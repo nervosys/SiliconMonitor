@@ -1,0 +1,34 @@
+[general]
+update_interval_ms = 2000
+use_fahrenheit = true
+color_scheme = "default"
+encode_decode_hiding_timer = 60
+
+[gpu]
+monitored_gpus = []
+show_details = true
+show_processes = true
+reverse_plot = false
+
+[process]
+visible_columns = [
+    "pid",
+    "user",
+    "name",
+    "gpu",
+    "gpu_mem",
+    "cpu",
+    "mem",
+]
+sort_column = "cpu"
+sort_ascending = true
+hide_self = true
+
+[chart]
+metrics = [
+    "gpu_util",
+    "mem_util",
+    "temperature",
+    "power",
+]
+history_length = 120

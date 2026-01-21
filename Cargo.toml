@@ -1,0 +1,185 @@
+[package]
+name = "simon"
+version = "0.1.0"
+edition = "2021"
+authors = ["nervosys"]
+license = "Apache-2.0"
+description = "Silicon Monitor: Comprehensive hardware monitoring for CPUs, GPUs, NPUs, memory, I/O, and network silicon across all platforms"
+repository = "https://github.com/nervosys/simon"
+keywords = ["silicon", "monitor", "gpu", "cpu", "hardware"]
+categories = [
+    "hardware-support",
+    "os",
+    "api-bindings",
+    "command-line-utilities",
+]
+
+[lib]
+name = "simonlib"
+path = "src/lib.rs"
+crate-type = ["lib", "cdylib", "staticlib"]
+
+[[bin]]
+name = "simon"
+path = "src/bin/main.rs"
+required-features = ["cli"]
+
+# AI Monitor (amon) - dedicated AI agent interface
+[[bin]]
+name = "amon"
+path = "src/bin/amon.rs"
+required-features = ["cli"]
+
+[dependencies]
+# Core dependencies
+thiserror = "2.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+bincode = "1.3"                                    # For TSDB binary serialization
+toml = "0.8"
+log = "0.4"
+chrono = "0.4"
+lru = "0.12"                                       # For agent response caching
+async-trait = "0.1"
+
+# Platform-specific dependencies
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+nix = { version = "0.29", features = ["fs", "process", "user", "signal"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# NVML bindings for Linux
+nvml-wrapper = { version = "0.10", optional = true }
+# AMD GPU support via libdrm (we'll implement direct syscalls for now)
+# Intel GPU support via DRM
+drm = { version = "0.14", optional = true }
+drm-ffi = { version = "0.8", optional = true }
+
+[target.'cfg(windows)'.dependencies]
+# Windows API bindings
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_SystemInformation",
+    "Win32_System_Performance",
+    "Win32_System_ProcessStatus",
+    "Win32_System_Threading",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_Diagnostics_Debug",
+    "Win32_System_Power",
+    "Win32_System_IO",
+    "Win32_System_Ioctl",
+    "Win32_Storage_FileSystem",
+    "Win32_NetworkManagement_IpHelper",
+    "Win32_Networking_WinSock",
+] }
+# WMI for hardware monitoring (temperature, fans, etc.)
+wmi = "0.14"
+# Windows registry access
+winreg = "0.52"
+# NVML for Windows
+nvml-wrapper = { version = "0.10", optional = true }
+
+# Optional dependencies for CLI
+clap = { version = "4.5", features = ["derive"], optional = true }
+colored = { version = "2.1", optional = true }
+ratatui = { version = "0.29", optional = true }
+crossterm = { version = "0.28", optional = true }
+tokio = { version = "1.41", features = ["full"], optional = true }
+chrono = { version = "0.4", optional = true }
+hostname = { version = "0.4", optional = true }
+num_cpus = { version = "1.16", optional = true }
+ctrlc = { version = "3.4", optional = true }
+
+# Optional dependencies for GUI
+eframe = { version = "0.30", optional = true, default-features = false, features = [
+    "default_fonts",
+    "glow",
+    "persistence",
+] }
+egui = { version = "0.30", optional = true }
+egui_extras = { version = "0.30", optional = true, features = ["all_loaders"] }
+egui_plot = { version = "0.30", optional = true }
+
+# Optional dependencies for remote AI backends
+reqwest = { version = "0.12", features = ["blocking", "json"], optional = true }
+async-trait = { version = "0.1", optional = true }
+
+# Logging
+env_logger = { version = "0.11", optional = true }
+
+# macOS dependencies
+[target.'cfg(target_os = "macos")'.dependencies]
+plist = { version = "1.7", optional = true }
+
+[dev-dependencies]
+tokio = { version = "1.41", features = ["full", "test-util"] }
+
+[features]
+default = []
+# Platform-specific silicon support
+nvidia = ["nvml-wrapper"] # NVML support for NVIDIA GPUs (Jetson & desktop)
+amd = [] # AMD GPU support via DRM (direct implementation)
+intel = ["drm", "drm-ffi"] # Intel GPU support via i915/xe drivers
+apple = [
+    "plist",
+] # Apple Silicon support (M1/M2/M3/M4 series) with powermetrics parsing
+# Silicon monitoring features
+cpu = []     # Enhanced CPU monitoring (per-core, clusters, power states)
+npu = []     # NPU/ASIC monitoring (ANE, Intel NPU, AMD AI Engine)
+io = []      # I/O controller monitoring (PCIe, NVMe, USB, Thunderbolt)
+network = [] # Network silicon monitoring (WiFi, Ethernet, offload engines)
+# CLI features
+cli = [
+    "clap",
+    "colored",
+    "ratatui",
+    "crossterm",
+    "tokio",
+    "chrono",
+    "env_logger",
+    "hostname",
+    "num_cpus",
+    "ctrlc",
+    "remote-backends", # Required for AI backend detection (Ollama, OpenAI, etc.)
+]
+# GUI features
+gui = [
+    "eframe",
+    "egui",
+    "egui_extras",
+    "egui_plot",
+    "tokio",
+    "chrono",
+    "hostname",
+    "num_cpus",
+    "remote-backends", # Required for AI backend detection (Ollama, OpenAI, etc.)
+]
+# Remote AI backend support (OpenAI, Anthropic, Ollama, etc.)
+remote-backends = ["reqwest", "async-trait"]
+# Local AI backends
+local-ollama = ["remote-backends"]   # Ollama local inference server
+local-llamacpp = []                  # llama.cpp direct model loading (TODO: needs llama-cpp-rs)
+local-vllm = ["remote-backends"]     # vLLM high-performance server
+local-tensorrt = ["remote-backends"] # TensorRT-LLM optimized inference
+# Full feature set with all silicon monitoring
+full = [
+    "nvidia",
+    "amd",
+    "intel",
+    "apple",
+    "cpu",
+    "npu",
+    "io",
+    "network",
+    "cli",
+    "gui",
+]
+# Alias for backward compatibility
+nvml = ["nvidia"]
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
