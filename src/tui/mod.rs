@@ -21,15 +21,19 @@ pub use app::{AcceleratorInfo, AcceleratorType, App};
 
 /// Run the TUI application
 pub fn run() -> Result<(), Box<dyn std::error::Error>> {
-    // Setup terminal
+    // Setup terminal FIRST for immediate visual feedback
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    // Create app and run
-    let mut app = App::new()?;
+    // Create app with fast initialization (slow components load in background)
+    let mut app = App::new_fast()?;
+
+    // Draw initial "Loading..." state immediately
+    terminal.draw(|f| ui::draw(f, &app))?;
+
     let res = run_app(&mut terminal, &mut app);
 
     // Restore terminal
@@ -48,36 +52,34 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Main application loop
+/// Main application loop with unified tick-based timing
 fn run_app<B: Backend>(
     terminal: &mut Terminal<B>,
     app: &mut App,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let render_rate = Duration::from_millis(100); // Render at 10 FPS for smooth UI
-    let fast_update_rate = Duration::from_millis(500); // Fast metrics (CPU/GPU/Memory)
-    let slow_update_rate = Duration::from_secs(1); // Process updates (every 1s)
-    let disk_update_rate = Duration::from_secs(5); // Disk updates (every 5s - expensive)
+    // Unified tick system - base tick is 100ms (10 ticks/sec)
+    const TICK_MS: u64 = 100;
+    let tick_duration = Duration::from_millis(TICK_MS);
 
-    let mut last_render = Instant::now();
-    let mut last_fast_update = Instant::now();
-    let mut last_slow_update = Instant::now();
-    let mut last_disk_update = Instant::now();
+    // Update frequencies in ticks (multiples of base tick for consistency)
+    const RENDER_TICKS: u64 = 1; // Every tick (100ms = 10 FPS)
+    const FAST_UPDATE_TICKS: u64 = 5; // Every 5 ticks (500ms)
+    const PROCESS_TICKS: u64 = 10; // Every 10 ticks (1s)
+    const DISK_TICKS: u64 = 50; // Every 50 ticks (5s)
+    const INIT_CHECK_TICKS: u64 = 2; // Check background init every 200ms
 
-    // Create monitor for agent queries
+    let mut tick_count: u64 = 0;
+    let mut last_tick = Instant::now();
+
+    // Create monitor for agent queries (lazy - only used when agent is active)
     let monitor = crate::SiliconMonitor::new()?;
 
     loop {
-        // Render UI (fast - 10 FPS)
-        if last_render.elapsed() >= render_rate {
-            terminal.draw(|f| ui::draw(f, app))?;
-            last_render = Instant::now();
-        }
+        // Calculate time until next tick
+        let elapsed = last_tick.elapsed();
+        let timeout = tick_duration.saturating_sub(elapsed);
 
-        // Calculate timeout for event polling
-        let timeout = render_rate
-            .checked_sub(last_render.elapsed())
-            .unwrap_or_else(|| Duration::from_millis(10));
-
+        // Poll for events with timeout
         if crossterm::event::poll(timeout)? {
             if let Event::Key(key) = event::read()? {
                 if key.kind == KeyEventKind::Press {
@@ -94,17 +96,13 @@ fn run_app<B: Backend>(
                         match key.code {
                             KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
                             KeyCode::Tab => {
-                                // Tab cycles forward through process display modes
                                 if key.modifiers.contains(KeyModifiers::SHIFT) {
                                     app.previous_process_mode();
                                 } else {
                                     app.next_process_mode();
                                 }
                             }
-                            KeyCode::BackTab => {
-                                // Shift+Tab (BackTab) cycles backward
-                                app.previous_process_mode();
-                            }
+                            KeyCode::BackTab => app.previous_process_mode(),
                             KeyCode::Char('1') => app.set_tab(0),
                             KeyCode::Char('2') => app.set_tab(1),
                             KeyCode::Char('3') => app.set_tab(2),
@@ -138,22 +136,35 @@ fn run_app<B: Backend>(
             }
         }
 
-        // Fast updates (CPU, GPU, Memory, Network) - every 500ms
-        if last_fast_update.elapsed() >= fast_update_rate {
-            app.update_fast()?;
-            last_fast_update = Instant::now();
-        }
+        // Check if a tick has elapsed
+        if last_tick.elapsed() >= tick_duration {
+            tick_count = tick_count.wrapping_add(1);
+            last_tick = Instant::now();
 
-        // Process updates - every 1 second
-        if last_slow_update.elapsed() >= slow_update_rate {
-            app.update_processes_only()?;
-            last_slow_update = Instant::now();
-        }
+            // Check for background initialization completion
+            if tick_count % INIT_CHECK_TICKS == 0 {
+                app.check_background_init();
+            }
 
-        // Disk updates - every 5 seconds (expensive operation)
-        if last_disk_update.elapsed() >= disk_update_rate {
-            app.update_disks_only()?;
-            last_disk_update = Instant::now();
+            // Render UI
+            if tick_count % RENDER_TICKS == 0 {
+                terminal.draw(|f| ui::draw(f, app))?;
+            }
+
+            // Fast updates (CPU, GPU, Memory, Network)
+            if tick_count % FAST_UPDATE_TICKS == 0 {
+                let _ = app.update_fast();
+            }
+
+            // Process updates
+            if tick_count % PROCESS_TICKS == 0 {
+                let _ = app.update_processes_only();
+            }
+
+            // Disk updates (expensive)
+            if tick_count % DISK_TICKS == 0 {
+                let _ = app.update_disks_only();
+            }
         }
     }
 }

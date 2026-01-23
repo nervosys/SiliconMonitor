@@ -11,6 +11,7 @@ use super::widgets::{
     CyberProgressBar, MetricCard, QuickLookPanel, SectionHeader, SparklineChart, ThresholdLegend,
 };
 
+use crate::ai_api::AiDataApi;
 use crate::connections::{ConnectionInfo, ConnectionMonitor, ConnectionState, Protocol};
 use crate::core::cpu::CpuStats;
 use crate::core::memory::MemoryStats;
@@ -36,6 +37,22 @@ struct DataUpdateResult {
     gpu_dynamic_info: Vec<GpuDynamicInfo>,
     network_rx: u64,
     network_tx: u64,
+}
+
+/// Cached disk data to avoid blocking I/O calls on every frame
+#[derive(Default, Clone)]
+struct CachedDiskData {
+    info: Option<crate::disk::DiskInfo>,
+    io_stats: Option<crate::disk::DiskIoStats>,
+    health: Option<crate::disk::DiskHealth>,
+    filesystems: Vec<crate::disk::FilesystemInfo>,
+}
+
+/// AI agent response from background thread
+struct AgentResponse {
+    response: String,
+    inference_time_ms: u64,
+    from_cache: bool,
 }
 
 /// Main application state
@@ -127,9 +144,19 @@ pub struct SiliconMonitorApp {
     // AI Agent state
     agent: Option<crate::agent::Agent>,
     silicon_monitor: Option<crate::SiliconMonitor>,
+    ai_data_api: Option<AiDataApi>,
     agent_query: String,
     agent_history: VecDeque<AgentChatEntry>,
     agent_is_processing: bool,
+    agent_response_receiver: Option<Receiver<Result<AgentResponse, String>>>,
+    
+    // AI configuration UI state
+    ai_api_key_input: String,
+    ai_selected_backend: AiBackendSelection,
+    ai_selected_model: String,
+    ai_ollama_models: Vec<String>,
+    ai_ollama_starting: bool,
+    ai_status_message: Option<(String, bool)>, // (message, is_error)
 
     // Background loading state
     system_info_receiver: Option<Receiver<SystemInfoResult>>,
@@ -139,11 +166,20 @@ pub struct SiliconMonitorApp {
     disk_loaded: bool,
     agent_receiver: Option<Receiver<Option<crate::agent::Agent>>>,
     agent_loading: bool,
+    agent_loading_start: Instant,
+
+    // Cached disk data (refreshed periodically, not on every frame)
+    cached_disk_data: Vec<CachedDiskData>,
+    last_disk_data_refresh: Instant,
 
     // Background data polling
     data_receiver: Option<Receiver<DataUpdateResult>>,
     data_poll_in_flight: bool,
     last_data_poll: Instant,
+
+    // Settings
+    show_settings: bool,
+    settings: AppSettings,
 }
 
 /// Result from background system info loading
@@ -196,6 +232,96 @@ enum ProcessSortColumn {
     Pid,
     Cpu,
     Memory,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AiBackendSelection {
+    Ollama,
+    OpenAi,
+    Anthropic,
+    GitHub,
+    LmStudio,
+}
+
+impl Default for AiBackendSelection {
+    fn default() -> Self {
+        Self::Ollama
+    }
+}
+
+/// Color theme options for the application
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ColorTheme {
+    #[default]
+    Cyber,       // Default neon cyber theme
+    Ocean,       // Blue/teal oceanic theme
+    Forest,      // Green nature theme
+    Sunset,      // Orange/red warm theme
+    Monochrome,  // Grayscale minimalist
+}
+
+impl ColorTheme {
+    fn name(&self) -> &'static str {
+        match self {
+            ColorTheme::Cyber => "Cyber (Default)",
+            ColorTheme::Ocean => "Ocean",
+            ColorTheme::Forest => "Forest",
+            ColorTheme::Sunset => "Sunset",
+            ColorTheme::Monochrome => "Monochrome",
+        }
+    }
+
+    fn all() -> &'static [ColorTheme] {
+        &[
+            ColorTheme::Cyber,
+            ColorTheme::Ocean,
+            ColorTheme::Forest,
+            ColorTheme::Sunset,
+            ColorTheme::Monochrome,
+        ]
+    }
+
+    /// Get the primary accent color for this theme
+    pub fn accent_color(&self) -> egui::Color32 {
+        match self {
+            ColorTheme::Cyber => CyberColors::CYAN,
+            ColorTheme::Ocean => egui::Color32::from_rgb(64, 224, 208),    // Turquoise
+            ColorTheme::Forest => egui::Color32::from_rgb(34, 197, 94),    // Green
+            ColorTheme::Sunset => egui::Color32::from_rgb(251, 146, 60),   // Orange
+            ColorTheme::Monochrome => egui::Color32::from_rgb(200, 200, 200), // Light gray
+        }
+    }
+
+    /// Get the secondary accent color for this theme
+    pub fn secondary_color(&self) -> egui::Color32 {
+        match self {
+            ColorTheme::Cyber => CyberColors::MAGENTA,
+            ColorTheme::Ocean => egui::Color32::from_rgb(56, 189, 248),    // Sky blue
+            ColorTheme::Forest => egui::Color32::from_rgb(74, 222, 128),   // Light green
+            ColorTheme::Sunset => egui::Color32::from_rgb(248, 113, 113),  // Red
+            ColorTheme::Monochrome => egui::Color32::from_rgb(150, 150, 150), // Medium gray
+        }
+    }
+}
+
+/// Application settings
+#[derive(Debug, Clone)]
+pub struct AppSettings {
+    pub color_theme: ColorTheme,
+    pub graph_line_thickness: f32,
+    pub show_grid_lines: bool,
+    pub animation_speed: f32,
+}
+
+impl Default for AppSettings {
+    fn default() -> Self {
+        Self {
+            color_theme: ColorTheme::Cyber,
+            graph_line_thickness: 2.5,
+            show_grid_lines: true,
+            animation_speed: 1.0,
+        }
+    }
 }
 
 impl SiliconMonitorApp {
@@ -326,9 +452,22 @@ impl SiliconMonitorApp {
             // AI Agent - loading in background
             agent: None, // Will be populated when background thread completes
             silicon_monitor: crate::SiliconMonitor::new().ok(),
+            ai_data_api: AiDataApi::new().ok(),
             agent_query: String::new(),
             agent_history: VecDeque::with_capacity(50),
             agent_is_processing: false,
+            agent_response_receiver: None,
+            
+            // AI configuration UI
+            ai_api_key_input: String::new(),
+            ai_selected_backend: AiBackendSelection::default(),
+            ai_selected_model: {
+                let models = Self::detect_ollama_models();
+                models.first().cloned().unwrap_or_default()
+            },
+            ai_ollama_models: Self::detect_ollama_models(),
+            ai_ollama_starting: false,
+            ai_status_message: None,
 
             // Background loading state
             system_info_receiver: None,
@@ -338,11 +477,20 @@ impl SiliconMonitorApp {
             disk_loaded: false,
             agent_receiver: Some(agent_rx),
             agent_loading: true,
+            agent_loading_start: Instant::now(),
+
+            // Cached disk data (avoid per-frame I/O)
+            cached_disk_data: Vec::new(),
+            last_disk_data_refresh: Instant::now(),
 
             // Background data polling
             data_receiver: None,
             data_poll_in_flight: false,
             last_data_poll: Instant::now(),
+
+            // Settings
+            show_settings: false,
+            settings: AppSettings::default(),
         };
 
         // Initialize history with zeros
@@ -596,6 +744,65 @@ impl SiliconMonitorApp {
                 self.system_info_receiver = None;
             }
         }
+
+        // Check AI agent response (non-blocking)
+        if let Some(ref receiver) = self.agent_response_receiver {
+            if let Ok(result) = receiver.try_recv() {
+                match result {
+                    Ok(response) => {
+                        self.agent_history.push_back(AgentChatEntry {
+                            role: ChatRole::Assistant,
+                            content: response.response,
+                            timestamp: std::time::Instant::now(),
+                            inference_time_ms: Some(response.inference_time_ms),
+                            from_cache: response.from_cache,
+                        });
+                    }
+                    Err(e) => {
+                        self.agent_history.push_back(AgentChatEntry {
+                            role: ChatRole::Assistant,
+                            content: format!("Error: {}", e),
+                            timestamp: std::time::Instant::now(),
+                            inference_time_ms: None,
+                            from_cache: false,
+                        });
+                    }
+                }
+                self.agent_is_processing = false;
+                self.agent_response_receiver = None;
+
+                // Limit history size
+                while self.agent_history.len() > 100 {
+                    self.agent_history.pop_front();
+                }
+            }
+        }
+
+        // Refresh cached disk data every 2 seconds (only when disks are loaded)
+        if self.disk_loaded && self.last_disk_data_refresh.elapsed() >= Duration::from_secs(2) {
+            self.refresh_cached_disk_data();
+            self.last_disk_data_refresh = Instant::now();
+        }
+    }
+
+    /// Refresh cached disk data (called periodically, not every frame)
+    fn refresh_cached_disk_data(&mut self) {
+        // Ensure we have enough cached entries for all disks
+        while self.cached_disk_data.len() < self.disks.len() {
+            self.cached_disk_data.push(CachedDiskData::default());
+        }
+
+        // Update cache for each disk
+        for (i, disk) in self.disks.iter().enumerate() {
+            if i < self.cached_disk_data.len() {
+                self.cached_disk_data[i] = CachedDiskData {
+                    info: disk.info().ok(),
+                    io_stats: disk.io_stats().ok(),
+                    health: disk.health().ok(),
+                    filesystems: disk.filesystem_info().unwrap_or_default(),
+                };
+            }
+        }
     }
 
     /// Start lazy loading of disk data
@@ -742,13 +949,13 @@ impl eframe::App for SiliconMonitorApp {
                 );
                 ui.selectable_value(
                     &mut self.current_tab,
-                    Tab::SystemInfo,
-                    RichText::new("🖥️ System").color(tab_color(Tab::SystemInfo)),
+                    Tab::Peripherals,
+                    RichText::new("🔌 Peripherals").color(tab_color(Tab::Peripherals)),
                 );
                 ui.selectable_value(
                     &mut self.current_tab,
-                    Tab::Peripherals,
-                    RichText::new("🔌 Peripherals").color(tab_color(Tab::Peripherals)),
+                    Tab::SystemInfo,
+                    RichText::new("🖥️ System").color(tab_color(Tab::SystemInfo)),
                 );
                 ui.selectable_value(
                     &mut self.current_tab,
@@ -757,6 +964,20 @@ impl eframe::App for SiliconMonitorApp {
                 );
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    // Settings gear icon
+                    let settings_btn = ui.add(
+                        egui::Button::new(RichText::new("⚙").size(16.0))
+                            .fill(egui::Color32::TRANSPARENT)
+                            .stroke(egui::Stroke::NONE)
+                    );
+                    if settings_btn.clicked() {
+                        self.show_settings = !self.show_settings;
+                    }
+                    if settings_btn.hovered() {
+                        settings_btn.on_hover_text("Settings");
+                    }
+                    
+                    ui.add_space(8.0);
                     ui.label(
                         RichText::new(format!("{}@{}", self.hostname, self.os_info))
                             .color(CyberColors::TEXT_SECONDARY)
@@ -826,6 +1047,9 @@ impl eframe::App for SiliconMonitorApp {
             Tab::Peripherals => self.draw_peripherals_tab(ui),
             Tab::AIAssistant => self.draw_ai_assistant_tab(ui),
         });
+
+        // Settings window (floating)
+        self.draw_settings_window(ctx);
     }
 }
 
@@ -1331,27 +1555,6 @@ impl SiliconMonitorApp {
 
                 ui.add_space(8.0);
 
-                // Per-core utilization with threshold colors
-                ui.add(SectionHeader::new("Per-Core Utilization").icon("⚡"));
-
-                let cores = &cpu.cores;
-                let num_cols = ((cores.len() as f32).sqrt().ceil() as usize).max(2);
-
-                ui.columns(num_cols, |columns| {
-                    for (i, core) in cores.iter().enumerate() {
-                        let col = i % num_cols;
-                        let util = core.user.unwrap_or(0.0) + core.system.unwrap_or(0.0);
-                        columns[col].add(
-                            CyberProgressBar::new(util / 100.0)
-                                .with_threshold_color()
-                                .label(format!("Core {}", core.id))
-                                .height(20.0),
-                        );
-                    }
-                });
-
-                ui.add_space(16.0);
-
                 // CPU History
                 ui.add(
                     SparklineChart::new(self.cpu_history.iter().cloned().collect())
@@ -1395,6 +1598,7 @@ impl SiliconMonitorApp {
                 ui.add_space(16.0);
                 ui.add(SectionHeader::new("CPU Information").icon("ℹ️"));
 
+                let cores = &cpu.cores;
                 egui::Grid::new("cpu_info_grid")
                     .num_columns(2)
                     .spacing([40.0, 8.0])
@@ -1440,24 +1644,33 @@ impl SiliconMonitorApp {
     }
 
     fn draw_accelerators_tab(&mut self, ui: &mut egui::Ui) {
-        ScrollArea::vertical().show(ui, |ui| {
-            if self.gpu_static_info.is_empty() {
-                ui.vertical_centered(|ui| {
-                    ui.add_space(50.0);
-                    ui.label(RichText::new("⚡").size(48.0));
-                    ui.label(
-                        RichText::new("No Accelerators Detected")
-                            .color(CyberColors::TEXT_SECONDARY)
-                            .size(24.0),
-                    );
-                    ui.label(
-                        RichText::new("No GPUs, NPUs, FPGAs, or other accelerators found.\nInstall drivers or check hardware connection.")
-                            .color(CyberColors::TEXT_MUTED),
-                    );
-                });
-                return;
-            }
+        if self.gpu_static_info.is_empty() {
+            ui.vertical_centered(|ui| {
+                ui.add_space(50.0);
+                ui.label(RichText::new("⚡").size(48.0));
+                ui.label(
+                    RichText::new("No Accelerators Detected")
+                        .color(CyberColors::TEXT_SECONDARY)
+                        .size(24.0),
+                );
+                ui.label(
+                    RichText::new("No GPUs, NPUs, FPGAs, or other accelerators found.\nInstall drivers or check hardware connection.")
+                        .color(CyberColors::TEXT_MUTED),
+                );
+            });
+            return;
+        }
 
+        // Auto-scale layout based on device count
+        let device_count = self.gpu_static_info.len();
+        let available_width = ui.available_width();
+        
+        // Scale elements based on device count
+        let chart_height = if device_count == 1 { 100.0 } else if device_count == 2 { 80.0 } else { 65.0 };
+        let bar_height = if device_count <= 2 { 18.0 } else { 14.0 };
+        let font_scale = if device_count <= 2 { 1.0 } else if device_count <= 4 { 0.9 } else { 0.8 };
+        
+        ScrollArea::vertical().show(ui, |ui| {
             for (i, (static_info, dynamic_info)) in self
                 .gpu_static_info
                 .iter()
@@ -1465,174 +1678,136 @@ impl SiliconMonitorApp {
                 .enumerate()
             {
                 let accel_color = theme::neon_color_by_index(i);
-
-                // Determine accelerator type label based on vendor
-                use crate::gpu::GpuVendor;
-                let accel_type = match static_info.vendor {
-                    GpuVendor::Nvidia | GpuVendor::Amd | GpuVendor::Intel | GpuVendor::Apple => "GPU",
-                };
-
-                ui.add(SectionHeader::new(&format!("{} {} - {}", accel_type, i, static_info.name)).icon("⚡"));
-
-                // Utilization bars
-                ui.horizontal(|ui| {
-                    ui.set_min_width(ui.available_width());
-
-                    ui.vertical(|ui| {
-                        ui.set_min_width(200.0);
+                
+                // Device pane frame - compact
+                let frame = egui::Frame::none()
+                    .fill(CyberColors::SURFACE)
+                    .stroke(egui::Stroke::new(1.0, CyberColors::BORDER))
+                    .rounding(4.0)
+                    .inner_margin(8.0);
+                
+                frame.show(ui, |ui| {
+                    ui.set_width(available_width - 16.0);
+                    
+                    // Header row: Icon + Name + Live Metrics
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("⚡").color(accel_color).size(20.0));
                         ui.label(
-                            RichText::new(format!("{} Utilization", accel_type)).color(CyberColors::TEXT_SECONDARY),
+                            RichText::new(&static_info.name)
+                                .color(CyberColors::TEXT_PRIMARY)
+                                .strong()
+                                .size(18.0),
                         );
-                        ui.add(
-                            CyberProgressBar::new(dynamic_info.utilization as f32 / 100.0)
-                                .color(accel_color)
-                                .height(24.0),
-                        );
+                        
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            // Live metrics on the right
+                            if let Some(clock) = dynamic_info.clocks.graphics {
+                                ui.label(
+                                    RichText::new(format!("{} MHz", clock))
+                                        .color(CyberColors::NEON_BLUE)
+                                        .size(15.0),
+                                );
+                            }
+                            if let Some(power) = dynamic_info.power.draw {
+                                ui.label(
+                                    RichText::new(format!("{:.0}W", power as f64 / 1000.0))
+                                        .color(CyberColors::NEON_ORANGE)
+                                        .size(15.0),
+                                );
+                            }
+                            if let Some(temp) = dynamic_info.thermal.temperature {
+                                ui.label(
+                                    RichText::new(format!("{}°C", temp))
+                                        .color(theme::temperature_color(temp as u32))
+                                        .size(15.0),
+                                );
+                            }
+                        });
                     });
 
-                    ui.add_space(16.0);
+                    ui.add_space(4.0);
 
-                    ui.vertical(|ui| {
-                        ui.set_min_width(200.0);
-                        ui.label(
-                            RichText::new("Memory Utilization").color(CyberColors::TEXT_SECONDARY),
-                        );
-                        ui.add(
-                            CyberProgressBar::new(dynamic_info.memory.utilization as f32 / 100.0)
-                                .color(CyberColors::MAGENTA)
-                                .height(24.0),
-                        );
+                    // Main content: Progress bars + Charts side by side
+                    ui.horizontal(|ui| {
+                        // Left side: Progress bars
+                        ui.vertical(|ui| {
+                            ui.set_width(220.0);
+                            
+                            // Utilization bar
+                            ui.label(RichText::new(format!("Utilization {}%", dynamic_info.utilization)).color(CyberColors::TEXT_SECONDARY).size(13.0));
+                            ui.add(
+                                CyberProgressBar::new(dynamic_info.utilization as f32 / 100.0)
+                                    .color(accel_color)
+                                    .height(bar_height),
+                            );
+                            
+                            ui.add_space(4.0);
+                            
+                            // VRAM bar
+                            let mem_used_mb = dynamic_info.memory.used / 1024 / 1024;
+                            let mem_total_mb = dynamic_info.memory.total / 1024 / 1024;
+                            ui.label(RichText::new(format!("VRAM {}/{}MB", mem_used_mb, mem_total_mb)).color(CyberColors::TEXT_SECONDARY).size(13.0));
+                            ui.add(
+                                CyberProgressBar::new(dynamic_info.memory.utilization as f32 / 100.0)
+                                    .color(CyberColors::MAGENTA)
+                                    .height(bar_height),
+                            );
+                            
+                            // Vendor/Driver info at bottom
+                            ui.add_space(4.0);
+                            ui.label(
+                                RichText::new(format!("{:?}", static_info.vendor))
+                                    .color(accel_color)
+                                    .size(12.0),
+                            );
+                            if let Some(ref driver) = static_info.driver_version {
+                                ui.label(
+                                    RichText::new(format!("Driver: {}", driver))
+                                        .color(CyberColors::TEXT_MUTED)
+                                        .size(12.0),
+                                );
+                            }
+                        });
+
+                        ui.add_space(12.0);
+
+                        // Right side: Charts (expand to fill)
+                        ui.vertical(|ui| {
+                            ui.set_width(ui.available_width());
+                            
+                            if i < self.gpu_history.len() {
+                                ui.add(
+                                    SparklineChart::new(self.gpu_history[i].iter().cloned().collect())
+                                        .color(accel_color)
+                                        .height(chart_height)
+                                        .title("Utilization")
+                                        .unit("%")
+                                        .max_value(100.0)
+                                        .show_scale(true),
+                                );
+                            }
+                            
+                            ui.add_space(2.0);
+                            
+                            if i < self.gpu_temp_history.len() {
+                                ui.add(
+                                    SparklineChart::new(self.gpu_temp_history[i].iter().cloned().collect())
+                                        .color(CyberColors::NEON_YELLOW)
+                                        .height(chart_height)
+                                        .title("Temperature")
+                                        .unit("°C")
+                                        .max_value(100.0)
+                                        .show_scale(true),
+                                );
+                            }
+                        });
                     });
                 });
-
-                ui.add_space(8.0);
-
-                // Accelerator metrics grid
-                ui.columns(4, |columns| {
-                    // Temperature
-                    if let Some(temp) = dynamic_info.thermal.temperature {
-                        columns[0].add(
-                            MetricCard::new("Temperature", temp)
-                                .unit("°C")
-                                .color(theme::temperature_color(temp as u32)),
-                        );
-                    }
-
-                    // Power
-                    if let Some(power) = dynamic_info.power.draw {
-                        columns[1].add(
-                            MetricCard::new("Power Draw", power / 1000)
-                                .unit("W")
-                                .color(CyberColors::NEON_ORANGE),
-                        );
-                    }
-
-                    // Memory
-                    let mem_used_mb = dynamic_info.memory.used / 1024 / 1024;
-                    let mem_total_mb = dynamic_info.memory.total / 1024 / 1024;
-                    columns[2].add(
-                        MetricCard::new("VRAM Used", format!("{}/{}", mem_used_mb, mem_total_mb))
-                            .unit("MB")
-                            .color(CyberColors::MAGENTA),
-                    );
-
-                    // Clock
-                    if let Some(clock) = dynamic_info.clocks.graphics {
-                        columns[3].add(
-                            MetricCard::new("Core Clock", clock)
-                                .unit("MHz")
-                                .color(CyberColors::NEON_BLUE),
-                        );
-                    }
-                });
-
-                // Accelerator History Charts
-                if i < self.gpu_history.len() {
-                    ui.add_space(8.0);
-
-                    ui.columns(3, |columns| {
-                        // Utilization history
-                        columns[0].add(
-                            SparklineChart::new(self.gpu_history[i].iter().cloned().collect())
-                                .color(accel_color)
-                                .height(80.0)
-                                .title("Utilization")
-                                .unit("%")
-                                .max_value(100.0)
-                                .show_scale(true),
-                        );
-
-                        // Memory history
-                        if i < self.gpu_memory_history.len() {
-                            columns[1].add(
-                                SparklineChart::new(
-                                    self.gpu_memory_history[i].iter().cloned().collect(),
-                                )
-                                .color(CyberColors::MAGENTA)
-                                .height(80.0)
-                                .title("VRAM Usage")
-                                .unit("%")
-                                .max_value(100.0)
-                                .show_scale(true),
-                            );
-                        }
-
-                        // Temperature history
-                        if i < self.gpu_temp_history.len() {
-                            columns[2].add(
-                                SparklineChart::new(
-                                    self.gpu_temp_history[i].iter().cloned().collect(),
-                                )
-                                .color(CyberColors::NEON_ORANGE)
-                                .height(80.0)
-                                .title("Temperature")
-                                .unit("°C")
-                                .max_value(100.0)
-                                .show_scale(true),
-                            );
-                        }
-                    });
+                
+                // Minimal gap between device panes
+                if i < device_count - 1 {
+                    ui.add_space(2.0);
                 }
-
-                // Accelerator info
-                ui.add_space(8.0);
-                egui::Grid::new(format!("accel_info_{}", i))
-                    .num_columns(4)
-                    .spacing([20.0, 4.0])
-                    .show(ui, |ui| {
-                        ui.label(
-                            RichText::new("Vendor:")
-                                .color(CyberColors::TEXT_SECONDARY)
-                                .small(),
-                        );
-                        ui.label(
-                            RichText::new(format!("{:?}", static_info.vendor))
-                                .color(accel_color)
-                                .small(),
-                        );
-
-                        if let Some(ref driver) = static_info.driver_version {
-                            ui.label(
-                                RichText::new("Driver:")
-                                    .color(CyberColors::TEXT_SECONDARY)
-                                    .small(),
-                            );
-                            ui.label(RichText::new(driver).color(accel_color).small());
-                        }
-                        ui.end_row();
-
-                        if let Some(ref pci) = static_info.pci_bus_id {
-                            ui.label(
-                                RichText::new("PCI:")
-                                    .color(CyberColors::TEXT_SECONDARY)
-                                    .small(),
-                            );
-                            ui.label(RichText::new(pci).color(CyberColors::TEXT_MUTED).small());
-                        }
-                        ui.end_row();
-                    });
-
-                ui.add_space(16.0);
             }
         });
     }
@@ -2126,28 +2301,28 @@ impl SiliconMonitorApp {
             });
             ui.add_space(8.0);
 
-            // Network charts
-            ui.columns(2, |columns| {
-                columns[0].add(
-                    SparklineChart::new(self.network_rx_history.iter().cloned().collect())
-                        .color(CyberColors::NEON_GREEN)
-                        .height(100.0)
-                        .title("Download (Total MB)")
-                        .unit("MB")
-                        .show_scale(true)
-                        .show_min_max(true),
-                );
+            // Network charts - stacked vertically, left-aligned
+            ui.add(
+                SparklineChart::new(self.network_rx_history.iter().cloned().collect())
+                    .color(CyberColors::NEON_GREEN)
+                    .height(80.0)
+                    .title("Download (Total MB)")
+                    .unit("MB")
+                    .show_scale(true)
+                    .show_min_max(true),
+            );
 
-                columns[1].add(
-                    SparklineChart::new(self.network_tx_history.iter().cloned().collect())
-                        .color(CyberColors::NEON_ORANGE)
-                        .height(100.0)
-                        .title("Upload (Total MB)")
-                        .unit("MB")
-                        .show_scale(true)
-                        .show_min_max(true),
-                );
-            });
+            ui.add_space(4.0);
+
+            ui.add(
+                SparklineChart::new(self.network_tx_history.iter().cloned().collect())
+                    .color(CyberColors::NEON_ORANGE)
+                    .height(80.0)
+                    .title("Upload (Total MB)")
+                    .unit("MB")
+                    .show_scale(true)
+                    .show_min_max(true),
+            );
 
             ui.add_space(16.0);
 
@@ -2198,35 +2373,33 @@ impl SiliconMonitorApp {
                         });
 
                         ui.horizontal(|ui| {
-                            ui.columns(4, |columns| {
-                                columns[0].add(
-                                    MetricCard::new(
-                                        "Received",
-                                        format!("{:.1}", iface.rx_bytes as f64 / 1024.0 / 1024.0),
-                                    )
-                                    .unit("MB")
-                                    .color(CyberColors::NEON_GREEN),
-                                );
+                            ui.add(
+                                MetricCard::new(
+                                    "Received",
+                                    format!("{:.1}", iface.rx_bytes as f64 / 1024.0 / 1024.0),
+                                )
+                                .unit("MB")
+                                .color(CyberColors::NEON_GREEN),
+                            );
 
-                                columns[1].add(
-                                    MetricCard::new(
-                                        "Sent",
-                                        format!("{:.1}", iface.tx_bytes as f64 / 1024.0 / 1024.0),
-                                    )
-                                    .unit("MB")
-                                    .color(CyberColors::NEON_ORANGE),
-                                );
+                            ui.add(
+                                MetricCard::new(
+                                    "Sent",
+                                    format!("{:.1}", iface.tx_bytes as f64 / 1024.0 / 1024.0),
+                                )
+                                .unit("MB")
+                                .color(CyberColors::NEON_ORANGE),
+                            );
 
-                                columns[2].add(
-                                    MetricCard::new("Packets In", iface.rx_packets)
-                                        .color(iface_color),
-                                );
+                            ui.add(
+                                MetricCard::new("Packets In", iface.rx_packets)
+                                    .color(iface_color),
+                            );
 
-                                columns[3].add(
-                                    MetricCard::new("Packets Out", iface.tx_packets)
-                                        .color(iface_color),
-                                );
-                            });
+                            ui.add(
+                                MetricCard::new("Packets Out", iface.tx_packets)
+                                    .color(iface_color),
+                            );
                         });
 
                         // Status and IP addresses
@@ -2391,13 +2564,15 @@ impl SiliconMonitorApp {
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 for (i, disk) in self.disks.iter().enumerate() {
-                    self.draw_disk_row(ui, disk, i);
+                    // Get cached data for this disk (or empty defaults if not yet cached)
+                    let cached = self.cached_disk_data.get(i).cloned().unwrap_or_default();
+                    Self::draw_disk_row_cached(ui, disk, i, &cached);
                     ui.add_space(6.0);
                 }
             });
     }
 
-    fn draw_disk_row(&self, ui: &mut egui::Ui, disk: &Box<dyn DiskDevice>, index: usize) {
+    fn draw_disk_row_cached(ui: &mut egui::Ui, disk: &Box<dyn DiskDevice>, index: usize, cached: &CachedDiskData) {
         let disk_color = theme::neon_color_by_index(index);
         let disk_name = disk.name().to_string();
         let disk_type = disk.disk_type();
@@ -2421,10 +2596,10 @@ impl SiliconMonitorApp {
             else { format!("{} B", bytes) }
         };
 
-        // Get data upfront to avoid multiple calls
-        let info = disk.info().ok();
-        let io_stats = disk.io_stats().ok();
-        let health = disk.health().ok();
+        // Use cached data instead of making I/O calls
+        let info = &cached.info;
+        let io_stats = &cached.io_stats;
+        let health = &cached.health;
         
         let model_name = info.as_ref().map(|i| {
             if i.model.len() > 40 { format!("{}…", &i.model[..38]) } else { i.model.clone() }
@@ -2512,56 +2687,55 @@ impl SiliconMonitorApp {
                     });
                 });
                 
-                // Row 2: Partitions with aligned columns
-                if let Ok(filesystems) = disk.filesystem_info() {
-                    if !filesystems.is_empty() {
-                        ui.add_space(8.0);
-                        ui.separator();
-                        ui.add_space(6.0);
+                // Row 2: Partitions with aligned columns (use cached filesystem data)
+                let filesystems = &cached.filesystems;
+                if !filesystems.is_empty() {
+                    ui.add_space(8.0);
+                    ui.separator();
+                    ui.add_space(6.0);
+                    
+                    for fs in filesystems.iter().take(3) {
+                        let pct = fs.usage_percent();
+                        let color = if pct > 90.0 { CyberColors::NEON_RED } 
+                            else if pct > 75.0 { CyberColors::NEON_ORANGE } 
+                            else { CyberColors::NEON_GREEN };
                         
-                        for fs in filesystems.iter().take(3) {
-                            let pct = fs.usage_percent();
-                            let color = if pct > 90.0 { CyberColors::NEON_RED } 
-                                else if pct > 75.0 { CyberColors::NEON_ORANGE } 
-                                else { CyberColors::NEON_GREEN };
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 20.0; // Even spacing
                             
-                            ui.horizontal(|ui| {
-                                ui.spacing_mut().item_spacing.x = 20.0; // Even spacing
-                                
-                                // Mount point (fixed width 50px)
-                                ui.allocate_ui(egui::vec2(50.0, 22.0), |ui| {
-                                    let mount = fs.mount_point.to_string_lossy();
-                                    ui.label(RichText::new(mount.as_ref()).color(CyberColors::TEXT_PRIMARY).size(15.0).monospace());
-                                });
-                                
-                                // Filesystem type (fixed width 60px)
-                                ui.allocate_ui(egui::vec2(60.0, 22.0), |ui| {
-                                    ui.label(RichText::new(&fs.fs_type).color(CyberColors::TEXT_MUTED).size(13.0));
-                                });
-                                
-                                // Progress bar (fixed width 180px)
-                                let bar_w = 180.0;
-                                let bar_h = 18.0;
-                                let (rect, _) = ui.allocate_exact_size(egui::vec2(bar_w, bar_h), egui::Sense::hover());
-                                if ui.is_rect_visible(rect) {
-                                    ui.painter().rect_filled(rect, 3.0, CyberColors::BACKGROUND_DARK);
-                                    let w = rect.width() * pct / 100.0;
-                                    ui.painter().rect_filled(egui::Rect::from_min_size(rect.min, egui::vec2(w, rect.height())), 3.0, color.gamma_multiply(0.8));
-                                    ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, 
-                                        format!("{:.0}%", pct), egui::FontId::proportional(12.0), CyberColors::TEXT_PRIMARY);
-                                }
-                                
-                                // Used / Total (fixed width)
-                                ui.allocate_ui(egui::vec2(180.0, 22.0), |ui| {
-                                    ui.label(RichText::new(format!("{} / {}", format_bytes(fs.used_size), format_bytes(fs.total_size)))
-                                        .color(CyberColors::TEXT_SECONDARY).size(14.0));
-                                });
+                            // Mount point (fixed width 50px)
+                            ui.allocate_ui(egui::vec2(50.0, 22.0), |ui| {
+                                let mount = fs.mount_point.to_string_lossy();
+                                ui.label(RichText::new(mount.as_ref()).color(CyberColors::TEXT_PRIMARY).size(15.0).monospace());
                             });
-                            ui.add_space(2.0); // Space between partition rows
-                        }
-                        if filesystems.len() > 3 {
-                            ui.label(RichText::new(format!("+{} more partitions", filesystems.len() - 3)).color(CyberColors::TEXT_MUTED).size(12.0));
-                        }
+                            
+                            // Filesystem type (fixed width 60px)
+                            ui.allocate_ui(egui::vec2(60.0, 22.0), |ui| {
+                                ui.label(RichText::new(&fs.fs_type).color(CyberColors::TEXT_MUTED).size(13.0));
+                            });
+                            
+                            // Progress bar (fixed width 180px)
+                            let bar_w = 180.0;
+                            let bar_h = 18.0;
+                            let (rect, _) = ui.allocate_exact_size(egui::vec2(bar_w, bar_h), egui::Sense::hover());
+                            if ui.is_rect_visible(rect) {
+                                ui.painter().rect_filled(rect, 3.0, CyberColors::BACKGROUND_DARK);
+                                let w = rect.width() * pct / 100.0;
+                                ui.painter().rect_filled(egui::Rect::from_min_size(rect.min, egui::vec2(w, rect.height())), 3.0, color.gamma_multiply(0.8));
+                                ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, 
+                                    format!("{:.0}%", pct), egui::FontId::proportional(12.0), CyberColors::TEXT_PRIMARY);
+                            }
+                            
+                            // Used / Total (fixed width)
+                            ui.allocate_ui(egui::vec2(180.0, 22.0), |ui| {
+                                ui.label(RichText::new(format!("{} / {}", format_bytes(fs.used_size), format_bytes(fs.total_size)))
+                                    .color(CyberColors::TEXT_SECONDARY).size(14.0));
+                            });
+                        });
+                        ui.add_space(2.0); // Space between partition rows
+                    }
+                    if filesystems.len() > 3 {
+                        ui.label(RichText::new(format!("+{} more partitions", filesystems.len() - 3)).color(CyberColors::TEXT_MUTED).size(12.0));
                     }
                 }
             });
@@ -4302,14 +4476,11 @@ impl SiliconMonitorApp {
     }
 
     fn draw_ai_assistant_tab(&mut self, ui: &mut egui::Ui) {
-        ui.add_space(10.0);
-
-        // Header
-        ui.add(SectionHeader::new("🤖 AI System Assistant"));
-        ui.add_space(5.0);
-
         // Show loading state while agent is being initialized in background
-        if self.agent_loading {
+        // But timeout after 3 seconds to show the UI anyway
+        let loading_timeout = self.agent_loading && self.agent_loading_start.elapsed().as_secs() < 3;
+        
+        if loading_timeout {
             ui.vertical_centered(|ui| {
                 ui.add_space(50.0);
                 ui.spinner();
@@ -4327,216 +4498,320 @@ impl SiliconMonitorApp {
             });
             return;
         }
+        
+        // If we timed out, mark loading as done
+        if self.agent_loading && self.agent_loading_start.elapsed().as_secs() >= 3 {
+            self.agent_loading = false;
+        }
 
         let agent_available = self.agent.is_some() && self.silicon_monitor.is_some();
 
-        if !agent_available {
-            ui.vertical_centered(|ui| {
-                ui.add_space(20.0);
-                ui.label(
-                    RichText::new("⚠️ AI Agent not available")
-                        .color(CyberColors::WARNING)
-                        .size(18.0),
-                );
-                ui.add_space(15.0);
-                ui.label(
-                    RichText::new("To use the AI Assistant, you need one of the following:")
-                        .color(CyberColors::TEXT_SECONDARY),
-                );
-                ui.add_space(10.0);
-                ui.label(
-                    RichText::new("• Ollama installed locally (https://ollama.com)")
-                        .color(CyberColors::TEXT_MUTED),
-                );
-                ui.label(
-                    RichText::new("• OPENAI_API_KEY environment variable set")
-                        .color(CyberColors::TEXT_MUTED),
-                );
-                ui.label(
-                    RichText::new("• ANTHROPIC_API_KEY environment variable set")
-                        .color(CyberColors::TEXT_MUTED),
-                );
-                ui.label(
-                    RichText::new("• GITHUB_TOKEN for GitHub Models")
-                        .color(CyberColors::TEXT_MUTED),
-                );
-                ui.label(
-                    RichText::new("• LM Studio running locally")
-                        .color(CyberColors::TEXT_MUTED),
-                );
-                ui.add_space(15.0);
+        // Wrap content in ScrollArea like other tabs
+        ScrollArea::vertical().show(ui, |ui| {
+            ui.add_space(8.0);
+
+            // Header with provider/model selection
+            let mut refresh_ollama = false;
+            
+            ui.horizontal(|ui| {
+                ui.add(SectionHeader::new("🤖 AI System Assistant"));
                 
-                // Show available backends
-                let available = crate::agent::AgentConfig::list_available_backends();
-                if !available.is_empty() {
-                    ui.label(
-                        RichText::new(format!("Detected backends: {:?}", available))
-                            .color(CyberColors::CYAN),
-                    );
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    // Model dropdown - use detected models for Ollama, predefined for others
+                    let display_model = if self.ai_selected_model.is_empty() {
+                        "Select model...".to_string()
+                    } else {
+                        self.ai_selected_model.clone()
+                    };
+                
+                // Refresh button for Ollama models
+                if matches!(self.ai_selected_backend, AiBackendSelection::Ollama) {
+                    if ui.button(RichText::new("🔄").size(14.0)).on_hover_text("Refresh model list").clicked() {
+                        refresh_ollama = true;
+                    }
                 }
+                
+                egui::ComboBox::from_id_salt("ai_model_select")
+                    .selected_text(RichText::new(&display_model).color(CyberColors::NEON_GREEN))
+                    .width(180.0)
+                    .show_ui(ui, |ui| {
+                        // Models based on selected backend
+                        match self.ai_selected_backend {
+                            AiBackendSelection::Ollama => {
+                                // Use actually detected Ollama models
+                                for model in &self.ai_ollama_models {
+                                    ui.selectable_value(&mut self.ai_selected_model, model.clone(), model);
+                                }
+                            }
+                            AiBackendSelection::OpenAi => {
+                                for model in ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-4", "gpt-3.5-turbo"] {
+                                    ui.selectable_value(&mut self.ai_selected_model, model.to_string(), model);
+                                }
+                            }
+                            AiBackendSelection::Anthropic => {
+                                for model in ["claude-3-5-sonnet-latest", "claude-3-opus", "claude-3-sonnet", "claude-3-haiku"] {
+                                    ui.selectable_value(&mut self.ai_selected_model, model.to_string(), model);
+                                }
+                            }
+                            AiBackendSelection::GitHub => {
+                                for model in ["gpt-4o", "gpt-4o-mini", "o1-preview", "o1-mini"] {
+                                    ui.selectable_value(&mut self.ai_selected_model, model.to_string(), model);
+                                }
+                            }
+                            AiBackendSelection::LmStudio => {
+                                ui.selectable_value(&mut self.ai_selected_model, "local-model".to_string(), "local-model");
+                            }
+                        }
+                    });
+                
+                ui.label(RichText::new("Model:").color(CyberColors::TEXT_SECONDARY).size(12.0));
+                
+                ui.add_space(12.0);
+                
+                // Provider dropdown
+                let provider_name = match self.ai_selected_backend {
+                    AiBackendSelection::Ollama => "🦙 Ollama",
+                    AiBackendSelection::OpenAi => "🤖 OpenAI",
+                    AiBackendSelection::Anthropic => "🧠 Anthropic",
+                    AiBackendSelection::GitHub => "🐙 GitHub",
+                    AiBackendSelection::LmStudio => "📦 LM Studio",
+                };
+                egui::ComboBox::from_id_salt("ai_provider_select")
+                    .selected_text(RichText::new(provider_name).color(CyberColors::CYAN))
+                    .width(120.0)
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut self.ai_selected_backend, AiBackendSelection::Ollama, "🦙 Ollama");
+                        ui.selectable_value(&mut self.ai_selected_backend, AiBackendSelection::OpenAi, "🤖 OpenAI");
+                        ui.selectable_value(&mut self.ai_selected_backend, AiBackendSelection::Anthropic, "🧠 Anthropic");
+                        ui.selectable_value(&mut self.ai_selected_backend, AiBackendSelection::GitHub, "🐙 GitHub");
+                        ui.selectable_value(&mut self.ai_selected_backend, AiBackendSelection::LmStudio, "📦 LM Studio");
+                    });
+                
+                ui.label(RichText::new("Provider:").color(CyberColors::TEXT_SECONDARY).size(12.0));
             });
-            ui.add_space(10.0);
-            return;
+        });
+
+        // Handle deferred refresh after the UI block
+        if refresh_ollama {
+            self.refresh_ollama_models();
         }
 
-        // Chat history
-        ui.group(|ui| {
-            ui.set_min_height(400.0);
-            ui.set_max_height(600.0);
-            ScrollArea::vertical()
-                .auto_shrink([false; 2])
-                .stick_to_bottom(true)
+        ui.add_space(8.0);
+
+        // Show connection warning if agent not available
+        if !agent_available {
+            egui::Frame::none()
+                .fill(CyberColors::SURFACE)
+                .stroke(egui::Stroke::new(1.0, CyberColors::NEON_YELLOW))
+                .rounding(6.0)
+                .inner_margin(10.0)
                 .show(ui, |ui| {
-                    if self.agent_history.is_empty() {
-                        ui.vertical_centered(|ui| {
-                            ui.add_space(50.0);
-                            ui.label(
-                                RichText::new("👋 Welcome to the AI Assistant!")
-                                    .color(CyberColors::CYAN)
-                                    .size(18.0),
-                            );
-                            ui.add_space(10.0);
-                            ui.label(
-                                RichText::new("Ask questions about your system's performance, GPU status, or get optimization suggestions.")
-                                    .color(CyberColors::TEXT_SECONDARY),
-                            );
-                            ui.add_space(20.0);
-                            ui.label(
-                                RichText::new("Example questions:")
-                                    .color(CyberColors::TEXT_MUTED),
-                            );
-                            ui.label(
-                                RichText::new("• What is my GPU utilization?")
-                                    .color(CyberColors::TEXT_SECONDARY),
-                            );
-                            ui.label(
-                                RichText::new("• Is my system running hot?")
-                                    .color(CyberColors::TEXT_SECONDARY),
-                            );
-                            ui.label(
-                                RichText::new("• How can I optimize performance?")
-                                    .color(CyberColors::TEXT_SECONDARY),
-                            );
-                            ui.label(
-                                RichText::new("• What's using my GPU memory?")
-                                    .color(CyberColors::TEXT_SECONDARY),
-                            );
-                        });
-                    } else {
-                        for entry in self.agent_history.iter() {
-                            let (bg_color, text_color, icon) = match entry.role {
-                                ChatRole::User => (
-                                    CyberColors::BACKGROUND,
-                                    CyberColors::CYAN,
-                                    "👤",
-                                ),
-                                ChatRole::Assistant => (
-                                    CyberColors::SURFACE,
-                                    CyberColors::NEON_GREEN,
-                                    "🤖",
-                                ),
-                            };
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("⚠").color(CyberColors::NEON_YELLOW).size(16.0));
+                        ui.label(RichText::new("AI backend not connected.").color(CyberColors::NEON_YELLOW));
+                        if ui.button(RichText::new("🔄 Retry").color(CyberColors::CYAN)).clicked() {
+                            self.retry_agent_connection();
+                        }
+                        if ui.button(RichText::new("⚙ Setup").color(CyberColors::TEXT_SECONDARY)).clicked() {
+                            // Show setup panel in a collapsible section
+                        }
+                    });
+                });
+            ui.add_space(8.0);
+        }
 
-                            ui.horizontal(|ui| {
-                                if entry.role == ChatRole::Assistant {
-                                    ui.label(RichText::new(icon).size(16.0));
-                                } else {
-                                    ui.add_space(ui.available_width() * 0.3);
+        // Chat history area - fills available space
+        let chat_height = ui.available_height() - 80.0; // Leave room for input area
+        
+        egui::Frame::none()
+            .fill(CyberColors::BACKGROUND)
+            .stroke(egui::Stroke::new(1.0, CyberColors::BORDER))
+            .rounding(6.0)
+            .inner_margin(12.0)
+            .show(ui, |ui| {
+                ui.set_min_size(egui::vec2(ui.available_width(), chat_height.max(300.0)));
+                
+                if self.agent_history.is_empty() {
+                    ui.vertical_centered(|ui| {
+                        ui.add_space(20.0);
+                        ui.label(
+                            RichText::new("👋 Welcome to the AI Assistant!")
+                                .color(CyberColors::CYAN)
+                                .size(20.0),
+                        );
+                        ui.add_space(12.0);
+                        ui.label(
+                            RichText::new("Ask questions about your system's performance, GPU status, or get optimization suggestions.")
+                                .color(CyberColors::TEXT_SECONDARY)
+                                .size(14.0),
+                        );
+                        ui.add_space(24.0);
+                        
+                        // Example questions
+                        egui::Frame::none()
+                            .fill(CyberColors::SURFACE)
+                            .rounding(6.0)
+                            .inner_margin(12.0)
+                            .show(ui, |ui| {
+                                ui.label(RichText::new("💡 Try asking:").color(CyberColors::TEXT_PRIMARY).size(13.0));
+                                ui.add_space(8.0);
+                                let examples = [
+                                    "What is my GPU utilization?",
+                                    "Is my system running hot?",
+                                    "How can I optimize performance?",
+                                    "What's using my GPU memory?",
+                                ];
+                                for example in examples {
+                                    ui.label(RichText::new(format!("  • {}", example)).color(CyberColors::CYAN_DIM).size(12.0));
                                 }
+                            });
+                    });
+                } else {
+                    // Scroll area for messages
+                    let scroll_height = chat_height - 30.0;
+                    egui::ScrollArea::vertical()
+                        .max_height(scroll_height.max(250.0))
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                    // Calculate max bubble width - allow wider bubbles
+                    let max_bubble_width = (ui.available_width() - 60.0).min(800.0);
+                    
+                    for entry in self.agent_history.iter() {
+                        let is_user = entry.role == ChatRole::User;
+                        
+                        let (bg_color, border_color, text_color, icon) = if is_user {
+                            (CyberColors::SURFACE, CyberColors::CYAN_DIM, CyberColors::TEXT_PRIMARY, "👤")
+                        } else {
+                            (CyberColors::BACKGROUND_DARK, CyberColors::NEON_GREEN, CyberColors::TEXT_PRIMARY, "🤖")
+                        };
 
-                                egui::Frame::none()
-                                    .fill(bg_color)
-                                    .inner_margin(10.0)
-                                    .rounding(8.0)
-                                    .show(ui, |ui| {
-                                        ui.set_max_width(ui.available_width() * 0.7);
-                                        ui.label(
-                                            RichText::new(&entry.content)
-                                                .color(text_color),
-                                        );
-
-                                        // Show inference time for assistant responses
-                                        if entry.role == ChatRole::Assistant {
-                                            ui.add_space(5.0);
+                        // Message bubble - left aligned for assistant, right padding for user
+                        if is_user {
+                            ui.add_space(40.0); // Indent user messages
+                        }
+                        
+                        egui::Frame::none()
+                            .fill(bg_color)
+                            .stroke(egui::Stroke::new(1.0, border_color))
+                            .inner_margin(10.0)
+                            .rounding(8.0)
+                            .show(ui, |ui| {
+                                ui.set_max_width(max_bubble_width);
+                                
+                                // Header with icon and role
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new(icon).size(14.0));
+                                    ui.label(
+                                        RichText::new(if is_user { "You" } else { "Assistant" })
+                                            .color(if is_user { CyberColors::CYAN } else { CyberColors::NEON_GREEN })
+                                            .strong()
+                                            .size(12.0),
+                                    );
+                                    
+                                    // Metadata on the right
+                                    if !is_user {
+                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                             let meta = if entry.from_cache {
-                                                "cached".to_string()
+                                                "⚡ cached".to_string()
                                             } else if let Some(ms) = entry.inference_time_ms {
-                                                format!("{}ms", ms)
+                                                format!("⏱ {}ms", ms)
                                             } else {
                                                 String::new()
                                             };
                                             if !meta.is_empty() {
-                                                ui.label(
-                                                    RichText::new(meta)
-                                                        .color(CyberColors::TEXT_MUTED)
-                                                        .small(),
-                                                );
+                                                ui.label(RichText::new(meta).color(CyberColors::TEXT_MUTED).size(10.0));
                                             }
-                                        }
-                                    });
-
-                                if entry.role == ChatRole::User {
-                                    ui.label(RichText::new(icon).size(16.0));
-                                }
+                                        });
+                                    }
+                                });
+                                
+                                ui.add_space(4.0);
+                                        
+                                // Message content with text wrapping
+                                ui.label(
+                                    RichText::new(&entry.content)
+                                        .color(text_color)
+                                        .size(13.0),
+                                );
                             });
-                            ui.add_space(8.0);
-                        }
+                        
+                        ui.add_space(8.0);
+                    }
+                    }); // End ScrollArea
+                }
+            });
+
+        ui.add_space(8.0);
+
+        // Input area with improved styling
+        egui::Frame::none()
+            .fill(CyberColors::SURFACE)
+            .stroke(egui::Stroke::new(1.0, CyberColors::BORDER))
+            .rounding(6.0)
+            .inner_margin(8.0)
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    let response = ui.add(
+                        egui::TextEdit::singleline(&mut self.agent_query)
+                            .hint_text("Ask about your system...")
+                            .desired_width(ui.available_width() - 100.0)
+                            .font(egui::TextStyle::Body),
+                    );
+
+                    let enter_pressed =
+                        response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+
+                    let send_enabled = !self.agent_is_processing && !self.agent_query.trim().is_empty();
+                    let send_btn = ui.add_enabled(
+                        send_enabled,
+                        egui::Button::new(
+                            RichText::new(if self.agent_is_processing { "⏳" } else { "➤ Send" })
+                                .color(if send_enabled { CyberColors::CYAN } else { CyberColors::TEXT_MUTED })
+                                .size(14.0)
+                        )
+                        .min_size(Vec2::new(70.0, 28.0)),
+                    );
+
+                    if (enter_pressed || send_btn.clicked())
+                        && !self.agent_is_processing
+                        && !self.agent_query.trim().is_empty()
+                    {
+                        self.send_agent_query();
                     }
                 });
-        });
+            });
 
-        ui.add_space(10.0);
-
-        // Input area
+        // Bottom toolbar
+        ui.add_space(8.0);
         ui.horizontal(|ui| {
-            let response = ui.add(
-                egui::TextEdit::singleline(&mut self.agent_query)
-                    .hint_text("Ask about your system...")
-                    .desired_width(ui.available_width() - 80.0),
-            );
-
-            let enter_pressed =
-                response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-
-            let send_clicked = ui
-                .add_enabled(
-                    !self.agent_is_processing && !self.agent_query.trim().is_empty(),
-                    egui::Button::new(RichText::new("Send").color(CyberColors::CYAN)),
-                )
-                .clicked();
-
-            if (enter_pressed || send_clicked)
-                && !self.agent_is_processing
-                && !self.agent_query.trim().is_empty()
-            {
-                self.send_agent_query();
-            }
-        });
-
-        // Clear history button
-        ui.add_space(10.0);
-        ui.horizontal(|ui| {
-            if ui
-                .button(RichText::new("🗑️ Clear History").color(CyberColors::TEXT_MUTED))
-                .clicked()
-            {
+            if ui.button(RichText::new("🗑️ Clear").color(CyberColors::TEXT_MUTED).size(12.0)).clicked() {
                 self.agent_history.clear();
             }
-
+            
+            ui.add_space(8.0);
+            
             if self.agent_is_processing {
                 ui.spinner();
                 ui.label(
-                    RichText::new("Processing...")
+                    RichText::new("Thinking...")
                         .color(CyberColors::CYAN)
-                        .italics(),
+                        .italics()
+                        .size(12.0),
+                );
+            } else {
+                ui.label(
+                    RichText::new(format!("{} messages", self.agent_history.len()))
+                        .color(CyberColors::TEXT_MUTED)
+                        .size(11.0),
                 );
             }
         });
+        }); // End ScrollArea
     }
 
     fn send_agent_query(&mut self) {
         let query = self.agent_query.trim().to_string();
-        if query.is_empty() {
+        if query.is_empty() || self.agent_is_processing {
             return;
         }
 
@@ -4552,35 +4827,496 @@ impl SiliconMonitorApp {
         self.agent_query.clear();
         self.agent_is_processing = true;
 
-        // Get response from agent
-        if let (Some(agent), Some(monitor)) = (&mut self.agent, &self.silicon_monitor) {
-            match agent.ask(&query, monitor) {
-                Ok(response) => {
-                    self.agent_history.push_back(AgentChatEntry {
-                        role: ChatRole::Assistant,
-                        content: response.response,
-                        timestamp: std::time::Instant::now(),
-                        inference_time_ms: Some(response.inference_time_ms),
+        // Get tool context from AI Data API (runs on UI thread to avoid Send issues)
+        let tool_context = if let Some(ref mut api) = self.ai_data_api {
+            api.auto_query(&query)
+        } else {
+            String::new()
+        };
+
+        // Get the agent config and monitor for background thread
+        // We need to create fresh instances in the background thread since Agent uses &mut self
+        let config = self.agent.as_ref().map(|a| a.config().clone());
+        
+        if let Some(config) = config {
+            let (tx, rx) = channel();
+            self.agent_response_receiver = Some(rx);
+
+            // Spawn background thread for agent query
+            std::thread::spawn(move || {
+                let result = (|| -> Result<AgentResponse, String> {
+                    // Create fresh agent and monitor in background thread
+                    let mut agent = crate::agent::Agent::new(config)
+                        .map_err(|e| format!("Failed to create agent: {}", e))?;
+                    let monitor = crate::SiliconMonitor::new()
+                        .map_err(|e| format!("Failed to create monitor: {}", e))?;
+                    
+                    // Enhance the query with tool context if available
+                    let enhanced_query = if !tool_context.is_empty() {
+                        format!(
+                            "{}\n\n---\n\n## User Question\n{}", 
+                            tool_context,
+                            query
+                        )
+                    } else {
+                        query
+                    };
+                    
+                    let response = agent.ask(&enhanced_query, &monitor)
+                        .map_err(|e| format!("{}", e))?;
+                    
+                    Ok(AgentResponse {
+                        response: response.response,
+                        inference_time_ms: response.inference_time_ms,
                         from_cache: response.from_cache,
-                    });
-                }
-                Err(e) => {
-                    self.agent_history.push_back(AgentChatEntry {
-                        role: ChatRole::Assistant,
-                        content: format!("Error: {}", e),
-                        timestamp: std::time::Instant::now(),
-                        inference_time_ms: None,
-                        from_cache: false,
-                    });
-                }
-            }
+                    })
+                })();
+                
+                let _ = tx.send(result);
+            });
+        } else {
+            // No agent available
+            self.agent_history.push_back(AgentChatEntry {
+                role: ChatRole::Assistant,
+                content: "Error: AI Agent not available".to_string(),
+                timestamp: std::time::Instant::now(),
+                inference_time_ms: None,
+                from_cache: false,
+            });
+            self.agent_is_processing = false;
+        }
+    }
+
+    /// Draw the AI setup panel when no backend is available
+    fn draw_ai_setup_panel(&mut self, ui: &mut egui::Ui) {
+        ui.add_space(10.0);
+        
+        // Show status message if any
+        if let Some((msg, is_error)) = &self.ai_status_message {
+            let color = if *is_error { CyberColors::NEON_RED } else { CyberColors::NEON_GREEN };
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(if *is_error { "❌" } else { "✓" }).color(color));
+                ui.label(RichText::new(msg.as_str()).color(color));
+            });
+            ui.add_space(10.0);
         }
 
-        self.agent_is_processing = false;
+        // Detected backends section
+        let available = crate::agent::AgentConfig::list_available_backends();
+        if !available.is_empty() {
+            egui::Frame::none()
+                .fill(CyberColors::SURFACE)
+                .rounding(8.0)
+                .inner_margin(15.0)
+                .show(ui, |ui| {
+                    ui.label(RichText::new("✓ Available Backends").color(CyberColors::NEON_GREEN).size(16.0));
+                    ui.add_space(5.0);
+                    for backend in &available {
+                        ui.label(RichText::new(format!("  • {:?}", backend)).color(CyberColors::CYAN));
+                    }
+                    ui.add_space(10.0);
+                    if ui.button(RichText::new("🔄 Retry Connection").color(CyberColors::CYAN)).clicked() {
+                        self.retry_agent_connection();
+                    }
+                });
+            ui.add_space(15.0);
+        }
 
-        // Limit history size
-        while self.agent_history.len() > 100 {
-            self.agent_history.pop_front();
+        // Setup options
+        egui::Frame::none()
+            .fill(CyberColors::SURFACE)
+            .rounding(8.0)
+            .inner_margin(15.0)
+            .show(ui, |ui| {
+                ui.label(RichText::new("🔧 Configure AI Backend").color(CyberColors::CYAN).size(18.0));
+                ui.add_space(15.0);
+
+                // Backend selection tabs - read current value first to avoid borrow issues
+                let current_backend = self.ai_selected_backend;
+                ui.horizontal(|ui| {
+                    ui.selectable_value(&mut self.ai_selected_backend, AiBackendSelection::Ollama, 
+                        RichText::new("🦙 Ollama").color(if current_backend == AiBackendSelection::Ollama { CyberColors::CYAN } else { CyberColors::TEXT_SECONDARY }));
+                    ui.selectable_value(&mut self.ai_selected_backend, AiBackendSelection::OpenAi, 
+                        RichText::new("🤖 OpenAI").color(if current_backend == AiBackendSelection::OpenAi { CyberColors::CYAN } else { CyberColors::TEXT_SECONDARY }));
+                    ui.selectable_value(&mut self.ai_selected_backend, AiBackendSelection::Anthropic, 
+                        RichText::new("🧠 Anthropic").color(if current_backend == AiBackendSelection::Anthropic { CyberColors::CYAN } else { CyberColors::TEXT_SECONDARY }));
+                    ui.selectable_value(&mut self.ai_selected_backend, AiBackendSelection::GitHub, 
+                        RichText::new("🐙 GitHub").color(if current_backend == AiBackendSelection::GitHub { CyberColors::CYAN } else { CyberColors::TEXT_SECONDARY }));
+                    ui.selectable_value(&mut self.ai_selected_backend, AiBackendSelection::LmStudio, 
+                        RichText::new("📦 LM Studio").color(if current_backend == AiBackendSelection::LmStudio { CyberColors::CYAN } else { CyberColors::TEXT_SECONDARY }));
+                });
+                ui.add_space(15.0);
+                ui.separator();
+                ui.add_space(10.0);
+
+                match self.ai_selected_backend {
+                    AiBackendSelection::Ollama => {
+                        ui.label(RichText::new("Ollama - Local AI (Recommended)").color(CyberColors::TEXT_PRIMARY).size(14.0));
+                        ui.add_space(5.0);
+                        ui.label(RichText::new("Run AI models locally on your machine. Free and private.").color(CyberColors::TEXT_SECONDARY));
+                        ui.add_space(15.0);
+                        
+                        ui.horizontal(|ui| {
+                            if self.ai_ollama_starting {
+                                ui.spinner();
+                                ui.label(RichText::new("Starting Ollama...").color(CyberColors::CYAN));
+                            } else {
+                                if ui.button(RichText::new("▶ Start Ollama").color(CyberColors::NEON_GREEN).size(14.0)).clicked() {
+                                    self.start_ollama();
+                                }
+                                if ui.button(RichText::new("📥 Install Ollama").color(CyberColors::TEXT_SECONDARY)).clicked() {
+                                    let _ = open::that("https://ollama.com/download");
+                                }
+                            }
+                        });
+                        ui.add_space(10.0);
+                        ui.label(RichText::new("After starting Ollama, click 'Retry Connection' above.").color(CyberColors::TEXT_MUTED).small());
+                    }
+                    AiBackendSelection::OpenAi => {
+                        ui.label(RichText::new("OpenAI API").color(CyberColors::TEXT_PRIMARY).size(14.0));
+                        ui.add_space(5.0);
+                        ui.label(RichText::new("Use GPT models via OpenAI API. Requires API key.").color(CyberColors::TEXT_SECONDARY));
+                        ui.add_space(15.0);
+                        
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("API Key:").color(CyberColors::TEXT_SECONDARY));
+                            ui.add(egui::TextEdit::singleline(&mut self.ai_api_key_input)
+                                .password(true)
+                                .hint_text("sk-...")
+                                .desired_width(300.0));
+                        });
+                        ui.add_space(10.0);
+                        if ui.button(RichText::new("💾 Set API Key").color(CyberColors::CYAN)).clicked() {
+                            self.set_api_key("OPENAI_API_KEY");
+                        }
+                        ui.add_space(5.0);
+                        if ui.link(RichText::new("Get an API key from OpenAI →").color(CyberColors::TEXT_MUTED).small()).clicked() {
+                            let _ = open::that("https://platform.openai.com/api-keys");
+                        }
+                    }
+                    AiBackendSelection::Anthropic => {
+                        ui.label(RichText::new("Anthropic Claude API").color(CyberColors::TEXT_PRIMARY).size(14.0));
+                        ui.add_space(5.0);
+                        ui.label(RichText::new("Use Claude models via Anthropic API. Requires API key.").color(CyberColors::TEXT_SECONDARY));
+                        ui.add_space(15.0);
+                        
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("API Key:").color(CyberColors::TEXT_SECONDARY));
+                            ui.add(egui::TextEdit::singleline(&mut self.ai_api_key_input)
+                                .password(true)
+                                .hint_text("sk-ant-...")
+                                .desired_width(300.0));
+                        });
+                        ui.add_space(10.0);
+                        if ui.button(RichText::new("💾 Set API Key").color(CyberColors::CYAN)).clicked() {
+                            self.set_api_key("ANTHROPIC_API_KEY");
+                        }
+                        ui.add_space(5.0);
+                        if ui.link(RichText::new("Get an API key from Anthropic →").color(CyberColors::TEXT_MUTED).small()).clicked() {
+                            let _ = open::that("https://console.anthropic.com/settings/keys");
+                        }
+                    }
+                    AiBackendSelection::GitHub => {
+                        ui.label(RichText::new("GitHub Models").color(CyberColors::TEXT_PRIMARY).size(14.0));
+                        ui.add_space(5.0);
+                        ui.label(RichText::new("Use AI models via GitHub. Requires GitHub token.").color(CyberColors::TEXT_SECONDARY));
+                        ui.add_space(15.0);
+                        
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Token:").color(CyberColors::TEXT_SECONDARY));
+                            ui.add(egui::TextEdit::singleline(&mut self.ai_api_key_input)
+                                .password(true)
+                                .hint_text("ghp_...")
+                                .desired_width(300.0));
+                        });
+                        ui.add_space(10.0);
+                        if ui.button(RichText::new("💾 Set Token").color(CyberColors::CYAN)).clicked() {
+                            self.set_api_key("GITHUB_TOKEN");
+                        }
+                        ui.add_space(5.0);
+                        if ui.link(RichText::new("Create a GitHub token →").color(CyberColors::TEXT_MUTED).small()).clicked() {
+                            let _ = open::that("https://github.com/settings/tokens");
+                        }
+                    }
+                    AiBackendSelection::LmStudio => {
+                        ui.label(RichText::new("LM Studio - Local AI").color(CyberColors::TEXT_PRIMARY).size(14.0));
+                        ui.add_space(5.0);
+                        ui.label(RichText::new("Run local models with LM Studio's OpenAI-compatible API.").color(CyberColors::TEXT_SECONDARY));
+                        ui.add_space(15.0);
+                        
+                        ui.label(RichText::new("1. Download and install LM Studio").color(CyberColors::TEXT_SECONDARY));
+                        ui.label(RichText::new("2. Download a model (e.g., Llama 3.2, Mistral)").color(CyberColors::TEXT_SECONDARY));
+                        ui.label(RichText::new("3. Start the local server on port 1234").color(CyberColors::TEXT_SECONDARY));
+                        ui.add_space(10.0);
+                        
+                        if ui.button(RichText::new("📥 Download LM Studio").color(CyberColors::CYAN)).clicked() {
+                            let _ = open::that("https://lmstudio.ai/");
+                        }
+                        ui.add_space(5.0);
+                        ui.label(RichText::new("After starting the server, click 'Retry Connection' above.").color(CyberColors::TEXT_MUTED).small());
+                    }
+                }
+            });
+    }
+
+    /// Start Ollama in the background
+    fn start_ollama(&mut self) {
+        self.ai_ollama_starting = true;
+        self.ai_status_message = Some(("Starting Ollama...".to_string(), false));
+        
+        // Try to start Ollama
+        #[cfg(target_os = "windows")]
+        {
+            // On Windows, try to start Ollama from common locations
+            let ollama_paths = [
+                std::env::var("LOCALAPPDATA").ok().map(|p| format!("{}\\Ollama\\ollama.exe", p)),
+                Some("C:\\Program Files\\Ollama\\ollama.exe".to_string()),
+                Some("ollama".to_string()), // Try PATH
+            ];
+            
+            for path in ollama_paths.into_iter().flatten() {
+                if let Ok(_) = std::process::Command::new(&path)
+                    .arg("serve")
+                    .spawn()
+                {
+                    self.ai_status_message = Some(("Ollama started! Wait a few seconds and click 'Retry Connection'.".to_string(), false));
+                    self.ai_ollama_starting = false;
+                    return;
+                }
+            }
+            self.ai_status_message = Some(("Could not start Ollama. Please install it from ollama.com".to_string(), true));
+        }
+        
+        #[cfg(not(target_os = "windows"))]
+        {
+            if let Ok(_) = std::process::Command::new("ollama")
+                .arg("serve")
+                .spawn()
+            {
+                self.ai_status_message = Some(("Ollama started! Wait a few seconds and click 'Retry Connection'.".to_string(), false));
+            } else {
+                self.ai_status_message = Some(("Could not start Ollama. Please install it from ollama.com".to_string(), true));
+            }
+        }
+        
+        self.ai_ollama_starting = false;
+    }
+
+    /// Set an API key as environment variable and retry connection
+    fn set_api_key(&mut self, env_var: &str) {
+        let key = self.ai_api_key_input.trim();
+        if key.is_empty() {
+            self.ai_status_message = Some(("Please enter an API key".to_string(), true));
+            return;
+        }
+        
+        // Set environment variable for this process
+        std::env::set_var(env_var, key);
+        self.ai_api_key_input.clear();
+        self.ai_status_message = Some((format!("{} set! Retrying connection...", env_var), false));
+        
+        // Retry connection
+        self.retry_agent_connection();
+    }
+
+    /// Retry agent connection with current configuration
+    fn retry_agent_connection(&mut self) {
+        self.agent_loading = true;
+        self.ai_status_message = None;
+        
+        let (tx, rx) = channel();
+        self.agent_receiver = Some(rx);
+        
+        std::thread::spawn(move || {
+            let agent = crate::agent::AgentConfig::auto_detect()
+                .ok()
+                .and_then(|config| crate::agent::Agent::new(config).ok());
+            let _ = tx.send(agent);
+        });
+    }
+
+    /// Draw the settings window
+    fn draw_settings_window(&mut self, ctx: &egui::Context) {
+        if !self.show_settings {
+            return;
+        }
+
+        egui::Window::new("⚙ Settings")
+            .collapsible(true)
+            .resizable(true)
+            .default_width(350.0)
+            .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-10.0, 50.0))
+            .show(ctx, |ui| {
+                ui.add_space(8.0);
+                
+                // Close button in corner
+                ui.horizontal(|ui| {
+                    ui.heading(RichText::new("Appearance").color(CyberColors::CYAN));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.button("✕").clicked() {
+                            self.show_settings = false;
+                        }
+                    });
+                });
+                
+                ui.add_space(12.0);
+                ui.separator();
+                ui.add_space(8.0);
+
+                // Color Theme Selection
+                ui.label(RichText::new("Color Theme").color(CyberColors::TEXT_PRIMARY));
+                ui.add_space(4.0);
+                
+                egui::ComboBox::from_id_salt("theme_selector")
+                    .selected_text(self.settings.color_theme.name())
+                    .width(200.0)
+                    .show_ui(ui, |ui| {
+                        for theme in ColorTheme::all() {
+                            let is_selected = self.settings.color_theme == *theme;
+                            ui.horizontal(|ui| {
+                                // Color preview swatch
+                                let (rect, _) = ui.allocate_exact_size(
+                                    egui::vec2(16.0, 16.0),
+                                    egui::Sense::hover(),
+                                );
+                                ui.painter().rect_filled(rect, 2.0, theme.accent_color());
+                                
+                                if ui.selectable_label(is_selected, theme.name()).clicked() {
+                                    self.settings.color_theme = *theme;
+                                }
+                            });
+                        }
+                    });
+
+                ui.add_space(16.0);
+                
+                // Graph Line Thickness
+                ui.label(RichText::new("Graph Line Thickness").color(CyberColors::TEXT_PRIMARY));
+                ui.add_space(4.0);
+                
+                ui.horizontal(|ui| {
+                    ui.add(
+                        egui::Slider::new(&mut self.settings.graph_line_thickness, 1.0..=5.0)
+                            .step_by(0.5)
+                            .suffix(" px")
+                    );
+                });
+
+                // Preview line
+                ui.add_space(8.0);
+                let preview_rect = ui.available_rect_before_wrap();
+                let preview_height = 30.0;
+                let preview_width = preview_rect.width().min(200.0);
+                let (response, painter) = ui.allocate_painter(
+                    egui::vec2(preview_width, preview_height),
+                    egui::Sense::hover(),
+                );
+                let rect = response.rect;
+                
+                // Draw preview background
+                painter.rect_filled(rect, 4.0, CyberColors::SURFACE);
+                
+                // Draw sample sine wave with current thickness
+                let points: Vec<egui::Pos2> = (0..50)
+                    .map(|i| {
+                        let t = i as f32 / 49.0;
+                        let x = rect.left() + t * rect.width();
+                        let y = rect.center().y + (t * 6.0 * std::f32::consts::PI).sin() * 10.0;
+                        egui::Pos2::new(x, y)
+                    })
+                    .collect();
+                
+                painter.add(egui::Shape::line(
+                    points,
+                    egui::Stroke::new(
+                        self.settings.graph_line_thickness,
+                        self.settings.color_theme.accent_color(),
+                    ),
+                ));
+
+                ui.add_space(16.0);
+                
+                // Show Grid Lines
+                ui.checkbox(
+                    &mut self.settings.show_grid_lines,
+                    RichText::new("Show Grid Lines").color(CyberColors::TEXT_PRIMARY),
+                );
+
+                ui.add_space(8.0);
+                
+                // Animation Speed
+                ui.label(RichText::new("Animation Speed").color(CyberColors::TEXT_PRIMARY));
+                ui.add_space(4.0);
+                ui.add(
+                    egui::Slider::new(&mut self.settings.animation_speed, 0.5..=2.0)
+                        .step_by(0.1)
+                        .suffix("x")
+                );
+
+                ui.add_space(16.0);
+                ui.separator();
+                ui.add_space(8.0);
+
+                // Reset to defaults button
+                ui.horizontal(|ui| {
+                    if ui.button("Reset to Defaults").clicked() {
+                        self.settings = AppSettings::default();
+                    }
+                    
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.button("Close").clicked() {
+                            self.show_settings = false;
+                        }
+                    });
+                });
+                
+                ui.add_space(8.0);
+            });
+    }
+
+    /// Detect locally installed Ollama models by running `ollama list`
+    fn detect_ollama_models() -> Vec<String> {
+        // Try to run `ollama list` and parse output
+        match std::process::Command::new("ollama")
+            .arg("list")
+            .output()
+        {
+            Ok(output) if output.status.success() => {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let mut models = Vec::new();
+                
+                // Skip header line (NAME, ID, SIZE, MODIFIED)
+                for line in stdout.lines().skip(1) {
+                    // First column is the model name
+                    if let Some(name) = line.split_whitespace().next() {
+                        if !name.is_empty() {
+                            models.push(name.to_string());
+                        }
+                    }
+                }
+                
+                if models.is_empty() {
+                    // Fallback if parsing failed
+                    vec!["llama3.2".to_string()]
+                } else {
+                    models
+                }
+            }
+            _ => {
+                // Ollama not installed or not running - use defaults
+                vec!["llama3.2".to_string(), "llama3.1".to_string(), "mistral".to_string()]
+            }
+        }
+    }
+
+    /// Refresh the list of Ollama models (can be called when user switches to Ollama)
+    fn refresh_ollama_models(&mut self) {
+        self.ai_ollama_models = Self::detect_ollama_models();
+        // Select first model if current selection is not in the list
+        if !self.ai_ollama_models.contains(&self.ai_selected_model) {
+            if let Some(first) = self.ai_ollama_models.first() {
+                self.ai_selected_model = first.clone();
+            }
         }
     }
 }

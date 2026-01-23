@@ -100,6 +100,7 @@ eframe = { version = "0.30", optional = true, default-features = false, features
 egui = { version = "0.30", optional = true }
 egui_extras = { version = "0.30", optional = true, features = ["all_loaders"] }
 egui_plot = { version = "0.30", optional = true }
+open = { version = "5.3", optional = true }
 
 # Optional dependencies for remote AI backends
 reqwest = { version = "0.12", features = ["blocking", "json"], optional = true }
@@ -149,6 +150,7 @@ gui = [
     "egui",
     "egui_extras",
     "egui_plot",
+    "open",
     "tokio",
     "chrono",
     "hostname",

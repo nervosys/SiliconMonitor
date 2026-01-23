@@ -607,9 +607,12 @@ impl MonitoringBackend {
         let system_stats = SystemStats::new().ok();
 
         // Get hostname and OS info
+        #[cfg(any(feature = "cli", feature = "gui"))]
         let hostname = hostname::get()
             .map(|h| h.to_string_lossy().to_string())
             .unwrap_or_else(|_| "unknown".to_string());
+        #[cfg(not(any(feature = "cli", feature = "gui")))]
+        let hostname = "unknown".to_string();
 
         let os_info = std::env::consts::OS.to_string();
 

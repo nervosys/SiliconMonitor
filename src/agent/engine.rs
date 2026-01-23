@@ -4,7 +4,7 @@
 //! using local models and remote APIs.
 
 use crate::agent::{AgentConfig, Query, RemoteClient, SystemState};
-use crate::error::{SimonError, Result};
+use crate::error::{Result, SimonError};
 use std::time::Instant;
 
 /// Inference engine (ML-powered only)
@@ -60,13 +60,28 @@ impl InferenceEngine {
         query: &Query,
         state: &SystemState,
     ) -> Result<String> {
+        // Check if the query contains embedded tool context (from AI Data API)
+        let has_tool_context = query.text.contains("# Real-time System Data");
+
         // Build system prompt with context
-        let system_prompt = format!(
-            "You are a hardware monitoring assistant. Provide concise, factual answers \
-            about system state. Keep responses under 200 words.\n\n\
-            Current System State:\n{}",
-            state.to_context_string()
-        );
+        let system_prompt = if has_tool_context {
+            // When tool context is embedded, instruct the AI to use it
+            "You are a hardware monitoring assistant for Silicon Monitor. \
+            The user's question includes REAL-TIME SYSTEM DATA in JSON format that was \
+            automatically gathered from monitoring tools. Use this data to provide specific, \
+            accurate answers. Reference actual values from the JSON (temperatures, memory usage, \
+            GPU names, process names, etc.). Be concise and factual. \
+            Do NOT describe how the tools work - just answer the question using the data provided."
+                .to_string()
+        } else {
+            // Standard prompt with SystemState context
+            format!(
+                "You are a hardware monitoring assistant. Provide concise, factual answers \
+                about system state. Keep responses under 200 words.\n\n\
+                Current System State:\n{}",
+                state.to_context_string()
+            )
+        };
 
         // Send query to ML backend
         let (response, _elapsed) = client.query(&system_prompt, &query.text)?;

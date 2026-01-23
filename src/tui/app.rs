@@ -195,6 +195,29 @@ pub struct App {
     cached_process_order: Vec<usize>,
     /// Cached filtered process count for scroll bounds
     filtered_process_count: usize,
+    /// Background initialization state
+    init_state: InitState,
+    /// Receiver for background-initialized GPU devices
+    gpu_init_rx: Option<std::sync::mpsc::Receiver<Vec<Box<dyn Device + Send>>>>,
+    /// Receiver for background-initialized agent
+    agent_init_rx: Option<std::sync::mpsc::Receiver<Option<Agent>>>,
+    /// Receiver for background-initialized process monitor
+    process_init_rx: Option<std::sync::mpsc::Receiver<Option<ProcessMonitor>>>,
+}
+
+/// Background initialization state
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum InitState {
+    /// Still loading components
+    Loading,
+    /// All components ready
+    Ready,
+}
+
+impl Default for InitState {
+    fn default() -> Self {
+        InitState::Loading
+    }
 }
 
 #[derive(Clone, Default)]
@@ -337,55 +360,83 @@ pub struct NetworkInfo {
 }
 
 impl App {
-    /// Create a new application instance
+    /// Create a new application instance (blocking - full initialization)
     pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
-        // Initialize GPU devices
-        let mut gpu_devices: Vec<Box<dyn Device>> = Vec::new();
-
-        // Try to detect NVIDIA GPUs
-        #[cfg(feature = "nvidia")]
-        {
-            if let Ok(nvidia_devices) = crate::gpu::nvidia_new::enumerate() {
-                for device in nvidia_devices {
-                    gpu_devices.push(Box::new(device));
-                }
-            }
+        let mut app = Self::new_fast()?;
+        // Wait for background init to complete
+        while app.init_state != InitState::Ready {
+            app.check_background_init();
+            std::thread::sleep(Duration::from_millis(10));
         }
+        Ok(app)
+    }
 
-        // Try to detect AMD GPUs
-        #[cfg(feature = "amd")]
-        {
-            if let Ok(mut amd_devices) = crate::gpu::amd_rocm::enumerate() {
-                gpu_devices.append(&mut amd_devices);
-            }
-        }
+    /// Create app with fast startup - slow components initialize in background
+    pub fn new_fast() -> Result<Self, Box<dyn std::error::Error>> {
+        use std::sync::mpsc;
 
-        // Try to detect Intel GPUs
-        #[cfg(feature = "intel")]
-        {
-            if let Ok(mut intel_devices) = crate::gpu::intel_levelzero::enumerate() {
-                gpu_devices.append(&mut intel_devices);
-            }
-        }
-
-        // Load or create default config
+        // Load config synchronously (fast - just file read)
         let config = crate::config::Config::load().unwrap_or_default();
         let update_interval = Duration::from_millis(config.general.update_interval_ms as u64);
 
-        // Initialize agent with auto-detected backend (lazy loading - won't impact startup)
-        // If no backends are available (no Ollama, no API keys, etc.), agent will be None
-        let agent = AgentConfig::auto_detect()
-            .ok()
-            .map(|config| {
-                config
-                    .with_caching(true)
-                    .with_cache_size(50)
-                    .with_timeout(Duration::from_secs(5))
-            })
-            .and_then(|config| Agent::new(config).ok());
-
-        // Initialize network monitor
+        // Initialize network monitor synchronously (usually fast)
         let network_monitor = NetworkMonitor::new().ok();
+
+        // Spawn background thread for GPU enumeration (slow - NVML init, device enumeration)
+        let (gpu_tx, gpu_rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let mut gpu_devices: Vec<Box<dyn Device + Send>> = Vec::new();
+
+            #[cfg(feature = "nvidia")]
+            {
+                if let Ok(nvidia_devices) = crate::gpu::nvidia_new::enumerate() {
+                    for device in nvidia_devices {
+                        gpu_devices.push(Box::new(device));
+                    }
+                }
+            }
+
+            #[cfg(feature = "amd")]
+            {
+                if let Ok(mut amd_devices) = crate::gpu::amd_rocm::enumerate() {
+                    for device in amd_devices.drain(..) {
+                        gpu_devices.push(device);
+                    }
+                }
+            }
+
+            #[cfg(feature = "intel")]
+            {
+                if let Ok(mut intel_devices) = crate::gpu::intel_levelzero::enumerate() {
+                    for device in intel_devices.drain(..) {
+                        gpu_devices.push(device);
+                    }
+                }
+            }
+
+            let _ = gpu_tx.send(gpu_devices);
+        });
+
+        // Spawn background thread for agent detection (potentially slow - network checks)
+        let (agent_tx, agent_rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let agent = AgentConfig::auto_detect()
+                .ok()
+                .map(|config| {
+                    config
+                        .with_caching(true)
+                        .with_cache_size(50)
+                        .with_timeout(Duration::from_secs(5))
+                })
+                .and_then(|config| Agent::new(config).ok());
+            let _ = agent_tx.send(agent);
+        });
+
+        // Spawn background thread for process monitor (can be slow on Windows)
+        let (proc_tx, proc_rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = proc_tx.send(ProcessMonitor::new().ok());
+        });
 
         let mut app = Self {
             selected_tab: 0,
@@ -413,27 +464,108 @@ impl App {
             update_interval,
             last_update: Instant::now(),
             scroll_position: 0,
-            gpu_devices,
+            gpu_devices: Vec::new(), // Will be populated from background thread
             network_monitor,
             config,
-            status_message: None,
-            agent,
+            status_message: Some(("Loading...".to_string(), Instant::now())),
+            agent: None, // Will be populated from background thread
             agent_input_mode: false,
             agent_input: String::new(),
             agent_history: VecDeque::with_capacity(MAX_AGENT_HISTORY),
             agent_loading: false,
             process_display_mode: ProcessDisplayMode::default(),
-            process_monitor: ProcessMonitor::new().ok(),
+            process_monitor: None, // Will be populated from background thread
             processes: Vec::new(),
             cached_process_order: Vec::new(),
             filtered_process_count: 0,
+            init_state: InitState::Loading,
+            gpu_init_rx: Some(gpu_rx),
+            agent_init_rx: Some(agent_rx),
+            process_init_rx: Some(proc_rx),
         };
 
-        // Initial update - do both fast and slow updates
-        app.update_fast()?;
-        app.update_slow()?;
+        // Do initial fast update for immediate data (CPU, Memory are fast)
+        let _ = app.update_cpu();
+        let _ = app.update_memory();
+        let _ = app.update_network();
+        let _ = app.update_system();
 
         Ok(app)
+    }
+
+    /// Check and apply background initialization results
+    pub fn check_background_init(&mut self) {
+        let mut all_done = true;
+
+        // Check GPU init
+        if let Some(ref rx) = self.gpu_init_rx {
+            match rx.try_recv() {
+                Ok(devices) => {
+                    // Convert Vec<Box<dyn Device + Send>> to Vec<Box<dyn Device>>
+                    self.gpu_devices = devices.into_iter().map(|d| d as Box<dyn Device>).collect();
+                    self.gpu_init_rx = None;
+                    // Trigger GPU update now that devices are available
+                    let _ = self.update_gpu();
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {
+                    all_done = false;
+                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    self.gpu_init_rx = None;
+                }
+            }
+        }
+
+        // Check agent init
+        if let Some(ref rx) = self.agent_init_rx {
+            match rx.try_recv() {
+                Ok(agent) => {
+                    self.agent = agent;
+                    self.agent_init_rx = None;
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {
+                    all_done = false;
+                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    self.agent_init_rx = None;
+                }
+            }
+        }
+
+        // Check process monitor init
+        if let Some(ref rx) = self.process_init_rx {
+            match rx.try_recv() {
+                Ok(monitor) => {
+                    self.process_monitor = monitor;
+                    self.process_init_rx = None;
+                    // Trigger process update
+                    let _ = self.update_processes();
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {
+                    all_done = false;
+                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    self.process_init_rx = None;
+                }
+            }
+        }
+
+        // Update state when all done
+        if all_done
+            && self.gpu_init_rx.is_none()
+            && self.agent_init_rx.is_none()
+            && self.process_init_rx.is_none()
+        {
+            if self.init_state != InitState::Ready {
+                self.init_state = InitState::Ready;
+                self.status_message = None; // Clear "Loading..." message
+            }
+        }
+    }
+
+    /// Check if app is still initializing
+    pub fn is_loading(&self) -> bool {
+        self.init_state == InitState::Loading
     }
 
     /// Update all monitoring data (legacy - calls both fast and slow)

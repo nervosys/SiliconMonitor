@@ -61,6 +61,18 @@ fn threshold_color(percent: f32) -> Color {
     }
 }
 
+/// Safely clamp a percentage value to 0-100 range for gauge widgets
+/// Handles NaN, infinity, and out-of-range values
+fn safe_percent(value: f32) -> u16 {
+    if value.is_nan() || value.is_infinite() || value < 0.0 {
+        0
+    } else if value > 100.0 {
+        100
+    } else {
+        value as u16
+    }
+}
+
 /// Get trend indicator arrow based on value change
 /// Returns (arrow, color) tuple
 fn trend_indicator(current: f32, previous: f32) -> (&'static str, Color) {
@@ -269,7 +281,12 @@ fn draw_nvtop_header(f: &mut Frame, app: &App, area: Rect) {
 /// Draw all accelerators (GPUs, NPUs, FPGAs, etc.) with detailed metrics
 fn draw_accelerators(f: &mut Frame, app: &App, area: Rect) {
     if app.accelerators.is_empty() {
-        let no_accel = Paragraph::new("No accelerators detected")
+        let message = if app.is_loading() {
+            "Detecting accelerators..."
+        } else {
+            "No accelerators detected"
+        };
+        let no_accel = Paragraph::new(message)
             .block(Block::default().borders(Borders::ALL).title("Accelerators"))
             .alignment(Alignment::Center);
         f.render_widget(no_accel, area);
@@ -371,7 +388,7 @@ fn draw_single_accelerator(
                 .fg(accel_color)
                 .add_modifier(Modifier::BOLD),
         )
-        .percent(accel.utilization as u16)
+        .percent(safe_percent(accel.utilization))
         .label(accel_util_label);
     f.render_widget(accel_gauge, inner);
 }
@@ -441,7 +458,7 @@ fn draw_single_gpu(f: &mut Frame, gpu: &super::app::GpuInfo, idx: usize, area: R
 
     let gpu_gauge = Gauge::default()
         .gauge_style(Style::default().fg(gpu_color).add_modifier(Modifier::BOLD))
-        .percent(gpu.utilization as u16)
+        .percent(safe_percent(gpu.utilization))
         .label(gpu_util_label);
     f.render_widget(gpu_gauge, inner);
 }
@@ -529,7 +546,7 @@ fn draw_cpu_bar(f: &mut Frame, app: &App, area: Rect) {
             )),
         )
         .gauge_style(Style::default().fg(cpu_color).add_modifier(Modifier::BOLD))
-        .percent(app.cpu_info.utilization as u16)
+        .percent(safe_percent(app.cpu_info.utilization))
         .label(cpu_label);
 
     f.render_widget(cpu_gauge, area);
@@ -537,7 +554,7 @@ fn draw_cpu_bar(f: &mut Frame, app: &App, area: Rect) {
 
 /// Draw memory utilization bar gauge with Glances-style formatting
 fn draw_memory_bar(f: &mut Frame, app: &App, area: Rect) {
-    let mem_percent = ((app.memory_info.used as f64 / app.memory_info.total as f64) * 100.0) as u16;
+    let mem_percent = (app.memory_info.used as f64 / app.memory_info.total.max(1) as f64) * 100.0;
 
     // Get previous memory value for trend indicator
     let prev_mem = app
@@ -570,7 +587,7 @@ fn draw_memory_bar(f: &mut Frame, app: &App, area: Rect) {
             )),
         )
         .gauge_style(Style::default().fg(mem_color).add_modifier(Modifier::BOLD))
-        .percent(mem_percent)
+        .percent(safe_percent(mem_percent as f32))
         .label(mem_label);
 
     f.render_widget(mem_gauge, area);
@@ -583,9 +600,9 @@ fn draw_disk_bar(f: &mut Frame, app: &App, area: Rect) {
     let total_read: f64 = app.disk_info.iter().map(|d| d.read_rate).sum();
     let total_write: f64 = app.disk_info.iter().map(|d| d.write_rate).sum();
     let disk_percent = if total_space > 0 {
-        ((used_space as f64 / total_space as f64) * 100.0) as u16
+        (used_space as f64 / total_space as f64) * 100.0
     } else {
-        0
+        0.0
     };
 
     // Build disk list string with Glances-style formatting
@@ -649,7 +666,7 @@ fn draw_disk_bar(f: &mut Frame, app: &App, area: Rect) {
             )),
         )
         .gauge_style(Style::default().fg(disk_color).add_modifier(Modifier::BOLD))
-        .percent(disk_percent)
+        .percent(safe_percent(disk_percent as f32))
         .label(disk_label);
 
     f.render_widget(disk_gauge, area);
@@ -1690,7 +1707,7 @@ fn draw_overview(f: &mut Frame, app: &App, area: Rect) {
                 .bg(Color::Black)
                 .add_modifier(Modifier::BOLD),
         )
-        .percent(app.cpu_info.utilization as u16)
+        .percent(safe_percent(app.cpu_info.utilization))
         .label(format!(
             "{:.1}% | {} cores | {:.0}°C",
             app.cpu_info.utilization,
@@ -1701,7 +1718,7 @@ fn draw_overview(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(cpu_gauge, chunks[0]);
 
     // Memory Overview
-    let mem_percent = ((app.memory_info.used as f64 / app.memory_info.total as f64) * 100.0) as u16;
+    let mem_percent = (app.memory_info.used as f64 / app.memory_info.total.max(1) as f64) * 100.0;
     let mem_block = Block::default().borders(Borders::ALL).title("Memory");
 
     let mem_gauge = Gauge::default()
@@ -1712,7 +1729,7 @@ fn draw_overview(f: &mut Frame, app: &App, area: Rect) {
                 .bg(Color::Black)
                 .add_modifier(Modifier::BOLD),
         )
-        .percent(mem_percent)
+        .percent(safe_percent(mem_percent as f32))
         .label(format!(
             "{:.1} GB / {:.1} GB ({:.0}%)",
             app.memory_info.used as f64 / (1024.0 * 1024.0 * 1024.0),
@@ -1737,7 +1754,7 @@ fn draw_overview(f: &mut Frame, app: &App, area: Rect) {
                     .bg(Color::Black)
                     .add_modifier(Modifier::BOLD),
             )
-            .percent(gpu.utilization as u16)
+            .percent(safe_percent(gpu.utilization))
             .label(format!(
                 "{:.0}% | {:.0}°C | {:.0}W / {:.0}W",
                 gpu.utilization,

@@ -351,6 +351,7 @@ pub struct SparklineChart {
     show_scale: bool,
     fixed_max: Option<f32>,
     show_min_max: bool,
+    line_thickness: f32,
 }
 
 impl SparklineChart {
@@ -369,6 +370,7 @@ impl SparklineChart {
             show_scale: true,
             fixed_max: None,
             show_min_max: false, // Disabled by default - less clutter
+            line_thickness: 2.5, // Default thicker lines
         }
     }
 
@@ -428,6 +430,12 @@ impl SparklineChart {
     #[allow(dead_code)]
     pub fn show_min_max(mut self, show: bool) -> Self {
         self.show_min_max = show;
+        self
+    }
+
+    /// Set the line thickness for the sparkline
+    pub fn line_thickness(mut self, thickness: f32) -> Self {
+        self.line_thickness = thickness;
         self
     }
 }
@@ -690,15 +698,17 @@ impl Widget for SparklineChart {
                     }
                 }
 
-                // Main line - softer color (reduce brightness by 30%)
+                // Main line - bright color for visibility
                 let line_color = Color32::from_rgba_unmultiplied(
-                    (self.color.r() as f32 * 0.7) as u8,
-                    (self.color.g() as f32 * 0.7) as u8,
-                    (self.color.b() as f32 * 0.7) as u8,
-                    220,
+                    (self.color.r() as f32 * 0.9) as u8,
+                    (self.color.g() as f32 * 0.9) as u8,
+                    (self.color.b() as f32 * 0.9) as u8,
+                    240,
                 );
-                let main_path =
-                    PathShape::line(smooth_points.clone(), Stroke::new(1.5, line_color));
+                let main_path = PathShape::line(
+                    smooth_points.clone(),
+                    Stroke::new(self.line_thickness, line_color),
+                );
                 painter.add(main_path);
 
                 // Data point dots (only on original points, not interpolated)

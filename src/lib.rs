@@ -90,6 +90,37 @@
 //! # }
 //! ```
 //!
+//! ### AI Data API - Tool-Based System Access
+//!
+//! The AI Data API provides a comprehensive tool-based interface for AI systems
+//! to query hardware monitoring data:
+//!
+//! ```no_run
+//! use simon::ai_api::{AiDataApi, ToolCategory};
+//!
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! let mut api = AiDataApi::new()?;
+//!
+//! // List available tools (35+ tools across 8 categories)
+//! for tool in api.list_tools_by_category(ToolCategory::Gpu) {
+//!     println!("{}: {}", tool.name, tool.description);
+//! }
+//!
+//! // Call a tool
+//! let result = api.call_tool("get_gpu_status", serde_json::json!({}))?;
+//! if result.success {
+//!     println!("{}", serde_json::to_string_pretty(&result.data)?);
+//! }
+//!
+//! // Get tools in OpenAI function calling format
+//! let openai_tools = api.tools_as_openai_functions();
+//!
+//! // Get tools in Anthropic tools format
+//! let anthropic_tools = api.tools_as_anthropic_tools();
+//! # Ok(())
+//! # }
+//! ```
+//!
 //! ## Feature Flags
 //!
 //! - `nvidia` - NVIDIA GPU support via NVML (requires CUDA toolkit or NVIDIA driver)
@@ -115,8 +146,10 @@
 //! - `network_monitor.rs` - Network interface statistics
 //! - `tui.rs` - Interactive terminal UI
 //! - `all_gpus.rs` - Unified multi-vendor GPU example
+//! - `ai_api_demo.rs` - AI Data API demonstration with tool-based system access
 
 pub mod agent; // AI agent for system analysis and predictions
+pub mod ai_api; // AI Data API for full system visibility with tool-based access
 pub mod ai_workload; // AI training and inference workload monitoring
 pub mod bandwidth; // Network bandwidth testing (iperf-style)
 pub mod boot_config; // Boot configuration and startup management
@@ -200,6 +233,9 @@ pub use ai_workload::{
     AiFramework, AiWorkload, AiWorkloadMonitor, CloudProvider, DistributedConfig, InferenceMetrics,
     TpuConfig, TrainingMetrics, WorkloadType,
 };
+
+// Re-export AI Data API for full system visibility
+pub use ai_api::{AiDataApi, ToolCall, ToolCategory, ToolDefinition, ToolResult};
 
 // Re-export AI agent
 pub use agent::{Agent, AgentConfig, AgentResponse, ModelSize, Query, QueryType, SystemState};

@@ -74,6 +74,42 @@ pub enum SimonError {
     #[error("Configuration error: {0}")]
     Configuration(String),
 
+    /// GPU-specific error
+    #[error("GPU error: {0}")]
+    GpuError(String),
+
+    /// Process-related error
+    #[error("Process error: {0}")]
+    ProcessError(String),
+
+    /// CPU-related error
+    #[error("CPU error: {0}")]
+    CpuError(String),
+
+    /// Memory-related error
+    #[error("Memory error: {0}")]
+    MemoryError(String),
+
+    /// Disk-related error
+    #[error("Disk error: {0}")]
+    DiskError(String),
+
+    /// Network-related error
+    #[error("Network error: {0}")]
+    NetworkError(String),
+
+    /// Hardware-related error
+    #[error("Hardware error: {0}")]
+    HardwareError(String),
+
+    /// Invalid argument
+    #[error("Invalid argument: {0}")]
+    InvalidArgument(String),
+
+    /// JSON serialization error
+    #[error("JSON error: {0}")]
+    JsonError(#[from] serde_json::Error),
+
     /// Other error
     #[error("{0}")]
     Other(String),

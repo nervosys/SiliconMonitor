@@ -52,7 +52,7 @@ pub mod query;
 pub mod remote;
 pub mod state;
 
-use crate::error::{SimonError, Result};
+use crate::error::{Result, SimonError};
 use crate::SiliconMonitor;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -397,6 +397,11 @@ impl Agent {
         })
     }
 
+    /// Get the agent's configuration
+    pub fn config(&self) -> &AgentConfig {
+        &self.config
+    }
+
     /// Check if agent is initialized (model loaded)
     pub fn is_initialized(&self) -> bool {
         *self.initialized.lock().unwrap()
@@ -537,11 +542,6 @@ impl Agent {
     pub fn cache_size(&self) -> usize {
         let cache = self.cache.lock().unwrap();
         cache.len()
-    }
-
-    /// Get agent configuration
-    pub fn config(&self) -> &AgentConfig {
-        &self.config
     }
 
     /// Preload model (warm start) - optional, to avoid first-query latency

@@ -28,3 +28,7 @@ jtop_test.*
 
 .vscode/
 .venv*/
+
+# Debug output
+tui_output.txt
+*.out
