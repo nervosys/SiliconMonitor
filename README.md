@@ -1,6 +1,6 @@
 # Silicon Monitor (simon) 🔬
 
-**Comprehensive cross-platform hardware monitoring library for Rust**
+## Comprehensive cross-platform hardware monitoring library for Rust
 
 Silicon Monitor is a powerful, cross-platform hardware monitoring library that provides deep insights into CPUs, GPUs, memory, disks, motherboards, and network interfaces. Built in Rust for maximum performance and safety, it offers a unified API across Windows, Linux, and macOS.
 
@@ -35,6 +35,7 @@ Silicon Monitor provides a unified Rust API for monitoring hardware across all m
 ### Comprehensive Metrics
 
 **GPU Metrics:**
+
 - Utilization (graphics, compute, video engines)
 - Memory usage (used, free, total, bandwidth)
 - Clock frequencies (graphics, memory, streaming multiprocessor)
@@ -44,6 +45,7 @@ Silicon Monitor provides a unified Rust API for monitoring hardware across all m
 - Per-process GPU memory attribution
 
 **CPU Metrics:**
+
 - Per-core utilization and frequency
 - Temperature sensors
 - Cache sizes (L1, L2, L3)
@@ -51,18 +53,21 @@ Silicon Monitor provides a unified Rust API for monitoring hardware across all m
 - Power states
 
 **Memory Metrics:**
+
 - Total, used, free, available
 - Swap usage
 - Page faults
 - Memory bandwidth
 
 **Disk Metrics:**
+
 - Read/write bytes and operations
 - Queue depth and latency
 - SMART attributes
 - Device information
 
 **Network Metrics:**
+
 - Per-interface RX/TX statistics
 - Bandwidth rates
 - Packet errors and drops
@@ -105,6 +110,7 @@ let response = agent.ask("How much power am I using?", &monitor)?;
 ```
 
 **Features**:
+
 - Natural language queries (state, predictions, energy, recommendations)
 - Multiple model sizes (100M, 500M, 1B parameters)
 - Zero latency impact on monitoring (non-blocking)
@@ -135,6 +141,7 @@ cargo build --release --features nvidia,amd  # NVIDIA + AMD
 The CLI provides two binary names optimized for different use cases:
 
 #### `simon` - Full Silicon Monitor
+
 Complete hardware monitoring with subcommands for specific metrics:
 
 ```bash
@@ -153,6 +160,7 @@ simon ai  # Interactive AI mode
 ```
 
 #### `amon` - AI Monitor
+
 Dedicated AI agent interface for natural language system queries. This is syntactic sugar for `simon ai`:
 
 ```bash
@@ -296,7 +304,7 @@ let open = check_port("192.168.1.1", 80, Duration::from_secs(2))?;
 println!("Port 80: {}", if open { "OPEN" } else { "CLOSED" });
 ```
 
-## AI Agent for System Analysis
+## AI Agent CLI and API
 
 Silicon Monitor includes a lightweight AI agent that can answer questions about your system in natural language:
 
@@ -347,6 +355,7 @@ println!("{}", response.response);
 The AI agent automatically detects and uses available backends in this order:
 
 **Local Inference Backends** (✅ Implemented):
+
 - **TensorRT-LLM** - NVIDIA optimized inference (requires Triton server)
 - **vLLM** - High-performance serving with PagedAttention
 - **Ollama** - Easy local model management (recommended for beginners)
@@ -354,12 +363,14 @@ The AI agent automatically detects and uses available backends in this order:
 - **llama.cpp** - Direct GGUF model loading (placeholder, needs bindings)
 
 **Remote API Backends**:
+
 - **OpenAI API** - GPT models (requires `OPENAI_API_KEY`)
 - **Anthropic Claude** - Claude models (requires `ANTHROPIC_API_KEY`)
 - **GitHub Models** - Free AI models (requires `GITHUB_TOKEN`)
 - **Azure OpenAI** - Enterprise OpenAI (requires `AZURE_OPENAI_API_KEY`)
 
 **Always Available**:
+
 - **Rule-Based** - Built-in fallback system (no setup required)
 
 See [LOCAL_AI_BACKENDS.md](LOCAL_AI_BACKENDS.md) for detailed setup instructions.
@@ -414,6 +425,7 @@ let mut agent = Agent::new(config)?;
 ```
 
 **Example Queries:**
+
 - "What's my GPU temperature and is it safe?"
 - "Show me CPU usage across all cores"
 - "How much memory am I using?"
@@ -434,6 +446,7 @@ amon    # AI Monitor alias
 ```
 
 **TUI Features:**
+
 - 📊 Real-time graphs with 60-second history
 - 🎨 Color-coded gauges (green/yellow/red)
 - ⌨️ Keyboard navigation (←/→ or 1-6 for tabs, Q to quit)
@@ -442,6 +455,7 @@ amon    # AI Monitor alias
 - 🖥️ 6 tabs: Overview, CPU, GPU, Memory, System, **Agent**
 
 **Agent Tab:**
+
 - Natural language queries: "What's my GPU temperature?"
 - Conversation history with timing
 - Response caching for instant repeated queries
@@ -473,6 +487,7 @@ The repository includes comprehensive examples:
 - **`agent_demo.rs`** - AI agent interactive demo with model selection
 
 Run any example with:
+
 ```bash
 cargo run --release --features nvidia --example gpu_monitor
 cargo run --release --features nvidia --example process_monitor
@@ -485,29 +500,32 @@ cargo run --release --features full --example agent_simple
 
 ## Platform Support
 
-| Platform    | CPU | Memory | Disk | GPU (NVIDIA) | GPU (AMD) | GPU (Intel) | Network | Processes |
-| ----------- | --- | ------ | ---- | ------------ | --------- | ----------- | ------- | --------- |
-| **Linux**   | ✅   | ✅      | ✅    | ✅            | ✅         | ✅           | ✅       | ✅         |
-| **Windows** | ✅   | ✅      | ✅    | ✅            | 🚧         | 🚧           | 🚧       | 🚧         |
-| **macOS**   | ✅   | ✅      | ✅    | ❌            | ❌         | ❌           | 🚧       | 🚧         |
+| Platform | CPU | Memory | Disk | GPU (NVIDIA) | GPU (AMD) | GPU (Intel) | Network | Processes |
+| -------- | --- | ------ | ---- | ------------ | --------- | ----------- | ------- | --------- |
+| Linux    | ✅  | ✅     | ✅   | ✅           | ✅        | ✅          | ✅      | ✅        |
+| Windows  | ✅  | ✅     | ✅   | ✅           | 🚧        | 🚧          | 🚧      | 🚧        |
+| macOS    | ✅  | ✅     | ✅   | ❌           | ❌        | ❌          | 🚧      | 🚧        |
 
 ✅ Fully Supported | 🚧 Partial/In Progress | ❌ Not Supported
 
 ### GPU Backend Details
 
 **NVIDIA:**
+
 - **Linux**: Full NVML support via `libnvidia-ml.so`
 - **Windows**: Full NVML support via `nvml.dll`
 - **Metrics**: All metrics supported - utilization, memory, clocks, power, temperature, processes, throttling, ECC
 - **Devices**: GeForce, Quadro, Tesla, Jetson (Nano, TX1/TX2, Xavier, Orin, Thor)
 
 **AMD:**
+
 - **Linux**: sysfs via `/sys/class/drm/card*/device/`
 - **Metrics**: Utilization (GFX/compute), VRAM, clocks (SCLK/MCLK), temperature, power, fan speed
 - **Devices**: RDNA 1/2/3, CDNA 1/2 (Radeon RX 5000+, Instinct MI series)
 - **Requirements**: amdgpu driver
 
 **Intel:**
+
 - **Linux**: i915/xe drivers via `/sys/class/drm/card*/`
 - **Metrics**: GT frequency, memory (discrete GPUs), temperature, power via hwmon
 - **Devices**: Arc A-series, Iris Xe, UHD Graphics, Data Center GPU Max
@@ -515,7 +533,7 @@ cargo run --release --features full --example agent_simple
 
 ## Architecture
 
-```
+```plaintext
 simon/
 ├── cpu/                   CPU monitoring (per-core, frequency, temperature)
 ├── memory/                Memory and swap monitoring
@@ -536,7 +554,7 @@ simon/
 
 ## API Documentation
 
-### GPU Monitoring
+### GPU Collection API
 
 The `GpuCollection` provides a unified interface for all GPU vendors:
 
@@ -582,7 +600,7 @@ let cpu_procs = monitor.processes_by_cpu()?;
 let gpu_only = monitor.gpu_processes()?;
 ```
 
-### Network Monitoring
+### Network Monitor API
 
 The `NetworkMonitor` tracks network interface statistics:
 
@@ -610,6 +628,7 @@ if let Some(iface) = monitor.interface_by_name("eth0")? {
 ```
 
 Full API documentation:
+
 ```bash
 cargo doc --features full --no-deps --open
 ```
@@ -619,6 +638,7 @@ cargo doc --features full --no-deps --open
 ### Prerequisites
 
 **Linux:**
+
 ```bash
 # Ubuntu/Debian
 sudo apt install build-essential pkg-config libdrm-dev
@@ -633,12 +653,14 @@ sudo pacman -S base-devel libdrm
 ```
 
 **Windows:**
+
 ```bash
 # Install Visual Studio Build Tools (2019 or later)
 # For NVIDIA support, install CUDA toolkit or NVIDIA driver (provides nvml.dll)
 ```
 
 **macOS:**
+
 ```bash
 # Install Xcode command line tools
 xcode-select --install
@@ -724,8 +746,8 @@ if manager.has_consent(ConsentScope::BasicTelemetry) {
 
 This project is licensed under either of:
 
-- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE) or http://www.apache.org/licenses/LICENSE-2.0)
-- MIT License ([LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT)
+- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE) or <http://www.apache.org/licenses/LICENSE-2.0>)
+- MIT License ([LICENSE-MIT](LICENSE-MIT) or <http://opensource.org/licenses/MIT>)
 
 at your option.
 
@@ -739,6 +761,7 @@ Silicon Monitor builds upon and is inspired by:
 - **[intel_gpu_top](https://gitlab.freedesktop.org/drm/igt-gpu-tools)** - Intel GPU monitoring
 
 Special thanks to the Rust community and the maintainers of the following crates:
+
 - [ratatui](https://github.com/ratatui-org/ratatui) - Terminal UI framework
 - [sysinfo](https://github.com/GuillaumeGomez/sysinfo) - System information
 - [nvml-wrapper](https://github.com/Cldfire/nvml-wrapper) - NVIDIA NVML bindings
@@ -751,5 +774,5 @@ Special thanks to the Rust community and the maintainers of the following crates
 
 ---
 
-**Made with ❤️ by NervoSys**
+Made with ❤️ by NervoSys
 
