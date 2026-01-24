@@ -434,6 +434,7 @@ impl SparklineChart {
     }
 
     /// Set the line thickness for the sparkline
+    #[allow(dead_code)]
     pub fn line_thickness(mut self, thickness: f32) -> Self {
         self.line_thickness = thickness;
         self

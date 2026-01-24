@@ -150,11 +150,13 @@ pub struct SiliconMonitorApp {
     agent_is_processing: bool,
     agent_response_receiver: Option<Receiver<Result<AgentResponse, String>>>,
     
-    // AI configuration UI state
+    // AI configuration UI state (reserved for future use)
+    #[allow(dead_code)]
     ai_api_key_input: String,
     ai_selected_backend: AiBackendSelection,
     ai_selected_model: String,
     ai_ollama_models: Vec<String>,
+    #[allow(dead_code)]
     ai_ollama_starting: bool,
     ai_status_message: Option<(String, bool)>, // (message, is_error)
 
@@ -293,6 +295,7 @@ impl ColorTheme {
     }
 
     /// Get the secondary accent color for this theme
+    #[allow(dead_code)]
     pub fn secondary_color(&self) -> egui::Color32 {
         match self {
             ColorTheme::Cyber => CyberColors::MAGENTA,
@@ -1668,7 +1671,7 @@ impl SiliconMonitorApp {
         // Scale elements based on device count
         let chart_height = if device_count == 1 { 100.0 } else if device_count == 2 { 80.0 } else { 65.0 };
         let bar_height = if device_count <= 2 { 18.0 } else { 14.0 };
-        let font_scale = if device_count <= 2 { 1.0 } else if device_count <= 4 { 0.9 } else { 0.8 };
+        let _font_scale = if device_count <= 2 { 1.0 } else if device_count <= 4 { 0.9 } else { 0.8 };
         
         ScrollArea::vertical().show(ui, |ui| {
             for (i, (static_info, dynamic_info)) in self
@@ -4888,6 +4891,7 @@ impl SiliconMonitorApp {
     }
 
     /// Draw the AI setup panel when no backend is available
+    #[allow(dead_code)]
     fn draw_ai_setup_panel(&mut self, ui: &mut egui::Ui) {
         ui.add_space(10.0);
         
@@ -5060,6 +5064,7 @@ impl SiliconMonitorApp {
     }
 
     /// Start Ollama in the background
+    #[allow(dead_code)]
     fn start_ollama(&mut self) {
         self.ai_ollama_starting = true;
         self.ai_status_message = Some(("Starting Ollama...".to_string(), false));
@@ -5103,6 +5108,7 @@ impl SiliconMonitorApp {
     }
 
     /// Set an API key as environment variable and retry connection
+    #[allow(dead_code)]
     fn set_api_key(&mut self, env_var: &str) {
         let key = self.ai_api_key_input.trim();
         if key.is_empty() {
