@@ -836,4 +836,33 @@ impl AiDataApi {
             format!("{}{}", header, results.join("\n\n"))
         }
     }
+
+    /// Analyze a user query and automatically call relevant tools
+    ///
+    /// Returns a tuple of (context string, tools called) with the results of all
+    /// relevant tool calls that can be injected into the AI system prompt.
+    pub fn auto_query_with_tools(&mut self, user_query: &str) -> (String, Vec<String>) {
+        let context = self.auto_query(user_query);
+
+        // Parse tools from the context header
+        let tools = if context.contains("*Tools called:") {
+            context
+                .lines()
+                .find(|line| line.contains("*Tools called:"))
+                .and_then(|line| {
+                    line.trim_start_matches("*Tools called: ")
+                        .trim_end_matches("*")
+                        .split(", ")
+                        .map(|s| s.to_string())
+                        .filter(|s| !s.is_empty())
+                        .collect::<Vec<_>>()
+                        .into()
+                })
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+
+        (context, tools)
+    }
 }

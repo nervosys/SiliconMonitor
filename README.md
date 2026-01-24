@@ -502,9 +502,9 @@ cargo run --release --features full --example agent_simple
 
 | Platform | CPU | Memory | Disk | GPU (NVIDIA) | GPU (AMD) | GPU (Intel) | Network | Processes |
 | -------- | --- | ------ | ---- | ------------ | --------- | ----------- | ------- | --------- |
-| Linux    | ✅  | ✅     | ✅   | ✅           | ✅        | ✅          | ✅      | ✅        |
-| Windows  | ✅  | ✅     | ✅   | ✅           | 🚧        | 🚧          | 🚧      | 🚧        |
-| macOS    | ✅  | ✅     | ✅   | ❌           | ❌        | ❌          | 🚧      | 🚧        |
+| Linux    | ✅   | ✅      | ✅    | ✅            | ✅         | ✅           | ✅       | ✅         |
+| Windows  | ✅   | ✅      | ✅    | ✅            | 🚧         | 🚧           | 🚧       | 🚧         |
+| macOS    | ✅   | ✅      | ✅    | ❌            | ❌         | ❌           | 🚧       | 🚧         |
 
 ✅ Fully Supported | 🚧 Partial/In Progress | ❌ Not Supported
 

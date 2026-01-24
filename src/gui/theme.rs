@@ -3,7 +3,9 @@
 //! A dark cyberpunk-inspired theme with neon accents
 //! Now with Glances-style threshold colors
 
-use egui::{Color32, FontData, FontDefinitions, FontFamily, FontId, Stroke, Style, TextStyle, Visuals};
+use egui::{
+    Color32, FontData, FontDefinitions, FontFamily, FontId, Stroke, Style, TextStyle, Visuals,
+};
 use std::sync::Arc;
 
 /// Cyber color palette
@@ -144,11 +146,23 @@ pub fn apply_cyber_theme(ctx: &egui::Context) {
     style.visuals = visuals;
 
     style.text_styles = [
-        (TextStyle::Small, FontId::new(11.0, FontFamily::Proportional)),
+        (
+            TextStyle::Small,
+            FontId::new(11.0, FontFamily::Proportional),
+        ),
         (TextStyle::Body, FontId::new(13.0, FontFamily::Proportional)),
-        (TextStyle::Button, FontId::new(13.0, FontFamily::Proportional)),
-        (TextStyle::Heading, FontId::new(18.0, FontFamily::Proportional)),
-        (TextStyle::Monospace, FontId::new(12.0, FontFamily::Monospace)),
+        (
+            TextStyle::Button,
+            FontId::new(13.0, FontFamily::Proportional),
+        ),
+        (
+            TextStyle::Heading,
+            FontId::new(18.0, FontFamily::Proportional),
+        ),
+        (
+            TextStyle::Monospace,
+            FontId::new(12.0, FontFamily::Monospace),
+        ),
     ]
     .into();
 

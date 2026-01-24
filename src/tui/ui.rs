@@ -1838,8 +1838,12 @@ fn draw_gpu(f: &mut Frame, app: &App, area: Rect) {
 
     let gpu = &app.gpu_info[0];
 
-    // GPU Info
-    let mem_percent = ((gpu.memory_used as f64 / gpu.memory_total as f64) * 100.0) as u16;
+    // GPU Info - safely calculate memory percentage with clamping
+    let mem_percent = if gpu.memory_total > 0 {
+        ((gpu.memory_used as f64 / gpu.memory_total as f64) * 100.0).clamp(0.0, 100.0) as u16
+    } else {
+        0
+    };
     let info_text = vec![
         Line::from(format!("Name: {}", gpu.name)),
         Line::from(format!("Vendor: {}", gpu.vendor)),

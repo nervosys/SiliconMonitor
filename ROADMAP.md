@@ -84,7 +84,7 @@ Silicon Monitor is a comprehensive cross-platform hardware monitoring library fo
 
 #### AI Agent Improvements
 - [ ] Streaming responses in GUI chatbot
-- [ ] Tool call visualization (show which tools were called)
+- [x] Tool call visualization (show which tools were called)
 - [ ] Historical data queries ("What was GPU temp 5 minutes ago?")
 - [ ] Anomaly detection prompts
 - [ ] System optimization recommendations
@@ -133,7 +133,7 @@ Silicon Monitor is a comprehensive cross-platform hardware monitoring library fo
 - None currently
 
 ### High Priority
-- [ ] TUI gauge panic when percentage exceeds 100% (clamping needed)
+- [x] ~~TUI gauge panic when percentage exceeds 100%~~ (Fixed: added clamping in ui.rs)
 - [ ] Windows: Limited sensor support compared to Linux
 
 ### Medium Priority
@@ -142,7 +142,7 @@ Silicon Monitor is a comprehensive cross-platform hardware monitoring library fo
 - [ ] Network: Virtual interfaces may show incorrect rates
 
 ### Low Priority
-- [ ] README.md has markdown linting warnings (cosmetic)
+- [x] ~~README.md has markdown linting warnings~~ (Fixed: all issues resolved)
 - [ ] Some reserved code paths marked `#[allow(dead_code)]`
 
 ---
@@ -177,6 +177,12 @@ Legend: ✅ Full support | 🚧 Partial/WIP | ❌ Not supported
 - AI Data API with 35+ tools
 - GUI and TUI interfaces
 - Linux full support, Windows/macOS partial
+
+### Recent Updates (January 23, 2026)
+- ✅ Fixed TUI gauge panic when percentage exceeds 100%
+- ✅ Added tool call visualization in GUI chatbot
+- ✅ Fixed all markdown linting issues in README.md
+- ✅ Added ROADMAP.md for development tracking
 
 ---
 
