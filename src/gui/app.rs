@@ -866,6 +866,92 @@ impl SiliconMonitorApp {
             .map(|s| s.ram_usage_percent())
             .unwrap_or(0.0)
     }
+    /// Export current system data to JSON format
+    fn export_to_json(&self) -> Result<String, String> {
+        use serde_json::json;
+        let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+        
+        let cpu_data = self.cpu_stats.as_ref().map(|s| {
+            let usage = 100.0 - s.total.idle;
+            let freq = s.cores.first().and_then(|c| c.frequency.as_ref()).map(|f| f.current).unwrap_or(0);
+            json!({
+                "usage_percent": usage,
+                "frequency_mhz": freq,
+                "core_count": s.cores.len(),
+            })
+        });
+        
+        let mem_data = self.memory_stats.as_ref().map(|s| {
+            json!({
+                "total_bytes": s.ram.total,
+                "used_bytes": s.ram.used,
+                "available_bytes": s.ram.free,
+                "usage_percent": s.ram_usage_percent(),
+            })
+        });
+        
+        let gpu_data: Vec<_> = self.gpu_static_info.iter()
+            .zip(self.gpu_dynamic_info.iter())
+            .map(|(static_info, dynamic)| {
+                json!({
+                    "name": static_info.name,
+                    "vendor": format!("{:?}", static_info.vendor),
+                    "memory_used_mb": dynamic.memory.used / (1024 * 1024),
+                    "memory_total_mb": dynamic.memory.total / (1024 * 1024),
+                    "temperature_c": dynamic.thermal.temperature,
+                    "utilization_percent": dynamic.utilization,
+                    "power_mw": dynamic.power.draw,
+                })
+            })
+            .collect();
+        
+        let data = json!({
+            "timestamp": timestamp,
+            "cpu": cpu_data,
+            "memory": mem_data,
+            "gpus": gpu_data,
+            "processes_count": self.process_list.len(),
+            "network_interfaces": self.network_rates.len(),
+        });
+        
+        serde_json::to_string_pretty(&data).map_err(|e| e.to_string())
+    }
+
+    /// Export current system data to CSV format
+    fn export_to_csv(&self) -> String {
+        let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+        let mut csv = String::from("metric,value,unit,timestamp\n");
+        
+        if let Some(cpu) = &self.cpu_stats {
+            let usage = 100.0 - cpu.total.idle;
+            csv.push_str(&format!("cpu_usage,{:.1},percent,{}\n", usage, timestamp));
+            if let Some(freq) = cpu.cores.first().and_then(|c| c.frequency.as_ref()) {
+                csv.push_str(&format!("cpu_frequency,{},MHz,{}\n", freq.current, timestamp));
+            }
+            csv.push_str(&format!("cpu_cores,{},count,{}\n", cpu.cores.len(), timestamp));
+        }
+        
+        if let Some(mem) = &self.memory_stats {
+            csv.push_str(&format!("memory_total,{},bytes,{}\n", mem.ram.total, timestamp));
+            csv.push_str(&format!("memory_used,{},bytes,{}\n", mem.ram.used, timestamp));
+            csv.push_str(&format!("memory_usage,{:.1},percent,{}\n", mem.ram_usage_percent(), timestamp));
+        }
+        
+        for (i, (static_info, dynamic)) in self.gpu_static_info.iter().zip(self.gpu_dynamic_info.iter()).enumerate() {
+            csv.push_str(&format!("gpu{}_name,\"{}\",string,{}\n", i, static_info.name, timestamp));
+            csv.push_str(&format!("gpu{}_memory_used,{},MB,{}\n", i, dynamic.memory.used / (1024 * 1024), timestamp));
+            csv.push_str(&format!("gpu{}_memory_total,{},MB,{}\n", i, dynamic.memory.total / (1024 * 1024), timestamp));
+            if let Some(temp) = dynamic.thermal.temperature {
+                csv.push_str(&format!("gpu{}_temperature,{},C,{}\n", i, temp, timestamp));
+            }
+            csv.push_str(&format!("gpu{}_utilization,{},percent,{}\n", i, dynamic.utilization, timestamp));
+            if let Some(power) = dynamic.power.draw {
+                csv.push_str(&format!("gpu{}_power,{:.1},mW,{}\n", i, power, timestamp));
+            }
+        }
+        
+        csv
+    }
 }
 
 impl eframe::App for SiliconMonitorApp {
@@ -1025,8 +1111,20 @@ impl eframe::App for SiliconMonitorApp {
                 }
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    // Export buttons
+                    if ui.small_button("CSV").clicked() {
+                        let csv = self.export_to_csv();
+                        ui.output_mut(|o| o.copied_text = csv);
+                    }
+                    ui.add_space(4.0);
+                    if ui.small_button("JSON").clicked() {
+                        if let Ok(json) = self.export_to_json() {
+                            ui.output_mut(|o| o.copied_text = json);
+                        }
+                    }
+                    ui.add_space(8.0);
                     ui.label(
-                        RichText::new("Press F1 for help")
+                        RichText::new("F1=Help")
                             .color(CyberColors::TEXT_MUTED)
                             .small(),
                     );

@@ -106,7 +106,7 @@ Silicon Monitor is a comprehensive cross-platform hardware monitoring library fo
 #### GUI Enhancements
 - [ ] Custom dashboard layouts
 - [ ] Alert/notification system
-- [ ] Data export (CSV, JSON)
+- [x] Data export (CSV, JSON)
 - [ ] System tray mode
 - [ ] Dark/light theme toggle
 
@@ -178,7 +178,8 @@ Legend: ✅ Full support | 🚧 Partial/WIP | ❌ Not supported
 - GUI and TUI interfaces
 - Linux full support, Windows/macOS partial
 
-### Recent Updates (January 23, 2026)
+### Recent Updates (January 24, 2026)
+- ✅ Added data export functionality (JSON/CSV) in GUI status bar
 - ✅ Fixed TUI gauge panic when percentage exceeds 100%
 - ✅ Added tool call visualization in GUI chatbot
 - ✅ Fixed all markdown linting issues in README.md
