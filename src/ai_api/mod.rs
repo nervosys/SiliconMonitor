@@ -159,6 +159,8 @@ pub struct AiDataApi {
     /// Last update times for rate calculations
     #[allow(dead_code)]
     last_update: Instant,
+    /// Historical data context (injected from GUI)
+    historical_context: Option<String>,
 }
 
 /// Cache for API data
@@ -198,6 +200,7 @@ impl AiDataApi {
             network_monitor,
             cache: Arc::new(Mutex::new(ApiCache::new())),
             last_update: Instant::now(),
+            historical_context: None,
         })
     }
 
@@ -213,7 +216,13 @@ impl AiDataApi {
             network_monitor,
             cache: Arc::new(Mutex::new(ApiCache::new())),
             last_update: Instant::now(),
+            historical_context: None,
         }
+    }
+
+    /// Set historical data context from the GUI
+    pub fn set_historical_context(&mut self, context: Option<String>) {
+        self.historical_context = context;
     }
 
     /// List all available tools
@@ -822,6 +831,22 @@ impl AiDataApi {
                         ));
                     }
                 }
+            }
+        }
+
+        // Historical data queries (injected from GUI if available)
+        if (query_lower.contains("minute")
+            || query_lower.contains("ago")
+            || query_lower.contains("earlier")
+            || query_lower.contains("before")
+            || query_lower.contains("history")
+            || query_lower.contains("historical")
+            || query_lower.contains("was"))
+            && self.historical_context.is_some()
+        {
+            if let Some(ref context) = self.historical_context {
+                tools_called.push("get_historical_data");
+                results.push(format!("## Historical Data\n{}", context));
             }
         }
 

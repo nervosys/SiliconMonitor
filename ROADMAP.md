@@ -85,7 +85,7 @@ Silicon Monitor is a comprehensive cross-platform hardware monitoring library fo
 #### AI Agent Improvements
 - [ ] Streaming responses in GUI chatbot
 - [x] Tool call visualization (show which tools were called)
-- [ ] Historical data queries ("What was GPU temp 5 minutes ago?")
+- [x] Historical data queries ("What was GPU temp 5 minutes ago?")
 - [ ] Anomaly detection prompts
 - [ ] System optimization recommendations
 
@@ -105,10 +105,10 @@ Silicon Monitor is a comprehensive cross-platform hardware monitoring library fo
 
 #### GUI Enhancements
 - [ ] Custom dashboard layouts
-- [ ] Alert/notification system
+- [x] Alert/notification system (threshold-based with UI panel)
 - [x] Data export (CSV, JSON)
-- [ ] System tray mode
-- [ ] Dark/light theme toggle
+- [ ] System tray mode (setting added, tray-icon integration pending)
+- [x] Dark/light theme toggle
 
 ### Long-term (v1.0.0)
 
@@ -184,6 +184,10 @@ Legend: ✅ Full support | 🚧 Partial/WIP | ❌ Not supported
 - ✅ Added tool call visualization in GUI chatbot
 - ✅ Fixed all markdown linting issues in README.md
 - ✅ Added ROADMAP.md for development tracking
+- ✅ Added dark/light theme toggle (Light theme with full color palette)
+- ✅ Added alert/notification system (CPU/memory/GPU thresholds with UI panel)
+- ✅ Added historical data queries (30-min history, AI agent integration)
+- ✅ Added system tray mode setting (UI ready, tray-icon pending)
 
 ---
 
@@ -205,4 +209,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on:
 
 ---
 
-*Last updated: January 23, 2026*
+*Last updated: January 24, 2026*

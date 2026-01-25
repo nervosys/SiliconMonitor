@@ -210,3 +210,72 @@ pub fn neon_color_by_index(index: usize) -> Color32 {
     ];
     COLORS[index % COLORS.len()]
 }
+
+/// Light theme colors
+pub struct LightColors;
+
+impl LightColors {
+    pub const BACKGROUND: Color32 = Color32::from_rgb(250, 250, 252);
+    pub const SURFACE: Color32 = Color32::from_rgb(255, 255, 255);
+    pub const SURFACE_HOVER: Color32 = Color32::from_rgb(240, 242, 245);
+    pub const TEXT_PRIMARY: Color32 = Color32::from_rgb(30, 41, 59);
+    pub const TEXT_SECONDARY: Color32 = Color32::from_rgb(100, 116, 139);
+    pub const ACCENT: Color32 = Color32::from_rgb(59, 130, 246);
+    pub const ACCENT_DIM: Color32 = Color32::from_rgb(96, 165, 250);
+    pub const BORDER: Color32 = Color32::from_rgb(226, 232, 240);
+}
+
+/// Apply light theme to the egui context
+pub fn apply_light_theme(ctx: &egui::Context) {
+    let mut fonts = FontDefinitions::default();
+    fonts.font_data.insert(
+        "emoji".to_owned(),
+        Arc::new(FontData::from_static(include_bytes!(
+            "../../assets/fonts/NotoEmoji-VariableFont.ttf"
+        ))),
+    );
+    fonts.families.entry(FontFamily::Proportional).or_default().push("emoji".to_owned());
+    fonts.families.entry(FontFamily::Monospace).or_default().push("emoji".to_owned());
+    ctx.set_fonts(fonts);
+
+    let mut style = Style::default();
+    let mut visuals = Visuals::light();
+    visuals.window_fill = LightColors::BACKGROUND;
+    visuals.panel_fill = LightColors::BACKGROUND;
+    visuals.faint_bg_color = LightColors::SURFACE;
+    visuals.extreme_bg_color = Color32::WHITE;
+    visuals.widgets.noninteractive.bg_fill = LightColors::SURFACE;
+    visuals.widgets.noninteractive.fg_stroke = Stroke::new(1.0, LightColors::TEXT_SECONDARY);
+    visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0, LightColors::BORDER);
+    visuals.widgets.inactive.bg_fill = LightColors::SURFACE;
+    visuals.widgets.inactive.fg_stroke = Stroke::new(1.0, LightColors::TEXT_PRIMARY);
+    visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, LightColors::BORDER);
+    visuals.widgets.hovered.bg_fill = LightColors::SURFACE_HOVER;
+    visuals.widgets.hovered.fg_stroke = Stroke::new(1.0, LightColors::ACCENT);
+    visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, LightColors::ACCENT_DIM);
+    visuals.widgets.active.bg_fill = LightColors::ACCENT_DIM;
+    visuals.widgets.active.fg_stroke = Stroke::new(1.0, Color32::WHITE);
+    visuals.widgets.active.bg_stroke = Stroke::new(1.0, LightColors::ACCENT);
+    visuals.widgets.open.bg_fill = LightColors::SURFACE_HOVER;
+    visuals.widgets.open.fg_stroke = Stroke::new(1.0, LightColors::ACCENT);
+    visuals.widgets.open.bg_stroke = Stroke::new(1.0, LightColors::ACCENT_DIM);
+    visuals.selection.bg_fill = LightColors::ACCENT.linear_multiply(0.2);
+    visuals.selection.stroke = Stroke::new(1.0, LightColors::ACCENT);
+    visuals.hyperlink_color = LightColors::ACCENT;
+    visuals.window_shadow.color = Color32::from_black_alpha(30);
+    visuals.popup_shadow.color = Color32::from_black_alpha(20);
+    visuals.window_rounding = egui::Rounding::same(8.0);
+    visuals.menu_rounding = egui::Rounding::same(6.0);
+    style.visuals = visuals;
+    style.text_styles = [
+        (TextStyle::Small, FontId::new(11.0, FontFamily::Proportional)),
+        (TextStyle::Body, FontId::new(13.0, FontFamily::Proportional)),
+        (TextStyle::Button, FontId::new(13.0, FontFamily::Proportional)),
+        (TextStyle::Heading, FontId::new(18.0, FontFamily::Proportional)),
+        (TextStyle::Monospace, FontId::new(12.0, FontFamily::Monospace)),
+    ].into();
+    style.spacing.item_spacing = egui::vec2(8.0, 6.0);
+    style.spacing.window_margin = egui::Margin::same(12.0);
+    style.spacing.button_padding = egui::vec2(10.0, 4.0);
+    ctx.set_style(style);
+}

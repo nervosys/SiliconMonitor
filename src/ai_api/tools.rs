@@ -551,6 +551,41 @@ pub fn get_all_tool_definitions() -> Vec<ToolDefinition> {
         example: Some("get_driver_info({\"driver_type\": \"gpu\"})".to_string()),
     });
 
+    // Historical data tools
+    tools.push(ToolDefinition {
+        name: "get_historical_data".to_string(),
+        description: "Get historical system metrics from a specific time in the past. Useful for questions like 'What was the GPU temperature 5 minutes ago?' or 'What was CPU usage 10 minutes ago?'. Data is available for up to 30 minutes in the past.".to_string(),
+        parameters: json!({
+            "type": "object",
+            "properties": {
+                "minutes_ago": {
+                    "type": "integer",
+                    "description": "How many minutes ago to query (0 = current, 1-30 for historical). Default: 0"
+                }
+            },
+            "required": []
+        }),
+        category: ToolCategory::System,
+        example: Some("get_historical_data({\"minutes_ago\": 5})".to_string()),
+    });
+
+    tools.push(ToolDefinition {
+        name: "compare_metrics".to_string(),
+        description: "Compare current system metrics with metrics from a specific time in the past. Shows the change in CPU, memory, GPU temperature and utilization.".to_string(),
+        parameters: json!({
+            "type": "object",
+            "properties": {
+                "minutes_ago": {
+                    "type": "integer",
+                    "description": "Compare with metrics from this many minutes ago (1-30). Default: 5"
+                }
+            },
+            "required": []
+        }),
+        category: ToolCategory::System,
+        example: Some("compare_metrics({\"minutes_ago\": 10})".to_string()),
+    });
+
     tools
 }
 

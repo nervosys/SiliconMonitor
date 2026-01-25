@@ -182,6 +182,13 @@ pub struct SiliconMonitorApp {
     // Settings
     show_settings: bool,
     settings: AppSettings,
+
+    // Alert system
+    active_alerts: Vec<Alert>,
+
+    // Historical data for AI queries
+    historical_data: Vec<HistoricalDataPoint>,
+    last_historical_save: std::time::Instant,
 }
 
 /// Result from background system info loading
@@ -255,7 +262,8 @@ impl Default for AiBackendSelection {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ColorTheme {
     #[default]
-    Cyber,       // Default neon cyber theme
+    Cyber,       // Default neon cyber theme (dark)
+    Light,       // Clean light theme
     Ocean,       // Blue/teal oceanic theme
     Forest,      // Green nature theme
     Sunset,      // Orange/red warm theme
@@ -265,7 +273,8 @@ pub enum ColorTheme {
 impl ColorTheme {
     fn name(&self) -> &'static str {
         match self {
-            ColorTheme::Cyber => "Cyber (Default)",
+            ColorTheme::Cyber => "Cyber (Dark)",
+            ColorTheme::Light => "Light",
             ColorTheme::Ocean => "Ocean",
             ColorTheme::Forest => "Forest",
             ColorTheme::Sunset => "Sunset",
@@ -276,6 +285,7 @@ impl ColorTheme {
     fn all() -> &'static [ColorTheme] {
         &[
             ColorTheme::Cyber,
+            ColorTheme::Light,
             ColorTheme::Ocean,
             ColorTheme::Forest,
             ColorTheme::Sunset,
@@ -287,6 +297,7 @@ impl ColorTheme {
     pub fn accent_color(&self) -> egui::Color32 {
         match self {
             ColorTheme::Cyber => CyberColors::CYAN,
+            ColorTheme::Light => egui::Color32::from_rgb(59, 130, 246),    // Blue
             ColorTheme::Ocean => egui::Color32::from_rgb(64, 224, 208),    // Turquoise
             ColorTheme::Forest => egui::Color32::from_rgb(34, 197, 94),    // Green
             ColorTheme::Sunset => egui::Color32::from_rgb(251, 146, 60),   // Orange
@@ -299,6 +310,7 @@ impl ColorTheme {
     pub fn secondary_color(&self) -> egui::Color32 {
         match self {
             ColorTheme::Cyber => CyberColors::MAGENTA,
+            ColorTheme::Light => egui::Color32::from_rgb(99, 102, 241),    // Indigo
             ColorTheme::Ocean => egui::Color32::from_rgb(56, 189, 248),    // Sky blue
             ColorTheme::Forest => egui::Color32::from_rgb(74, 222, 128),   // Light green
             ColorTheme::Sunset => egui::Color32::from_rgb(248, 113, 113),  // Red
@@ -306,6 +318,58 @@ impl ColorTheme {
         }
     }
 }
+/// Alert severity levels
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AlertSeverity {
+    Warning,
+    Critical,
+}
+
+/// An active alert
+#[derive(Debug, Clone)]
+pub struct Alert {
+    pub severity: AlertSeverity,
+    pub message: String,
+    pub timestamp: std::time::Instant,
+}
+
+/// Settings for the alert system
+#[derive(Debug, Clone)]
+pub struct AlertSettings {
+    pub enabled: bool,
+    pub cpu_warning_threshold: f32,
+    pub cpu_critical_threshold: f32,
+    pub memory_warning_threshold: f32,
+    pub memory_critical_threshold: f32,
+    pub gpu_temp_warning: f32,
+    pub gpu_temp_critical: f32,
+}
+
+impl Default for AlertSettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            cpu_warning_threshold: 80.0,
+            cpu_critical_threshold: 95.0,
+            memory_warning_threshold: 80.0,
+            memory_critical_threshold: 95.0,
+            gpu_temp_warning: 75.0,
+            gpu_temp_critical: 90.0,
+        }
+    }
+}
+
+/// A historical data point for tracking metrics over time
+#[derive(Debug, Clone)]
+pub struct HistoricalDataPoint {
+    pub timestamp: std::time::Instant,
+    pub cpu_usage: f32,
+    pub memory_usage: f32,
+    pub gpu_temps: Vec<f32>,
+    pub gpu_utils: Vec<f32>,
+}
+
+
 
 /// Application settings
 #[derive(Debug, Clone)]
@@ -314,6 +378,8 @@ pub struct AppSettings {
     pub graph_line_thickness: f32,
     pub show_grid_lines: bool,
     pub animation_speed: f32,
+    pub alert_settings: AlertSettings,
+    pub minimize_to_tray: bool,
 }
 
 impl Default for AppSettings {
@@ -323,6 +389,8 @@ impl Default for AppSettings {
             graph_line_thickness: 2.5,
             show_grid_lines: true,
             animation_speed: 1.0,
+            alert_settings: AlertSettings::default(),
+            minimize_to_tray: false,
         }
     }
 }
@@ -494,6 +562,13 @@ impl SiliconMonitorApp {
             // Settings
             show_settings: false,
             settings: AppSettings::default(),
+
+            // Alert system
+            active_alerts: Vec::new(),
+
+            // Historical data for AI queries
+            historical_data: Vec::new(),
+            last_historical_save: std::time::Instant::now(),
         };
 
         // Initialize history with zeros
@@ -956,6 +1031,23 @@ impl SiliconMonitorApp {
 
 impl eframe::App for SiliconMonitorApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Apply theme based on settings
+        match self.settings.color_theme {
+            ColorTheme::Light => theme::apply_light_theme(ctx),
+            _ => theme::apply_cyber_theme(ctx),
+        }
+
+        // Check alerts if enabled
+        if self.settings.alert_settings.enabled {
+            self.check_alerts();
+        }
+
+        // Save historical data periodically (every minute)
+        if self.last_historical_save.elapsed() >= std::time::Duration::from_secs(60) {
+            self.save_historical_data();
+            self.last_historical_save = std::time::Instant::now();
+        }
+
         // Check for background loading completions (non-blocking) - must be first!
         self.check_background_loaders();
 
@@ -1155,6 +1247,106 @@ impl eframe::App for SiliconMonitorApp {
 }
 
 impl SiliconMonitorApp {
+    /// Check for threshold violations and generate alerts
+    fn check_alerts(&mut self) {
+        let settings = self.settings.alert_settings.clone();
+        let mut new_alerts: Vec<(AlertSeverity, String)> = Vec::new();
+        
+        // Check CPU usage
+        let cpu_usage = self.cpu_usage();
+        if cpu_usage >= settings.cpu_critical_threshold {
+            new_alerts.push((AlertSeverity::Critical, format!("CPU usage critical: {:.1}%", cpu_usage)));
+        } else if cpu_usage >= settings.cpu_warning_threshold {
+            new_alerts.push((AlertSeverity::Warning, format!("CPU usage high: {:.1}%", cpu_usage)));
+        }
+        
+        // Check memory usage
+        if let Some(ref mem) = self.memory_stats {
+            let mem_percent = mem.ram_usage_percent();
+            if mem_percent >= settings.memory_critical_threshold {
+                new_alerts.push((AlertSeverity::Critical, format!("Memory usage critical: {:.1}%", mem_percent)));
+            } else if mem_percent >= settings.memory_warning_threshold {
+                new_alerts.push((AlertSeverity::Warning, format!("Memory usage high: {:.1}%", mem_percent)));
+            }
+        }
+        
+        // Check GPU temperatures
+        for (i, gpu) in self.gpu_dynamic_info.iter().enumerate() {
+            if let Some(temp) = gpu.thermal.temperature {
+                if temp as f32 >= settings.gpu_temp_critical {
+                    new_alerts.push((AlertSeverity::Critical, format!("GPU {} temperature critical: {}°C", i, temp)));
+                } else if temp as f32 >= settings.gpu_temp_warning {
+                    new_alerts.push((AlertSeverity::Warning, format!("GPU {} temperature high: {}°C", i, temp)));
+                }
+            }
+        }
+        
+        // Add collected alerts
+        for (severity, message) in new_alerts {
+            self.add_alert(severity, message);
+        }
+        
+        // Remove old alerts (older than 30 seconds)
+        let now = std::time::Instant::now();
+        self.active_alerts.retain(|a| now.duration_since(a.timestamp).as_secs() < 30);
+    }
+
+    /// Add an alert if not already present
+    fn add_alert(&mut self, severity: AlertSeverity, message: String) {
+        if !self.active_alerts.iter().any(|a| a.message == message) {
+            self.active_alerts.push(Alert {
+                severity,
+                message,
+                timestamp: std::time::Instant::now(),
+            });
+        }
+    }
+
+    /// Save current metrics to historical data for AI queries
+    fn save_historical_data(&mut self) {
+        let cpu_usage = self.cpu_usage();
+        let memory_usage = self.memory_stats.as_ref().map(|m| m.ram_usage_percent()).unwrap_or(0.0);
+        let gpu_temps: Vec<f32> = self.gpu_dynamic_info.iter().filter_map(|g| g.thermal.temperature.map(|t| t as f32)).collect();
+        let gpu_utils: Vec<f32> = self.gpu_dynamic_info.iter().map(|g| g.utilization as f32).collect();
+        
+        self.historical_data.push(HistoricalDataPoint {
+            timestamp: std::time::Instant::now(),
+            cpu_usage,
+            memory_usage,
+            gpu_temps,
+            gpu_utils,
+        });
+        
+        // Keep only last 60 minutes of data
+        if self.historical_data.len() > 60 {
+            self.historical_data.remove(0);
+        }
+    }
+
+    /// Get historical summary for AI agent queries
+    #[allow(dead_code)]
+    pub fn get_historical_summary(&self, minutes_ago: u32) -> Option<String> {
+        let now = std::time::Instant::now();
+        let target_duration = std::time::Duration::from_secs(minutes_ago as u64 * 60);
+        for point in self.historical_data.iter().rev() {
+            let age = now.duration_since(point.timestamp);
+            if age >= target_duration {
+                let mut summary = format!(
+                    "Historical data from {} minutes ago:\n- CPU: {:.1}%\n- Memory: {:.1}%",
+                    age.as_secs() / 60, point.cpu_usage, point.memory_usage
+                );
+                if !point.gpu_temps.is_empty() {
+                    summary.push_str(&format!("\n- GPU temps: {:?}°C", point.gpu_temps));
+                }
+                if !point.gpu_utils.is_empty() {
+                    summary.push_str(&format!("\n- GPU utils: {:?}%", point.gpu_utils));
+                }
+                return Some(summary);
+            }
+        }
+        None
+    }
+
     fn draw_overview(&mut self, ui: &mut egui::Ui) {
         ScrollArea::vertical().show(ui, |ui| {
             // Glances-style QuickLook panel at the top
