@@ -51,6 +51,17 @@ enum Commands {
         /// Question to ask the AI agent (if not provided, enters interactive mode)
         query: Option<String>,
     },
+    /// Start Model Context Protocol (MCP) server for AI agent integration (Claude, etc.)
+    McpServer,
+    /// Export AI agent integration manifests and schemas
+    AiManifest {
+        /// Output format: openai, anthropic, gemini, jsonld, mcp, or json
+        #[arg(short, long, default_value = "json")]
+        format: String,
+        /// Output file (stdout if not specified)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
     /// Record system metrics to a time-series database for analysis
     Record {
         #[command(subcommand)]
@@ -340,6 +351,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             handle_ai_command(query.as_deref())?;
         }
 
+        // MCP Server - Model Context Protocol for AI agent integration
+        Some(Commands::McpServer) => {
+            handle_mcp_server()?;
+        }
+
+        // AI Manifest - Export integration schemas for various AI agents
+        Some(Commands::AiManifest { format, output }) => {
+            handle_ai_manifest(format, output.as_ref())?;
+        }
+
         // Record command - time-series database operations
         Some(Commands::Record { action }) => {
             handle_record_command(action)?;
@@ -365,6 +386,55 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 fn handle_ai_command(query: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
     // Delegate to the same AI handler used by 'cli ai'
     handle_ai_query(query)
+}
+
+/// Handle MCP server command
+#[cfg(feature = "cli")]
+fn handle_mcp_server() -> Result<(), Box<dyn std::error::Error>> {
+    use simonlib::ai_api::McpServer;
+
+    eprintln!("[*] Starting MCP server on stdio...");
+    eprintln!("[*] Protocol version: {}", simonlib::ai_api::MCP_PROTOCOL_VERSION);
+
+    let mut server = McpServer::new()?;
+    server.run_stdio()?;
+    Ok(())
+}
+
+/// Handle AI manifest export command
+#[cfg(feature = "cli")]
+fn handle_ai_manifest(
+    format: &str,
+    output: Option<&PathBuf>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use simonlib::ai_api::{AgentManifest, ExportFormat};
+
+    let manifest = AgentManifest::new();
+
+    let export_format = match format.to_lowercase().as_str() {
+        "openai" | "chatgpt" | "gpt" => ExportFormat::OpenAI,
+        "anthropic" | "claude" => ExportFormat::Anthropic,
+        "gemini" | "google" => ExportFormat::Gemini,
+        "jsonld" | "json-ld" | "schema" => ExportFormat::JsonLd,
+        "mcp" => ExportFormat::Mcp,
+        "json" | "simple" => ExportFormat::SimpleJson,
+        _ => {
+            eprintln!("Unknown format '{}'. Supported: openai, anthropic, gemini, jsonld, mcp, json", format);
+            return Err("Invalid format".into());
+        }
+    };
+
+    let exported = manifest.export(export_format);
+    let json_output = serde_json::to_string_pretty(&exported)?;
+
+    if let Some(path) = output {
+        std::fs::write(path, &json_output)?;
+        eprintln!("[+] Manifest written to: {}", path.display());
+    } else {
+        println!("{}", json_output);
+    }
+
+    Ok(())
 }
 
 /// Handle CLI subcommands using the shared MonitoringBackend

@@ -32,6 +32,9 @@
 //! # }
 //! ```
 
+pub mod formats;
+pub mod mcp_server;
+pub mod ontology;
 pub mod tools;
 pub mod types;
 
@@ -44,6 +47,9 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
+pub use formats::*;
+pub use mcp_server::{McpServer, MCP_PROTOCOL_VERSION};
+pub use ontology::*;
 pub use tools::*;
 pub use types::*;
 
