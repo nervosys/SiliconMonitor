@@ -168,6 +168,7 @@ pub mod memory_management; // Memory and swap management (jetson_stats style)
 pub mod motherboard; // Motherboard sensors, BIOS, system information
 pub mod network_monitor; // Network interface monitoring
 pub mod network_tools; // Network diagnostic tools (ping, traceroute, port scan) - nmap/netcat style
+pub mod observability; // Full system observability API with MCP-like permissions for external AI access
 pub mod platform;
 pub mod power_supply; // Battery and power supply monitoring
 pub mod process_monitor; // Unified process monitoring with GPU attribution
@@ -236,6 +237,24 @@ pub use ai_workload::{
 
 // Re-export AI Data API for full system visibility
 pub use ai_api::{AiDataApi, ToolCall, ToolCategory, ToolDefinition, ToolResult};
+
+// Re-export Observability API for external AI access with MCP-like permissions
+pub use observability::{
+    // API types
+    ApiResponse, ObservabilityApi, ObservabilityError, RequestContext, ResponseMeta,
+    // Context types
+    SystemContext, MinimalContext, SystemContextBuilder, HardwareContext, SoftwareContext,
+    // Permission types
+    ApiConfig, ApiKey, Capability, Permission, PermissionChecker, Scope,
+    // Event types
+    EventManager, SystemEvent, EventCategory, EventSeverity, EventFilter,
+    // Metric types
+    MetricCollector, MetricSnapshot, MetricValue, MetricStats,
+    // Server types
+    ServerConfig, RequestHandler, HttpRequest, HttpResponse, OpenApiSpec,
+    // Streaming types
+    StreamManager, StreamMessage, StreamChannel, Subscription,
+};
 
 // Re-export AI agent
 pub use agent::{Agent, AgentConfig, AgentResponse, ModelSize, Query, QueryType, SystemState};
