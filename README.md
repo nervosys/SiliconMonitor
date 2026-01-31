@@ -3,9 +3,9 @@
 </p>
 
 <p align="center">
-  <a href="https://crates.io/crates/simon"><img src="https://img.shields.io/crates/v/simon.svg?style=flat-square&logo=rust&color=orange" alt="Crates.io"></a>
-  <a href="https://github.com/nervosys/SiliconMonitor/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/nervosys/SiliconMonitor/ci.yml?style=flat-square&logo=github&label=CI" alt="CI Status"></a>
-  <a href="https://github.com/nervosys/SiliconMonitor/actions"><img src="https://img.shields.io/github/actions/workflow/status/nervosys/SiliconMonitor/security-audit.yml?style=flat-square&logo=github&label=security" alt="Security"></a>
+  <a href="https://crates.io/crates/silicon-monitor"><img src="https://img.shields.io/crates/v/silicon-monitor.svg?style=flat-square&logo=rust&color=orange" alt="Crates.io"></a>
+  <a href="https://github.com/nervosys/SiliconMonitor/actions/workflows/build-and-push.yml"><img src="https://img.shields.io/github/actions/workflow/status/nervosys/SiliconMonitor/build-and-push.yml?style=flat-square&logo=github&label=CI" alt="CI Status"></a>
+  <a href="https://github.com/nervosys/SiliconMonitor/actions"><img src="https://img.shields.io/github/actions/workflow/status/nervosys/SiliconMonitor/build-and-push.yml?style=flat-square&logo=github&label=build" alt="Security"></a>
   <a href="https://github.com/nervosys/SiliconMonitor/blob/master/LICENSE"><img src="https://img.shields.io/badge/License-AGPL%20v3-blue.svg?style=flat-square" alt="License"></a>
   <a href="https://github.com/nervosys/SiliconMonitor/stargazers"><img src="https://img.shields.io/github/stars/nervosys/SiliconMonitor?style=flat-square&color=yellow" alt="Stars"></a>
 </p>
