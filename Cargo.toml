@@ -1,11 +1,11 @@
 [package]
-name = "simon"
+name = "silicon-monitor"
 version = "0.1.0"
 edition = "2021"
 authors = ["nervosys"]
 license = "Apache-2.0"
 description = "Silicon Monitor: Comprehensive hardware monitoring for CPUs, GPUs, NPUs, memory, I/O, and network silicon across all platforms"
-repository = "https://github.com/nervosys/simon"
+repository = "https://github.com/nervosys/SiliconMonitor"
 keywords = ["silicon", "monitor", "gpu", "cpu", "hardware"]
 categories = [
     "hardware-support",
@@ -20,7 +20,7 @@ path = "src/lib.rs"
 crate-type = ["lib", "cdylib", "staticlib"]
 
 [[bin]]
-name = "simon"
+name = "silicon-monitor"
 path = "src/bin/main.rs"
 required-features = ["cli"]
 
