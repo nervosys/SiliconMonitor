@@ -55,7 +55,7 @@ enum Commands {
     McpServer,
     /// Export AI agent integration manifests and schemas
     AiManifest {
-        /// Output format: openai, anthropic, gemini, jsonld, mcp, or json
+        /// Output format: openai, anthropic, gemini, grok, llama, mistral, deepseek, jsonld, mcp, or json
         #[arg(short, long, default_value = "json")]
         format: String,
         /// Output file (stdout if not specified)
@@ -412,14 +412,18 @@ fn handle_ai_manifest(
     let manifest = AgentManifest::new();
 
     let export_format = match format.to_lowercase().as_str() {
-        "openai" | "chatgpt" | "gpt" => ExportFormat::OpenAI,
+        "openai" | "chatgpt" | "gpt" | "gpt4" | "o1" | "o3" => ExportFormat::OpenAI,
         "anthropic" | "claude" => ExportFormat::Anthropic,
         "gemini" | "google" => ExportFormat::Gemini,
+        "grok" | "xai" => ExportFormat::Grok,
+        "llama" | "meta" => ExportFormat::Llama,
+        "mistral" | "mixtral" => ExportFormat::Mistral,
+        "deepseek" | "r1" => ExportFormat::DeepSeek,
         "jsonld" | "json-ld" | "schema" => ExportFormat::JsonLd,
         "mcp" => ExportFormat::Mcp,
         "json" | "simple" => ExportFormat::SimpleJson,
         _ => {
-            eprintln!("Unknown format '{}'. Supported: openai, anthropic, gemini, jsonld, mcp, json", format);
+            eprintln!("Unknown format '{}'. Supported: openai, anthropic, gemini, grok, llama, mistral, deepseek, jsonld, mcp, json", format);
             return Err("Invalid format".into());
         }
     };

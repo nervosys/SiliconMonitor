@@ -1,6 +1,23 @@
 # AI Agent Integration Guide
 
-Silicon Monitor provides comprehensive hardware monitoring capabilities that AI agents (ChatGPT, Claude, Gemini, etc.) can use to understand and query system state.
+Silicon Monitor provides comprehensive hardware monitoring capabilities that AI agents can use to understand and query system state.
+
+## Supported Models
+
+### Closed Source
+| Provider | Models | Format |
+|----------|--------|--------|
+| **OpenAI** | GPT-4o, GPT-4.5, o1, o3, o3-mini | `openai` |
+| **Anthropic** | Claude 4 Opus, Claude 4 Sonnet, Claude 3.5 | `anthropic` |
+| **Google** | Gemini 2.0 Flash, Gemini 2.0 Pro, Gemini 1.5 | `gemini` |
+| **xAI** | Grok 3, Grok 3 Mini, Grok 2 | `grok` |
+
+### Open Source (via OpenAI-compatible APIs)
+| Provider | Models | Format |
+|----------|--------|--------|
+| **Meta** | Llama 4 Scout/Maverick, Llama 3.3 70B | `llama` |
+| **Mistral** | Mistral Large, Codestral, Mixtral 8x22B | `mistral` |
+| **DeepSeek** | DeepSeek-R1, DeepSeek-V3 | `deepseek` |
 
 ## Quick Start
 
@@ -18,7 +35,7 @@ with open("openai_tools.json") as f:
     tools = json.load(f)["tools"]
 
 response = client.chat.completions.create(
-    model="gpt-4",
+    model="gpt-4o",  # or gpt-4.5-preview, o1, o3
     messages=[{"role": "user", "content": "What is my GPU temperature?"}],
     tools=tools
 )
@@ -38,7 +55,7 @@ with open("claude_tools.json") as f:
     tools = json.load(f)["tools"]
 
 response = client.messages.create(
-    model="claude-sonnet-4-20250514",
+    model="claude-opus-4-20250514",  # or claude-sonnet-4-20250514
     tools=tools,
     messages=[{"role": "user", "content": "How much GPU memory is being used?"}]
 )
@@ -60,11 +77,123 @@ Add to your Claude Desktop configuration (`claude_desktop_config.json`):
 
 Then restart Claude Desktop. Silicon Monitor tools will be available automatically.
 
-### For Gemini / Google AI
+### For Google Gemini
 
 Export the function declarations:
 ```bash
 simon ai-manifest --format gemini -o gemini_tools.json
+```
+
+```python
+import json
+with open("gemini_tools.json") as f:
+    tools_config = json.load(f)
+
+# Use with google-generativeai SDK
+model = genai.GenerativeModel(
+    "gemini-2.0-flash",  # or gemini-2.0-pro
+    tools=tools_config["tools"]
+)
+```
+
+### For xAI Grok
+
+```bash
+simon ai-manifest --format grok -o grok_tools.json
+```
+
+```python
+import json
+from openai import OpenAI
+
+client = OpenAI(
+    api_key="your-xai-api-key",
+    base_url="https://api.x.ai/v1"
+)
+
+with open("grok_tools.json") as f:
+    tools = json.load(f)["tools"]
+
+response = client.chat.completions.create(
+    model="grok-3",  # or grok-3-mini
+    messages=[{"role": "user", "content": "Check my GPU status"}],
+    tools=tools
+)
+```
+
+### For Meta Llama (Open Source)
+
+Use with OpenAI-compatible providers (Together, Fireworks, Groq):
+
+```bash
+simon ai-manifest --format llama -o llama_tools.json
+```
+
+```python
+import json
+from openai import OpenAI
+
+# Example using Together AI
+client = OpenAI(
+    api_key="your-together-api-key",
+    base_url="https://api.together.xyz/v1"
+)
+
+with open("llama_tools.json") as f:
+    tools = json.load(f)["tools"]
+
+response = client.chat.completions.create(
+    model="meta-llama/Llama-4-Scout-17B-16E-Instruct",
+    messages=[{"role": "user", "content": "What's my memory usage?"}],
+    tools=tools
+)
+```
+
+### For Mistral
+
+```bash
+simon ai-manifest --format mistral -o mistral_tools.json
+```
+
+```python
+import json
+from mistralai import Mistral
+
+client = Mistral(api_key="your-mistral-key")
+
+with open("mistral_tools.json") as f:
+    tools = json.load(f)["tools"]
+
+response = client.chat.complete(
+    model="mistral-large-latest",
+    messages=[{"role": "user", "content": "Show CPU utilization"}],
+    tools=tools
+)
+```
+
+### For DeepSeek
+
+```bash
+simon ai-manifest --format deepseek -o deepseek_tools.json
+```
+
+```python
+import json
+from openai import OpenAI
+
+client = OpenAI(
+    api_key="your-deepseek-key",
+    base_url="https://api.deepseek.com"
+)
+
+with open("deepseek_tools.json") as f:
+    tools = json.load(f)["tools"]
+
+response = client.chat.completions.create(
+    model="deepseek-chat",  # DeepSeek-V3
+    messages=[{"role": "user", "content": "List all GPUs"}],
+    tools=tools
+)
 ```
 
 ## Available Tools (35+)
@@ -131,10 +260,14 @@ The server communicates via JSON-RPC over stdio. It supports:
 
 | Format | Command | Use Case |
 |--------|---------|----------|
-| `openai` | `--format openai` | ChatGPT, GPT-4 function calling |
-| `anthropic` | `--format anthropic` | Claude tool use |
-| `gemini` | `--format gemini` | Google Gemini |
-| `mcp` | `--format mcp` | Model Context Protocol |
+| `openai` | `--format openai` | ChatGPT, GPT-4o, GPT-4.5, o1, o3 |
+| `anthropic` | `--format anthropic` | Claude 4 Opus/Sonnet, Claude 3.5 |
+| `gemini` | `--format gemini` | Gemini 2.0, Gemini 1.5 |
+| `grok` | `--format grok` | xAI Grok 3, Grok 2 |
+| `llama` | `--format llama` | Meta Llama 4, Llama 3.3 (via OpenAI-compatible APIs) |
+| `mistral` | `--format mistral` | Mistral Large, Codestral, Mixtral |
+| `deepseek` | `--format deepseek` | DeepSeek-R1, DeepSeek-V3 |
+| `mcp` | `--format mcp` | Model Context Protocol (Claude Desktop) |
 | `jsonld` | `--format jsonld` | Semantic web, general discovery |
 | `json` | `--format json` | Full manifest with ontology |
 
