@@ -1,6 +1,23 @@
-# Silicon Monitor (simon) 🔬
+<p align="center">
+  <img src="assets/banner.png" alt="Silicon Monitor (simon)" width="100%">
+</p>
 
-## Comprehensive cross-platform hardware monitoring library for Rust
+<p align="center">
+  <a href="https://crates.io/crates/simon"><img src="https://img.shields.io/crates/v/simon.svg?style=flat-square&logo=rust&color=orange" alt="Crates.io"></a>
+  <a href="https://github.com/nervosys/SiliconMonitor/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/nervosys/SiliconMonitor/ci.yml?style=flat-square&logo=github&label=CI" alt="CI Status"></a>
+  <a href="https://github.com/nervosys/SiliconMonitor/actions"><img src="https://img.shields.io/github/actions/workflow/status/nervosys/SiliconMonitor/security-audit.yml?style=flat-square&logo=github&label=security" alt="Security"></a>
+  <a href="https://github.com/nervosys/SiliconMonitor/blob/master/LICENSE"><img src="https://img.shields.io/badge/License-AGPL%20v3-blue.svg?style=flat-square" alt="License"></a>
+  <a href="https://github.com/nervosys/SiliconMonitor/stargazers"><img src="https://img.shields.io/github/stars/nervosys/SiliconMonitor?style=flat-square&color=yellow" alt="Stars"></a>
+</p>
+
+--
+
+<p align="center">
+  <strong>The world's first agentic shell with typed functional pipelines and multi-modal AI.</strong><br>
+  <em>Built in Rust for safety and performance, featuring revolutionary AI protocols found nowhere else.</em>
+</p>
+
+## Cross-platform agentic system monitoring
 
 Silicon Monitor is a powerful, cross-platform hardware monitoring library that provides deep insights into CPUs, GPUs, memory, disks, motherboards, and network interfaces. Built in Rust for maximum performance and safety, it offers a unified API across Windows, Linux, and macOS.
 
