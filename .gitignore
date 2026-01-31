@@ -31,4 +31,4 @@ jtop_test.*
 
 # Debug output
 tui_output.txt
-*.out
+*.outrelease/
