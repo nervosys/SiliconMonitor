@@ -20,7 +20,7 @@ path = "src/lib.rs"
 crate-type = ["lib", "cdylib", "staticlib"]
 
 [[bin]]
-name = "silicon-monitor"
+name = "simon"
 path = "src/bin/main.rs"
 required-features = ["cli"]
 
