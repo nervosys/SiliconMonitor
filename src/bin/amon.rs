@@ -1,28 +1,51 @@
-//! AI Monitor (amon) - Syntactic sugar for `simon ai`
+﻿//! AI Monitor (amon) - Syntactic sugar for `simon ai`
 //!
-//! This binary automatically routes all commands to the AI agent interface,
-//! providing a simpler interface for querying system state via natural language.
+//! This binary provides a simpler interface for AI-related commands.
+//!
+//! Usage:
+//!   amon                    - Enter interactive query mode
+//!   amon query [question]   - Ask a question
+//!   amon manifest [opts]    - Export tool manifests for AI agents
+//!   amon server             - Start MCP server for Claude Desktop
 
 #[cfg(feature = "cli")]
-use clap::Parser;
+use clap::{Parser, Subcommand};
+use std::path::PathBuf;
 use std::time::Duration;
 
 #[cfg(feature = "cli")]
 #[derive(Parser)]
 #[command(name = "amon")]
-#[command(about = "AI Monitor: Ask questions about your system state using natural language", long_about = None)]
+#[command(about = "AI Monitor: Natural language interface to system hardware", long_about = None)]
 #[command(version)]
 struct Cli {
-    /// Question to ask the AI agent (if not provided, enters interactive mode)
-    query: Option<String>,
-
-    /// Additional query arguments (combined with the first query)
-    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-    extra_args: Vec<String>,
+    #[command(subcommand)]
+    command: Option<AmonCommand>,
 
     /// List available AI backends
     #[arg(long)]
     list_backends: bool,
+}
+
+#[cfg(feature = "cli")]
+#[derive(Subcommand)]
+enum AmonCommand {
+    /// Ask AI agent about system state (default if no subcommand)
+    Query {
+        /// Question to ask the AI agent
+        question: Vec<String>,
+    },
+    /// Export tool manifests for AI agents (OpenAI, Claude, Gemini, etc.)
+    Manifest {
+        /// Output format: openai, anthropic, gemini, grok, llama, mistral, deepseek, jsonld, mcp, or json
+        #[arg(short, long, default_value = "json")]
+        format: String,
+        /// Output file (stdout if not specified)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
+    /// Start MCP (Model Context Protocol) server for Claude Desktop integration
+    Server,
 }
 
 #[cfg(feature = "cli")]
@@ -57,17 +80,77 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
-    // Combine query and extra args into one question
-    let query = if let Some(first) = cli.query {
-        let mut full_query = first;
-        if !cli.extra_args.is_empty() {
-            full_query.push(' ');
-            full_query.push_str(&cli.extra_args.join(" "));
+    match cli.command {
+        // Manifest export
+        Some(AmonCommand::Manifest { format, output }) => {
+            use simonlib::ai_api::{AgentManifest, ExportFormat};
+
+            let manifest = AgentManifest::new();
+
+            let export_format = match format.to_lowercase().as_str() {
+                "openai" | "chatgpt" | "gpt" | "gpt4" | "o1" | "o3" => ExportFormat::OpenAI,
+                "anthropic" | "claude" => ExportFormat::Anthropic,
+                "gemini" | "google" => ExportFormat::Gemini,
+                "grok" | "xai" => ExportFormat::Grok,
+                "llama" | "meta" => ExportFormat::Llama,
+                "mistral" | "mixtral" => ExportFormat::Mistral,
+                "deepseek" | "r1" => ExportFormat::DeepSeek,
+                "jsonld" | "json-ld" | "schema" => ExportFormat::JsonLd,
+                "mcp" => ExportFormat::Mcp,
+                "json" | "simple" => ExportFormat::SimpleJson,
+                _ => {
+                    eprintln!("Unknown format '{}'. Supported: openai, anthropic, gemini, grok, llama, mistral, deepseek, jsonld, mcp, json", format);
+                    return Err("Invalid format".into());
+                }
+            };
+
+            let exported = manifest.export(export_format);
+            let json_output = serde_json::to_string_pretty(&exported)?;
+
+            if let Some(path) = output {
+                std::fs::write(&path, &json_output)?;
+                eprintln!("[+] Manifest written to: {}", path.display());
+            } else {
+                println!("{}", json_output);
+            }
         }
-        Some(full_query)
-    } else {
-        None
-    };
+
+        // MCP Server
+        Some(AmonCommand::Server) => {
+            use simonlib::ai_api::McpServer;
+
+            eprintln!("[*] Starting MCP (Model Context Protocol) server...");
+            eprintln!("[*] Communicating via stdio (JSON-RPC 2.0)");
+            eprintln!("[*] Ready for connections from Claude Desktop or other MCP clients");
+
+            let mut server = McpServer::new()?;
+            server.run_stdio()?;
+        }
+
+        // Query mode (explicit or default)
+        Some(AmonCommand::Query { question }) => {
+            let query = if question.is_empty() {
+                None
+            } else {
+                Some(question.join(" "))
+            };
+            run_query_mode(query)?;
+        }
+
+        // No subcommand = interactive mode
+        None => {
+            run_query_mode(None)?;
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(feature = "cli")]
+fn run_query_mode(query: Option<String>) -> Result<(), Box<dyn std::error::Error>> {
+    use simonlib::agent::{Agent, AgentConfig};
+    use simonlib::SiliconMonitor;
+    use std::io::{self, Write};
 
     // Create monitor for system state
     let monitor = SiliconMonitor::new()?;
@@ -75,14 +158,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Auto-detect and configure best available backend
     let config = match AgentConfig::auto_detect() {
         Ok(cfg) => {
-            // Successfully auto-detected a backend
             if let Some(ref backend) = cfg.backend {
                 eprintln!("[*] Using backend: {}", backend.backend_type.display_name());
             }
             cfg
         }
         Err(e) => {
-            // No backends available - return error instead of falling back
             eprintln!("[!] No AI backends available: {}", e);
             eprintln!("[!] To use AI features, install Ollama (https://ollama.com) or set an API key (OPENAI_API_KEY, GITHUB_TOKEN, etc.)");
             return Err(Box::new(std::io::Error::new(
@@ -93,7 +174,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     .with_caching(true)
     .with_cache_size(50)
-    .with_timeout(Duration::from_secs(30)); // Longer timeout for remote backends
+    .with_timeout(Duration::from_secs(30));
 
     let mut agent = Agent::new(config)?;
 

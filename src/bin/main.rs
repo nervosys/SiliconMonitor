@@ -46,21 +46,10 @@ enum Commands {
         #[arg(short, long, default_value = "text", global = true)]
         format: String,
     },
-    /// Ask AI agent about system state (shortcut for 'cli ai')
+    /// AI agent features: query system, export manifests, start MCP server
     Ai {
-        /// Question to ask the AI agent (if not provided, enters interactive mode)
-        query: Option<String>,
-    },
-    /// Start Model Context Protocol (MCP) server for AI agent integration (Claude, etc.)
-    McpServer,
-    /// Export AI agent integration manifests and schemas
-    AiManifest {
-        /// Output format: openai, anthropic, gemini, grok, llama, mistral, deepseek, jsonld, mcp, or json
-        #[arg(short, long, default_value = "json")]
-        format: String,
-        /// Output file (stdout if not specified)
-        #[arg(short, long)]
-        output: Option<PathBuf>,
+        #[command(subcommand)]
+        action: AiSubcommand,
     },
     /// Record system metrics to a time-series database for analysis
     Record {
@@ -72,6 +61,29 @@ enum Commands {
         #[command(subcommand)]
         action: PrivacySubcommand,
     },
+}
+
+
+/// AI subcommands for agent integration
+#[cfg(feature = "cli")]
+#[derive(Subcommand)]
+enum AiSubcommand {
+    /// Ask AI agent about system state (interactive if no query provided)
+    Query {
+        /// Question to ask the AI agent
+        question: Option<String>,
+    },
+    /// Export tool manifests for AI agents (OpenAI, Claude, Gemini, etc.)
+    Manifest {
+        /// Output format: openai, anthropic, gemini, grok, llama, mistral, deepseek, jsonld, mcp, or json
+        #[arg(short, long, default_value = "json")]
+        format: String,
+        /// Output file (stdout if not specified)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
+    /// Start MCP (Model Context Protocol) server for Claude Desktop integration
+    Server,
 }
 
 /// CLI subcommands for hardware monitoring
@@ -346,20 +358,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             handle_cli_command(action, *interval, format)?;
         }
 
-        // Top-level AI command (shortcut for 'cli ai')
-        Some(Commands::Ai { query }) => {
-            handle_ai_command(query.as_deref())?;
+        // AI subcommands - query, manifest, server
+        Some(Commands::Ai { action }) => {
+            match action {
+                AiSubcommand::Query { question } => {
+                    handle_ai_command(question.as_deref())?;
+                }
+                AiSubcommand::Manifest { format, output } => {
+                    handle_ai_manifest(&format, output.as_ref())?;
+                }
+                AiSubcommand::Server => {
+                    handle_mcp_server()?;
+                }
+            }
         }
 
-        // MCP Server - Model Context Protocol for AI agent integration
-        Some(Commands::McpServer) => {
-            handle_mcp_server()?;
-        }
-
-        // AI Manifest - Export integration schemas for various AI agents
-        Some(Commands::AiManifest { format, output }) => {
-            handle_ai_manifest(format, output.as_ref())?;
-        }
 
         // Record command - time-series database operations
         Some(Commands::Record { action }) => {
