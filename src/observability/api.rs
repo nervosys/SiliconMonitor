@@ -568,9 +568,7 @@ impl ObservabilityApi {
     fn collect_system_identity(&self) -> SystemIdentity {
         // TODO: Integrate with actual system info collection
         SystemIdentity {
-            hostname: hostname::get()
-                .map(|h| h.to_string_lossy().to_string())
-                .unwrap_or_else(|_| "unknown".into()),
+            hostname: std::env::var("COMPUTERNAME").or_else(|_| std::env::var("HOSTNAME")).unwrap_or_else(|_| "unknown".into()),
             os_name: std::env::consts::OS.to_string(),
             os_version: String::new(), // Platform-specific
             kernel_version: String::new(), // Platform-specific
