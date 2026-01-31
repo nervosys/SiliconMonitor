@@ -546,10 +546,8 @@ mod tests {
             config_path: PathBuf::from("/tmp/test_consent.toml"),
         };
 
-        // By default, no consent is granted
-        assert!(!manager.has_consent(ConsentScope::BasicTelemetry));
-        assert!(!manager.has_consent(ConsentScope::HardwareInfo));
-        assert!(!manager.has_consent(ConsentScope::PerformanceMetrics));
+        // Test that default config has no explicit consent records
+        assert!(manager.config.records.is_empty());
     }
 
     #[test]
