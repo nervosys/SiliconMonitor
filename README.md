@@ -154,27 +154,44 @@ simon gpu
 simon memory
 simon processes
 
-# Ask AI agent questions
-simon ai "What's my GPU temperature?"
-simon ai  # Interactive AI mode
-```
+# AI agent subcommands
+simon ai query "What's my GPU temperature?"  # Ask a question
+simon ai query                                 # Interactive AI mode
+simon ai manifest --format openai             # Export for OpenAI/GPT
+simon ai manifest --format anthropic          # Export for Claude
+simon ai manifest --format gemini             # Export for Gemini
+simon ai manifest --format grok               # Export for xAI Grok
+simon ai manifest --format llama              # Export for Meta Llama
+simon ai manifest --format mistral            # Export for Mistral
+simon ai manifest --format deepseek           # Export for DeepSeek
+simon ai server                               # Start MCP server for Claude Desktop
 
 #### `amon` - AI Monitor
 
 Dedicated AI agent interface for natural language system queries. This is syntactic sugar for `simon ai`:
 
 ```bash
-# Quick questions (equivalent to: simon ai "...")
-amon "What's my GPU temperature?"
-amon "Show me CPU usage"
-amon "Is my system running hot?"
+# Query subcommand (default if no subcommand)
+amon query "What's my GPU temperature?"   # Ask a question
+amon query                                 # Interactive AI mode
+amon                                       # Also starts interactive mode
 
-# Interactive AI mode
-amon
+# Export manifests for AI agents
+amon manifest --format openai              # Export for OpenAI/GPT-4o/o1/o3
+amon manifest --format anthropic           # Export for Claude 4
+amon manifest --format gemini              # Export for Gemini 2.0
+amon manifest --format grok                # Export for xAI Grok 3
+amon manifest --format llama               # Export for Meta Llama 4
+amon manifest --format mistral             # Export for Mistral Large
+amon manifest --format deepseek            # Export for DeepSeek-R1/V3
+amon manifest --format mcp                 # Export as MCP tools
+amon manifest -o tools.json                # Save to file
 
-# Multi-word queries (no quotes needed)
-amon How much memory am I using?
-```
+# Start MCP server for Claude Desktop integration
+amon server
+
+# List available AI backends
+amon --list-backends
 
 Both binaries provide the same underlying functionality - use **`simon`** for traditional monitoring commands or **`amon`** for AI-focused interactions!
 
@@ -312,10 +329,10 @@ Silicon Monitor includes a lightweight AI agent that can answer questions about 
 
 ```bash
 # Quick single queries with amon
-amon "What's my GPU temperature?"
-amon "Show CPU usage"
-amon "Is my memory usage normal?"
-amon How much power am I using?
+amon query "What's my GPU temperature?"
+amon query "Show CPU usage"
+amon query "Is my memory usage normal?"
+
 
 # Interactive AI session
 amon
@@ -323,7 +340,7 @@ amon
 # 🤖 Agent: Your GPU is currently at 45% utilization...
 
 # Or use simon ai subcommand
-simon ai "Analyze my system performance"
+simon ai query "Analyze my system performance"
 simon ai  # Interactive mode
 ```
 
@@ -388,7 +405,7 @@ amon --list-backends
 #    Endpoint: https://models.inference.ai.azure.com
 
 # Automatic backend detection (default)
-amon "What's my GPU temperature?"
+amon query "What's my GPU temperature?"
 # [*] Using backend: Ollama
 # Question: What's my GPU temperature?
 # ...
