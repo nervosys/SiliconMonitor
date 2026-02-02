@@ -592,7 +592,7 @@ fn handle_cli_command(
                 println!("{}", serde_json::to_string_pretty(monitor.devices())?);
             } else {
                 println!("{}", "═══ Audio Devices ═══".cyan().bold());
-                println!("  Master Volume: {:.0}%", monitor.master_volume() * 100.0);
+                println!("  Master Volume: {:.0}%", monitor.master_volume().unwrap_or(100));
                 println!("  Muted: {}", if monitor.is_muted() { "Yes" } else { "No" });
                 for device in monitor.devices() {
                     println!("  {} ({:?}) - {:?}", device.name, device.device_type, device.state);
@@ -631,7 +631,7 @@ fn handle_cli_command(
                 println!("  Count: {}", monitor.count());
                 for display in monitor.displays() {
                     println!("  {} {}x{} @ {:.0}Hz {:?}",
-                        display.name, display.width, display.height,
+                        display.name.as_deref().unwrap_or("Unknown"), display.width, display.height,
                         display.refresh_rate, display.connection);
                 }
             }
@@ -645,7 +645,7 @@ fn handle_cli_command(
                 println!("{}", "═══ USB Devices ═══".cyan().bold());
                 println!("  Count: {}", monitor.devices().len());
                 for device in monitor.devices() {
-                    let name = device.product_name.as_deref().unwrap_or("Unknown");
+                    let name = device.product.as_deref().unwrap_or("Unknown");
                     println!("  [{:04x}:{:04x}] {} ({:?})", 
                         device.vendor_id, device.product_id, name, device.speed);
                 }

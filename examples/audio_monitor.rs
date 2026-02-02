@@ -19,9 +19,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Check mute status
-    if let Some(muted) = monitor.is_muted() {
-        println!("Muted: {}", if muted { "Yes" } else { "No" });
-    }
+    println!("Muted: {}", if monitor.is_muted() { "Yes" } else { "No" });
 
     println!();
 
@@ -30,7 +28,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Found {} audio device(s):\n", devices.len());
 
     for device in devices {
-        let direction = if device.is_output { "Output" } else { "Input" };
+        let direction = match device.device_type {
+            simon::audio::AudioDeviceType::Output => "Output",
+            simon::audio::AudioDeviceType::Input => "Input",
+            simon::audio::AudioDeviceType::Duplex => "Duplex",
+        };
         let default = if device.is_default { " (Default)" } else { "" };
         let enabled = if device.is_enabled { "" } else { " [Disabled]" };
 

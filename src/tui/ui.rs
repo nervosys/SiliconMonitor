@@ -2246,7 +2246,7 @@ fn draw_peripherals(f: &mut Frame, _app: &App, area: Rect) {
             "No audio devices detected".to_string()
         } else {
             format!("{} audio device(s) | Volume: {:.0}% | Muted: {}",
-                devices.len(), monitor.master_volume() * 100.0, if monitor.is_muted() { "Yes" } else { "No" })
+                devices.len(), monitor.master_volume().unwrap_or(100) as f32, if monitor.is_muted() { "Yes" } else { "No" })
         }
     } else {
         "Audio monitoring not available".to_string()
@@ -2286,7 +2286,7 @@ fn draw_peripherals(f: &mut Frame, _app: &App, area: Rect) {
             "No displays detected".to_string()
         } else {
             let info: Vec<String> = displays.iter().map(|d| {
-                format!("{}: {}x{} @ {:.0}Hz", d.name, d.width, d.height, d.refresh_rate)
+                format!("{}: {}x{} @ {:.0}Hz", d.name.as_deref().unwrap_or("Display"), d.width, d.height, d.refresh_rate)
             }).collect();
             info.join(" | ")
         }

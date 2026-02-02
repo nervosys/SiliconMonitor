@@ -1968,10 +1968,10 @@ impl AiDataApi {
     }
     // ============== USB Tools ==============
     pub(crate) fn tool_get_usb_devices(&mut self, params: serde_json::Value) -> Result<serde_json::Value> {
-        use crate::usb::{UsbClass, UsbMonitor};
+        use crate::usb::{UsbDeviceClass, UsbMonitor};
         let class_filter = params.get("class").and_then(|v| v.as_str()).unwrap_or("all");
         let monitor = UsbMonitor::new().map_err(|e| SimonError::HardwareError(e.to_string()))?;
-        let devices: Vec<_> = monitor.devices().iter().filter(|d| class_filter == "all" || matches!((&d.class, class_filter), (UsbClass::Audio, "audio") | (UsbClass::Hid, "hid") | (UsbClass::MassStorage, "storage") | (UsbClass::Hub, "hub") | (UsbClass::Video, "video"))).map(|d| json!({"bus": d.bus, "address": d.address, "vendor_id": format!("{:04x}", d.vendor_id), "product_id": format!("{:04x}", d.product_id), "vendor_name": d.vendor_name, "product_name": d.product_name, "class": format!("{:?}", d.class), "speed": format!("{:?}", d.speed)})).collect();
+        let devices: Vec<_> = monitor.devices().iter().filter(|d| class_filter == "all" || matches!((&d.class, class_filter), (UsbDeviceClass::Audio, "audio") | (UsbDeviceClass::Hid, "hid") | (UsbDeviceClass::MassStorage, "storage") | (UsbDeviceClass::Hub, "hub") | (UsbDeviceClass::Video, "video"))).map(|d| json!({"bus": d.bus_number, "port": d.port_number, "vendor_id": format!("{:04x}", d.vendor_id), "product_id": format!("{:04x}", d.product_id), "vendor_name": d.manufacturer, "product_name": d.product, "class": format!("{:?}", d.class), "speed": format!("{:?}", d.speed)})).collect();
         Ok(json!(devices))
     }
     pub(crate) fn tool_get_usb_device_details(&mut self, params: serde_json::Value) -> Result<serde_json::Value> {
@@ -1979,8 +1979,8 @@ impl AiDataApi {
         let bus = params.get("bus").and_then(|v| v.as_u64()).ok_or_else(|| SimonError::InvalidArgument("bus required".to_string()))? as u8;
         let address = params.get("address").and_then(|v| v.as_u64()).ok_or_else(|| SimonError::InvalidArgument("address required".to_string()))? as u8;
         let monitor = UsbMonitor::new().map_err(|e| SimonError::HardwareError(e.to_string()))?;
-        let device = monitor.devices().iter().find(|d| d.bus == bus && d.address == address).ok_or_else(|| SimonError::DeviceNotFound(format!("USB device at bus {} address {} not found", bus, address)))?;
-        Ok(json!({"bus": device.bus, "address": device.address, "vendor_id": format!("{:04x}", device.vendor_id), "product_id": format!("{:04x}", device.product_id), "vendor_name": device.vendor_name, "product_name": device.product_name, "class": format!("{:?}", device.class), "speed": format!("{:?}", device.speed)}))
+        let device = monitor.devices().iter().find(|d| d.bus_number == bus && d.port_number == address).ok_or_else(|| SimonError::DeviceNotFound(format!("USB device at bus {} address {} not found", bus, address)))?;
+        Ok(json!({"bus": device.bus_number, "port": device.port_number, "vendor_id": format!("{:04x}", device.vendor_id), "product_id": format!("{:04x}", device.product_id), "vendor_name": device.manufacturer, "product_name": device.product, "class": format!("{:?}", device.class), "speed": format!("{:?}", device.speed)}))
     }
 
 }

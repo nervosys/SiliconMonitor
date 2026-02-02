@@ -201,7 +201,7 @@ pub mod gui; // Graphical UI
 pub use audio::{AudioDevice, AudioDeviceType, AudioMonitor, AudioState};
 pub use bluetooth::{BluetoothAdapter, BluetoothDevice, BluetoothDeviceType, BluetoothMonitor, BluetoothState};
 pub use display::{DisplayConnection, DisplayInfo, DisplayMonitor, HdrMode};
-pub use usb::{UsbClass, UsbDevice, UsbMonitor, UsbSpeed};
+pub use usb::{UsbDeviceClass, UsbDevice, UsbMonitor, UsbSpeed};
 // Re-export main types
 pub use core::{
     cpu::CpuStats,
