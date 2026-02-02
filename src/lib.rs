@@ -148,6 +148,10 @@
 //! - `all_gpus.rs` - Unified multi-vendor GPU example
 //! - `ai_api_demo.rs` - AI Data API demonstration with tool-based system access
 
+pub mod audio; // Audio device monitoring and control
+pub mod bluetooth; // Bluetooth device monitoring
+pub mod display; // Display/monitor information
+pub mod usb; // USB device enumeration
 pub mod agent; // AI agent for system analysis and predictions
 pub mod ai_api; // AI Data API for full system visibility with tool-based access
 pub mod ai_workload; // AI training and inference workload monitoring
@@ -192,6 +196,12 @@ pub use tui::{AcceleratorInfo, AcceleratorType};
 #[cfg(feature = "gui")]
 pub mod gui; // Graphical UI
 
+
+// Re-export new hardware monitors
+pub use audio::{AudioDevice, AudioDeviceType, AudioMonitor, AudioState};
+pub use bluetooth::{BluetoothAdapter, BluetoothDevice, BluetoothDeviceType, BluetoothMonitor, BluetoothState};
+pub use display::{DisplayConnection, DisplayInfo, DisplayMonitor, HdrMode};
+pub use usb::{UsbClass, UsbDevice, UsbMonitor, UsbSpeed};
 // Re-export main types
 pub use core::{
     cpu::CpuStats,
