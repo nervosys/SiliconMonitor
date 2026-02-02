@@ -1,7 +1,6 @@
 //! Hardware Ontology for AI Agent Discoverability
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 /// Hardware domain ontology
 #[derive(Debug, Clone, Serialize, Deserialize)]

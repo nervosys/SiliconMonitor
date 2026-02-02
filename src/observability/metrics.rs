@@ -197,6 +197,7 @@ pub struct TimeSeriesPoint {
 /// Time-series metric storage
 pub struct MetricTimeSeries {
     /// Metric name
+    #[allow(dead_code)]
     name: String,
     /// Max data points to keep
     max_points: usize,

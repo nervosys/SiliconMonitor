@@ -129,6 +129,7 @@ pub struct RateLimitInfo {
 }
 
 /// The main Observability API
+#[allow(dead_code)]
 pub struct ObservabilityApi {
     /// Permission checker
     permission_checker: Arc<RwLock<PermissionChecker>>,

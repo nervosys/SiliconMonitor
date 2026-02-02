@@ -10,11 +10,9 @@
   <a href="https://github.com/nervosys/SiliconMonitor/stargazers"><img src="https://img.shields.io/github/stars/nervosys/SiliconMonitor?style=flat-square&color=yellow" alt="Stars"></a>
 </p>
 
---
-
 <p align="center">
-  <strong>The world's first agentic shell with typed functional pipelines and multi-modal AI.</strong><br>
-  <em>Built in Rust for safety and performance, featuring revolutionary AI protocols found nowhere else.</em>
+  <strong>The world's first agentic system monitoring utility and API.</strong><br>
+  <em>Built in Rust for safety and performance, featuring revolutionary hardware interfaces for AI.</em>
 </p>
 
 ## Cross-platform agentic system monitoring
