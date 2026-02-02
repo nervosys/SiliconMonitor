@@ -1677,8 +1677,9 @@ fn draw_content(f: &mut Frame, app: &App, area: Rect) {
         1 => draw_cpu(f, app, area),
         2 => draw_gpu(f, app, area),
         3 => draw_memory(f, app, area),
-        4 => draw_system(f, app, area),
-        5 => draw_agent(f, app, area),
+        4 => draw_peripherals(f, app, area),
+        5 => draw_system(f, app, area),
+        6 => draw_agent(f, app, area),
         _ => {}
     }
 }
@@ -2215,3 +2216,103 @@ fn cpu_color(utilization: f32) -> Color {
 fn usage_color(percent: f32) -> Color {
     threshold_color(percent)
 }
+
+#[allow(dead_code)]
+fn draw_peripherals(f: &mut Frame, _app: &App, area: Rect) {
+    use crate::audio::AudioMonitor;
+    use crate::bluetooth::BluetoothMonitor;
+    use crate::display::DisplayMonitor;
+    use crate::usb::UsbMonitor;
+    
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage(25),
+            Constraint::Percentage(25),
+            Constraint::Percentage(25),
+            Constraint::Percentage(25),
+        ])
+        .split(area);
+    
+    // Audio section
+    let audio_block = Block::default()
+        .borders(Borders::ALL)
+        .title("Audio Devices")
+        .border_style(Style::default().fg(glances_colors::TITLE));
+    
+    let audio_info = if let Ok(monitor) = AudioMonitor::new() {
+        let devices = monitor.devices();
+        if devices.is_empty() {
+            "No audio devices detected".to_string()
+        } else {
+            format!("{} audio device(s) | Volume: {:.0}% | Muted: {}",
+                devices.len(), monitor.master_volume() * 100.0, if monitor.is_muted() { "Yes" } else { "No" })
+        }
+    } else {
+        "Audio monitoring not available".to_string()
+    };
+    let audio_para = Paragraph::new(audio_info).block(audio_block);
+    f.render_widget(audio_para, chunks[0]);
+    
+    // Bluetooth section
+    let bt_block = Block::default()
+        .borders(Borders::ALL)
+        .title("Bluetooth")
+        .border_style(Style::default().fg(glances_colors::TITLE));
+    
+    let bt_info = if let Ok(monitor) = BluetoothMonitor::new() {
+        let adapters = monitor.adapters().len();
+        let devices = monitor.devices().len();
+        if monitor.is_available() {
+            format!("{} adapter(s) | {} device(s) paired", adapters, devices)
+        } else {
+            "Bluetooth not available".to_string()
+        }
+    } else {
+        "Bluetooth monitoring not available".to_string()
+    };
+    let bt_para = Paragraph::new(bt_info).block(bt_block);
+    f.render_widget(bt_para, chunks[1]);
+    
+    // Display section
+    let display_block = Block::default()
+        .borders(Borders::ALL)
+        .title("Displays")
+        .border_style(Style::default().fg(glances_colors::TITLE));
+    
+    let display_info = if let Ok(monitor) = DisplayMonitor::new() {
+        let displays = monitor.displays();
+        if displays.is_empty() {
+            "No displays detected".to_string()
+        } else {
+            let info: Vec<String> = displays.iter().map(|d| {
+                format!("{}: {}x{} @ {:.0}Hz", d.name, d.width, d.height, d.refresh_rate)
+            }).collect();
+            info.join(" | ")
+        }
+    } else {
+        "Display monitoring not available".to_string()
+    };
+    let display_para = Paragraph::new(display_info).block(display_block);
+    f.render_widget(display_para, chunks[2]);
+    
+    // USB section
+    let usb_block = Block::default()
+        .borders(Borders::ALL)
+        .title("USB Devices")
+        .border_style(Style::default().fg(glances_colors::TITLE));
+    
+    let usb_info = if let Ok(monitor) = UsbMonitor::new() {
+        let devices = monitor.devices();
+        if devices.is_empty() {
+            "No USB devices detected".to_string()
+        } else {
+            format!("{} USB device(s) connected", devices.len())
+        }
+    } else {
+        "USB monitoring not available".to_string()
+    };
+    let usb_para = Paragraph::new(usb_info).block(usb_block);
+    f.render_widget(usb_para, chunks[3]);
+}
+

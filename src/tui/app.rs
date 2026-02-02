@@ -445,6 +445,7 @@ impl App {
                 "CPU",
                 "Accelerators",
                 "Memory",
+                "Peripherals",
                 "System",
                 "Agent",
             ],
