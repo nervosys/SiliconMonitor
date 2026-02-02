@@ -551,6 +551,67 @@ pub fn get_all_tool_definitions() -> Vec<ToolDefinition> {
         example: Some("get_driver_info({\"driver_type\": \"gpu\"})".to_string()),
     });
 
+    // Audio tools
+    tools.push(ToolDefinition {
+        name: "get_audio_devices".to_string(),
+        description: "List all audio devices (speakers, microphones, headphones) with their status.".to_string(),
+        parameters: json!({"type": "object", "properties": {"device_type": {"type": "string", "enum": ["output", "input", "all"], "description": "Filter by device type. Default: all"}}, "required": []}),
+        category: ToolCategory::Audio,
+        example: Some("get_audio_devices()".to_string()),
+    });
+    tools.push(ToolDefinition {
+        name: "get_audio_status".to_string(),
+        description: "Get current audio status including master volume and mute state.".to_string(),
+        parameters: json!({"type": "object", "properties": {}, "required": []}),
+        category: ToolCategory::Audio,
+        example: Some("get_audio_status()".to_string()),
+    });
+    // Bluetooth tools
+    tools.push(ToolDefinition {
+        name: "get_bluetooth_adapters".to_string(),
+        description: "List all Bluetooth adapters in the system.".to_string(),
+        parameters: json!({"type": "object", "properties": {}, "required": []}),
+        category: ToolCategory::Bluetooth,
+        example: Some("get_bluetooth_adapters()".to_string()),
+    });
+    tools.push(ToolDefinition {
+        name: "get_bluetooth_devices".to_string(),
+        description: "List all paired/discovered Bluetooth devices with connection status.".to_string(),
+        parameters: json!({"type": "object", "properties": {"connected_only": {"type": "boolean", "description": "Only show connected devices. Default: false"}}, "required": []}),
+        category: ToolCategory::Bluetooth,
+        example: Some("get_bluetooth_devices()".to_string()),
+    });
+    // Display tools
+    tools.push(ToolDefinition {
+        name: "get_display_list".to_string(),
+        description: "List all connected displays/monitors with resolution and refresh rate.".to_string(),
+        parameters: json!({"type": "object", "properties": {}, "required": []}),
+        category: ToolCategory::Display,
+        example: Some("get_display_list()".to_string()),
+    });
+    tools.push(ToolDefinition {
+        name: "get_display_details".to_string(),
+        description: "Get detailed information about a specific display.".to_string(),
+        parameters: json!({"type": "object", "properties": {"display_id": {"type": "string", "description": "Display identifier"}}, "required": ["display_id"]}),
+        category: ToolCategory::Display,
+        example: Some("get_display_details()".to_string()),
+    });
+    // USB tools
+    tools.push(ToolDefinition {
+        name: "get_usb_devices".to_string(),
+        description: "List all connected USB devices with vendor/product info.".to_string(),
+        parameters: json!({"type": "object", "properties": {"class": {"type": "string", "enum": ["audio", "hid", "storage", "hub", "video", "all"], "description": "Filter by USB device class. Default: all"}}, "required": []}),
+        category: ToolCategory::Usb,
+        example: Some("get_usb_devices()".to_string()),
+    });
+    tools.push(ToolDefinition {
+        name: "get_usb_device_details".to_string(),
+        description: "Get detailed information about a specific USB device.".to_string(),
+        parameters: json!({"type": "object", "properties": {"bus": {"type": "integer", "description": "USB bus number"}, "address": {"type": "integer", "description": "Device address on bus"}}, "required": ["bus", "address"]}),
+        category: ToolCategory::Usb,
+        example: Some("get_usb_device_details()".to_string()),
+    });
+
     // Historical data tools
     tools.push(ToolDefinition {
         name: "get_historical_data".to_string(),
@@ -1860,4 +1921,66 @@ impl AiDataApi {
 
         Ok(json!(filtered))
     }
+
+    // ============== Audio Tools ==============
+    pub(crate) fn tool_get_audio_devices(&mut self, params: serde_json::Value) -> Result<serde_json::Value> {
+        use crate::audio::{AudioDeviceType, AudioMonitor};
+        let device_type = params.get("device_type").and_then(|v| v.as_str()).unwrap_or("all");
+        let monitor = AudioMonitor::new().map_err(|e| SimonError::HardwareError(e.to_string()))?;
+        let devices: Vec<_> = monitor.devices().iter()
+            .filter(|d| device_type == "all" || matches!((&d.device_type, device_type), (AudioDeviceType::Output, "output") | (AudioDeviceType::Input, "input") | (AudioDeviceType::Duplex, "output") | (AudioDeviceType::Duplex, "input")))
+            .map(|d| json!({"id": d.id, "name": d.name, "type": format!("{:?}", d.device_type), "state": format!("{:?}", d.state), "is_default": d.is_default, "volume": d.volume, "muted": d.muted}))
+            .collect();
+        Ok(json!(devices))
+    }
+    pub(crate) fn tool_get_audio_status(&mut self, _params: serde_json::Value) -> Result<serde_json::Value> {
+        use crate::audio::AudioMonitor;
+        let monitor = AudioMonitor::new().map_err(|e| SimonError::HardwareError(e.to_string()))?;
+        Ok(json!({"master_volume": monitor.master_volume(), "is_muted": monitor.is_muted(), "device_count": monitor.devices().len()}))
+    }
+    // ============== Bluetooth Tools ==============
+    pub(crate) fn tool_get_bluetooth_adapters(&mut self, _params: serde_json::Value) -> Result<serde_json::Value> {
+        use crate::bluetooth::BluetoothMonitor;
+        let monitor = BluetoothMonitor::new().map_err(|e| SimonError::HardwareError(e.to_string()))?;
+        let adapters: Vec<_> = monitor.adapters().iter().map(|a| json!({"id": a.id, "name": a.name, "address": a.address, "powered": a.powered})).collect();
+        Ok(json!({"available": monitor.is_available(), "adapters": adapters}))
+    }
+    pub(crate) fn tool_get_bluetooth_devices(&mut self, params: serde_json::Value) -> Result<serde_json::Value> {
+        use crate::bluetooth::{BluetoothMonitor, BluetoothState};
+        let connected_only = params.get("connected_only").and_then(|v| v.as_bool()).unwrap_or(false);
+        let monitor = BluetoothMonitor::new().map_err(|e| SimonError::HardwareError(e.to_string()))?;
+        let devices: Vec<_> = monitor.devices().iter().filter(|d| !connected_only || d.state == BluetoothState::Connected).map(|d| json!({"address": d.address, "name": d.name, "type": format!("{:?}", d.device_type), "state": format!("{:?}", d.state), "battery_percent": d.battery_percent})).collect();
+        Ok(json!(devices))
+    }
+    // ============== Display Tools ==============
+    pub(crate) fn tool_get_display_list(&mut self, _params: serde_json::Value) -> Result<serde_json::Value> {
+        use crate::display::DisplayMonitor;
+        let monitor = DisplayMonitor::new().map_err(|e| SimonError::HardwareError(e.to_string()))?;
+        let displays: Vec<_> = monitor.displays().iter().map(|d| json!({"id": d.id, "name": d.name, "manufacturer": d.manufacturer, "connection": format!("{:?}", d.connection), "is_primary": d.is_primary, "resolution": format!("{}x{}", d.width, d.height), "aspect_ratio": d.aspect_ratio(), "refresh_rate": d.refresh_rate, "brightness": d.brightness, "hdr": format!("{:?}", d.hdr)})).collect();
+        Ok(json!({"count": monitor.count(), "displays": displays}))
+    }
+    pub(crate) fn tool_get_display_details(&mut self, params: serde_json::Value) -> Result<serde_json::Value> {
+        use crate::display::DisplayMonitor;
+        let display_id = params.get("display_id").and_then(|v| v.as_str()).ok_or_else(|| SimonError::InvalidArgument("display_id required".to_string()))?;
+        let monitor = DisplayMonitor::new().map_err(|e| SimonError::HardwareError(e.to_string()))?;
+        let display = monitor.displays().iter().find(|d| d.id == display_id).ok_or_else(|| SimonError::DeviceNotFound(format!("Display {} not found", display_id)))?;
+        Ok(json!({"id": display.id, "name": display.name, "manufacturer": display.manufacturer, "connection": format!("{:?}", display.connection), "is_primary": display.is_primary, "width": display.width, "height": display.height, "resolution": format!("{}x{}", display.width, display.height), "aspect_ratio": display.aspect_ratio(), "refresh_rate": display.refresh_rate, "brightness": display.brightness, "hdr": format!("{:?}", display.hdr)}))
+    }
+    // ============== USB Tools ==============
+    pub(crate) fn tool_get_usb_devices(&mut self, params: serde_json::Value) -> Result<serde_json::Value> {
+        use crate::usb::{UsbClass, UsbMonitor};
+        let class_filter = params.get("class").and_then(|v| v.as_str()).unwrap_or("all");
+        let monitor = UsbMonitor::new().map_err(|e| SimonError::HardwareError(e.to_string()))?;
+        let devices: Vec<_> = monitor.devices().iter().filter(|d| class_filter == "all" || matches!((&d.class, class_filter), (UsbClass::Audio, "audio") | (UsbClass::Hid, "hid") | (UsbClass::MassStorage, "storage") | (UsbClass::Hub, "hub") | (UsbClass::Video, "video"))).map(|d| json!({"bus": d.bus, "address": d.address, "vendor_id": format!("{:04x}", d.vendor_id), "product_id": format!("{:04x}", d.product_id), "vendor_name": d.vendor_name, "product_name": d.product_name, "class": format!("{:?}", d.class), "speed": format!("{:?}", d.speed)})).collect();
+        Ok(json!(devices))
+    }
+    pub(crate) fn tool_get_usb_device_details(&mut self, params: serde_json::Value) -> Result<serde_json::Value> {
+        use crate::usb::UsbMonitor;
+        let bus = params.get("bus").and_then(|v| v.as_u64()).ok_or_else(|| SimonError::InvalidArgument("bus required".to_string()))? as u8;
+        let address = params.get("address").and_then(|v| v.as_u64()).ok_or_else(|| SimonError::InvalidArgument("address required".to_string()))? as u8;
+        let monitor = UsbMonitor::new().map_err(|e| SimonError::HardwareError(e.to_string()))?;
+        let device = monitor.devices().iter().find(|d| d.bus == bus && d.address == address).ok_or_else(|| SimonError::DeviceNotFound(format!("USB device at bus {} address {} not found", bus, address)))?;
+        Ok(json!({"bus": device.bus, "address": device.address, "vendor_id": format!("{:04x}", device.vendor_id), "product_id": format!("{:04x}", device.product_id), "vendor_name": device.vendor_name, "product_name": device.product_name, "class": format!("{:?}", device.class), "speed": format!("{:?}", device.speed)}))
+    }
+
 }

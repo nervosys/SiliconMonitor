@@ -87,6 +87,14 @@ pub enum ToolCategory {
     System,
     /// Motherboard/hardware tools
     Hardware,
+    /// Audio device tools
+    Audio,
+    /// Bluetooth device tools
+    Bluetooth,
+    /// Display/monitor tools
+    Display,
+    /// USB device tools
+    Usb,
 }
 
 impl std::fmt::Display for ToolCategory {
@@ -100,6 +108,10 @@ impl std::fmt::Display for ToolCategory {
             ToolCategory::Process => write!(f, "Process"),
             ToolCategory::System => write!(f, "System"),
             ToolCategory::Hardware => write!(f, "Hardware"),
+            ToolCategory::Audio => write!(f, "Audio"),
+            ToolCategory::Bluetooth => write!(f, "Bluetooth"),
+            ToolCategory::Display => write!(f, "Display"),
+            ToolCategory::Usb => write!(f, "USB"),
         }
     }
 }
@@ -304,6 +316,22 @@ impl AiDataApi {
             "get_fan_speeds" => self.tool_get_fan_speeds(params),
             "get_voltage_rails" => self.tool_get_voltage_rails(params),
             "get_driver_info" => self.tool_get_driver_info(params),
+
+            // Audio tools
+            "get_audio_devices" => self.tool_get_audio_devices(params),
+            "get_audio_status" => self.tool_get_audio_status(params),
+
+            // Bluetooth tools
+            "get_bluetooth_adapters" => self.tool_get_bluetooth_adapters(params),
+            "get_bluetooth_devices" => self.tool_get_bluetooth_devices(params),
+
+            // Display tools
+            "get_display_list" => self.tool_get_display_list(params),
+            "get_display_details" => self.tool_get_display_details(params),
+
+            // USB tools
+            "get_usb_devices" => self.tool_get_usb_devices(params),
+            "get_usb_device_details" => self.tool_get_usb_device_details(params),
 
             _ => Err(SimonError::NotImplemented(format!(
                 "Unknown tool: {}",
