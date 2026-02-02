@@ -106,6 +106,14 @@ enum CliSubcommand {
     Processes,
     /// Monitor engines (GPU compute/video engines)
     Engines,
+    /// Monitor audio devices
+    Audio,
+    /// Monitor Bluetooth devices
+    Bluetooth,
+    /// Monitor displays
+    Display,
+    /// List USB devices
+    Usb,
     /// Show all statistics
     All,
     /// Interactive real-time monitoring mode
@@ -576,6 +584,72 @@ fn handle_cli_command(
         }
         CliSubcommand::Ai { query } => {
             handle_ai_query(query.as_deref())?;
+        }
+        CliSubcommand::Audio => {
+            use simonlib::audio::AudioMonitor;
+            let monitor = AudioMonitor::new()?;
+            if format == "json" {
+                println!("{}", serde_json::to_string_pretty(monitor.devices())?);
+            } else {
+                println!("{}", "═══ Audio Devices ═══".cyan().bold());
+                println!("  Master Volume: {:.0}%", monitor.master_volume() * 100.0);
+                println!("  Muted: {}", if monitor.is_muted() { "Yes" } else { "No" });
+                for device in monitor.devices() {
+                    println!("  {} ({:?}) - {:?}", device.name, device.device_type, device.state);
+                }
+            }
+        }
+        CliSubcommand::Bluetooth => {
+            use simonlib::bluetooth::BluetoothMonitor;
+            let monitor = BluetoothMonitor::new()?;
+            if format == "json" {
+                println!("{}", serde_json::to_string_pretty(&serde_json::json!({
+                    "available": monitor.is_available(),
+                    "adapters": monitor.adapters(),
+                    "devices": monitor.devices(),
+                }))?);
+            } else {
+                println!("{}", "═══ Bluetooth ═══".cyan().bold());
+                println!("  Available: {}", if monitor.is_available() { "Yes" } else { "No" });
+                println!("  Adapters: {}", monitor.adapters().len());
+                for adapter in monitor.adapters() {
+                    println!("    {} ({})", adapter.name, adapter.address);
+                }
+                println!("  Devices: {}", monitor.devices().len());
+                for device in monitor.devices() {
+                    println!("    {} - {:?}", device.name.as_deref().unwrap_or("Unknown"), device.state);
+                }
+            }
+        }
+        CliSubcommand::Display => {
+            use simonlib::display::DisplayMonitor;
+            let monitor = DisplayMonitor::new()?;
+            if format == "json" {
+                println!("{}", serde_json::to_string_pretty(monitor.displays())?);
+            } else {
+                println!("{}", "═══ Displays ═══".cyan().bold());
+                println!("  Count: {}", monitor.count());
+                for display in monitor.displays() {
+                    println!("  {} {}x{} @ {:.0}Hz {:?}",
+                        display.name, display.width, display.height,
+                        display.refresh_rate, display.connection);
+                }
+            }
+        }
+        CliSubcommand::Usb => {
+            use simonlib::usb::UsbMonitor;
+            let monitor = UsbMonitor::new()?;
+            if format == "json" {
+                println!("{}", serde_json::to_string_pretty(monitor.devices())?);
+            } else {
+                println!("{}", "═══ USB Devices ═══".cyan().bold());
+                println!("  Count: {}", monitor.devices().len());
+                for device in monitor.devices() {
+                    let name = device.product_name.as_deref().unwrap_or("Unknown");
+                    println!("  [{:04x}:{:04x}] {} ({:?})", 
+                        device.vendor_id, device.product_id, name, device.speed);
+                }
+            }
         }
         CliSubcommand::Jetson { action } => {
             handle_jetson_command(action)?;
