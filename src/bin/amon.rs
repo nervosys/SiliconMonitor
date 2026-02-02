@@ -50,9 +50,9 @@ enum AmonCommand {
 
 #[cfg(feature = "cli")]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    use simonlib::agent::{Agent, AgentConfig};
-    use simonlib::SiliconMonitor;
-    use std::io::{self, Write};
+    use simonlib::agent::AgentConfig;
+    
+    
 
     env_logger::init();
 

@@ -385,7 +385,7 @@ impl App {
         // Spawn background thread for GPU enumeration (slow - NVML init, device enumeration)
         let (gpu_tx, gpu_rx) = mpsc::channel();
         std::thread::spawn(move || {
-            let mut gpu_devices: Vec<Box<dyn Device + Send>> = Vec::new();
+            let gpu_devices: Vec<Box<dyn Device + Send>> = Vec::new();
 
             #[cfg(feature = "nvidia")]
             {
