@@ -8,4 +8,4 @@ Exceptions may be made depending on the severity of the bug and the feasibility 
 ## Reporting a Vulnerability
 
 jetson-stats uses GitHub's security advisory functionality for private vulnerability reports.
-To make a private report, use the "Report a vulnerability" button on https://github.com/rbonghi/jetson_stats/security/advisories
+To make a private report, use the "Report a vulnerability" button on https://github.com/nervosys/SiliconMonitor/security/advisories

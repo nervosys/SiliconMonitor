@@ -42,3 +42,49 @@ impl BluetoothMonitor {
 impl Default for BluetoothMonitor {
     fn default() -> Self { Self { adapters: Vec::new(), devices: Vec::new() } }
 }
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_bluetooth_monitor_creation() {
+        let monitor = BluetoothMonitor::new();
+        assert!(monitor.is_ok());
+    }
+
+    #[test]
+    fn test_bluetooth_monitor_availability() {
+        let monitor = BluetoothMonitor::new().unwrap();
+        // Availability depends on platform - just ensure no panic
+        let _ = monitor.is_available();
+    }
+
+    #[test]
+    fn test_bluetooth_device_serialization() {
+        let device = BluetoothDevice {
+            address: "AA:BB:CC:DD:EE:FF".to_string(),
+            name: Some("Test Device".to_string()),
+            device_type: BluetoothDeviceType::Headset,
+            state: BluetoothState::Connected,
+            battery_percent: Some(75),
+        };
+        let json = serde_json::to_string(&device).unwrap();
+        let deserialized: BluetoothDevice = serde_json::from_str(&json).unwrap();
+        assert_eq!(device.address, deserialized.address);
+        assert_eq!(device.battery_percent, deserialized.battery_percent);
+    }
+
+    #[test]
+    fn test_bluetooth_adapter_serialization() {
+        let adapter = BluetoothAdapter {
+            id: "hci0".to_string(),
+            name: "Test Adapter".to_string(),
+            address: "11:22:33:44:55:66".to_string(),
+            powered: true,
+        };
+        let json = serde_json::to_string(&adapter).unwrap();
+        let deserialized: BluetoothAdapter = serde_json::from_str(&json).unwrap();
+        assert_eq!(adapter.id, deserialized.id);
+        assert!(deserialized.powered);
+    }
+}

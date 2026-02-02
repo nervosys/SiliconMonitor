@@ -150,3 +150,82 @@ fn read_usb_string(path: &std::path::Path, attr: &str) -> Option<String> {
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_usb_monitor_creation() {
+        let monitor = UsbMonitor::new();
+        assert!(monitor.is_ok());
+    }
+
+    #[test]
+    fn test_usb_monitor_devices() {
+        let monitor = UsbMonitor::new().unwrap();
+        // Placeholder adds at least one device
+        assert!(!monitor.devices().is_empty());
+    }
+
+    #[test]
+    fn test_usb_device_serialization() {
+        let device = UsbDevice {
+            bus_number: 1,
+            port_number: 2,
+            vendor_id: 0x1234,
+            product_id: 0x5678,
+            manufacturer: Some("Test Manufacturer".to_string()),
+            product: Some("Test Product".to_string()),
+            description: None,
+            serial_number: Some("ABC123".to_string()),
+            class: UsbDeviceClass::MassStorage,
+            speed: UsbSpeed::High,
+        };
+        let json = serde_json::to_string(&device).unwrap();
+        let deserialized: UsbDevice = serde_json::from_str(&json).unwrap();
+        assert_eq!(device.vendor_id, deserialized.vendor_id);
+        assert_eq!(device.product_id, deserialized.product_id);
+        assert_eq!(device.serial_number, deserialized.serial_number);
+    }
+
+    #[test]
+    fn test_usb_speed_variants() {
+        let speeds = [
+            UsbSpeed::Low,
+            UsbSpeed::Full,
+            UsbSpeed::High,
+            UsbSpeed::Super,
+            UsbSpeed::SuperPlus,
+            UsbSpeed::SuperPlusx2,
+            UsbSpeed::Usb4,
+            UsbSpeed::Unknown,
+        ];
+        for speed in speeds {
+            let json = serde_json::to_string(&speed).unwrap();
+            let deserialized: UsbSpeed = serde_json::from_str(&json).unwrap();
+            assert_eq!(speed, deserialized);
+        }
+    }
+
+    #[test]
+    fn test_usb_class_variants() {
+        let classes = [
+            UsbDeviceClass::Audio,
+            UsbDeviceClass::Communication,
+            UsbDeviceClass::Hid,
+            UsbDeviceClass::Printer,
+            UsbDeviceClass::MassStorage,
+            UsbDeviceClass::Hub,
+            UsbDeviceClass::Video,
+            UsbDeviceClass::Wireless,
+            UsbDeviceClass::Vendor,
+            UsbDeviceClass::Unknown,
+        ];
+        for class in classes {
+            let json = serde_json::to_string(&class).unwrap();
+            let deserialized: UsbDeviceClass = serde_json::from_str(&json).unwrap();
+            assert_eq!(class, deserialized);
+        }
+    }
+}

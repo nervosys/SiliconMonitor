@@ -95,3 +95,55 @@ impl Default for AudioMonitor {
         Self::new().unwrap_or(Self { devices: Vec::new(), master_volume: Some(100), master_muted: false })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_audio_monitor_creation() {
+        let monitor = AudioMonitor::new();
+        assert!(monitor.is_ok());
+    }
+
+    #[test]
+    fn test_audio_monitor_devices() {
+        let monitor = AudioMonitor::new().unwrap();
+        // Should have at least one device (placeholder on all platforms)
+        assert!(!monitor.devices().is_empty());
+    }
+
+    #[test]
+    fn test_audio_monitor_master_volume() {
+        let monitor = AudioMonitor::new().unwrap();
+        if let Some(vol) = monitor.master_volume() {
+            assert!(vol <= 100);
+        }
+    }
+
+    #[test]
+    fn test_audio_device_serialization() {
+        let device = AudioDevice {
+            id: "test".to_string(),
+            name: "Test Device".to_string(),
+            device_type: AudioDeviceType::Output,
+            state: AudioState::Active,
+            is_default: true,
+            is_output: true,
+            is_enabled: true,
+            volume: Some(50),
+            muted: false,
+        };
+        let json = serde_json::to_string(&device).unwrap();
+        let deserialized: AudioDevice = serde_json::from_str(&json).unwrap();
+        assert_eq!(device.id, deserialized.id);
+        assert_eq!(device.name, deserialized.name);
+    }
+
+    #[test]
+    fn test_audio_monitor_default() {
+        let monitor = AudioMonitor::default();
+        // Default should work without panic
+        let _ = monitor.devices();
+    }
+}

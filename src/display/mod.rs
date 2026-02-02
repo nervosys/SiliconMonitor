@@ -101,3 +101,86 @@ impl DisplayMonitor {
 impl Default for DisplayMonitor {
     fn default() -> Self { Self::new().unwrap_or(Self { displays: Vec::new() }) }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_display_monitor_creation() {
+        let monitor = DisplayMonitor::new();
+        assert!(monitor.is_ok());
+    }
+
+    #[test]
+    fn test_display_monitor_count() {
+        let monitor = DisplayMonitor::new().unwrap();
+        assert!(monitor.count() >= 1); // Placeholder always adds one
+    }
+
+    #[test]
+    fn test_display_aspect_ratio() {
+        let display = DisplayInfo {
+            id: "test".to_string(),
+            name: Some("Test".to_string()),
+            manufacturer: None,
+            connection: DisplayConnection::Hdmi,
+            is_primary: true,
+            width: 1920,
+            height: 1080,
+            refresh_rate: 60.0,
+            brightness: None,
+            hdr: HdrMode::Off,
+            scale_factor: Some(1.0),
+            physical_width_mm: None,
+            physical_height_mm: None,
+            bits_per_pixel: Some(32),
+        };
+        assert_eq!(display.aspect_ratio(), "16:9");
+    }
+
+    #[test]
+    fn test_display_4k_aspect_ratio() {
+        let display = DisplayInfo {
+            id: "test".to_string(),
+            name: None,
+            manufacturer: None,
+            connection: DisplayConnection::DisplayPort,
+            is_primary: false,
+            width: 3840,
+            height: 2160,
+            refresh_rate: 144.0,
+            brightness: Some(0.8),
+            hdr: HdrMode::Hdr10,
+            scale_factor: Some(1.5),
+            physical_width_mm: Some(600),
+            physical_height_mm: Some(340),
+            bits_per_pixel: Some(30),
+        };
+        assert_eq!(display.aspect_ratio(), "16:9");
+    }
+
+    #[test]
+    fn test_display_info_serialization() {
+        let display = DisplayInfo {
+            id: "test".to_string(),
+            name: Some("Test Display".to_string()),
+            manufacturer: Some("Acme".to_string()),
+            connection: DisplayConnection::Hdmi,
+            is_primary: true,
+            width: 1920,
+            height: 1080,
+            refresh_rate: 60.0,
+            brightness: Some(0.5),
+            hdr: HdrMode::Off,
+            scale_factor: Some(1.0),
+            physical_width_mm: Some(530),
+            physical_height_mm: Some(300),
+            bits_per_pixel: Some(32),
+        };
+        let json = serde_json::to_string(&display).unwrap();
+        let deserialized: DisplayInfo = serde_json::from_str(&json).unwrap();
+        assert_eq!(display.id, deserialized.id);
+        assert_eq!(display.width, deserialized.width);
+    }
+}
