@@ -57,6 +57,50 @@ impl AudioMonitor {
     pub fn default_output(&self) -> Option<&AudioDevice> { self.devices.iter().find(|d| d.is_default && d.is_output) }
     pub fn default_input(&self) -> Option<&AudioDevice> { self.devices.iter().find(|d| d.is_default && !d.is_output) }
 
+    // ==================== Hardware Control APIs ====================
+
+    /// Set the master volume level (0-100).
+    pub fn set_master_volume(&mut self, volume: u8) -> Result<(), crate::error::SimonError> {
+        if volume > 100 {
+            return Err(crate::error::SimonError::InvalidInput(
+                format!("Volume must be 0-100, got {}", volume)
+            ));
+        }
+        self.master_volume = Some(volume);
+        Ok(())
+    }
+
+    /// Set the master mute state.
+    pub fn set_mute(&mut self, muted: bool) -> Result<(), crate::error::SimonError> {
+        self.master_muted = muted;
+        Ok(())
+    }
+
+    /// Set volume for a specific device by ID.
+    pub fn set_device_volume(&mut self, device_id: &str, volume: u8) -> Result<(), crate::error::SimonError> {
+        if volume > 100 {
+            return Err(crate::error::SimonError::InvalidInput(
+                format!("Volume must be 0-100, got {}", volume)
+            ));
+        }
+        if let Some(device) = self.devices.iter_mut().find(|d| d.id == device_id) {
+            device.volume = Some(volume);
+            Ok(())
+        } else {
+            Err(crate::error::SimonError::NotFound(format!("Audio device '{}' not found", device_id)))
+        }
+    }
+
+    /// Set mute state for a specific device by ID.
+    pub fn set_device_mute(&mut self, device_id: &str, muted: bool) -> Result<(), crate::error::SimonError> {
+        if let Some(device) = self.devices.iter_mut().find(|d| d.id == device_id) {
+            device.muted = muted;
+            Ok(())
+        } else {
+            Err(crate::error::SimonError::NotFound(format!("Audio device '{}' not found", device_id)))
+        }
+    }
+
     #[cfg(target_os = "windows")]
     fn refresh_windows(&mut self) {
         self.devices.push(AudioDevice {

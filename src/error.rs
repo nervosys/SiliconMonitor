@@ -78,6 +78,14 @@ pub enum SimonError {
     #[error("GPU error: {0}")]
     GpuError(String),
 
+    /// Invalid input
+    #[error("Invalid input: {0}")]
+    InvalidInput(String),
+
+    /// Resource not found
+    #[error("Not found: {0}")]
+    NotFound(String),
+
     /// Process-related error
     #[error("Process error: {0}")]
     ProcessError(String),

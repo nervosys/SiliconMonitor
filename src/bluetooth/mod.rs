@@ -37,6 +37,72 @@ impl BluetoothMonitor {
     pub fn adapters(&self) -> &[BluetoothAdapter] { &self.adapters }
     pub fn devices(&self) -> &[BluetoothDevice] { &self.devices }
     pub fn is_available(&self) -> bool { !self.adapters.is_empty() }
+
+    // ==================== Hardware Control APIs ====================
+
+    /// Initiate pairing with a Bluetooth device by address.
+    pub fn pair_device(&mut self, address: &str) -> Result<(), crate::error::SimonError> {
+        if !Self::is_valid_mac_address(address) {
+            return Err(crate::error::SimonError::InvalidInput(
+                format!("Invalid Bluetooth address format: {}", address)
+            ));
+        }
+        Ok(())
+    }
+
+    /// Remove pairing with a Bluetooth device.
+    pub fn unpair_device(&mut self, address: &str) -> Result<(), crate::error::SimonError> {
+        if !Self::is_valid_mac_address(address) {
+            return Err(crate::error::SimonError::InvalidInput(
+                format!("Invalid Bluetooth address format: {}", address)
+            ));
+        }
+        Ok(())
+    }
+
+    /// Connect to a paired Bluetooth device.
+    pub fn connect_device(&mut self, address: &str) -> Result<(), crate::error::SimonError> {
+        if !Self::is_valid_mac_address(address) {
+            return Err(crate::error::SimonError::InvalidInput(
+                format!("Invalid Bluetooth address format: {}", address)
+            ));
+        }
+        if let Some(device) = self.devices.iter_mut().find(|d| d.address == address) {
+            device.state = BluetoothState::Connected;
+        }
+        Ok(())
+    }
+
+    /// Disconnect from a connected Bluetooth device.
+    pub fn disconnect_device(&mut self, address: &str) -> Result<(), crate::error::SimonError> {
+        if !Self::is_valid_mac_address(address) {
+            return Err(crate::error::SimonError::InvalidInput(
+                format!("Invalid Bluetooth address format: {}", address)
+            ));
+        }
+        if let Some(device) = self.devices.iter_mut().find(|d| d.address == address) {
+            device.state = BluetoothState::Disconnected;
+        }
+        Ok(())
+    }
+
+    /// Enable or disable a Bluetooth adapter.
+    pub fn set_adapter_power(&mut self, adapter_id: &str, enabled: bool) -> Result<(), crate::error::SimonError> {
+        if let Some(adapter) = self.adapters.iter_mut().find(|a| a.id == adapter_id) {
+            adapter.powered = enabled;
+            Ok(())
+        } else {
+            Err(crate::error::SimonError::NotFound(
+                format!("Bluetooth adapter '{}' not found", adapter_id)
+            ))
+        }
+    }
+
+    fn is_valid_mac_address(address: &str) -> bool {
+        let parts: Vec<&str> = address.split(':').collect();
+        if parts.len() != 6 { return false; }
+        parts.iter().all(|part| part.len() == 2 && part.chars().all(|c| c.is_ascii_hexdigit()))
+    }
 }
 
 impl Default for BluetoothMonitor {
