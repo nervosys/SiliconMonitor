@@ -42,6 +42,58 @@ impl BluetoothMonitor {
 impl Default for BluetoothMonitor {
     fn default() -> Self { Self { adapters: Vec::new(), devices: Vec::new() } }
 }
+
+// Bluetooth events for device monitoring
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum BluetoothEvent {
+    DeviceConnected(BluetoothDevice),
+    DeviceDisconnected(BluetoothDevice),
+    DevicePaired(BluetoothDevice),
+    AdapterEnabled(BluetoothAdapter),
+    AdapterDisabled(BluetoothAdapter),
+}
+
+impl BluetoothMonitor {
+    /// Check for device changes since last refresh
+    /// Returns a list of connect/disconnect events
+    pub fn poll_events(&mut self) -> Result<Vec<BluetoothEvent>, crate::error::SimonError> {
+        let old_devices = self.devices.clone();
+        self.refresh()?;
+        
+        let mut events = Vec::new();
+        
+        // Find state changes
+        for old in &old_devices {
+            if let Some(new) = self.devices.iter().find(|d| d.address == old.address) {
+                // State changed
+                if old.state != new.state {
+                    match new.state {
+                        BluetoothState::Connected => events.push(BluetoothEvent::DeviceConnected(new.clone())),
+                        BluetoothState::Paired => events.push(BluetoothEvent::DevicePaired(new.clone())),
+                        BluetoothState::Disconnected => events.push(BluetoothEvent::DeviceDisconnected(new.clone())),
+                        _ => {}
+                    }
+                }
+            } else {
+                // Device removed
+                events.push(BluetoothEvent::DeviceDisconnected(old.clone()));
+            }
+        }
+        
+        // Find new devices
+        for new in &self.devices {
+            if !old_devices.iter().any(|d| d.address == new.address) {
+                match new.state {
+                    BluetoothState::Connected => events.push(BluetoothEvent::DeviceConnected(new.clone())),
+                    BluetoothState::Paired => events.push(BluetoothEvent::DevicePaired(new.clone())),
+                    _ => {}
+                }
+            }
+        }
+        
+        Ok(events)
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;

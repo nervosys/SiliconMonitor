@@ -151,6 +151,48 @@ fn read_usb_string(path: &std::path::Path, attr: &str) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
+
+// USB events for device monitoring
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum UsbEvent {
+    Connected(UsbDevice),
+    Disconnected(UsbDevice),
+}
+
+impl UsbMonitor {
+    /// Check for device changes since last refresh
+    /// Returns a list of connect/disconnect events
+    pub fn poll_events(&mut self) -> Result<Vec<UsbEvent>, crate::error::SimonError> {
+        let old_devices = self.devices.clone();
+        self.refresh()?;
+        
+        let mut events = Vec::new();
+        
+        // Find disconnected devices (in old but not in new)
+        for old in &old_devices {
+            if !self.devices.iter().any(|d| device_matches(d, old)) {
+                events.push(UsbEvent::Disconnected(old.clone()));
+            }
+        }
+        
+        // Find connected devices (in new but not in old)
+        for new in &self.devices {
+            if !old_devices.iter().any(|d| device_matches(d, new)) {
+                events.push(UsbEvent::Connected(new.clone()));
+            }
+        }
+        
+        Ok(events)
+    }
+}
+
+fn device_matches(a: &UsbDevice, b: &UsbDevice) -> bool {
+    a.vendor_id == b.vendor_id && 
+    a.product_id == b.product_id && 
+    a.bus_number == b.bus_number &&
+    a.port_number == b.port_number
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
