@@ -45,6 +45,10 @@ enum Commands {
         /// Output format (json or text)
         #[arg(short, long, default_value = "text", global = true)]
         format: String,
+
+        /// Watch mode: continuously refresh output (press 'q' to quit)
+        #[arg(short, long, global = true)]
+        watch: bool,
     },
     /// AI agent features: query system, export manifests, start MCP server
     Ai {
@@ -362,8 +366,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             action,
             interval,
             format,
+            watch,
         }) => {
-            handle_cli_command(action, *interval, format)?;
+            handle_cli_command(action, *interval, format, *watch)?;
         }
 
         // AI subcommands - query, manifest, server
@@ -468,6 +473,7 @@ fn handle_cli_command(
     action: &CliSubcommand,
     interval: f64,
     format: &str,
+    watch: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use simonlib::backend::{BackendConfig, MonitoringBackend};
     use simonlib::Simon;
@@ -478,6 +484,41 @@ fn handle_cli_command(
         ..Default::default()
     };
 
+    // Helper closure to run in watch mode
+    let run_watch_mode = |display_fn: &dyn Fn() -> Result<(), Box<dyn std::error::Error>>| -> Result<(), Box<dyn std::error::Error>> {
+        use crossterm::{
+            event::{self, Event, KeyCode},
+            terminal::{disable_raw_mode, enable_raw_mode},
+        };
+        
+        println!("Watch mode - Press 'q' to quit, refreshing every {:.1}s", interval);
+        enable_raw_mode()?;
+        
+        loop {
+            // Clear screen
+            print!("\x1B[2J\x1B[1;1H");
+            
+            // Display the data
+            if let Err(e) = display_fn() {
+                disable_raw_mode()?;
+                return Err(e);
+            }
+            
+            println!("\n[Press 'q' to quit]");
+            
+            // Check for quit key with timeout
+            if event::poll(Duration::from_secs_f64(interval))? {
+                if let Event::Key(key) = event::read()? {
+                    if key.code == KeyCode::Char('q') || key.code == KeyCode::Char('Q') {
+                        break;
+                    }
+                }
+            }
+        }
+        
+        disable_raw_mode()?;
+        Ok(())
+    };
     match action {
         CliSubcommand::Board => {
             let stats = Simon::with_interval(interval)?;
