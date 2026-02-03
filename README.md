@@ -17,14 +17,24 @@
 
 ## Cross-platform agentic system monitoring
 
-Silicon Monitor is a powerful, cross-platform hardware monitoring library that provides deep insights into CPUs, GPUs, memory, disks, motherboards, and network interfaces. Built in Rust for maximum performance and safety, it offers a unified API across Windows, Linux, and macOS.
+Silicon Monitor is a powerful, cross-platform hardware monitoring utility designed primarily for **AI agents** and **interactive interfaces**. It provides deep insights into CPUs, GPUs, memory, disks, motherboards, and network interfaces across Windows, Linux, and macOS.
 
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg)](https://www.rust-lang.org/)
 
+
+## Primary Usage Modes
+
+| Mode | Command | Description |
+|------|---------|-------------|
+| 🤖 **AI Agent** | `amon` / `simon ai` | Natural language queries, MCP server for Claude, tool manifests for LLMs |
+| 💻 **CLI** | `simon <component>` | Command-line monitoring with JSON output for scripting |
+| 🖥️ **TUI** | `simon` | Interactive terminal dashboard with real-time graphs |
+| 🪟 **GUI** | `simon gui` | Native desktop application with egui |
+
 ## Overview
 
-Silicon Monitor provides a unified Rust API for monitoring hardware across all major platforms:
+Silicon Monitor provides comprehensive hardware monitoring:
 
 - **🎮 GPU Monitoring**: NVIDIA, AMD, and Intel GPUs with utilization, memory, temperature, power, and process tracking
 - **💻 CPU Monitoring**: Per-core metrics, frequencies, temperatures, and hybrid architecture support
@@ -38,8 +48,13 @@ Silicon Monitor provides a unified Rust API for monitoring hardware across all m
 - **📶 Bluetooth Monitoring**: Adapter and device enumeration, battery levels, connection states
 - **🖥️ Display Monitoring**: Connected displays, resolutions, refresh rates, and scaling
 - **🔌 USB Monitoring**: USB device enumeration, device classes, and connection topology
-- **�🖥️ TUI Interface**: Beautiful terminal interface for real-time monitoring
-- **🤖 AI Agent**: Natural language queries about system state, predictions, and calculations
+
+**Interfaces:**
+
+- **🤖 AI Agent**: Natural language queries, MCP server for Claude Desktop, tool manifests for all major LLMs
+- **💻 CLI**: Structured command-line output with JSON support for scripting and automation
+- **🖥️ TUI**: Beautiful terminal interface with real-time graphs and integrated AI chat
+- **🪟 GUI**: Native desktop application with multiple themes and visualizations
 
 ## Features
 
@@ -694,10 +709,10 @@ See [TUI_AGENT_GUIDE.md](TUI_AGENT_GUIDE.md) for complete agent usage guide.
 <details>
 <summary><strong>📸 TUI Screenshots</strong> (click to expand)</summary>
 
-| Overview Tab | GPU Tab | Agent Tab |
-|:---:|:---:|:---:|
-| ![TUI Overview](docs/images/tui-overview.png) | ![TUI GPU](docs/images/tui-gpu.png) | ![TUI Agent](docs/images/tui-agent.png) |
-| Real-time system overview with gauges | GPU metrics, temperature, utilization | Natural language AI queries |
+|                 Overview Tab                  |                GPU Tab                |                Agent Tab                |
+| :-------------------------------------------: | :-----------------------------------: | :-------------------------------------: |
+| ![TUI Overview](docs/images/tui-overview.png) |  ![TUI GPU](docs/images/tui-gpu.png)  | ![TUI Agent](docs/images/tui-agent.png) |
+|     Real-time system overview with gauges     | GPU metrics, temperature, utilization |       Natural language AI queries       |
 
 </details>
 
@@ -725,10 +740,10 @@ simon gui
 <details>
 <summary><strong>📸 GUI Screenshots</strong> (click to expand)</summary>
 
-| System Overview | GPU Monitoring | Theme Selection |
-|:---:|:---:|:---:|
+|                System Overview                |           GPU Monitoring            |              Theme Selection              |
+| :-------------------------------------------: | :---------------------------------: | :---------------------------------------: |
 | ![GUI Overview](docs/images/gui-overview.png) | ![GUI GPU](docs/images/gui-gpu.png) | ![GUI Themes](docs/images/gui-themes.png) |
-| Main dashboard with system stats | Detailed GPU metrics panel | Available color themes |
+|       Main dashboard with system stats        |     Detailed GPU metrics panel      |          Available color themes           |
 
 </details>
 
@@ -1021,5 +1036,4 @@ Special thanks to the Rust community and the maintainers of the following crates
 
 ---
 
-Made with ❤️ by NervoSys
-
+Made with 🦾 by NERVOSYS
