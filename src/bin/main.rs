@@ -628,68 +628,108 @@ fn handle_cli_command(
         }
         CliSubcommand::Audio => {
             use simonlib::audio::AudioMonitor;
-            let monitor = AudioMonitor::new()?;
-            if format == "json" {
-                println!("{}", serde_json::to_string_pretty(monitor.devices())?);
-            } else {
-                println!("{}", "═══ Audio Devices ═══".cyan().bold());
-                println!("  Master Volume: {:.0}%", monitor.master_volume().unwrap_or(100));
-                println!("  Muted: {}", if monitor.is_muted() { "Yes" } else { "No" });
-                for device in monitor.devices() {
-                    println!("  {} ({:?}) - {:?}", device.name, device.device_type, device.state);
+            
+            let display_audio = || -> Result<(), Box<dyn std::error::Error>> {
+                let monitor = AudioMonitor::new()?;
+                if format == "json" {
+                    println!("{}", serde_json::to_string_pretty(monitor.devices())?);
+                } else {
+                    println!("{}", "═══ Audio Devices ═══".cyan().bold());
+                    println!("  Master Volume: {}%", monitor.master_volume().unwrap_or(100));
+                    println!("  Muted: {}", if monitor.is_muted() { "Yes" } else { "No" });
+                    for device in monitor.devices() {
+                        println!("  {} ({:?}) - {:?}", device.name, device.device_type, device.state);
+                    }
                 }
+                Ok(())
+            };
+            
+            if watch {
+                run_watch_mode(&display_audio)?;
+            } else {
+                display_audio()?;
             }
         }
         CliSubcommand::Bluetooth => {
             use simonlib::bluetooth::BluetoothMonitor;
-            let monitor = BluetoothMonitor::new()?;
-            if format == "json" {
-                println!("{}", serde_json::to_string_pretty(&serde_json::json!({
-                    "available": monitor.is_available(),
-                    "adapters": monitor.adapters(),
-                    "devices": monitor.devices(),
-                }))?);
+            
+            let display_bluetooth = || -> Result<(), Box<dyn std::error::Error>> {
+                let monitor = BluetoothMonitor::new()?;
+                if format == "json" {
+                    println!("{}", serde_json::to_string_pretty(&serde_json::json!({
+                        "available": monitor.is_available(),
+                        "adapters": monitor.adapters(),
+                        "devices": monitor.devices(),
+                    }))?);
+                } else {
+                    println!("{}", "═══ Bluetooth ═══".cyan().bold());
+                    println!("  Available: {}", if monitor.is_available() { "Yes" } else { "No" });
+                    println!("  Adapters: {}", monitor.adapters().len());
+                    for adapter in monitor.adapters() {
+                        println!("    {} ({})", adapter.name, adapter.address);
+                    }
+                    println!("  Devices: {}", monitor.devices().len());
+                    for device in monitor.devices() {
+                        println!("    {} - {:?}", device.name.as_deref().unwrap_or("Unknown"), device.state);
+                    }
+                }
+                Ok(())
+            };
+            
+            if watch {
+                run_watch_mode(&display_bluetooth)?;
             } else {
-                println!("{}", "═══ Bluetooth ═══".cyan().bold());
-                println!("  Available: {}", if monitor.is_available() { "Yes" } else { "No" });
-                println!("  Adapters: {}", monitor.adapters().len());
-                for adapter in monitor.adapters() {
-                    println!("    {} ({})", adapter.name, adapter.address);
-                }
-                println!("  Devices: {}", monitor.devices().len());
-                for device in monitor.devices() {
-                    println!("    {} - {:?}", device.name.as_deref().unwrap_or("Unknown"), device.state);
-                }
+                display_bluetooth()?;
             }
         }
         CliSubcommand::Display => {
             use simonlib::display::DisplayMonitor;
-            let monitor = DisplayMonitor::new()?;
-            if format == "json" {
-                println!("{}", serde_json::to_string_pretty(monitor.displays())?);
-            } else {
-                println!("{}", "═══ Displays ═══".cyan().bold());
-                println!("  Count: {}", monitor.count());
-                for display in monitor.displays() {
-                    println!("  {} {}x{} @ {:.0}Hz {:?}",
-                        display.name.as_deref().unwrap_or("Unknown"), display.width, display.height,
-                        display.refresh_rate, display.connection);
+            
+            let display_displays = || -> Result<(), Box<dyn std::error::Error>> {
+                let monitor = DisplayMonitor::new()?;
+                if format == "json" {
+                    println!("{}", serde_json::to_string_pretty(monitor.displays())?);
+                } else {
+                    println!("{}", "═══ Displays ═══".cyan().bold());
+                    println!("  Count: {}", monitor.count());
+                    for display in monitor.displays() {
+                        println!("  {} {}x{} @ {:.0}Hz {:?}",
+                            display.name.as_deref().unwrap_or("Unknown"), display.width, display.height,
+                            display.refresh_rate, display.connection);
+                    }
                 }
+                Ok(())
+            };
+            
+            if watch {
+                run_watch_mode(&display_displays)?;
+            } else {
+                display_displays()?;
             }
         }
         CliSubcommand::Usb => {
             use simonlib::usb::UsbMonitor;
-            let monitor = UsbMonitor::new()?;
-            if format == "json" {
-                println!("{}", serde_json::to_string_pretty(monitor.devices())?);
-            } else {
-                println!("{}", "═══ USB Devices ═══".cyan().bold());
-                println!("  Count: {}", monitor.devices().len());
-                for device in monitor.devices() {
-                    let name = device.product.as_deref().unwrap_or("Unknown");
-                    println!("  [{:04x}:{:04x}] {} ({:?})", 
-                        device.vendor_id, device.product_id, name, device.speed);
+            
+            let display_usb = || -> Result<(), Box<dyn std::error::Error>> {
+                let monitor = UsbMonitor::new()?;
+                if format == "json" {
+                    println!("{}", serde_json::to_string_pretty(monitor.devices())?);
+                } else {
+                    println!("{}", "═══ USB Devices ═══".cyan().bold());
+                    println!("  Count: {}", monitor.devices().len());
+                    for device in monitor.devices() {
+                        let name = device.product.as_deref().unwrap_or("Unknown");
+                        println!("  [{:04x}:{:04x}] {} ({:?})",
+                            device.vendor_id, device.product_id, name, device.speed);
+                    }
                 }
+                Ok(())
+            };
+            
+            if watch {
+                run_watch_mode(&display_usb)?;
+            } else {
+                display_usb()?;
             }
         }
         CliSubcommand::Jetson { action } => {
