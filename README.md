@@ -135,6 +135,99 @@ let response = agent.ask("How much power am I using?", &monitor)?;
 - Response caching for instant repeated queries
 - See [AI_AGENT.md](AI_AGENT.md) for details
 
+
+### AI Agent Discoverability & Hardware Ontology
+
+Silicon Monitor is designed from the ground up to be **discoverable by AI agents**. It provides a structured hardware ontology that allows agents to understand what monitoring capabilities are available and how to query them.
+
+#### Hardware Ontology
+
+The library exposes a machine-readable ontology describing hardware domains, properties, and their data types:
+
+```rust
+use simon::ai_api::HardwareOntology;
+
+let ontology = HardwareOntology::complete();
+println!("{}", serde_json::to_string_pretty(&ontology)?);
+```
+
+```json
+{
+  "version": "1.0.0",
+  "name": "Silicon Monitor Hardware Ontology",
+  "domains": [
+    {
+      "id": "gpu",
+      "name": "Graphics Processing Unit",
+      "properties": [
+        { "id": "utilization", "data_type": "percentage", "unit": "%" },
+        { "id": "temperature", "data_type": "temperature", "unit": "C" },
+        { "id": "power_draw", "data_type": "power", "unit": "W" }
+      ]
+    },
+    { "id": "cpu", "name": "Central Processing Unit" },
+    { "id": "memory", "name": "System Memory" },
+    { "id": "disk", "name": "Storage Devices" },
+    { "id": "network", "name": "Network Interfaces" },
+    { "id": "process", "name": "System Processes" }
+  ]
+}
+```
+
+#### Tool Discovery
+
+AI agents can enumerate all available monitoring tools with their schemas:
+
+```rust
+use simon::ai_api::{AiDataApi, ToolDefinition};
+
+let api = AiDataApi::new()?;
+let tools: Vec<ToolDefinition> = api.list_tools();
+
+for tool in &tools {
+    println!("{}: {}", tool.name, tool.description);
+    // get_gpu_status: Get current status of all GPUs...
+    // get_cpu_usage: Get CPU utilization per-core...
+}
+```
+
+#### MCP Server (Model Context Protocol)
+
+For seamless integration with Claude Desktop and other MCP-compatible AI systems:
+
+```bash
+simon ai server   # or: amon server
+```
+
+Configure in Claude Desktop's `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "silicon-monitor": {
+      "command": "simon",
+      "args": ["ai", "server"]
+    }
+  }
+}
+```
+
+#### Multi-Format Tool Export
+
+Export tool definitions in formats optimized for different AI platforms:
+
+```bash
+amon manifest --format openai      # OpenAI function calling format
+amon manifest --format anthropic   # Claude tool use format
+amon manifest --format mcp         # Model Context Protocol
+```
+
+This enables AI agents to:
+- **Discover** available hardware monitoring capabilities at runtime
+- **Understand** the data types and units for each metric
+- **Query** system state using structured tool calls
+- **Reason** about hardware relationships through the ontology
+
 ## Installation
 
 ### From Source
