@@ -29,7 +29,7 @@ Silicon Monitor is a powerful, cross-platform hardware monitoring utility design
 |------|---------|-------------|
 | 🤖 **AI Agent** | `amon` / `simon ai` | Natural language queries, MCP server for Claude, tool manifests for LLMs |
 | 💻 **CLI** | `simon <component>` | Command-line monitoring with JSON output for scripting |
-| 🖥️ **TUI** | `simon` | Interactive terminal dashboard with real-time graphs |
+| 🖥️ **TUI** | `simon tui` | Interactive terminal dashboard with real-time graphs |
 | 🪟 **GUI** | `simon gui` | Native desktop application with egui |
 
 ## Overview
