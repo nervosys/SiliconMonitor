@@ -34,6 +34,10 @@ Silicon Monitor provides a unified Rust API for monitoring hardware across all m
 - **📊 Process Monitoring**: System-wide process tracking with GPU attribution
 - **🌐 Network Monitoring**: Interface statistics, bandwidth rates, and network health
 - **� Network Tools**: nmap-style port scanning, ping, traceroute, DNS lookup
+- **🔊 Audio Monitoring**: Audio device enumeration, volume levels, and mute states
+- **📶 Bluetooth Monitoring**: Adapter and device enumeration, battery levels, connection states
+- **🖥️ Display Monitoring**: Connected displays, resolutions, refresh rates, and scaling
+- **🔌 USB Monitoring**: USB device enumeration, device classes, and connection topology
 - **�🖥️ TUI Interface**: Beautiful terminal interface for real-time monitoring
 - **🤖 AI Agent**: Natural language queries about system state, predictions, and calculations
 - **🔒 Privacy First**: Ethical data collection framework with explicit consent and sandbox detection
@@ -169,6 +173,12 @@ simon gpu
 simon memory
 simon processes
 
+
+# Peripheral hardware
+simon audio           # List audio devices and volume
+simon bluetooth       # List Bluetooth adapters and devices
+simon displays        # Show connected displays
+simon usb             # List USB devices
 # AI agent subcommands
 simon ai query "What's my GPU temperature?"  # Ask a question
 simon ai query                                 # Interactive AI mode
@@ -337,6 +347,93 @@ println!("Port 80: {}", if open { "OPEN" } else { "CLOSED" });
 ```
 
 ## AI Agent CLI and API
+### Peripheral Hardware Monitoring
+
+Silicon Monitor provides cross-platform monitoring for audio, Bluetooth, display, and USB devices:
+
+#### Audio Devices
+
+```rust
+use simon::audio::AudioMonitor;
+
+let mut monitor = AudioMonitor::new()?;
+let devices = monitor.devices();
+
+for device in devices {
+    println!("{} ({:?}): {:?}", device.name, device.device_type, device.state);
+    if device.is_default {
+        println!("  * Default device");
+    }
+    if let Some(vol) = device.volume {
+        println!("  Volume: {}%", vol);
+    }
+}
+
+// Get master volume (0-100)
+if let Some(volume) = monitor.master_volume() {
+    println!("Master volume: {}%", volume);
+}
+```
+
+#### Bluetooth Devices
+
+```rust
+use simon::bluetooth::BluetoothMonitor;
+
+let mut monitor = BluetoothMonitor::new()?;
+
+// List adapters
+for adapter in monitor.adapters() {
+    println!("Adapter: {} ({})", adapter.name, adapter.address);
+    println!("  Powered: {}", adapter.powered);
+}
+
+// List connected/paired devices
+for device in monitor.devices() {
+    println!("{} ({:?})", device.name, device.device_type);
+    if let Some(battery) = device.battery_percent {
+        println!("  Battery: {}%", battery);
+    }
+}
+```
+
+#### Display/Monitor Information
+
+```rust
+use simon::display::DisplayMonitor;
+
+let monitor = DisplayMonitor::new()?;
+
+for display in monitor.displays() {
+    println!("Display {}: {}x{} @ {}Hz",
+        display.id, display.width, display.height, display.refresh_rate);
+    if display.is_primary {
+        println!("  * Primary display");
+    }
+    println!("  Aspect ratio: {}", display.aspect_ratio());
+    if let Some(scale) = display.scale_factor {
+        println!("  Scale: {}x", scale);
+    }
+}
+```
+
+#### USB Devices
+
+```rust
+use simon::usb::UsbMonitor;
+
+let monitor = UsbMonitor::new()?;
+
+for device in monitor.devices() {
+    println!("USB {:04x}:{:04x} - {} {}",
+        device.vendor_id, device.product_id,
+        device.manufacturer.as_deref().unwrap_or("Unknown"),
+        device.product.as_deref().unwrap_or("Unknown"));
+    println!("  Class: {:?}", device.device_class);
+    println!("  Bus {}, Port {}", device.bus_number, device.port_number);
+}
+```
+
 
 Silicon Monitor includes a lightweight AI agent that can answer questions about your system in natural language:
 
@@ -514,6 +611,10 @@ The repository includes comprehensive examples:
 - **`network_monitor.rs`** - Network interface statistics
 - **`tui.rs`** - Interactive terminal UI
 - **`consent_demo.rs`** - Ethical consent management demo
+- **``audio_monitor.rs``** - Audio device enumeration and volume
+- **``bluetooth_monitor.rs``** - Bluetooth adapter and device discovery
+- **``display_monitor.rs``** - Display/monitor information
+- **``usb_monitor.rs``** - USB device enumeration
 - **`sandbox_demo.rs`** - Sandbox detection and privacy protection
 - **`agent_simple.rs`** - AI agent quick demo
 - **`agent_demo.rs`** - AI agent interactive demo with model selection
@@ -526,17 +627,21 @@ cargo run --release --features nvidia --example process_monitor
 cargo run --release --example network_monitor
 cargo run --release --features cli --example tui
 cargo run --release --features full --example sandbox_demo
+cargo run --release --features cli --example audio_monitor
+cargo run --release --features cli --example bluetooth_monitor
+cargo run --release --features cli --example display_monitor
+cargo run --release --features cli --example usb_monitor
 cargo run --release --features full --example consent_demo
 cargo run --release --features full --example agent_simple
 ```
 
 ## Platform Support
 
-| Platform | CPU | Memory | Disk | GPU (NVIDIA) | GPU (AMD) | GPU (Intel) | Network | Processes |
-| -------- | --- | ------ | ---- | ------------ | --------- | ----------- | ------- | --------- |
-| Linux    | ✅   | ✅      | ✅    | ✅            | ✅         | ✅           | ✅       | ✅         |
-| Windows  | ✅   | ✅      | ✅    | ✅            | 🚧         | 🚧           | 🚧       | 🚧         |
-| macOS    | ✅   | ✅      | ✅    | ❌            | ❌         | ❌           | 🚧       | 🚧         |
+| Platform | CPU | Memory | Disk | GPU (NVIDIA) | GPU (AMD) | GPU (Intel) | Network | Audio | Bluetooth | Display | USB |
+| -------- | --- | ------ | ---- | ------------ | --------- | ----------- | ------- | ----- | --------- | ------- | --- |
+| Linux    | ✅   | ✅      | ✅    | ✅            | ✅         | ✅           | ✅       | 🚧     | 🚧         | 🚧       | ✅   |
+| Windows  | ✅   | ✅      | ✅    | ✅            | 🚧         | 🚧           | 🚧       | 🚧     | 🚧         | 🚧       | 🚧   |
+| macOS    | ✅   | ✅      | ✅    | ❌            | ❌         | ❌           | 🚧       | 🚧     | 🚧         | 🚧       | 🚧   |
 
 ✅ Fully Supported | 🚧 Partial/In Progress | ❌ Not Supported
 
