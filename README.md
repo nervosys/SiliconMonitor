@@ -40,7 +40,6 @@ Silicon Monitor provides a unified Rust API for monitoring hardware across all m
 - **🔌 USB Monitoring**: USB device enumeration, device classes, and connection topology
 - **�🖥️ TUI Interface**: Beautiful terminal interface for real-time monitoring
 - **🤖 AI Agent**: Natural language queries about system state, predictions, and calculations
-- **🔒 Privacy First**: Ethical data collection framework with explicit consent and sandbox detection
 
 ## Features
 
@@ -617,12 +616,10 @@ The repository includes comprehensive examples:
 - **`process_monitor.rs`** - Process listing with GPU attribution
 - **`network_monitor.rs`** - Network interface statistics
 - **`tui.rs`** - Interactive terminal UI
-- **`consent_demo.rs`** - Ethical consent management demo
 - **``audio_monitor.rs``** - Audio device enumeration and volume
 - **``bluetooth_monitor.rs``** - Bluetooth adapter and device discovery
 - **``display_monitor.rs``** - Display/monitor information
 - **``usb_monitor.rs``** - USB device enumeration
-- **`sandbox_demo.rs`** - Sandbox detection and privacy protection
 - **`agent_simple.rs`** - AI agent quick demo
 - **`agent_demo.rs`** - AI agent interactive demo with model selection
 
@@ -633,12 +630,10 @@ cargo run --release --features nvidia --example gpu_monitor
 cargo run --release --features nvidia --example process_monitor
 cargo run --release --example network_monitor
 cargo run --release --features cli --example tui
-cargo run --release --features full --example sandbox_demo
 cargo run --release --features cli --example audio_monitor
 cargo run --release --features cli --example bluetooth_monitor
 cargo run --release --features cli --example display_monitor
 cargo run --release --features cli --example usb_monitor
-cargo run --release --features full --example consent_demo
 cargo run --release --features full --example agent_simple
 ```
 
@@ -860,30 +855,6 @@ cargo doc --features full --no-deps --open
 
 # Run examples
 cargo run --release --features nvidia --example gpu_monitor
-```
-
-## Privacy & Ethics
-
-Silicon Monitor takes user privacy seriously. See [ETHICAL_DATA_COLLECTION.md](ETHICAL_DATA_COLLECTION.md) for details on:
-
-- **Explicit Consent**: No data collection without user permission
-- **Sandbox Detection**: Automatic prevention in VMs, containers, and analysis environments
-- **Transparency**: Full disclosure of what's collected and why
-- **User Control**: Easy opt-out and data deletion
-- **GDPR/CCPA Compliant**: Industry-leading privacy protection
-
-**Key Feature**: The library automatically detects when running in sandboxed environments (VMs, containers, debuggers) and prevents all data collection, regardless of consent status.
-
-```rust
-use simon::consent::{ConsentManager, ConsentScope};
-use simon::sandbox::SandboxDetector;
-
-// Check if data collection is allowed
-let manager = ConsentManager::load()?;
-if manager.has_consent(ConsentScope::BasicTelemetry) {
-    // Safe to collect - includes automatic sandbox check
-    collect_telemetry();
-}
 ```
 
 ## License
