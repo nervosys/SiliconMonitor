@@ -179,7 +179,14 @@ simon audio           # List audio devices and volume
 simon bluetooth       # List Bluetooth adapters and devices
 simon displays        # Show connected displays
 simon usb             # List USB devices
-# AI agent subcommands
+simon usb             # List USB devices
+
+# Watch mode: continuously monitor devices (press 'q' to quit)
+simon cli audio --watch          # Watch audio devices
+simon cli bluetooth --watch      # Watch Bluetooth devices
+simon cli display --watch        # Watch connected displays
+simon cli usb --watch            # Watch USB devices
+simon cli usb --watch -i 2.0     # Watch USB with 2s refresh interval
 simon ai query "What's my GPU temperature?"  # Ask a question
 simon ai query                                 # Interactive AI mode
 simon ai manifest --format openai             # Export for OpenAI/GPT
