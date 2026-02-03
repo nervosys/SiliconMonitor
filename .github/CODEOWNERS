@@ -1,6 +1,3 @@
-# Restrict all files related to deploying to
-# require lead maintainer approval.
-
-.github/workflows/        @rbonghi
-.github/CODEOWNERS        @rbonghi
-setup.py                  @rbonghi
+# Silicon Monitor CODEOWNERS
+*                         @nervosys
+.github/                  @nervosys

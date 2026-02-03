@@ -1,12 +1,10 @@
 version: 2
 updates:
-  - package-ecosystem: docker
+  - package-ecosystem: "cargo"
     directory: "/"
     schedule:
-      interval: daily
-    open-pull-requests-limit: 10
+      interval: "weekly"
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
-      # Check for updates to GitHub Actions every weekday
-      interval: "daily"
+      interval: "weekly"

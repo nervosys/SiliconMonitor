@@ -1,8 +1,20 @@
-<!---
-Thanks for your contribution!
+## Description
 
-If this is your first PR to jetson-stats please review the Contributing Guide:
-https://rnext.it/jetson_stats/contributing.html
+Brief description of your changes.
 
-Adhering to the Contributing Guide means we can review, merge, and release your change faster! :)
---->
+## Type of Change
+
+- [ ] Bug fix
+- [ ] New feature
+- [ ] Breaking change
+- [ ] Documentation update
+
+## Testing
+
+Describe how you tested your changes.
+
+## Checklist
+
+- [ ] Code compiles without warnings (`cargo check --features full`)
+- [ ] Tests pass (`cargo test --features full`)
+- [ ] Documentation updated if needed
