@@ -691,7 +691,46 @@ amon    # AI Monitor alias
 
 See [TUI_AGENT_GUIDE.md](TUI_AGENT_GUIDE.md) for complete agent usage guide.
 
-![TUI Screenshot](docs/images/tui-screenshot.png)
+<details>
+<summary><strong>📸 TUI Screenshots</strong> (click to expand)</summary>
+
+| Overview Tab | GPU Tab | Agent Tab |
+|:---:|:---:|:---:|
+| ![TUI Overview](docs/images/tui-overview.png) | ![TUI GPU](docs/images/tui-gpu.png) | ![TUI Agent](docs/images/tui-agent.png) |
+| Real-time system overview with gauges | GPU metrics, temperature, utilization | Natural language AI queries |
+
+</details>
+
+## Graphical User Interface (GUI)
+
+Silicon Monitor also includes a native desktop GUI built with egui for a modern graphical experience:
+
+```bash
+# Build and run the GUI
+cargo run --release --features gui
+
+# Or after installation
+simon gui
+```
+
+**GUI Features:**
+
+- 🖼️ Native desktop application (Windows, Linux, macOS)
+- 🎨 Multiple color themes (Dark, Light, Ocean, Forest, Sunset, Monochrome)
+- 📊 Real-time graphs and visualizations
+- 🔄 Auto-refreshing metrics
+- 🖱️ Mouse-friendly interface with scrollable panels
+- 📈 Historical data with trend charts
+
+<details>
+<summary><strong>📸 GUI Screenshots</strong> (click to expand)</summary>
+
+| System Overview | GPU Monitoring | Theme Selection |
+|:---:|:---:|:---:|
+| ![GUI Overview](docs/images/gui-overview.png) | ![GUI GPU](docs/images/gui-gpu.png) | ![GUI Themes](docs/images/gui-themes.png) |
+| Main dashboard with system stats | Detailed GPU metrics panel | Available color themes |
+
+</details>
 
 ## Examples
 
