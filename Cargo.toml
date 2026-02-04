@@ -92,7 +92,7 @@ num_cpus = { version = "1.16", optional = true }
 ctrlc = { version = "3.4", optional = true }
 
 # Optional dependencies for GUI
-eframe = { version = "0.30", optional = true, default-features = false, features = [
+eframe = { version = "0.33", optional = true, default-features = false, features = [
     "default_fonts",
     "glow",
     "persistence",
