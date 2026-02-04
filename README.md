@@ -29,7 +29,7 @@ Silicon Monitor is a powerful, cross-platform hardware monitoring utility design
 |------|---------|-------------|
 | 🤖 **AI Agent** | `amon` / `simon ai` | Natural language queries, MCP server for Claude, tool manifests for LLMs |
 | 💻 **CLI** | `simon <component>` | Command-line monitoring with JSON output for scripting |
-| 🖥️ **TUI** | `simon tui` | Interactive terminal dashboard with real-time graphs |
+| 🖥️ **TUI** | `simon tui` | Interactive terminal dashboard with real-time graphs and selectable themes |
 | 🪟 **GUI** | `simon gui` | Native desktop application with egui |
 
 ## Overview
@@ -53,7 +53,7 @@ Silicon Monitor provides comprehensive hardware monitoring:
 
 - **🤖 AI Agent**: Natural language queries, MCP server for Claude Desktop, tool manifests for all major LLMs
 - **💻 CLI**: Structured command-line output with JSON support for scripting and automation
-- **🖥️ TUI**: Beautiful terminal interface with real-time graphs and integrated AI chat
+- **🖥️ TUI**: Beautiful terminal interface with real-time graphs, selectable themes, and integrated AI chat
 - **🪟 GUI**: Native desktop application with multiple themes and visualizations
 
 ## Features
@@ -691,11 +691,26 @@ amon    # AI Monitor alias
 **TUI Features:**
 
 - 📊 Real-time graphs with 60-second history
-- 🎨 Color-coded gauges (green/yellow/red)
+- 🎨 **Selectable color themes** - Press `t` to choose from 6 themes (Catppuccin Mocha/Latte, Glances, Nord, Dracula, Gruvbox Dark)
 - ⌨️ Keyboard navigation (←/→ or 1-6 for tabs, Q to quit)
 - 📈 Sparkline charts for trends
+- 🔍 **Process selection** - Use ↑/↓ arrows to navigate processes, Enter for detailed view
 - 🤖 **Integrated AI Agent** - Press `a` to ask questions about your system
 - 🖥️ 6 tabs: Overview, CPU, GPU, Memory, System, **Agent**
+
+**Keyboard Shortcuts:**
+
+| Key | Action |
+|-----|--------|
+| `q` | Quit |
+| `Tab` | Cycle process sort mode |
+| `↑/↓` | Select process |
+| `Enter` | Open process detail view |
+| `Esc` | Close overlay/detail view |
+| `t` / `T` | Open theme picker |
+| `PgUp/PgDn` | Page through processes |
+| `Home/End` | Jump to first/last process |
+| `r` | Reset scroll position |
 
 **Agent Tab:**
 

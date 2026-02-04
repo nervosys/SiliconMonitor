@@ -93,43 +93,62 @@ fn run_app<B: Backend>(
                             _ => {}
                         }
                     } else {
-                        match key.code {
-                            KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
-                            KeyCode::Tab => {
-                                if key.modifiers.contains(KeyModifiers::SHIFT) {
-                                    app.previous_process_mode();
-                                } else {
-                                    app.next_process_mode();
+                        use crate::tui::app::ViewMode;
+                        match app.view_mode {
+                            ViewMode::Main => match key.code {
+                                KeyCode::Char('q') => return Ok(()),
+                                KeyCode::Esc => return Ok(()),
+                                KeyCode::Tab => {
+                                    if key.modifiers.contains(KeyModifiers::SHIFT) {
+                                        app.previous_process_mode();
+                                    } else {
+                                        app.next_process_mode();
+                                    }
                                 }
-                            }
-                            KeyCode::BackTab => app.previous_process_mode(),
-                            KeyCode::Char('1') => app.set_tab(0),
-                            KeyCode::Char('2') => app.set_tab(1),
-                            KeyCode::Char('3') => app.set_tab(2),
-                            KeyCode::Char('4') => app.set_tab(3),
-                            KeyCode::Char('5') => app.set_tab(4),
-                            KeyCode::Char('6') => app.set_tab(5),
-                            KeyCode::Left => app.previous_tab(),
-                            KeyCode::Right => app.next_tab(),
-                            KeyCode::Up => app.scroll_up(),
-                            KeyCode::Down => app.scroll_down(),
-                            KeyCode::PageUp => app.scroll_page_up(),
-                            KeyCode::PageDown => app.scroll_page_down(),
-                            KeyCode::Home => app.scroll_to_top(),
-                            KeyCode::End => app.scroll_to_bottom(),
-                            KeyCode::Char('r') => app.reset_stats(),
-                            KeyCode::Char('a') | KeyCode::Char('A') => app.toggle_agent_input(),
-                            KeyCode::Char('c') | KeyCode::Char('C') => {
-                                if app.selected_tab == 5 {
-                                    app.clear_agent_history();
+                                KeyCode::BackTab => app.previous_process_mode(),
+                                KeyCode::Char('1') => app.set_tab(0),
+                                KeyCode::Char('2') => app.set_tab(1),
+                                KeyCode::Char('3') => app.set_tab(2),
+                                KeyCode::Char('4') => app.set_tab(3),
+                                KeyCode::Char('5') => app.set_tab(4),
+                                KeyCode::Char('6') => app.set_tab(5),
+                                KeyCode::Left => app.previous_tab(),
+                                KeyCode::Right => app.next_tab(),
+                                KeyCode::Up => app.select_process_up(),
+                                KeyCode::Down => app.select_process_down(),
+                                KeyCode::PageUp => app.scroll_page_up(),
+                                KeyCode::PageDown => app.scroll_page_down(),
+                                KeyCode::Home => app.scroll_to_top(),
+                                KeyCode::End => app.scroll_to_bottom(),
+                                KeyCode::Enter => app.open_process_detail(),
+                                KeyCode::Char('t') | KeyCode::Char('T') => app.open_theme_picker(),
+                                KeyCode::Char('r') => app.reset_stats(),
+                                KeyCode::Char('a') | KeyCode::Char('A') => app.toggle_agent_input(),
+                                KeyCode::Char('c') | KeyCode::Char('C') => {
+                                    if app.selected_tab == 5 {
+                                        app.clear_agent_history();
+                                    }
                                 }
-                            }
-                            KeyCode::F(12) => {
-                                if let Err(e) = app.save_config() {
-                                    app.set_status_message(format!("Failed to save config: {}", e));
+                                KeyCode::F(12) => {
+                                    if let Err(e) = app.save_config() {
+                                        app.set_status_message(format!("Failed to save config: {}", e));
+                                    }
                                 }
-                            }
-                            _ => {}
+                                _ => {}
+                            },
+                            ViewMode::ProcessDetail => match key.code {
+                                KeyCode::Esc | KeyCode::Char('q') | KeyCode::Enter => app.close_overlay(),
+                                KeyCode::Up => app.select_process_up(),
+                                KeyCode::Down => app.select_process_down(),
+                                _ => {}
+                            },
+                            ViewMode::ThemeSelection => match key.code {
+                                KeyCode::Esc | KeyCode::Char('q') => app.close_overlay(),
+                                KeyCode::Up => app.theme_picker_prev(),
+                                KeyCode::Down => app.theme_picker_next(),
+                                KeyCode::Enter => app.apply_selected_theme(),
+                                _ => {}
+                            },
                         }
                     }
                 }

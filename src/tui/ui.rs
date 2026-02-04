@@ -172,6 +172,14 @@ pub fn draw(f: &mut Frame, app: &App) {
     chunk_idx += 1;
 
     draw_nvtop_footer(f, app, chunks[chunk_idx]);
+
+    // Draw overlays based on view mode
+    use super::app::ViewMode;
+    match app.view_mode {
+        ViewMode::Main => {}
+        ViewMode::ProcessDetail => draw_process_detail_overlay(f, app),
+        ViewMode::ThemeSelection => draw_theme_picker_overlay(f, app),
+    }
 }
 
 /// Draw header with Glances-style quicklook summary
@@ -962,6 +970,16 @@ fn draw_nvtop_processes(f: &mut Frame, app: &App, area: Rect) {
     let total_count = processes.len();
     let visible_count = 25;
 
+    // Calculate which display row is selected (for highlight bar)
+    let selected_display_idx = if app.selected_process_idx >= scroll_pos && app.selected_process_idx < scroll_pos + visible_count {
+        Some(app.selected_process_idx - scroll_pos)
+    } else {
+        None
+    };
+
+    // Selection highlight style (Catppuccin Mocha surface0)
+    let highlight_style = Style::default().bg(Color::Rgb(69, 71, 90));
+
     // Get total GPU memory for computing percentages
     let total_gpu_memory: u64 = app.accelerators.iter().map(|a| a.memory_total).sum();
 
@@ -1103,7 +1121,9 @@ fn draw_nvtop_processes(f: &mut Frame, app: &App, area: Rect) {
                 .iter()
                 .skip(scroll_pos)
                 .take(visible_count)
-                .map(|p| {
+                .enumerate()
+                .map(|(display_idx, p)| {
+                    let is_selected = selected_display_idx == Some(display_idx);
                     // Use Glances threshold colors
                     let cpu_color = threshold_color(p.cpu_percent);
                     let gpu_color = threshold_color(p.gpu_usage_percent.unwrap_or(0.0));
@@ -1249,7 +1269,7 @@ fn draw_nvtop_processes(f: &mut Frame, app: &App, area: Rect) {
                                     glances_colors::INACTIVE
                                 }),
                             ),
-                        ])
+                        ]).style(if is_selected { highlight_style } else { Style::default() })
                     } else {
                         // Total I/O (read + write) for display
                         let total_io = p.io_read_bytes + p.io_write_bytes;
@@ -1320,7 +1340,7 @@ fn draw_nvtop_processes(f: &mut Frame, app: &App, area: Rect) {
                                 },
                                 Style::default().fg(io_color),
                             ),
-                        ])
+                        ]).style(if is_selected { highlight_style } else { Style::default() })
                     }
                 })
                 .collect();
@@ -1400,7 +1420,9 @@ fn draw_nvtop_processes(f: &mut Frame, app: &App, area: Rect) {
                 .iter()
                 .skip(scroll_pos)
                 .take(visible_count)
-                .map(|p| {
+                .enumerate()
+                .map(|(display_idx, p)| {
+                    let is_selected = selected_display_idx == Some(display_idx);
                     let gpu_mem = p
                         .gpu_memory_per_device
                         .get(&gpu_idx)
@@ -1435,7 +1457,7 @@ fn draw_nvtop_processes(f: &mut Frame, app: &App, area: Rect) {
                         Span::styled(format!("{:>7}", gpu_mem), Style::default().fg(gpu_color)),
                         Span::styled(gpu_usage, Style::default().fg(gpu_color)),
                         Span::styled(proc_type, Style::default().fg(glances_colors::INACTIVE)),
-                    ])
+                    ]).style(if is_selected { highlight_style } else { Style::default() })
                 })
                 .collect();
 
@@ -1503,7 +1525,9 @@ fn draw_nvtop_processes(f: &mut Frame, app: &App, area: Rect) {
                 .iter()
                 .skip(scroll_pos)
                 .take(visible_count)
-                .map(|p| {
+                .enumerate()
+                .map(|(display_idx, p)| {
+                    let is_selected = selected_display_idx == Some(display_idx);
                     let accel_mem = p
                         .gpu_memory_per_device
                         .get(&accel_idx)
@@ -1540,7 +1564,7 @@ fn draw_nvtop_processes(f: &mut Frame, app: &App, area: Rect) {
                         ),
                         Span::styled(accel_usage, Style::default().fg(accel_color)),
                         Span::styled(proc_type, Style::default().fg(glances_colors::INACTIVE)),
-                    ])
+                    ]).style(if is_selected { highlight_style } else { Style::default() })
                 })
                 .collect();
 
@@ -1613,7 +1637,21 @@ fn draw_nvtop_footer(f: &mut Frame, _app: &App, area: Rect) {
                 .fg(glances_colors::TITLE)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::raw(" Scroll  "),
+        Span::raw(" Select  "),
+        Span::styled(
+            "Enter",
+            Style::default()
+                .fg(glances_colors::TITLE)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(" Detail  "),
+        Span::styled(
+            "t",
+            Style::default()
+                .fg(glances_colors::TITLE)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(" Theme  "),
         Span::styled(
             "PgUp/Dn",
             Style::default()
@@ -2315,4 +2353,137 @@ fn draw_peripherals(f: &mut Frame, _app: &App, area: Rect) {
     let usb_para = Paragraph::new(usb_info).block(usb_block);
     f.render_widget(usb_para, chunks[3]);
 }
+/// Draw process detail overlay
+fn draw_process_detail_overlay(f: &mut Frame, app: &App) {
+    let area = centered_rect(60, 50, f.area());
+    
+    // Semi-transparent background
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Rgb(137, 180, 250)))
+        .title(" Process Detail (Enter/Esc to close) ")
+        .title_style(Style::default().fg(Color::Rgb(137, 180, 250)).add_modifier(Modifier::BOLD))
+        .style(Style::default().bg(Color::Rgb(30, 30, 46)));
+    
+    let inner = block.inner(area);
+    f.render_widget(ratatui::widgets::Clear, area);
+    f.render_widget(block, area);
+    
+    if let Some(process) = app.get_selected_process() {
+        let lines = vec![
+            Line::from(vec![
+                Span::styled("PID: ", Style::default().fg(Color::Rgb(166, 227, 161))),
+                Span::raw(format!("{}", process.pid)),
+            ]),
+            Line::from(vec![
+                Span::styled("Name: ", Style::default().fg(Color::Rgb(166, 227, 161))),
+                Span::raw(&process.name),
+            ]),
+            Line::from(vec![
+                Span::styled("User: ", Style::default().fg(Color::Rgb(166, 227, 161))),
+                Span::raw(process.user.as_deref().unwrap_or("unknown")),
+            ]),
+            Line::from(vec![
+                Span::styled("CPU: ", Style::default().fg(Color::Rgb(166, 227, 161))),
+                Span::raw(format!("{:.1}%", process.cpu_percent)),
+            ]),
+            Line::from(vec![
+                Span::styled("Memory: ", Style::default().fg(Color::Rgb(166, 227, 161))),
+                Span::raw(auto_unit(process.memory_bytes)),
+            ]),
+            Line::from(vec![
+                Span::styled("State: ", Style::default().fg(Color::Rgb(166, 227, 161))),
+                Span::raw(format!("{}", process.state)),
+            ]),
+            Line::from(vec![
+                Span::styled("Threads: ", Style::default().fg(Color::Rgb(166, 227, 161))),
+                Span::raw(format!("{}", process.thread_count)),
+            ]),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("GPU Usage: ", Style::default().fg(Color::Rgb(250, 179, 135))),
+                Span::raw(process.gpu_usage_percent.map(|u| format!("{:.1}%", u)).unwrap_or_else(|| "-".to_string())),
+            ]),
+            Line::from(vec![
+                Span::styled("GPU Memory: ", Style::default().fg(Color::Rgb(250, 179, 135))),
+                Span::raw(if process.total_gpu_memory_bytes > 0 { auto_unit(process.total_gpu_memory_bytes) } else { "-".to_string() }),
+            ]),
+            Line::from(vec![
+                Span::styled("Encoder: ", Style::default().fg(Color::Rgb(250, 179, 135))),
+                Span::raw(process.encoder_usage_percent.map(|u| format!("{:.1}%", u)).unwrap_or_else(|| "-".to_string())),
+            ]),
+            Line::from(vec![
+                Span::styled("Decoder: ", Style::default().fg(Color::Rgb(250, 179, 135))),
+                Span::raw(process.decoder_usage_percent.map(|u| format!("{:.1}%", u)).unwrap_or_else(|| "-".to_string())),
+            ]),
+        ];
+        let para = Paragraph::new(lines);
+        f.render_widget(para, inner);
+    }
+}
+
+/// Draw theme picker overlay
+fn draw_theme_picker_overlay(f: &mut Frame, app: &App) {
+    use super::app::ColorTheme;
+    
+    let themes = ColorTheme::all();
+    let height = (themes.len() + 4) as u16;
+    let area = centered_rect(40, height.min(20), f.area());
+    
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Rgb(137, 180, 250)))
+        .title(" Select Theme (Enter to apply, Esc to cancel) ")
+        .title_style(Style::default().fg(Color::Rgb(137, 180, 250)).add_modifier(Modifier::BOLD))
+        .style(Style::default().bg(Color::Rgb(30, 30, 46)));
+    
+    let inner = block.inner(area);
+    f.render_widget(ratatui::widgets::Clear, area);
+    f.render_widget(block, area);
+    
+    let items: Vec<ListItem> = themes
+        .iter()
+        .enumerate()
+        .map(|(idx, theme)| {
+            let is_selected = idx == app.selected_theme_idx;
+            let is_current = *theme == app.color_theme;
+            let name = if is_current {
+                format!("{} (current)", theme.name())
+            } else {
+                theme.name().to_string()
+            };
+            let style = if is_selected {
+                Style::default().bg(Color::Rgb(69, 71, 90)).fg(Color::Rgb(205, 214, 244))
+            } else {
+                Style::default().fg(Color::Rgb(166, 173, 200))
+            };
+            ListItem::new(name).style(style)
+        })
+        .collect();
+    
+    let list = List::new(items);
+    f.render_widget(list, inner);
+}
+
+/// Helper to create a centered rectangle
+fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
+    let popup_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage((100 - percent_y) / 2),
+            Constraint::Percentage(percent_y),
+            Constraint::Percentage((100 - percent_y) / 2),
+        ])
+        .split(r);
+    
+    Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage((100 - percent_x) / 2),
+            Constraint::Percentage(percent_x),
+            Constraint::Percentage((100 - percent_x) / 2),
+        ])
+        .split(popup_layout[1])[1]
+}
+
 

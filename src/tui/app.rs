@@ -129,6 +129,163 @@ impl Default for ProcessDisplayMode {
     }
 }
 
+
+/// Current view mode for the TUI
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum ViewMode {
+    /// Main dashboard view
+    #[default]
+    Main,
+    /// Process detail view
+    ProcessDetail,
+    /// Theme selection view
+    ThemeSelection,
+}
+
+/// Available color themes
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum ColorTheme {
+    /// Catppuccin Mocha (default - matches GUI)
+    #[default]
+    CatppuccinMocha,
+    /// Catppuccin Latte (light theme)
+    CatppuccinLatte,
+    /// Classic Glances style
+    Glances,
+    /// Nord theme
+    Nord,
+    /// Dracula theme
+    Dracula,
+    /// Gruvbox Dark
+    GruvboxDark,
+}
+
+impl ColorTheme {
+    pub fn all() -> &'static [ColorTheme] {
+        &[
+            ColorTheme::CatppuccinMocha,
+            ColorTheme::CatppuccinLatte,
+            ColorTheme::Glances,
+            ColorTheme::Nord,
+            ColorTheme::Dracula,
+            ColorTheme::GruvboxDark,
+        ]
+    }
+
+    pub fn name(&self) -> &'static str {
+        match self {
+            ColorTheme::CatppuccinMocha => "Catppuccin Mocha",
+            ColorTheme::CatppuccinLatte => "Catppuccin Latte",
+            ColorTheme::Glances => "Glances Classic",
+            ColorTheme::Nord => "Nord",
+            ColorTheme::Dracula => "Dracula",
+            ColorTheme::GruvboxDark => "Gruvbox Dark",
+        }
+    }
+
+    pub fn next(&self) -> ColorTheme {
+        let themes = Self::all();
+        let idx = themes.iter().position(|t| t == self).unwrap_or(0);
+        themes[(idx + 1) % themes.len()]
+    }
+
+    pub fn prev(&self) -> ColorTheme {
+        let themes = Self::all();
+        let idx = themes.iter().position(|t| t == self).unwrap_or(0);
+        if idx == 0 {
+            themes[themes.len() - 1]
+        } else {
+            themes[idx - 1]
+        }
+    }
+
+    /// Get theme colors
+    pub fn colors(&self) -> ThemeColors {
+        match self {
+            ColorTheme::CatppuccinMocha => ThemeColors {
+                ok: (166, 227, 161),        // green
+                careful: (137, 180, 250),   // blue
+                warning: (249, 226, 175),   // yellow
+                critical: (243, 139, 168),  // red
+                title: (137, 180, 250),     // blue
+                separator: (88, 91, 112),   // surface2
+                inactive: (108, 112, 134),  // overlay0
+                surface: (69, 71, 90),      // surface0
+                text: (205, 214, 244),      // text
+            },
+            ColorTheme::CatppuccinLatte => ThemeColors {
+                ok: (64, 160, 43),
+                careful: (30, 102, 245),
+                warning: (223, 142, 29),
+                critical: (210, 15, 57),
+                title: (30, 102, 245),
+                separator: (172, 176, 190),
+                inactive: (140, 143, 161),
+                surface: (204, 208, 218),
+                text: (76, 79, 105),
+            },
+            ColorTheme::Glances => ThemeColors {
+                ok: (0, 255, 0),
+                careful: (0, 255, 255),
+                warning: (255, 255, 0),
+                critical: (255, 0, 0),
+                title: (0, 255, 255),
+                separator: (105, 105, 105),
+                inactive: (105, 105, 105),
+                surface: (48, 48, 48),
+                text: (255, 255, 255),
+            },
+            ColorTheme::Nord => ThemeColors {
+                ok: (163, 190, 140),
+                careful: (129, 161, 193),
+                warning: (235, 203, 139),
+                critical: (191, 97, 106),
+                title: (136, 192, 208),
+                separator: (76, 86, 106),
+                inactive: (76, 86, 106),
+                surface: (59, 66, 82),
+                text: (236, 239, 244),
+            },
+            ColorTheme::Dracula => ThemeColors {
+                ok: (80, 250, 123),
+                careful: (139, 233, 253),
+                warning: (241, 250, 140),
+                critical: (255, 85, 85),
+                title: (189, 147, 249),
+                separator: (68, 71, 90),
+                inactive: (98, 114, 164),
+                surface: (68, 71, 90),
+                text: (248, 248, 242),
+            },
+            ColorTheme::GruvboxDark => ThemeColors {
+                ok: (184, 187, 38),
+                careful: (131, 165, 152),
+                warning: (250, 189, 47),
+                critical: (251, 73, 52),
+                title: (250, 189, 47),
+                separator: (80, 73, 69),
+                inactive: (146, 131, 116),
+                surface: (60, 56, 54),
+                text: (235, 219, 178),
+            },
+    }
+    }
+}
+
+/// Theme color palette
+#[derive(Clone, Copy)]
+pub struct ThemeColors {
+    pub ok: (u8, u8, u8),
+    pub careful: (u8, u8, u8),
+    pub warning: (u8, u8, u8),
+    pub critical: (u8, u8, u8),
+    pub title: (u8, u8, u8),
+    pub separator: (u8, u8, u8),
+    pub inactive: (u8, u8, u8),
+    pub surface: (u8, u8, u8),
+    pub text: (u8, u8, u8),
+}
+
 /// Application state
 pub struct App {
     /// Currently selected tab
@@ -203,6 +360,14 @@ pub struct App {
     agent_init_rx: Option<std::sync::mpsc::Receiver<Option<Agent>>>,
     /// Receiver for background-initialized process monitor
     process_init_rx: Option<std::sync::mpsc::Receiver<Option<ProcessMonitor>>>,
+    /// Current view mode (Main, ProcessDetail, ThemeSelection)
+    pub view_mode: ViewMode,
+    /// Currently selected process index in the visible list
+    pub selected_process_idx: usize,
+    /// Current color theme
+    pub color_theme: ColorTheme,
+    /// Selected theme index in theme picker
+    pub selected_theme_idx: usize,
 }
 
 /// Background initialization state
@@ -385,7 +550,7 @@ impl App {
         // Spawn background thread for GPU enumeration (slow - NVML init, device enumeration)
         let (gpu_tx, gpu_rx) = mpsc::channel();
         std::thread::spawn(move || {
-            let gpu_devices: Vec<Box<dyn Device + Send>> = Vec::new();
+            let mut gpu_devices: Vec<Box<dyn Device + Send>> = Vec::new();
 
             #[cfg(feature = "nvidia")]
             {
@@ -482,7 +647,11 @@ impl App {
             init_state: InitState::Loading,
             gpu_init_rx: Some(gpu_rx),
             agent_init_rx: Some(agent_rx),
-            process_init_rx: Some(proc_rx),
+                        process_init_rx: Some(proc_rx),
+            view_mode: ViewMode::default(),
+            selected_process_idx: 0,
+            color_theme: ColorTheme::default(),
+            selected_theme_idx: 0,
         };
 
         // Do initial fast update for immediate data (CPU, Memory are fast)
@@ -1010,32 +1179,48 @@ impl App {
     }
 
     fn update_disks(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        // Get real disk info from disk monitoring module
         self.disk_info.clear();
 
-        // Try to get real disk information
-        match crate::disk::enumerate_disks() {
-            Ok(disks) if !disks.is_empty() => {
+        // On Windows, always use Windows API directly (most reliable)
+        #[cfg(target_os = "windows")]
+        {
+            if let Ok(drives) = Self::get_windows_drives() {
+                for (drive, total, used, fs_type) in drives {
+                    self.disk_info.push(DiskInfo {
+                        name: drive.clone(),
+                        mount_point: drive,
+                        total,
+                        used,
+                        filesystem: fs_type,
+                        read_rate: 0.0,
+                        write_rate: 0.0,
+                    });
+                }
+            }
+        }
+
+        // On non-Windows, use enumerate_disks
+        #[cfg(not(target_os = "windows"))]
+        {
+            if let Ok(disks) = crate::disk::enumerate_disks() {
                 for disk in disks {
                     if let Ok(info) = disk.info() {
-                        // Get filesystem info if available
-                        let (mount_point, filesystem, used) =
+                        let (mount_point, filesystem, used, total) =
                             if let Ok(fs_infos) = disk.filesystem_info() {
-                                // Use first filesystem if multiple partitions
                                 if let Some(fs) = fs_infos.first() {
                                     (
                                         fs.mount_point.to_string_lossy().to_string(),
                                         fs.fs_type.clone(),
                                         fs.used_size,
+                                        fs.total_size,
                                     )
                                 } else {
-                                    ("N/A".to_string(), "N/A".to_string(), 0)
+                                    ("N/A".to_string(), "N/A".to_string(), 0, info.capacity)
                                 }
                             } else {
-                                ("N/A".to_string(), "N/A".to_string(), 0)
+                                ("N/A".to_string(), "N/A".to_string(), 0, info.capacity)
                             };
 
-                        // Get I/O stats for throughput
                         let (read_rate, write_rate) = if let Ok(io_stats) = disk.io_stats() {
                             (
                                 io_stats.read_throughput.unwrap_or(0) as f64,
@@ -1048,7 +1233,7 @@ impl App {
                         self.disk_info.push(DiskInfo {
                             name: info.model,
                             mount_point,
-                            total: info.capacity,
+                            total,
                             used,
                             filesystem,
                             read_rate,
@@ -1057,54 +1242,19 @@ impl App {
                     }
                 }
             }
-            Ok(_) | Err(_) => {
-                // Fallback: Try to use Windows APIs for basic disk space info
-                #[cfg(target_os = "windows")]
-                {
-                    // Windows fallback: Get logical drives using GetDiskFreeSpaceEx
-                    if let Ok(drives) = Self::get_windows_drives() {
-                        for (drive, total, used, fs_type) in drives {
-                            self.disk_info.push(DiskInfo {
-                                name: drive.clone(),
-                                mount_point: drive,
-                                total,
-                                used,
-                                filesystem: fs_type,
-                                read_rate: 0.0,
-                                write_rate: 0.0,
-                            });
-                        }
-                    }
-                }
+        }
 
-                // If still no disks, show message
-                if self.disk_info.is_empty() {
-                    #[cfg(target_os = "windows")]
-                    {
-                        self.disk_info.push(DiskInfo {
-                            name: "Unable to detect disks".to_string(),
-                            mount_point: "Check disk permissions".to_string(),
-                            total: 0,
-                            used: 0,
-                            filesystem: "N/A".to_string(),
-                            read_rate: 0.0,
-                            write_rate: 0.0,
-                        });
-                    }
-                    #[cfg(not(target_os = "windows"))]
-                    {
-                        self.disk_info.push(DiskInfo {
-                            name: "No disks detected".to_string(),
-                            mount_point: "N/A".to_string(),
-                            total: 0,
-                            used: 0,
-                            filesystem: "N/A".to_string(),
-                            read_rate: 0.0,
-                            write_rate: 0.0,
-                        });
-                    }
-                }
-            }
+        // Fallback if still empty
+        if self.disk_info.is_empty() {
+            self.disk_info.push(DiskInfo {
+                name: "No disks detected".to_string(),
+                mount_point: "N/A".to_string(),
+                total: 0,
+                used: 0,
+                filesystem: "N/A".to_string(),
+                read_rate: 0.0,
+                write_rate: 0.0,
+            });
         }
 
         Ok(())
@@ -1310,6 +1460,24 @@ impl App {
 
         self.cached_process_order = indexed.into_iter().map(|(i, _)| i).collect();
         self.filtered_process_count = self.cached_process_order.len();
+
+        // Clamp selected index and scroll position to valid range
+        if self.filtered_process_count > 0 {
+            self.selected_process_idx = self.selected_process_idx.min(self.filtered_process_count - 1);
+            // Ensure scroll position keeps selected item visible
+            let visible_rows = 25;
+            if self.selected_process_idx < self.scroll_position {
+                self.scroll_position = self.selected_process_idx;
+            } else if self.selected_process_idx >= self.scroll_position + visible_rows {
+                self.scroll_position = self.selected_process_idx.saturating_sub(visible_rows - 1);
+            }
+            // Clamp scroll position
+            let max_scroll = self.filtered_process_count.saturating_sub(visible_rows);
+            self.scroll_position = self.scroll_position.min(max_scroll);
+        } else {
+            self.selected_process_idx = 0;
+            self.scroll_position = 0;
+        }
     }
 
     /// Get processes using cached order (fast - no sorting during render)
@@ -1470,6 +1638,80 @@ impl App {
         let visible_rows = 25;
         self.scroll_position = self.filtered_process_count.saturating_sub(visible_rows);
     }
+
+    /// Move process selection up
+    pub fn select_process_up(&mut self) {
+        if self.selected_process_idx > 0 {
+            self.selected_process_idx -= 1;
+            if self.selected_process_idx < self.scroll_position {
+                self.scroll_position = self.selected_process_idx;
+            }
+        }
+    }
+
+    /// Move process selection down
+    pub fn select_process_down(&mut self) {
+        let max_idx = self.filtered_process_count.saturating_sub(1);
+        if self.selected_process_idx < max_idx {
+            self.selected_process_idx += 1;
+            let visible_rows = 25;
+            if self.selected_process_idx >= self.scroll_position + visible_rows {
+                self.scroll_position = self.selected_process_idx.saturating_sub(visible_rows - 1);
+            }
+        }
+    }
+
+    /// Get the currently selected process
+    pub fn get_selected_process(&self) -> Option<&crate::ProcessMonitorInfo> {
+        self.cached_process_order
+            .get(self.selected_process_idx)
+            .and_then(|&idx| self.processes.get(idx))
+    }
+
+    /// Open process detail view
+    pub fn open_process_detail(&mut self) {
+        if self.get_selected_process().is_some() {
+            self.view_mode = ViewMode::ProcessDetail;
+        }
+    }
+
+    /// Close overlay and return to main
+    pub fn close_overlay(&mut self) {
+        self.view_mode = ViewMode::Main;
+    }
+
+    /// Open theme picker
+    pub fn open_theme_picker(&mut self) {
+        self.selected_theme_idx = ColorTheme::all().iter().position(|t| *t == self.color_theme).unwrap_or(0);
+        self.view_mode = ViewMode::ThemeSelection;
+    }
+
+    /// Theme picker next
+    pub fn theme_picker_next(&mut self) {
+        self.selected_theme_idx = (self.selected_theme_idx + 1) % ColorTheme::all().len();
+    }
+
+    /// Theme picker prev
+    pub fn theme_picker_prev(&mut self) {
+        let len = ColorTheme::all().len();
+        self.selected_theme_idx = if self.selected_theme_idx == 0 { len - 1 } else { self.selected_theme_idx - 1 };
+    }
+
+    /// Apply selected theme
+    pub fn apply_selected_theme(&mut self) {
+        if let Some(&theme) = ColorTheme::all().get(self.selected_theme_idx) {
+            self.color_theme = theme;
+        }
+        self.view_mode = ViewMode::Main;
+        self.set_status_message(format!("Theme: {}", self.color_theme.name()));
+    }
+
+    /// Cycle theme directly
+    pub fn cycle_theme(&mut self) {
+        self.color_theme = self.color_theme.next();
+        self.set_status_message(format!("Theme: {}", self.color_theme.name()));
+    }
+
 
     /// Cycle to next process display mode
     pub fn next_process_mode(&mut self) {
