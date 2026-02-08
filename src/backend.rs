@@ -1334,3 +1334,162 @@ impl BackendConfig {
         self
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // === HistoryBuffer tests ===
+
+    #[test]
+    fn test_history_buffer_new() {
+        let buf: HistoryBuffer<f32> = HistoryBuffer::new(10);
+        assert!(buf.is_empty());
+        assert_eq!(buf.len(), 0);
+        assert!(buf.latest().is_none());
+    }
+
+    #[test]
+    fn test_history_buffer_push_and_latest() {
+        let mut buf = HistoryBuffer::new(5);
+        buf.push(1.0f32);
+        assert_eq!(buf.len(), 1);
+        assert!(!buf.is_empty());
+        assert_eq!(*buf.latest().unwrap(), 1.0);
+    }
+
+    #[test]
+    fn test_history_buffer_previous() {
+        let mut buf = HistoryBuffer::new(10);
+        buf.push(10.0f32);
+        assert!(buf.previous().is_none());
+        buf.push(20.0);
+        assert_eq!(*buf.previous().unwrap(), 10.0);
+        assert_eq!(*buf.latest().unwrap(), 20.0);
+    }
+
+    #[test]
+    fn test_history_buffer_capacity_eviction() {
+        let mut buf = HistoryBuffer::new(3);
+        buf.push(1u64);
+        buf.push(2);
+        buf.push(3);
+        assert_eq!(buf.len(), 3);
+        buf.push(4);
+        assert_eq!(buf.len(), 3);
+        let v = buf.to_vec();
+        assert_eq!(v, vec![2, 3, 4]);
+    }
+
+    #[test]
+    fn test_history_buffer_values_iterator() {
+        let mut buf = HistoryBuffer::new(10);
+        buf.push(10u64);
+        buf.push(20);
+        buf.push(30);
+        let values: Vec<&u64> = buf.values().collect();
+        assert_eq!(values, vec![&10, &20, &30]);
+    }
+
+    #[test]
+    fn test_history_buffer_clear() {
+        let mut buf = HistoryBuffer::new(10);
+        buf.push(1.0f32);
+        buf.push(2.0);
+        buf.clear();
+        assert!(buf.is_empty());
+        assert_eq!(buf.len(), 0);
+        assert!(buf.latest().is_none());
+    }
+
+    #[test]
+    fn test_history_buffer_to_vec() {
+        let mut buf = HistoryBuffer::new(5);
+        buf.push(1.0f32);
+        buf.push(2.0);
+        buf.push(3.0);
+        assert_eq!(buf.to_vec(), vec![1.0, 2.0, 3.0]);
+    }
+
+    #[test]
+    fn test_history_buffer_as_u64_vec() {
+        let mut buf: HistoryBuffer<u64> = HistoryBuffer::new(5);
+        buf.push(100);
+        buf.push(200);
+        buf.push(300);
+        assert_eq!(buf.as_u64_vec(), vec![100, 200, 300]);
+    }
+
+    #[test]
+    fn test_history_buffer_as_f32_vec() {
+        let mut buf: HistoryBuffer<f32> = HistoryBuffer::new(5);
+        buf.push(1.5);
+        buf.push(2.5);
+        assert_eq!(buf.as_f32_vec(), vec![1.5, 2.5]);
+    }
+
+    #[test]
+    fn test_history_buffer_large_capacity() {
+        let mut buf = HistoryBuffer::new(1000);
+        for i in 0..1000 {
+            buf.push(i as f32);
+        }
+        assert_eq!(buf.len(), 1000);
+        assert_eq!(*buf.latest().unwrap(), 999.0);
+        buf.push(1000.0);
+        assert_eq!(buf.len(), 1000);
+        assert_eq!(*buf.values().next().unwrap(), 1.0);
+    }
+
+    #[test]
+    fn test_history_buffer_single_capacity() {
+        let mut buf = HistoryBuffer::new(1);
+        buf.push(10u64);
+        assert_eq!(buf.len(), 1);
+        buf.push(20);
+        assert_eq!(buf.len(), 1);
+        assert_eq!(*buf.latest().unwrap(), 20);
+    }
+
+    // === FullSystemState tests ===
+
+    #[test]
+    fn test_full_system_state_empty() {
+        let state = FullSystemState::empty();
+        assert!(state.cpu.is_none());
+        assert!(state.memory.is_none());
+        assert!(state.accelerators.is_empty());
+        assert!(state.disks.is_empty());
+        assert!(state.network.is_empty());
+        assert!(state.top_processes.is_empty());
+        assert!(state.system.is_none());
+        assert!(state.timestamp > 0);
+    }
+
+    #[test]
+    fn test_full_system_state_to_context_string() {
+        let state = FullSystemState::empty();
+        let ctx = state.to_context_string();
+        assert!(ctx.contains("Current System State"));
+    }
+
+    // === BackendConfig tests ===
+
+    #[test]
+    fn test_backend_config_minimal() {
+        let config = BackendConfig::without_agent();
+        assert!(!config.enable_agent);
+    }
+
+    #[test]
+    fn test_backend_config_with_history_size() {
+        let config = BackendConfig::without_agent().with_history_size(120);
+        assert_eq!(config.history_size, 120);
+    }
+
+    #[test]
+    fn test_backend_config_with_update_interval() {
+        let config = BackendConfig::without_agent().with_update_interval(Duration::from_secs(5));
+        assert_eq!(config.update_interval, Duration::from_secs(5));
+    }
+}

@@ -1169,3 +1169,187 @@ pub fn list_thermal_zones() -> Result<Vec<ThermalZone>> {
     let monitor = FanMonitor::new()?;
     Ok(monitor.thermal_zones.clone())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // === FanProfile tests ===
+
+    #[test]
+    fn test_fan_profile_display() {
+        assert_eq!(FanProfile::Silent.to_string(), "silent");
+        assert_eq!(FanProfile::Quiet.to_string(), "quiet");
+        assert_eq!(FanProfile::Cool.to_string(), "cool");
+        assert_eq!(FanProfile::Performance.to_string(), "performance");
+        assert_eq!(FanProfile::Manual.to_string(), "manual");
+        assert_eq!(FanProfile::Auto.to_string(), "auto");
+        assert_eq!(FanProfile::TempControl.to_string(), "temp_control");
+    }
+
+    #[test]
+    fn test_fan_profile_from_str() {
+        assert_eq!("silent".parse::<FanProfile>().unwrap(), FanProfile::Silent);
+        assert_eq!("quiet".parse::<FanProfile>().unwrap(), FanProfile::Quiet);
+        assert_eq!("cool".parse::<FanProfile>().unwrap(), FanProfile::Cool);
+        assert_eq!(
+            "performance".parse::<FanProfile>().unwrap(),
+            FanProfile::Performance
+        );
+        assert_eq!("auto".parse::<FanProfile>().unwrap(), FanProfile::Auto);
+        assert_eq!("automatic".parse::<FanProfile>().unwrap(), FanProfile::Auto);
+        assert!("invalid".parse::<FanProfile>().is_err());
+    }
+
+    #[test]
+    fn test_fan_profile_case_insensitive() {
+        assert_eq!("QUIET".parse::<FanProfile>().unwrap(), FanProfile::Quiet);
+        assert_eq!("Silent".parse::<FanProfile>().unwrap(), FanProfile::Silent);
+    }
+
+    // === FanType tests ===
+
+    #[test]
+    fn test_fan_type_display() {
+        assert_eq!(FanType::Cpu.to_string(), "CPU");
+        assert_eq!(FanType::Gpu.to_string(), "GPU");
+        assert_eq!(FanType::Case.to_string(), "Case");
+        assert_eq!(FanType::Unknown.to_string(), "Unknown");
+    }
+
+    // === FanInfo tests ===
+
+    #[test]
+    fn test_fan_info_new_defaults() {
+        let fan = FanInfo::new("cpu_fan");
+        assert_eq!(fan.name, "cpu_fan");
+        assert_eq!(fan.fan_type, FanType::Unknown);
+        assert_eq!(fan.speed_percent, 0.0);
+        assert!(!fan.controllable);
+    }
+
+    #[test]
+    fn test_fan_is_running_by_speed() {
+        let mut fan = FanInfo::new("test");
+        assert!(!fan.is_running());
+        fan.speed_percent = 50.0;
+        assert!(fan.is_running());
+    }
+
+    #[test]
+    fn test_fan_is_running_by_rpm() {
+        let mut fan = FanInfo::new("test");
+        fan.rpm = Some(1000);
+        assert!(fan.is_running());
+    }
+
+    #[test]
+    fn test_fan_is_full_speed() {
+        let mut fan = FanInfo::new("test");
+        fan.speed_percent = 94.0;
+        assert!(!fan.is_full_speed());
+        fan.speed_percent = 95.0;
+        assert!(fan.is_full_speed());
+        fan.speed_percent = 100.0;
+        assert!(fan.is_full_speed());
+    }
+
+    #[test]
+    fn test_fan_is_potentially_stalled() {
+        let mut fan = FanInfo::new("test");
+        // Not stalled: speed 0, no rpm
+        assert!(!fan.is_potentially_stalled());
+        // Not stalled: speed > 10 but rpm not zero
+        fan.speed_percent = 50.0;
+        fan.rpm = Some(1200);
+        assert!(!fan.is_potentially_stalled());
+        // Stalled: speed > 10 and rpm == 0
+        fan.rpm = Some(0);
+        assert!(fan.is_potentially_stalled());
+        // Not stalled: low speed
+        fan.speed_percent = 5.0;
+        assert!(!fan.is_potentially_stalled());
+    }
+
+    #[test]
+    fn test_fan_efficiency() {
+        let mut fan = FanInfo::new("test");
+        // No rpm -> None
+        assert!(fan.efficiency().is_none());
+        // Low speed -> None
+        fan.speed_percent = 3.0;
+        fan.rpm = Some(500);
+        assert!(fan.efficiency().is_none());
+        // Normal case
+        fan.speed_percent = 50.0;
+        fan.rpm = Some(1000);
+        let eff = fan.efficiency().unwrap();
+        assert!((eff - 20.0).abs() < 0.01); // 1000 / 50 = 20
+    }
+
+    // === FanCurve tests ===
+
+    #[test]
+    fn test_fan_curve_quiet_has_points() {
+        let curve = FanCurve::quiet();
+        assert_eq!(curve.name, "Quiet");
+        assert!(!curve.points.is_empty());
+        assert!(curve.hysteresis > 0.0);
+    }
+
+    #[test]
+    fn test_fan_curve_performance_has_points() {
+        let curve = FanCurve::performance();
+        assert_eq!(curve.name, "Performance");
+        assert!(!curve.points.is_empty());
+    }
+
+    #[test]
+    fn test_fan_curve_silent_has_points() {
+        let curve = FanCurve::silent();
+        assert_eq!(curve.name, "Silent");
+        assert!(!curve.points.is_empty());
+    }
+
+    #[test]
+    fn test_fan_curve_calculate_speed_below_min() {
+        let curve = FanCurve::quiet();
+        // Below minimum temp should return first point's speed
+        let speed = curve.calculate_speed(0.0);
+        assert_eq!(speed, curve.points[0].speed_percent);
+    }
+
+    #[test]
+    fn test_fan_curve_calculate_speed_above_max() {
+        let curve = FanCurve::quiet();
+        let speed = curve.calculate_speed(200.0);
+        assert_eq!(speed, curve.points.last().unwrap().speed_percent);
+    }
+
+    #[test]
+    fn test_fan_curve_calculate_speed_interpolation() {
+        let curve = FanCurve::quiet();
+        // Quiet curve: 30°C=20%, 50°C=30%
+        // At 40°C: 20 + (30-20)*(40-30)/(50-30) = 20 + 10*10/20 = 25
+        let speed = curve.calculate_speed(40.0);
+        assert!((speed - 25.0).abs() < 0.1);
+    }
+
+    #[test]
+    fn test_fan_curve_calculate_speed_at_point() {
+        let curve = FanCurve::quiet();
+        // At exact point temperature
+        let speed = curve.calculate_speed(30.0);
+        assert_eq!(speed, 20.0);
+    }
+
+    #[test]
+    fn test_fan_curve_empty_returns_100() {
+        let curve = FanCurve {
+            name: "empty".to_string(),
+            points: vec![],
+            hysteresis: 0.0,
+        };
+        assert_eq!(curve.calculate_speed(50.0), 100.0);
+    }
+}

@@ -2086,3 +2086,173 @@ mod macos {
         Ok(processes)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_test_process() -> ProcessMonitorInfo {
+        ProcessMonitorInfo {
+            pid: 1234,
+            parent_pid: Some(1),
+            name: "test_process".to_string(),
+            user: Some("testuser".to_string()),
+            category: ProcessCategory::Unknown,
+            cpu_percent: 25.5,
+            memory_bytes: 1024 * 1024 * 512,
+            virtual_memory_bytes: 1024 * 1024 * 1024,
+            private_bytes: 1024 * 1024 * 256,
+            thread_count: 4,
+            handle_count: 100,
+            io_read_bytes: 0,
+            io_write_bytes: 0,
+            start_time: None,
+            gpu_indices: vec![],
+            gpu_memory_per_device: HashMap::new(),
+            total_gpu_memory_bytes: 0,
+            state: 'R',
+            priority: Some(0),
+            gfx_engine_used: None,
+            compute_engine_used: None,
+            enc_engine_used: None,
+            dec_engine_used: None,
+            gpu_usage_percent: None,
+            encoder_usage_percent: None,
+            decoder_usage_percent: None,
+            gpu_process_type: ProcessGpuType::Unknown,
+            gpu_memory_percentage: None,
+        }
+    }
+
+    #[test]
+    fn test_classify_system() {
+        assert_eq!(
+            ProcessCategory::classify("systemd", None, false),
+            ProcessCategory::System
+        );
+    }
+
+    #[test]
+    fn test_classify_browser() {
+        assert_eq!(
+            ProcessCategory::classify("firefox", None, false),
+            ProcessCategory::Browser
+        );
+        assert_eq!(
+            ProcessCategory::classify("chrome", None, false),
+            ProcessCategory::Browser
+        );
+    }
+
+    #[test]
+    fn test_classify_development() {
+        assert_eq!(
+            ProcessCategory::classify("cargo", None, false),
+            ProcessCategory::Development
+        );
+        assert_eq!(
+            ProcessCategory::classify("rustc", None, false),
+            ProcessCategory::Development
+        );
+    }
+
+    #[test]
+    fn test_classify_ai_ml_gpu() {
+        assert_eq!(
+            ProcessCategory::classify("python", None, true),
+            ProcessCategory::AiMl
+        );
+        assert_eq!(
+            ProcessCategory::classify("ollama", None, true),
+            ProcessCategory::AiMl
+        );
+    }
+
+    #[test]
+    fn test_classify_gpu_gaming() {
+        assert_eq!(
+            ProcessCategory::classify("steam", None, true),
+            ProcessCategory::Gaming
+        );
+    }
+
+    #[test]
+    fn test_classify_gpu_generic() {
+        assert_eq!(
+            ProcessCategory::classify("someapp", None, true),
+            ProcessCategory::GpuCompute
+        );
+    }
+
+    #[test]
+    fn test_classify_service() {
+        assert_eq!(
+            ProcessCategory::classify("sshd", None, false),
+            ProcessCategory::Service
+        );
+    }
+
+    #[test]
+    fn test_classify_media() {
+        assert_eq!(
+            ProcessCategory::classify("vlc", None, false),
+            ProcessCategory::Media
+        );
+    }
+
+    #[test]
+    fn test_classify_unknown() {
+        assert_eq!(
+            ProcessCategory::classify("xyzzy_unknown_proc", None, false),
+            ProcessCategory::Unknown
+        );
+    }
+
+    #[test]
+    fn test_classify_case_insensitive() {
+        assert_eq!(
+            ProcessCategory::classify("Firefox", None, false),
+            ProcessCategory::Browser
+        );
+        assert_eq!(
+            ProcessCategory::classify("CHROME", None, false),
+            ProcessCategory::Browser
+        );
+    }
+
+    #[test]
+    fn test_memory_mb() {
+        let p = make_test_process();
+        assert!((p.memory_mb() - 512.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_cpu_usage() {
+        let p = make_test_process();
+        assert!((p.cpu_usage() - 25.5).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_is_gpu_process() {
+        let mut p = make_test_process();
+        assert!(!p.is_gpu_process());
+        p.gpu_indices.push(0);
+        assert!(p.is_gpu_process());
+    }
+
+    #[test]
+    fn test_gpu_memory_mb() {
+        let mut p = make_test_process();
+        assert_eq!(p.gpu_memory_mb(), 0.0);
+        p.total_gpu_memory_bytes = 1024 * 1024 * 256;
+        assert!((p.gpu_memory_mb() - 256.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_reclassify() {
+        let mut p = make_test_process();
+        p.name = "firefox".to_string();
+        p.reclassify();
+        assert_eq!(p.category, ProcessCategory::Browser);
+    }
+}

@@ -592,12 +592,19 @@ pub fn scan_ports_with_timeout(
             None
         };
 
+        // Grab banner for open ports
+        let banner = if status == PortStatus::Open {
+            grab_banner(host, port, timeout)
+        } else {
+            None
+        };
+
         results.push(PortScanResult {
             port,
             status,
             service: get_service_name(port),
             connect_time_ms: connect_time,
-            banner: None, // TODO: Implement banner grabbing
+            banner,
         });
     }
 

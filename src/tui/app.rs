@@ -2166,3 +2166,86 @@ impl App {
             .map(|agent| format!("Cache: {} entries", agent.cache_size()))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_color_theme_all_count() {
+        assert_eq!(ColorTheme::all().len(), 6);
+    }
+
+    #[test]
+    fn test_color_theme_default() {
+        let theme = ColorTheme::default();
+        assert_eq!(theme, ColorTheme::CatppuccinMocha);
+    }
+
+    #[test]
+    fn test_color_theme_names() {
+        assert_eq!(ColorTheme::CatppuccinMocha.name(), "Catppuccin Mocha");
+        assert_eq!(ColorTheme::CatppuccinLatte.name(), "Catppuccin Latte");
+        assert_eq!(ColorTheme::Glances.name(), "Glances Classic");
+        assert_eq!(ColorTheme::Nord.name(), "Nord");
+        assert_eq!(ColorTheme::Dracula.name(), "Dracula");
+        assert_eq!(ColorTheme::GruvboxDark.name(), "Gruvbox Dark");
+    }
+
+    #[test]
+    fn test_next_wraps() {
+        let last = *ColorTheme::all().last().unwrap();
+        let first = ColorTheme::all()[0];
+        assert_eq!(last.next(), first);
+    }
+
+    #[test]
+    fn test_next_sequence() {
+        let t = ColorTheme::CatppuccinMocha;
+        assert_eq!(t.next(), ColorTheme::CatppuccinLatte);
+    }
+
+    #[test]
+    fn test_prev_wraps() {
+        let first = ColorTheme::all()[0];
+        let last = *ColorTheme::all().last().unwrap();
+        assert_eq!(first.prev(), last);
+    }
+
+    #[test]
+    fn test_prev_sequence() {
+        let t = ColorTheme::CatppuccinLatte;
+        assert_eq!(t.prev(), ColorTheme::CatppuccinMocha);
+    }
+
+    #[test]
+    fn test_next_prev_roundtrip() {
+        for theme in ColorTheme::all() {
+            assert_eq!(theme.next().prev(), *theme);
+            assert_eq!(theme.prev().next(), *theme);
+        }
+    }
+
+    #[test]
+    fn test_colors_valid_rgb() {
+        for theme in ColorTheme::all() {
+            let c = theme.colors();
+            // Just verify we can access all color fields (they're u8 so always valid)
+            let _ok = c.ok;
+            let _warn = c.warning;
+            let _crit = c.critical;
+            let _title = c.title;
+            let _text = c.text;
+        }
+    }
+
+    #[test]
+    fn test_view_mode_default() {
+        assert_eq!(ViewMode::default(), ViewMode::Main);
+    }
+
+    #[test]
+    fn test_process_display_mode_default() {
+        assert_eq!(ProcessDisplayMode::default(), ProcessDisplayMode::All);
+    }
+}

@@ -490,3 +490,286 @@ pub enum Error {
     #[error("Unknown error: {0}")]
     Unknown(String),
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // === Temperature tests ===
+
+    #[test]
+    fn test_temperature_primary_junction_first() {
+        let temp = Temperature {
+            edge: Some(55.0),
+            junction: Some(65.0),
+            memory: Some(50.0),
+            hotspot: Some(70.0),
+            vr_gfx: None,
+            vr_soc: None,
+            vr_mem: None,
+            hbm: None,
+            thresholds: None,
+        };
+        assert_eq!(temp.primary(), Some(65.0));
+    }
+
+    #[test]
+    fn test_temperature_primary_fallback_hotspot() {
+        let temp = Temperature {
+            edge: Some(55.0),
+            junction: None,
+            memory: None,
+            hotspot: Some(70.0),
+            vr_gfx: None,
+            vr_soc: None,
+            vr_mem: None,
+            hbm: None,
+            thresholds: None,
+        };
+        assert_eq!(temp.primary(), Some(70.0));
+    }
+
+    #[test]
+    fn test_temperature_primary_fallback_edge() {
+        let temp = Temperature {
+            edge: Some(55.0),
+            junction: None,
+            memory: None,
+            hotspot: None,
+            vr_gfx: None,
+            vr_soc: None,
+            vr_mem: None,
+            hbm: None,
+            thresholds: None,
+        };
+        assert_eq!(temp.primary(), Some(55.0));
+    }
+
+    #[test]
+    fn test_temperature_primary_none() {
+        let temp = Temperature {
+            edge: None,
+            junction: None,
+            memory: None,
+            hotspot: None,
+            vr_gfx: None,
+            vr_soc: None,
+            vr_mem: None,
+            hbm: None,
+            thresholds: None,
+        };
+        assert_eq!(temp.primary(), None);
+    }
+
+    #[test]
+    fn test_temperature_max() {
+        let temp = Temperature {
+            edge: Some(55.0),
+            junction: Some(65.0),
+            memory: Some(50.0),
+            hotspot: Some(80.0),
+            vr_gfx: Some(72.0),
+            vr_soc: None,
+            vr_mem: None,
+            hbm: Some(vec![60.0, 62.0, 85.0]),
+            thresholds: None,
+        };
+        assert_eq!(temp.max(), Some(85.0));
+    }
+
+    #[test]
+    fn test_temperature_max_none_when_empty() {
+        let temp = Temperature {
+            edge: None,
+            junction: None,
+            memory: None,
+            hotspot: None,
+            vr_gfx: None,
+            vr_soc: None,
+            vr_mem: None,
+            hbm: None,
+            thresholds: None,
+        };
+        assert_eq!(temp.max(), None);
+    }
+
+    #[test]
+    fn test_temperature_status_normal() {
+        let temp = Temperature {
+            edge: None,
+            junction: Some(50.0),
+            memory: None,
+            hotspot: None,
+            vr_gfx: None,
+            vr_soc: None,
+            vr_mem: None,
+            hbm: None,
+            thresholds: Some(TemperatureThresholds {
+                slowdown: Some(80.0),
+                shutdown: Some(95.0),
+                critical: Some(100.0),
+                memory_critical: None,
+            }),
+        };
+        assert_eq!(temp.status(), TemperatureStatus::Normal);
+    }
+
+    #[test]
+    fn test_temperature_status_throttling() {
+        let temp = Temperature {
+            edge: None,
+            junction: Some(85.0),
+            memory: None,
+            hotspot: None,
+            vr_gfx: None,
+            vr_soc: None,
+            vr_mem: None,
+            hbm: None,
+            thresholds: Some(TemperatureThresholds {
+                slowdown: Some(80.0),
+                shutdown: Some(95.0),
+                critical: Some(100.0),
+                memory_critical: None,
+            }),
+        };
+        assert_eq!(temp.status(), TemperatureStatus::Throttling);
+    }
+
+    #[test]
+    fn test_temperature_status_shutdown() {
+        let temp = Temperature {
+            edge: None,
+            junction: Some(96.0),
+            memory: None,
+            hotspot: None,
+            vr_gfx: None,
+            vr_soc: None,
+            vr_mem: None,
+            hbm: None,
+            thresholds: Some(TemperatureThresholds {
+                slowdown: Some(80.0),
+                shutdown: Some(95.0),
+                critical: Some(100.0),
+                memory_critical: None,
+            }),
+        };
+        assert_eq!(temp.status(), TemperatureStatus::Shutdown);
+    }
+
+    #[test]
+    fn test_temperature_status_critical() {
+        let temp = Temperature {
+            edge: None,
+            junction: Some(105.0),
+            memory: None,
+            hotspot: None,
+            vr_gfx: None,
+            vr_soc: None,
+            vr_mem: None,
+            hbm: None,
+            thresholds: Some(TemperatureThresholds {
+                slowdown: Some(80.0),
+                shutdown: Some(95.0),
+                critical: Some(100.0),
+                memory_critical: None,
+            }),
+        };
+        assert_eq!(temp.status(), TemperatureStatus::Critical);
+    }
+
+    #[test]
+    fn test_temperature_status_unknown_when_no_primary() {
+        let temp = Temperature {
+            edge: None,
+            junction: None,
+            memory: None,
+            hotspot: None,
+            vr_gfx: None,
+            vr_soc: None,
+            vr_mem: None,
+            hbm: None,
+            thresholds: Some(TemperatureThresholds {
+                slowdown: Some(80.0),
+                shutdown: Some(95.0),
+                critical: Some(100.0),
+                memory_critical: None,
+            }),
+        };
+        assert_eq!(temp.status(), TemperatureStatus::Unknown);
+    }
+
+    #[test]
+    fn test_temperature_status_normal_when_no_thresholds() {
+        let temp = Temperature {
+            edge: None,
+            junction: Some(90.0),
+            memory: None,
+            hotspot: None,
+            vr_gfx: None,
+            vr_soc: None,
+            vr_mem: None,
+            hbm: None,
+            thresholds: None,
+        };
+        assert_eq!(temp.status(), TemperatureStatus::Normal);
+    }
+
+    // === Memory tests ===
+
+    #[test]
+    fn test_memory_utilization_percent() {
+        let mem = Memory {
+            total: 8 * 1024 * 1024 * 1024, // 8GB
+            used: 4 * 1024 * 1024 * 1024,  // 4GB
+            free: 4 * 1024 * 1024 * 1024,
+            bar1_total: None,
+            bar1_used: None,
+        };
+        assert!((mem.utilization_percent() - 50.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_memory_utilization_zero_total() {
+        let mem = Memory {
+            total: 0,
+            used: 0,
+            free: 0,
+            bar1_total: None,
+            bar1_used: None,
+        };
+        assert_eq!(mem.utilization_percent(), 0.0);
+    }
+
+    #[test]
+    fn test_memory_utilization_full() {
+        let mem = Memory {
+            total: 1024,
+            used: 1024,
+            free: 0,
+            bar1_total: None,
+            bar1_used: None,
+        };
+        assert!((mem.utilization_percent() - 100.0).abs() < 0.01);
+    }
+
+    // === Vendor tests ===
+
+    #[test]
+    fn test_vendor_display() {
+        assert_eq!(Vendor::Nvidia.to_string(), "NVIDIA");
+        assert_eq!(Vendor::Amd.to_string(), "AMD");
+        assert_eq!(Vendor::Intel.to_string(), "Intel");
+        assert_eq!(Vendor::Apple.to_string(), "Apple");
+    }
+
+    // === TemperatureStatus tests ===
+
+    #[test]
+    fn test_temperature_status_display() {
+        assert_eq!(TemperatureStatus::Normal.to_string(), "Normal");
+        assert_eq!(TemperatureStatus::Throttling.to_string(), "Throttling");
+        assert_eq!(TemperatureStatus::Shutdown.to_string(), "Shutdown Warning");
+        assert_eq!(TemperatureStatus::Critical.to_string(), "CRITICAL");
+        assert_eq!(TemperatureStatus::Unknown.to_string(), "Unknown");
+    }
+}

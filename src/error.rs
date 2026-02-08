@@ -210,3 +210,118 @@ impl From<Error> for SimonError {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // === SimonError tests ===
+
+    #[test]
+    fn test_simon_error_display_parse() {
+        let err = SimonError::Parse("bad value".to_string());
+        assert_eq!(err.to_string(), "Parse error: bad value");
+    }
+
+    #[test]
+    fn test_simon_error_display_device_not_found() {
+        let err = SimonError::DeviceNotFound("GPU 0".to_string());
+        assert_eq!(err.to_string(), "Device not found: GPU 0");
+    }
+
+    #[test]
+    fn test_simon_error_display_permission_denied() {
+        let err = SimonError::PermissionDenied("need root".to_string());
+        assert_eq!(err.to_string(), "Permission denied: need root");
+    }
+
+    #[test]
+    fn test_simon_error_display_unsupported_platform() {
+        let err = SimonError::UnsupportedPlatform("FreeBSD".to_string());
+        assert_eq!(err.to_string(), "Unsupported platform: FreeBSD");
+    }
+
+    #[test]
+    fn test_simon_error_display_not_implemented() {
+        let err = SimonError::NotImplemented("macOS fan".to_string());
+        assert_eq!(err.to_string(), "Not implemented: macOS fan");
+    }
+
+    #[test]
+    fn test_simon_error_from_io() {
+        let io_err = io::Error::new(io::ErrorKind::NotFound, "file missing");
+        let err: SimonError = io_err.into();
+        assert!(err.to_string().contains("file missing"));
+    }
+
+    #[test]
+    fn test_simon_error_from_json() {
+        let json_str = "{ invalid json }}}";
+        let json_err = serde_json::from_str::<serde_json::Value>(json_str).unwrap_err();
+        let err: SimonError = json_err.into();
+        assert!(err.to_string().contains("JSON error"));
+    }
+
+    #[test]
+    fn test_simon_error_gpu_error() {
+        let err = SimonError::GpuError("NVML failure".to_string());
+        assert_eq!(err.to_string(), "GPU error: NVML failure");
+    }
+
+    #[test]
+    fn test_simon_error_other() {
+        let err = SimonError::Other("misc error".to_string());
+        assert_eq!(err.to_string(), "misc error");
+    }
+
+    // === Error (unified GPU error) tests ===
+
+    #[test]
+    fn test_error_not_supported() {
+        let err = Error::NotSupported("MIG".to_string());
+        assert!(err.to_string().contains("Not supported"));
+    }
+
+    #[test]
+    fn test_error_gpu_error_display() {
+        let err = Error::GpuError("No devices".to_string());
+        assert!(err.to_string().contains("No devices"));
+    }
+
+    #[test]
+    fn test_error_conversion_to_simon_error() {
+        let err = Error::GpuError("test failure".to_string());
+        let simon_err: SimonError = err.into();
+        assert!(simon_err.to_string().contains("test failure"));
+    }
+
+    #[test]
+    fn test_error_not_supported_conv() {
+        let err = Error::NotSupported("feature X".to_string());
+        let simon_err: SimonError = err.into();
+        match simon_err {
+            SimonError::FeatureNotAvailable(s) => assert_eq!(s, "feature X"),
+            _ => panic!("Expected FeatureNotAvailable"),
+        }
+    }
+
+    #[test]
+    fn test_error_permission_denied_conv() {
+        let err = Error::PermissionDenied("need admin".to_string());
+        let simon_err: SimonError = err.into();
+        match simon_err {
+            SimonError::PermissionDenied(s) => assert_eq!(s, "need admin"),
+            _ => panic!("Expected PermissionDenied"),
+        }
+    }
+
+    #[test]
+    fn test_error_device_not_found_conv() {
+        let err = Error::DeviceNotFound("GPU 1".to_string());
+        let simon_err: SimonError = err.into();
+        match simon_err {
+            SimonError::DeviceNotFound(s) => assert_eq!(s, "GPU 1"),
+            _ => panic!("Expected DeviceNotFound"),
+        }
+    }
+}

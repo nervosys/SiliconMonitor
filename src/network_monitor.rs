@@ -982,3 +982,122 @@ mod macos {
         Ok(interfaces)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_test_iface() -> NetworkInterfaceInfo {
+        NetworkInterfaceInfo {
+            name: "eth0".to_string(),
+            is_up: true,
+            is_running: true,
+            rx_bytes: 1024 * 1024 * 100,
+            rx_packets: 5000,
+            rx_errors: 2,
+            rx_drops: 1,
+            tx_bytes: 1024 * 1024 * 50,
+            tx_packets: 3000,
+            tx_errors: 1,
+            tx_drops: 0,
+            speed_mbps: Some(1000),
+            mtu: Some(1500),
+            mac_address: Some("aa:bb:cc:dd:ee:ff".to_string()),
+            ipv4_addresses: vec!["192.168.1.10".to_string()],
+            ipv6_addresses: vec![],
+        }
+    }
+
+    #[test]
+    fn test_total_bytes() {
+        let iface = make_test_iface();
+        assert_eq!(iface.total_bytes(), iface.rx_bytes + iface.tx_bytes);
+    }
+
+    #[test]
+    fn test_total_packets() {
+        let iface = make_test_iface();
+        assert_eq!(iface.total_packets(), 5000 + 3000);
+    }
+
+    #[test]
+    fn test_total_errors() {
+        let iface = make_test_iface();
+        assert_eq!(iface.total_errors(), 3);
+    }
+
+    #[test]
+    fn test_total_drops() {
+        let iface = make_test_iface();
+        assert_eq!(iface.total_drops(), 1);
+    }
+
+    #[test]
+    fn test_rx_mb() {
+        let iface = make_test_iface();
+        assert!((iface.rx_mb() - 100.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_tx_mb() {
+        let iface = make_test_iface();
+        assert!((iface.tx_mb() - 50.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_total_mb() {
+        let iface = make_test_iface();
+        assert!((iface.total_mb() - 150.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_is_active() {
+        let mut iface = make_test_iface();
+        assert!(iface.is_active());
+        iface.is_up = false;
+        assert!(!iface.is_active());
+        iface.is_up = true;
+        iface.is_running = false;
+        assert!(!iface.is_active());
+    }
+
+    #[test]
+    fn test_zero_stats_interface() {
+        let iface = NetworkInterfaceInfo {
+            name: "lo".to_string(),
+            is_up: true,
+            is_running: true,
+            rx_bytes: 0,
+            rx_packets: 0,
+            rx_errors: 0,
+            rx_drops: 0,
+            tx_bytes: 0,
+            tx_packets: 0,
+            tx_errors: 0,
+            tx_drops: 0,
+            speed_mbps: None,
+            mtu: None,
+            mac_address: None,
+            ipv4_addresses: vec![],
+            ipv6_addresses: vec![],
+        };
+        assert_eq!(iface.total_bytes(), 0);
+        assert_eq!(iface.total_packets(), 0);
+        assert_eq!(iface.total_errors(), 0);
+        assert_eq!(iface.total_drops(), 0);
+        assert_eq!(iface.rx_mb(), 0.0);
+        assert_eq!(iface.tx_mb(), 0.0);
+    }
+
+    #[test]
+    fn test_bandwidth_rate_no_prev() {
+        let monitor = NetworkMonitor {
+            prev_stats: HashMap::new(),
+            last_update: std::time::Instant::now(),
+        };
+        let iface = make_test_iface();
+        let (rx, tx) = monitor.bandwidth_rate("eth0", &iface);
+        assert_eq!(rx, 0.0);
+        assert_eq!(tx, 0.0);
+    }
+}

@@ -539,12 +539,194 @@ pub fn detect_gpus(collection: &mut GpuCollection) -> Result<(), Error> {
         }
     }
     
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(windows)]
+    {
+        detect_intel_gpus_wmi(collection)?;
+    }
+
+    #[cfg(not(any(target_os = "linux", windows)))]
     {
         let _ = collection;
     }
     
     Ok(())
+}
+
+/// Detect Intel GPUs on Windows via WMI Win32_VideoController
+#[cfg(windows)]
+fn detect_intel_gpus_wmi(collection: &mut GpuCollection) -> Result<(), Error> {
+    use serde::Deserialize;
+
+    #[derive(Deserialize, Debug)]
+    #[serde(rename_all = "PascalCase")]
+    #[allow(dead_code)]
+    struct Win32VideoController {
+        name: Option<String>,
+        adapter_r_a_m: Option<u64>,
+        driver_version: Option<String>,
+        video_processor: Option<String>,
+        pnp_device_i_d: Option<String>,
+        status: Option<String>,
+    }
+
+    let com = wmi::COMLibrary::new().map_err(|e| {
+        Error::Other(format!("Failed to initialize COM: {}", e))
+    })?;
+    let wmi_con = wmi::WMIConnection::with_namespace_path("root\\CIMV2", com.into())
+        .map_err(|e| Error::Other(format!("Failed to connect to WMI: {}", e)))?;
+
+    let controllers: Vec<Win32VideoController> = wmi_con
+        .raw_query("SELECT Name, AdapterRAM, DriverVersion, VideoProcessor, PNPDeviceID, Status FROM Win32_VideoController")
+        .unwrap_or_default();
+
+    let mut gpu_index = 0;
+    for ctrl in &controllers {
+        let name = ctrl.name.as_deref().unwrap_or("");
+        let name_lower = name.to_lowercase();
+
+        // Filter for Intel GPUs
+        if !name_lower.contains("intel") {
+            continue;
+        }
+
+        // Skip non-GPU Intel devices (e.g., Intel Management Engine)
+        if name_lower.contains("management") || name_lower.contains("serial") {
+            continue;
+        }
+
+        let pci_bus_id = ctrl
+            .pnp_device_i_d
+            .as_deref()
+            .unwrap_or("unknown")
+            .to_string();
+
+        // Determine driver type from name
+        let driver = if name_lower.contains("arc") {
+            IntelDriver::Xe
+        } else {
+            IntelDriver::I915
+        };
+
+        let mut gpu = IntelGpu::new(gpu_index, pci_bus_id, driver)?;
+        gpu.name = name.to_string();
+
+        let is_discrete = name_lower.contains("arc")
+            || name_lower.contains("data center");
+        let adapter_ram = ctrl.adapter_r_a_m.unwrap_or(0);
+
+        collection.add_gpu(Box::new(WmiIntelGpu {
+            inner: gpu,
+            adapter_ram,
+            driver_version: ctrl.driver_version.clone(),
+            is_discrete,
+        }));
+        gpu_index += 1;
+    }
+
+    Ok(())
+}
+
+/// Intel GPU with WMI-sourced data on Windows
+#[cfg(windows)]
+struct WmiIntelGpu {
+    inner: IntelGpu,
+    adapter_ram: u64,
+    driver_version: Option<String>,
+    is_discrete: bool,
+}
+
+#[cfg(windows)]
+impl Gpu for WmiIntelGpu {
+    fn static_info(&self) -> Result<GpuStaticInfo, Error> {
+        Ok(GpuStaticInfo {
+            index: self.inner.index,
+            vendor: GpuVendor::Intel,
+            name: self.inner.name.clone(),
+            pci_bus_id: Some(self.inner.pci_bus_id.clone()),
+            uuid: None,
+            vbios_version: None,
+            driver_version: self.driver_version.clone(),
+            compute_capability: None,
+            shader_cores: None,
+            l2_cache: None,
+            num_engines: None,
+            integrated: !self.is_discrete,
+        })
+    }
+
+    fn dynamic_info(&self) -> Result<GpuDynamicInfo, Error> {
+        Ok(GpuDynamicInfo {
+            utilization: 0,
+            memory: GpuMemory {
+                total: self.adapter_ram,
+                used: 0,
+                free: self.adapter_ram,
+                utilization: 0,
+            },
+            clocks: GpuClocks {
+                graphics: None,
+                graphics_max: None,
+                memory: None,
+                memory_max: None,
+                sm: None,
+                video: None,
+            },
+            power: GpuPower {
+                draw: None,
+                limit: None,
+                default_limit: None,
+                usage_percent: None,
+            },
+            thermal: GpuThermal {
+                temperature: None,
+                max_temperature: None,
+                critical_temperature: None,
+                fan_speed: None,
+                fan_rpm: None,
+            },
+            pcie: PcieLinkInfo {
+                current_gen: None,
+                max_gen: None,
+                current_width: None,
+                max_width: None,
+                current_speed: None,
+                max_speed: None,
+                tx_throughput: None,
+                rx_throughput: None,
+            },
+            engines: GpuEngines {
+                graphics: None,
+                compute: None,
+                encoder: None,
+                decoder: None,
+                copy: None,
+                vendor_specific: vec![],
+            },
+            processes: vec![],
+        })
+    }
+
+    fn vendor(&self) -> GpuVendor {
+        GpuVendor::Intel
+    }
+
+    fn index(&self) -> usize {
+        self.inner.index
+    }
+
+    fn name(&self) -> Result<String, Error> {
+        Ok(self.inner.name.clone())
+    }
+
+    fn processes(&self) -> Result<Vec<GpuProcess>, Error> {
+        Ok(vec![])
+    }
+
+    fn kill_process(&self, _pid: u32) -> Result<(), Error> {
+        Err(Error::NotSupported(
+            "Process killing not supported on Windows for Intel GPUs".to_string(),
+        ))
+    }
 }
 
 #[cfg(test)]

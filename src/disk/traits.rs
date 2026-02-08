@@ -354,3 +354,137 @@ pub mod smart_ids {
     /// Reallocation event count
     pub const REALLOCATION_EVENTS: u8 = 0xC4;
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    // === DiskIoStats tests ===
+
+    #[test]
+    fn test_disk_io_total_ops() {
+        let stats = DiskIoStats {
+            read_bytes: 1000,
+            write_bytes: 2000,
+            read_ops: 100,
+            write_ops: 200,
+            read_time_ms: None,
+            write_time_ms: None,
+            queue_depth: None,
+            avg_latency_us: None,
+            read_throughput: None,
+            write_throughput: None,
+        };
+        assert_eq!(stats.total_ops(), 300);
+    }
+
+    #[test]
+    fn test_disk_io_total_bytes() {
+        let stats = DiskIoStats {
+            read_bytes: 1_000_000,
+            write_bytes: 2_000_000,
+            read_ops: 0,
+            write_ops: 0,
+            read_time_ms: None,
+            write_time_ms: None,
+            queue_depth: None,
+            avg_latency_us: None,
+            read_throughput: None,
+            write_throughput: None,
+        };
+        assert_eq!(stats.total_bytes(), 3_000_000);
+    }
+
+    #[test]
+    fn test_disk_io_zero() {
+        let stats = DiskIoStats {
+            read_bytes: 0,
+            write_bytes: 0,
+            read_ops: 0,
+            write_ops: 0,
+            read_time_ms: None,
+            write_time_ms: None,
+            queue_depth: None,
+            avg_latency_us: None,
+            read_throughput: None,
+            write_throughput: None,
+        };
+        assert_eq!(stats.total_ops(), 0);
+        assert_eq!(stats.total_bytes(), 0);
+    }
+
+    // === FilesystemInfo tests ===
+
+    #[test]
+    fn test_filesystem_usage_percent() {
+        let fs = FilesystemInfo {
+            mount_point: PathBuf::from("/"),
+            fs_type: "ext4".to_string(),
+            total_size: 1_000_000_000,
+            used_size: 500_000_000,
+            available_size: 500_000_000,
+            total_inodes: None,
+            used_inodes: None,
+            read_only: false,
+        };
+        assert!((fs.usage_percent() - 50.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_filesystem_usage_percent_zero_total() {
+        let fs = FilesystemInfo {
+            mount_point: PathBuf::from("/"),
+            fs_type: "tmpfs".to_string(),
+            total_size: 0,
+            used_size: 0,
+            available_size: 0,
+            total_inodes: None,
+            used_inodes: None,
+            read_only: false,
+        };
+        assert_eq!(fs.usage_percent(), 0.0);
+    }
+
+    #[test]
+    fn test_filesystem_usage_percent_full() {
+        let fs = FilesystemInfo {
+            mount_point: PathBuf::from("/data"),
+            fs_type: "ntfs".to_string(),
+            total_size: 1_000_000,
+            used_size: 1_000_000,
+            available_size: 0,
+            total_inodes: None,
+            used_inodes: None,
+            read_only: true,
+        };
+        assert!((fs.usage_percent() - 100.0).abs() < 0.01);
+    }
+
+    // === DiskHealth tests ===
+
+    #[test]
+    fn test_disk_health_equality() {
+        assert_eq!(DiskHealth::Healthy, DiskHealth::Healthy);
+        assert_ne!(DiskHealth::Healthy, DiskHealth::Warning);
+        assert_ne!(DiskHealth::Warning, DiskHealth::Critical);
+    }
+
+    // === DiskType tests ===
+
+    #[test]
+    fn test_disk_type_equality() {
+        assert_eq!(DiskType::NvmeSsd, DiskType::NvmeSsd);
+        assert_ne!(DiskType::NvmeSsd, DiskType::SataHdd);
+    }
+
+    // === smart_ids constants ===
+
+    #[test]
+    fn test_smart_ids_values() {
+        assert_eq!(smart_ids::POWER_ON_HOURS, 0x09);
+        assert_eq!(smart_ids::TEMPERATURE, 0xC2);
+        assert_eq!(smart_ids::REALLOCATED_SECTORS, 0x05);
+        assert_eq!(smart_ids::PENDING_SECTORS, 0xC5);
+    }
+}
