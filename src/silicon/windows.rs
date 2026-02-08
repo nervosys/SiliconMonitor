@@ -447,6 +447,7 @@ impl SiliconMonitor for WindowsSiliconMonitor {
                     struct PnpDevice {
                         name: Option<String>,
                         manufacturer: Option<String>,
+                        #[allow(dead_code)]
                         status: Option<String>,
                     }
 

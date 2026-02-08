@@ -777,32 +777,171 @@ impl ConnectionMonitor {
     }
 }
 
-// macOS implementation (stub)
+// macOS implementation using netstat
 #[cfg(target_os = "macos")]
 impl ConnectionMonitor {
     fn macos_tcp_connections(&self) -> Result<Vec<ConnectionInfo>, Error> {
-        // macOS would use netstat or lsof parsing, or system calls
-        Err(Error::NotSupported(
-            "macOS TCP monitoring not implemented yet".into(),
-        ))
+        self.parse_macos_netstat(Protocol::Tcp, "tcp4")
     }
 
     fn macos_tcp6_connections(&self) -> Result<Vec<ConnectionInfo>, Error> {
-        Err(Error::NotSupported(
-            "macOS TCP6 monitoring not implemented yet".into(),
-        ))
+        self.parse_macos_netstat(Protocol::Tcp6, "tcp6")
     }
 
     fn macos_udp_endpoints(&self) -> Result<Vec<ConnectionInfo>, Error> {
-        Err(Error::NotSupported(
-            "macOS UDP monitoring not implemented yet".into(),
-        ))
+        self.parse_macos_netstat(Protocol::Udp, "udp4")
     }
 
     fn macos_udp6_endpoints(&self) -> Result<Vec<ConnectionInfo>, Error> {
-        Err(Error::NotSupported(
-            "macOS UDP6 monitoring not implemented yet".into(),
-        ))
+        self.parse_macos_netstat(Protocol::Udp6, "udp6")
+    }
+
+    fn parse_macos_netstat(
+        &self,
+        protocol: Protocol,
+        proto_flag: &str,
+    ) -> Result<Vec<ConnectionInfo>, Error> {
+        use std::process::Command;
+
+        let output = Command::new("netstat")
+            .args(["-an", "-p", proto_flag])
+            .output()
+            .map_err(|e| Error::SystemError(format!("Failed to run netstat: {}", e)))?;
+
+        if !output.status.success() {
+            return Err(Error::SystemError("netstat command failed".into()));
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let mut connections = Vec::new();
+
+        for line in stdout.lines().skip(2) {
+            // Skip header lines
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() < 4 {
+                continue;
+            }
+
+            // macOS netstat format: Proto Recv-Q Send-Q Local Address Foreign Address (State)
+            let local_addr_str = parts[3];
+            let remote_addr_str = if parts.len() > 4 {
+                Some(parts[4])
+            } else {
+                None
+            };
+            let state_str = if parts.len() > 5 {
+                Some(parts[5])
+            } else {
+                None
+            };
+
+            let (local_ip, local_port) = match Self::parse_macos_address(local_addr_str, &protocol)
+            {
+                Some(v) => v,
+                None => continue,
+            };
+
+            let (remote_ip, remote_port) = if let Some(addr) = remote_addr_str {
+                match Self::parse_macos_address(addr, &protocol) {
+                    Some(v) => (Some(v.0), Some(v.1)),
+                    None => (None, None),
+                }
+            } else {
+                (None, None)
+            };
+
+            let state = if let Some(s) = state_str {
+                Self::parse_macos_state(s)
+            } else if matches!(protocol, Protocol::Udp | Protocol::Udp6) {
+                ConnectionState::Stateless
+            } else {
+                ConnectionState::Unknown
+            };
+
+            connections.push(ConnectionInfo {
+                protocol,
+                local_address: local_addr_str.to_string(),
+                local_ip,
+                local_port,
+                remote_address: remote_addr_str.map(|s| s.to_string()),
+                remote_ip,
+                remote_port,
+                state,
+                pid: None, // netstat -an doesn't show PIDs; would need lsof -i
+                process_name: None,
+            });
+        }
+
+        Ok(connections)
+    }
+
+    fn parse_macos_address(addr: &str, protocol: &Protocol) -> Option<(IpAddr, u16)> {
+        // macOS format: IP.port or [IPv6]:port or *.port
+        if let Some(last_dot) = addr.rfind('.') {
+            let ip_part = &addr[..last_dot];
+            let port_str = &addr[last_dot + 1..];
+            let port: u16 = match port_str.parse() {
+                Ok(p) => p,
+                Err(_) => {
+                    // Could be a service name like "https"
+                    if port_str == "*" {
+                        0
+                    } else {
+                        return None;
+                    }
+                }
+            };
+
+            let ip = if ip_part == "*" {
+                match protocol {
+                    Protocol::Tcp6 | Protocol::Udp6 => IpAddr::V6(Ipv6Addr::UNSPECIFIED),
+                    _ => IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+                }
+            } else if let Ok(v4) = ip_part.parse::<Ipv4Addr>() {
+                IpAddr::V4(v4)
+            } else if let Ok(v6) = ip_part.parse::<Ipv6Addr>() {
+                IpAddr::V6(v6)
+            } else {
+                // For IPv6 on macOS like "fe80::1%lo0.port" or bracket form
+                let cleaned = ip_part.trim_matches(|c| c == '[' || c == ']');
+                // Strip zone ID (e.g., %lo0)
+                let cleaned = if let Some(pct) = cleaned.find('%') {
+                    &cleaned[..pct]
+                } else {
+                    cleaned
+                };
+                match cleaned.parse::<Ipv6Addr>() {
+                    Ok(v6) => IpAddr::V6(v6),
+                    Err(_) => return None,
+                }
+            };
+
+            Some((ip, port))
+        } else {
+            None
+        }
+    }
+
+    fn parse_macos_state(state: &str) -> ConnectionState {
+        match state {
+            "ESTABLISHED" => ConnectionState::Established,
+            "LISTEN" => ConnectionState::Listen,
+            "SYN_SENT" => ConnectionState::SynSent,
+            "SYN_RECEIVED" | "SYN_RECV" => ConnectionState::SynReceived,
+            "FIN_WAIT_1" | "FIN_WAIT1" => ConnectionState::FinWait1,
+            "FIN_WAIT_2" | "FIN_WAIT2" => ConnectionState::FinWait2,
+            "CLOSE_WAIT" => ConnectionState::CloseWait,
+            "CLOSING" => ConnectionState::Closing,
+            "LAST_ACK" => ConnectionState::LastAck,
+            "TIME_WAIT" => ConnectionState::TimeWait,
+            "CLOSED" => ConnectionState::Closed,
+            _ => ConnectionState::Unknown,
+        }
+    }
+
+    fn get_process_name_macos(&self, _pid: u32) -> Option<String> {
+        // Would need libproc or ps command
+        None
     }
 }
 

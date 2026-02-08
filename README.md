@@ -1,4 +1,4 @@
-<p align="center">
+﻿<p align="center">
   <img src="assets/banner.png" alt="Silicon Monitor (simon)" width="100%">
 </p>
 
@@ -803,9 +803,9 @@ cargo run --release --features full --example agent_simple
 
 | Platform | CPU | Memory | Disk | GPU (NVIDIA) | GPU (AMD) | GPU (Intel) | Network | Audio | Bluetooth | Display | USB |
 | -------- | --- | ------ | ---- | ------------ | --------- | ----------- | ------- | ----- | --------- | ------- | --- |
-| Linux    | ✅   | ✅      | ✅    | ✅            | ✅         | ✅           | ✅       | 🚧     | 🚧         | 🚧       | ✅   |
-| Windows  | ✅   | ✅      | ✅    | ✅            | 🚧         | 🚧           | 🚧       | 🚧     | 🚧         | 🚧       | 🚧   |
-| macOS    | ✅   | ✅      | ✅    | ❌            | ❌         | ❌           | 🚧       | 🚧     | 🚧         | 🚧       | 🚧   |
+| Linux    | ✅   | ✅      | ✅    | ✅            | ✅         | ✅           | ✅       | ✅     | ✅         | ✅       | ✅   |
+| Windows  | ✅   | ✅      | ✅    | ✅            | 🚧         | 🚧           | ✅       | ✅     | ✅         | ✅       | ✅   |
+| macOS    | ✅   | ✅      | ✅    | ❌            | ❌         | ❌           | ✅       | ✅     | ✅         | ✅       | ✅   |
 
 ✅ Fully Supported | 🚧 Partial/In Progress | ❌ Not Supported
 

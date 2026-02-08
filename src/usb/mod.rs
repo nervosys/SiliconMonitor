@@ -164,18 +164,115 @@ impl UsbMonitor {
 
     #[cfg(target_os = "macos")]
     fn refresh_macos(&mut self) {
-        self.devices.push(UsbDevice {
-            bus_number: 1,
-            port_number: 0,
-            vendor_id: 0x05ac,
-            product_id: 0x8006,
-            manufacturer: Some("Apple Inc.".to_string()),
-            product: Some("USB Root Hub".to_string()),
-            description: None,
-            serial_number: None,
-            class: UsbDeviceClass::Hub,
-            speed: UsbSpeed::High,
-        });
+        use std::process::Command;
+
+        // Use system_profiler to enumerate USB devices
+        let output = match Command::new("system_profiler")
+            .args(["SPUSBDataType", "-detailLevel", "full"])
+            .output()
+        {
+            Ok(o) => o,
+            Err(_) => return,
+        };
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let mut current_name: Option<String> = None;
+        let mut current_vendor_id: u16 = 0;
+        let mut current_product_id: u16 = 0;
+        let mut current_manufacturer: Option<String> = None;
+        let mut current_serial: Option<String> = None;
+        let mut current_speed: UsbSpeed = UsbSpeed::Full;
+        let mut bus_number: u8 = 0;
+        let mut port_number: u8 = 0;
+        let mut device_idx: u8 = 0;
+
+        for line in stdout.lines() {
+            let trimmed = line.trim();
+
+            // Device name lines end with ':'
+            if trimmed.ends_with(':') && !trimmed.starts_with("USB") && !trimmed.is_empty() {
+                // Save previous device if any
+                if let Some(name) = current_name.take() {
+                    device_idx += 1;
+                    self.devices.push(UsbDevice {
+                        bus_number,
+                        port_number: device_idx,
+                        vendor_id: current_vendor_id,
+                        product_id: current_product_id,
+                        manufacturer: current_manufacturer.take(),
+                        product: Some(name),
+                        description: None,
+                        serial_number: current_serial.take(),
+                        class: UsbDeviceClass::Other,
+                        speed: current_speed,
+                    });
+                    current_vendor_id = 0;
+                    current_product_id = 0;
+                    current_speed = UsbSpeed::Full;
+                }
+                current_name = Some(trimmed.trim_end_matches(':').to_string());
+            } else if let Some((key, val)) = trimmed.split_once(':') {
+                let key = key.trim();
+                let val = val.trim();
+                match key {
+                    "Vendor ID" => {
+                        // Format: "0x05ac (Apple Inc.)"
+                        if let Some(hex) = val.strip_prefix("0x").and_then(|s| s.split_whitespace().next()) {
+                            current_vendor_id = u16::from_str_radix(hex, 16).unwrap_or(0);
+                        }
+                    }
+                    "Product ID" => {
+                        if let Some(hex) = val.strip_prefix("0x").and_then(|s| s.split_whitespace().next()) {
+                            current_product_id = u16::from_str_radix(hex, 16).unwrap_or(0);
+                        }
+                    }
+                    "Manufacturer" => {
+                        current_manufacturer = Some(val.to_string());
+                    }
+                    "Serial Number" => {
+                        current_serial = Some(val.to_string());
+                    }
+                    "Speed" => {
+                        current_speed = if val.contains("480") {
+                            UsbSpeed::High
+                        } else if val.contains("5 Gb") || val.contains("10 Gb") || val.contains("20 Gb") {
+                            UsbSpeed::Super
+                        } else if val.contains("1.5") {
+                            UsbSpeed::Low
+                        } else {
+                            UsbSpeed::Full
+                        };
+                    }
+                    "Location ID" => {
+                        // Parse bus from location ID hex (e.g., "0x14200000 / 7")
+                        if let Some(hex) = val.strip_prefix("0x").and_then(|s| s.split_whitespace().next()) {
+                            if let Ok(loc) = u32::from_str_radix(hex, 16) {
+                                bus_number = ((loc >> 24) & 0xFF) as u8;
+                                port_number = ((loc >> 20) & 0xF) as u8;
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        // Save last device
+        if let Some(name) = current_name.take() {
+            device_idx += 1;
+            self.devices.push(UsbDevice {
+                bus_number,
+                port_number: device_idx,
+                vendor_id: current_vendor_id,
+                product_id: current_product_id,
+                manufacturer: current_manufacturer.take(),
+                product: Some(name),
+                description: None,
+                serial_number: current_serial.take(),
+                class: UsbDeviceClass::Other,
+                speed: current_speed,
+            });
+        }
     }
 }
 

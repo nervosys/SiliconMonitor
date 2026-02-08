@@ -2060,7 +2060,7 @@ mod macos {
                     memory_bytes: task_info.ptinfo.pti_resident_size,
                     virtual_memory_bytes: task_info.ptinfo.pti_virtual_size,
                     private_bytes: 0, // Not easily available on macOS
-                    thread_count: 0,  // TODO: Get from task_info
+                    thread_count: task_info.ptinfo.pti_threadnum as u32,
                     handle_count: 0,  // Not available on macOS
                     io_read_bytes: 0, // Would need ioreg
                     io_write_bytes: 0,

@@ -1081,14 +1081,20 @@ impl App {
     }
 
     fn get_cpu_utilization() -> f32 {
-        // Simple placeholder - returns a random-ish value for demonstration
-        // In real implementation, would read from /proc/stat (Linux) or WMI (Windows)
-        use std::time::SystemTime;
-        let now = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-        ((now % 100) as f32) / 2.0 // 0-50% range for demo
+        // Cross-platform fallback using num_cpus and /proc/loadavg (Linux/macOS)
+        // or returning 0.0 when platform stats are unavailable
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        {
+            if let Ok(contents) = std::fs::read_to_string("/proc/loadavg") {
+                if let Some(load_str) = contents.split_whitespace().next() {
+                    if let Ok(load) = load_str.parse::<f32>() {
+                        let ncpu = num_cpus::get() as f32;
+                        return (load / ncpu * 100.0).clamp(0.0, 100.0);
+                    }
+                }
+            }
+        }
+        0.0
     }
 
     fn update_memory(&mut self) -> Result<(), Box<dyn std::error::Error>> {

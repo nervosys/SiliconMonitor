@@ -1091,9 +1091,34 @@ impl AiDataApi {
 
         #[cfg(not(any(target_os = "linux", target_os = "windows")))]
         {
-            Err(SimonError::NotImplemented(
-                "CPU status not implemented for this platform".to_string(),
-            ))
+            use std::process::Command;
+            let model = Command::new("sysctl")
+                .args(["-n", "machdep.cpu.brand_string"])
+                .output()
+                .ok()
+                .and_then(|o| String::from_utf8(o.stdout).ok())
+                .map(|s| s.trim().to_string())
+                .unwrap_or_else(|| "CPU".to_string());
+            let ncpu = num_cpus::get();
+            let load = Command::new("sysctl")
+                .args(["-n", "vm.loadavg"])
+                .output()
+                .ok()
+                .and_then(|o| String::from_utf8(o.stdout).ok())
+                .and_then(|s| {
+                    s.trim()
+                        .trim_matches(|c: char| c == '{' || c == '}')
+                        .split_whitespace()
+                        .next()
+                        .and_then(|v| v.parse::<f64>().ok())
+                })
+                .unwrap_or(0.0);
+            let usage = (load / ncpu as f64 * 100.0).clamp(0.0, 100.0);
+            Ok(json!({
+                "core_count": ncpu,
+                "total": { "usage_percent": usage, "idle_percent": 100.0 - usage },
+                "model": model,
+            }))
         }
     }
 
@@ -1154,9 +1179,31 @@ impl AiDataApi {
 
         #[cfg(not(any(target_os = "linux", target_os = "windows")))]
         {
-            Err(SimonError::NotImplemented(
-                "CPU cores not implemented for this platform".to_string(),
-            ))
+            use std::process::Command;
+            let model = Command::new("sysctl")
+                .args(["-n", "machdep.cpu.brand_string"])
+                .output()
+                .ok()
+                .and_then(|o| String::from_utf8(o.stdout).ok())
+                .map(|s| s.trim().to_string())
+                .unwrap_or_else(|| "CPU".to_string());
+            let freq_hz = Command::new("sysctl")
+                .args(["-n", "hw.cpufrequency"])
+                .output()
+                .ok()
+                .and_then(|o| String::from_utf8(o.stdout).ok())
+                .and_then(|s| s.trim().parse::<u64>().ok())
+                .unwrap_or(0);
+            let ncpu = num_cpus::get();
+            let cores: Vec<_> = (0..ncpu)
+                .map(|i| {
+                    json!({
+                        "id": i, "online": true, "model": model,
+                        "frequency_mhz": freq_hz / 1_000_000,
+                    })
+                })
+                .collect();
+            Ok(json!(cores))
         }
     }
 
@@ -1213,9 +1260,40 @@ impl AiDataApi {
 
         #[cfg(not(any(target_os = "linux", target_os = "windows")))]
         {
-            Err(SimonError::NotImplemented(
-                "CPU frequency not implemented for this platform".to_string(),
-            ))
+            use std::process::Command;
+            let freq_hz = Command::new("sysctl")
+                .args(["-n", "hw.cpufrequency"])
+                .output()
+                .ok()
+                .and_then(|o| String::from_utf8(o.stdout).ok())
+                .and_then(|s| s.trim().parse::<u64>().ok())
+                .unwrap_or(0);
+            let freq_min = Command::new("sysctl")
+                .args(["-n", "hw.cpufrequency_min"])
+                .output()
+                .ok()
+                .and_then(|o| String::from_utf8(o.stdout).ok())
+                .and_then(|s| s.trim().parse::<u64>().ok())
+                .unwrap_or(freq_hz / 2);
+            let freq_max = Command::new("sysctl")
+                .args(["-n", "hw.cpufrequency_max"])
+                .output()
+                .ok()
+                .and_then(|o| String::from_utf8(o.stdout).ok())
+                .and_then(|s| s.trim().parse::<u64>().ok())
+                .unwrap_or(freq_hz);
+            let ncpu = num_cpus::get();
+            let freqs: Vec<_> = (0..ncpu)
+                .map(|i| {
+                    json!({
+                        "core_id": i,
+                        "current_mhz": freq_hz / 1_000_000,
+                        "min_mhz": freq_min / 1_000_000,
+                        "max_mhz": freq_max / 1_000_000,
+                    })
+                })
+                .collect();
+            Ok(json!(freqs))
         }
     }
 
@@ -1277,9 +1355,77 @@ impl AiDataApi {
 
         #[cfg(not(any(target_os = "linux", target_os = "windows")))]
         {
-            Err(SimonError::NotImplemented(
-                "Memory status not implemented for this platform".to_string(),
-            ))
+            use std::process::Command;
+            let memsize = Command::new("sysctl")
+                .args(["-n", "hw.memsize"])
+                .output()
+                .ok()
+                .and_then(|o| String::from_utf8(o.stdout).ok())
+                .and_then(|s| s.trim().parse::<u64>().ok())
+                .unwrap_or(0);
+            let total_mb = memsize / (1024 * 1024);
+            // Parse vm_stat for page counts
+            let vm_stat = Command::new("vm_stat")
+                .output()
+                .ok()
+                .and_then(|o| String::from_utf8(o.stdout).ok())
+                .unwrap_or_default();
+            let page_size: u64 = 16384; // Apple Silicon default
+            let mut free_pages: u64 = 0;
+            let mut active_pages: u64 = 0;
+            let mut inactive_pages: u64 = 0;
+            let mut speculative_pages: u64 = 0;
+            for line in vm_stat.lines() {
+                let val = || -> Option<u64> {
+                    line.split(':')
+                        .nth(1)?
+                        .trim()
+                        .trim_end_matches('.')
+                        .parse()
+                        .ok()
+                };
+                if line.starts_with("Pages free") {
+                    free_pages = val().unwrap_or(0);
+                } else if line.starts_with("Pages active") {
+                    active_pages = val().unwrap_or(0);
+                } else if line.starts_with("Pages inactive") {
+                    inactive_pages = val().unwrap_or(0);
+                } else if line.starts_with("Pages speculative") {
+                    speculative_pages = val().unwrap_or(0);
+                }
+            }
+            let free_mb = (free_pages + speculative_pages) * page_size / (1024 * 1024);
+            let used_mb =
+                total_mb.saturating_sub(free_mb + inactive_pages * page_size / (1024 * 1024));
+            // Swap
+            let swap_info = Command::new("sysctl")
+                .args(["-n", "vm.swapusage"])
+                .output()
+                .ok()
+                .and_then(|o| String::from_utf8(o.stdout).ok())
+                .unwrap_or_default();
+            let parse_swap = |key: &str| -> u64 {
+                swap_info
+                    .split_whitespace()
+                    .collect::<Vec<_>>()
+                    .windows(3)
+                    .find(|w| w[0] == key && w[1] == "=")
+                    .and_then(|w| w[2].trim_end_matches('M').parse::<f64>().ok())
+                    .map(|v| v as u64)
+                    .unwrap_or(0)
+            };
+            let swap_total = parse_swap("total");
+            let swap_used = parse_swap("used");
+            Ok(json!({
+                "ram": {
+                    "total_mb": total_mb, "used_mb": used_mb, "free_mb": free_mb,
+                    "usage_percent": if total_mb > 0 { used_mb as f64 / total_mb as f64 * 100.0 } else { 0.0 },
+                },
+                "swap": {
+                    "total_mb": swap_total, "used_mb": swap_used,
+                    "usage_percent": if swap_total > 0 { swap_used as f64 / swap_total as f64 * 100.0 } else { 0.0 },
+                }
+            }))
         }
     }
 
@@ -1331,9 +1477,46 @@ impl AiDataApi {
 
         #[cfg(not(any(target_os = "linux", target_os = "windows")))]
         {
-            Err(SimonError::NotImplemented(
-                "Memory breakdown not implemented for this platform".to_string(),
-            ))
+            use std::process::Command;
+            let memsize = Command::new("sysctl")
+                .args(["-n", "hw.memsize"])
+                .output()
+                .ok()
+                .and_then(|o| String::from_utf8(o.stdout).ok())
+                .and_then(|s| s.trim().parse::<u64>().ok())
+                .unwrap_or(0);
+            let total_kb = memsize / 1024;
+            let vm_stat = Command::new("vm_stat")
+                .output()
+                .ok()
+                .and_then(|o| String::from_utf8(o.stdout).ok())
+                .unwrap_or_default();
+            let page_size: u64 = 16384;
+            let mut free_pages: u64 = 0;
+            let mut purgeable_pages: u64 = 0;
+            for line in vm_stat.lines() {
+                let val = || -> Option<u64> {
+                    line.split(':')
+                        .nth(1)?
+                        .trim()
+                        .trim_end_matches('.')
+                        .parse()
+                        .ok()
+                };
+                if line.starts_with("Pages free") {
+                    free_pages = val().unwrap_or(0);
+                } else if line.starts_with("Pages purgeable") {
+                    purgeable_pages = val().unwrap_or(0);
+                }
+            }
+            let free_kb = free_pages * page_size / 1024;
+            let used_kb = total_kb.saturating_sub(free_kb);
+            Ok(json!({
+                "total_kb": total_kb, "used_kb": used_kb, "free_kb": free_kb,
+                "buffers_kb": 0, "cached_kb": purgeable_pages * page_size / 1024, "shared_kb": 0,
+                "total_mb": total_kb / 1024, "used_mb": used_kb / 1024, "free_mb": free_kb / 1024,
+                "buffers_mb": 0, "cached_mb": purgeable_pages * page_size / 1024 / 1024,
+            }))
         }
     }
 
@@ -1379,9 +1562,30 @@ impl AiDataApi {
 
         #[cfg(not(any(target_os = "linux", target_os = "windows")))]
         {
-            Err(SimonError::NotImplemented(
-                "Swap status not implemented for this platform".to_string(),
-            ))
+            use std::process::Command;
+            let swap_info = Command::new("sysctl")
+                .args(["-n", "vm.swapusage"])
+                .output()
+                .ok()
+                .and_then(|o| String::from_utf8(o.stdout).ok())
+                .unwrap_or_default();
+            let parse_swap = |key: &str| -> u64 {
+                swap_info
+                    .split_whitespace()
+                    .collect::<Vec<_>>()
+                    .windows(3)
+                    .find(|w| w[0] == key && w[1] == "=")
+                    .and_then(|w| w[2].trim_end_matches('M').parse::<f64>().ok())
+                    .map(|v| v as u64)
+                    .unwrap_or(0)
+            };
+            let total = parse_swap("total");
+            let used = parse_swap("used");
+            Ok(json!({
+                "total_kb": total * 1024, "used_kb": used * 1024, "cached_kb": 0,
+                "total_mb": total, "used_mb": used,
+                "usage_percent": if total > 0 { used as f64 / total as f64 * 100.0 } else { 0.0 },
+            }))
         }
     }
 

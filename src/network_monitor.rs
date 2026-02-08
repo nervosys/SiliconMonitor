@@ -884,9 +884,10 @@ mod macos {
                         .or_insert_with(|| NetworkInterfaceInfo {
                             name: name.clone(),
                             mac_address: None,
-                            ipv4_address: None,
-                            ipv6_address: None,
+                            ipv4_addresses: Vec::new(),
+                            ipv6_addresses: Vec::new(),
                             is_up: (ifa.ifa_flags as i32 & libc::IFF_UP) != 0,
+                            is_running: (ifa.ifa_flags as i32 & libc::IFF_RUNNING) != 0,
                             speed_mbps: None,
                             mtu: None,
                             rx_bytes: 0,
@@ -895,8 +896,8 @@ mod macos {
                             tx_packets: 0,
                             rx_errors: 0,
                             tx_errors: 0,
-                            rx_dropped: 0,
-                            tx_dropped: 0,
+                            rx_drops: 0,
+                            tx_drops: 0,
                         });
 
                 if !ifa.ifa_addr.is_null() {
