@@ -217,12 +217,18 @@ impl UsbMonitor {
                 match key {
                     "Vendor ID" => {
                         // Format: "0x05ac (Apple Inc.)"
-                        if let Some(hex) = val.strip_prefix("0x").and_then(|s| s.split_whitespace().next()) {
+                        if let Some(hex) = val
+                            .strip_prefix("0x")
+                            .and_then(|s| s.split_whitespace().next())
+                        {
                             current_vendor_id = u16::from_str_radix(hex, 16).unwrap_or(0);
                         }
                     }
                     "Product ID" => {
-                        if let Some(hex) = val.strip_prefix("0x").and_then(|s| s.split_whitespace().next()) {
+                        if let Some(hex) = val
+                            .strip_prefix("0x")
+                            .and_then(|s| s.split_whitespace().next())
+                        {
                             current_product_id = u16::from_str_radix(hex, 16).unwrap_or(0);
                         }
                     }
@@ -235,7 +241,10 @@ impl UsbMonitor {
                     "Speed" => {
                         current_speed = if val.contains("480") {
                             UsbSpeed::High
-                        } else if val.contains("5 Gb") || val.contains("10 Gb") || val.contains("20 Gb") {
+                        } else if val.contains("5 Gb")
+                            || val.contains("10 Gb")
+                            || val.contains("20 Gb")
+                        {
                             UsbSpeed::Super
                         } else if val.contains("1.5") {
                             UsbSpeed::Low
@@ -245,7 +254,10 @@ impl UsbMonitor {
                     }
                     "Location ID" => {
                         // Parse bus from location ID hex (e.g., "0x14200000 / 7")
-                        if let Some(hex) = val.strip_prefix("0x").and_then(|s| s.split_whitespace().next()) {
+                        if let Some(hex) = val
+                            .strip_prefix("0x")
+                            .and_then(|s| s.split_whitespace().next())
+                        {
                             if let Ok(loc) = u32::from_str_radix(hex, 16) {
                                 bus_number = ((loc >> 24) & 0xFF) as u8;
                                 port_number = ((loc >> 20) & 0xF) as u8;

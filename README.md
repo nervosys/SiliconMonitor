@@ -25,12 +25,12 @@ Silicon Monitor is a powerful, cross-platform hardware monitoring utility design
 
 ## Primary Usage Modes
 
-| Mode | Command | Description |
-|------|---------|-------------|
-| 🤖 **AI Agent** | `amon` / `simon ai` | Natural language queries, MCP server for Claude, tool manifests for LLMs |
-| 💻 **CLI** | `simon <component>` | Command-line monitoring with JSON output for scripting |
-| 🖥️ **TUI** | `simon tui` | Interactive terminal dashboard with real-time graphs and selectable themes |
-| 🪟 **GUI** | `simon gui` | Native desktop application with egui |
+| Mode           | Command             | Description                                                                |
+| -------------- | ------------------- | -------------------------------------------------------------------------- |
+| 🤖 **AI Agent** | `amon` / `simon ai` | Natural language queries, MCP server for Claude, tool manifests for LLMs   |
+| 💻 **CLI**      | `simon <component>` | Command-line monitoring with JSON output for scripting                     |
+| 🖥️ **TUI**      | `simon tui`         | Interactive terminal dashboard with real-time graphs and selectable themes |
+| 🪟 **GUI**      | `simon gui`         | Native desktop application with egui                                       |
 
 ## Overview
 
@@ -700,17 +700,17 @@ amon    # AI Monitor alias
 
 **Keyboard Shortcuts:**
 
-| Key | Action |
-|-----|--------|
-| `q` | Quit |
-| `Tab` | Cycle process sort mode |
-| `↑/↓` | Select process |
-| `Enter` | Open process detail view |
-| `Esc` | Close overlay/detail view |
-| `t` / `T` | Open theme picker |
-| `PgUp/PgDn` | Page through processes |
-| `Home/End` | Jump to first/last process |
-| `r` | Reset scroll position |
+| Key         | Action                     |
+| ----------- | -------------------------- |
+| `q`         | Quit                       |
+| `Tab`       | Cycle process sort mode    |
+| `↑/↓`       | Select process             |
+| `Enter`     | Open process detail view   |
+| `Esc`       | Close overlay/detail view  |
+| `t` / `T`   | Open theme picker          |
+| `PgUp/PgDn` | Page through processes     |
+| `Home/End`  | Jump to first/last process |
+| `r`         | Reset scroll position      |
 
 **Agent Tab:**
 

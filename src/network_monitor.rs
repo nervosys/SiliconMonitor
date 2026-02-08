@@ -154,7 +154,7 @@
 //! - **mtu**: Maximum Transmission Unit
 //! - **address**: MAC address
 
-use crate::error::{SimonError, Result};
+use crate::error::{Result, SimonError};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
