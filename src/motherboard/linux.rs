@@ -448,3 +448,486 @@ pub fn get_driver_versions() -> Result<Vec<DriverInfo>, Error> {
 
     Ok(drivers)
 }
+
+/// Get PCIe devices from /sys/bus/pci/devices
+pub fn get_pcie_devices() -> Result<Vec<PcieDeviceInfo>, Error> {
+    let pci_dir = Path::new("/sys/bus/pci/devices");
+    if !pci_dir.exists() {
+        return Ok(Vec::new());
+    }
+
+    let mut devices = Vec::new();
+
+    for entry in fs::read_dir(pci_dir).map_err(|e| Error::IoError(e))? {
+        let entry = entry.map_err(|e| Error::IoError(e))?;
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+
+        let bus_id = entry.file_name().to_string_lossy().to_string();
+
+        // Read PCI class
+        let class = fs::read_to_string(path.join("class"))
+            .ok()
+            .map(|s| s.trim().to_string());
+
+        // Read vendor and device IDs
+        let vendor_id = fs::read_to_string(path.join("vendor"))
+            .ok()
+            .map(|s| s.trim().to_string());
+        let device_id = fs::read_to_string(path.join("device"))
+            .ok()
+            .map(|s| s.trim().to_string());
+
+        // Classify device from PCI class code
+        let device_class = class.as_deref().map(|c| classify_pci_class(c));
+
+        // Read link speed/width from /sys/bus/pci/devices/XXXX:XX:XX.X/
+        let current_link_speed = fs::read_to_string(path.join("current_link_speed"))
+            .ok()
+            .map(|s| s.trim().to_string());
+        let current_link_width = fs::read_to_string(path.join("current_link_width"))
+            .ok()
+            .and_then(|s| s.trim().parse::<u8>().ok());
+
+        // Derive PCIe version from link speed string
+        let pcie_version = current_link_speed.as_deref().map(|s| {
+            if s.contains("16") || s.contains("32") {
+                "PCIe 5.0".to_string()
+            } else if s.contains("16") {
+                "PCIe 4.0".to_string()
+            } else if s.contains("8") {
+                "PCIe 3.0".to_string()
+            } else if s.contains("5") {
+                "PCIe 2.0".to_string()
+            } else if s.contains("2.5") {
+                "PCIe 1.0".to_string()
+            } else {
+                s.to_string()
+            }
+        });
+
+        // Try to get device name from uevent or modalias
+        let name = fs::read_to_string(path.join("label"))
+            .ok()
+            .map(|s| s.trim().to_string())
+            .unwrap_or_else(|| {
+                // Fallback: construct from bus_id and class
+                format!("PCI {} ({})", bus_id, device_class.as_deref().unwrap_or("Unknown"))
+            });
+
+        devices.push(PcieDeviceInfo {
+            name,
+            device_id,
+            vendor: vendor_id,
+            pcie_version,
+            link_width: current_link_width,
+            link_speed: current_link_speed,
+            slot: Some(bus_id),
+            device_class,
+        });
+    }
+
+    Ok(devices)
+}
+
+/// Classify a PCI class code into a human-readable category
+fn classify_pci_class(class_hex: &str) -> String {
+    // PCI class codes: 0xCCSSPP (class, subclass, prog-if)
+    let class_code = u32::from_str_radix(class_hex.trim_start_matches("0x"), 16).unwrap_or(0);
+    let class_id = (class_code >> 16) & 0xFF;
+    match class_id {
+        0x00 => "Unclassified".to_string(),
+        0x01 => "Storage".to_string(),
+        0x02 => "Network".to_string(),
+        0x03 => "Display/VGA".to_string(),
+        0x04 => "Multimedia".to_string(),
+        0x05 => "Memory".to_string(),
+        0x06 => "Bridge".to_string(),
+        0x07 => "Communication".to_string(),
+        0x08 => "System Peripheral".to_string(),
+        0x09 => "Input Device".to_string(),
+        0x0A => "Docking Station".to_string(),
+        0x0B => "Processor".to_string(),
+        0x0C => "Serial Bus".to_string(),
+        0x0D => "Wireless".to_string(),
+        0x0E => "Intelligent I/O".to_string(),
+        0x0F => "Satellite Communication".to_string(),
+        0x10 => "Encryption/Decryption".to_string(),
+        0x11 => "Signal Processing".to_string(),
+        0x12 => "Processing Accelerator".to_string(),
+        0x13 => "Non-Essential Instrumentation".to_string(),
+        0x40 => "Co-Processor".to_string(),
+        _ => format!("Class 0x{:02X}", class_id),
+    }
+}
+
+/// Get SATA/storage devices from /sys/class/block
+pub fn get_sata_devices() -> Result<Vec<SataDeviceInfo>, Error> {
+    let block_dir = Path::new("/sys/class/block");
+    if !block_dir.exists() {
+        return Ok(Vec::new());
+    }
+
+    let mut devices = Vec::new();
+
+    for entry in fs::read_dir(block_dir).map_err(|e| Error::IoError(e))? {
+        let entry = entry.map_err(|e| Error::IoError(e))?;
+        let name = entry.file_name().to_string_lossy().to_string();
+
+        // Skip partitions (sda1, nvme0n1p1) - only include whole disks
+        if name.contains('p') && name.starts_with("nvme") {
+            continue; // Skip NVMe partition
+        }
+        if name.chars().last().map_or(false, |c| c.is_ascii_digit()) && !name.starts_with("nvme") {
+            // Check if it's a partition of sdX type
+            let base: String = name.chars().take_while(|c| !c.is_ascii_digit()).collect();
+            if base.len() < name.len() && (base.starts_with("sd") || base.starts_with("hd") || base.starts_with("vd")) {
+                continue;
+            }
+        }
+
+        let path = entry.path();
+        let device_path = path.join("device");
+
+        // Skip non-physical devices (loop, ram, dm)
+        if name.starts_with("loop") || name.starts_with("ram") || name.starts_with("dm-") {
+            continue;
+        }
+
+        // Read model
+        let model = fs::read_to_string(device_path.join("model"))
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+
+        // Read serial
+        let serial = fs::read_to_string(device_path.join("serial"))
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+
+        // Read firmware
+        let firmware = fs::read_to_string(device_path.join("firmware_rev"))
+            .or_else(|_| fs::read_to_string(device_path.join("rev")))
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+
+        // Read size (in 512-byte sectors)
+        let capacity_gb = fs::read_to_string(path.join("size"))
+            .ok()
+            .and_then(|s| s.trim().parse::<u64>().ok())
+            .map(|sectors| (sectors * 512) as f64 / (1024.0 * 1024.0 * 1024.0));
+
+        // Determine rotation rate to classify HDD vs SSD
+        let rotation = fs::read_to_string(path.join("queue/rotational"))
+            .ok()
+            .and_then(|s| s.trim().parse::<u32>().ok());
+        let media_type = match rotation {
+            Some(0) => SataMediaType::Ssd,
+            Some(1) => SataMediaType::Hdd,
+            _ => SataMediaType::Unknown,
+        };
+
+        // Read temperature from hwmon if available
+        let temperature = fs::read_dir(device_path.join("hwmon"))
+            .ok()
+            .and_then(|mut entries| entries.next())
+            .and_then(|entry| entry.ok())
+            .and_then(|entry| {
+                fs::read_to_string(entry.path().join("temp1_input"))
+                    .ok()
+                    .and_then(|s| s.trim().parse::<f32>().ok())
+                    .map(|t| t / 1000.0)
+            });
+
+        // Interface speed
+        let interface_speed = if name.starts_with("nvme") {
+            Some("NVMe".to_string())
+        } else {
+            // Try to detect SATA generation from link speed
+            fs::read_to_string(format!("/sys/class/ata_link/link{}/sata_spd", 1))
+                .ok()
+                .map(|s| {
+                    let s = s.trim();
+                    match s {
+                        "6.0 Gbps" | "6" => "SATA III (6 Gbps)".to_string(),
+                        "3.0 Gbps" | "3" => "SATA II (3 Gbps)".to_string(),
+                        "1.5 Gbps" | "1.5" => "SATA I (1.5 Gbps)".to_string(),
+                        _ => format!("SATA ({})", s),
+                    }
+                })
+        };
+
+        devices.push(SataDeviceInfo {
+            name,
+            model,
+            serial,
+            firmware,
+            capacity_gb,
+            interface_speed,
+            port: None,
+            temperature,
+            media_type,
+        });
+    }
+
+    Ok(devices)
+}
+
+/// Get system temperatures from hwmon
+pub fn get_system_temperatures() -> Result<SystemTemperatures, Error> {
+    let sensors = enumerate()?;
+
+    let mut cpu_temp: Option<f32> = None;
+    let mut mb_temp: Option<f32> = None;
+    let mut storage_temps: Vec<(String, f32)> = Vec::new();
+
+    for sensor in &sensors {
+        if let Ok(temp_sensors) = sensor.temperature_sensors() {
+            for ts in &temp_sensors {
+                match ts.sensor_type {
+                    SensorType::Cpu => {
+                        // Get the highest CPU temperature
+                        if cpu_temp.map_or(true, |t| ts.temperature > t) {
+                            cpu_temp = Some(ts.temperature);
+                        }
+                    }
+                    SensorType::Chipset | SensorType::Ambient | SensorType::Vrm => {
+                        if mb_temp.map_or(true, |t| ts.temperature > t) {
+                            mb_temp = Some(ts.temperature);
+                        }
+                    }
+                    SensorType::M2Slot => {
+                        storage_temps.push((ts.label.clone(), ts.temperature));
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    // Also check block device temperatures
+    let block_dir = Path::new("/sys/class/block");
+    if block_dir.exists() {
+        if let Ok(entries) = fs::read_dir(block_dir) {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name.starts_with("sd") || name.starts_with("nvme") {
+                    let hwmon_path = entry.path().join("device/hwmon");
+                    if let Ok(mut hwmon_entries) = fs::read_dir(&hwmon_path) {
+                        if let Some(Ok(hwmon_entry)) = hwmon_entries.next() {
+                            if let Ok(temp_str) = fs::read_to_string(hwmon_entry.path().join("temp1_input")) {
+                                if let Ok(temp_millic) = temp_str.trim().parse::<f32>() {
+                                    let temp_c = temp_millic / 1000.0;
+                                    if temp_c > 0.0 && temp_c < 150.0 {
+                                        storage_temps.push((name, temp_c));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(SystemTemperatures {
+        cpu: cpu_temp,
+        gpu: None, // GPU temps come from GPU module
+        motherboard: mb_temp,
+        storage: storage_temps,
+        network: Vec::new(),
+    })
+}
+
+/// Get all peripheral devices on Linux
+pub fn get_peripherals() -> Result<PeripheralsInfo, Error> {
+    let mut info = PeripheralsInfo::default();
+
+    // USB devices from /sys/bus/usb/devices
+    let usb_dir = Path::new("/sys/bus/usb/devices");
+    if usb_dir.exists() {
+        if let Ok(entries) = fs::read_dir(usb_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+
+                // Only process actual devices (not interfaces)
+                let name_str = entry.file_name().to_string_lossy().to_string();
+                if name_str.contains(':') {
+                    continue; // Skip interface entries
+                }
+
+                let product = fs::read_to_string(path.join("product"))
+                    .ok()
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty());
+                let manufacturer = fs::read_to_string(path.join("manufacturer"))
+                    .ok()
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty());
+                let vendor_id = fs::read_to_string(path.join("idVendor"))
+                    .ok()
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty());
+                let product_id = fs::read_to_string(path.join("idProduct"))
+                    .ok()
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty());
+                let speed = fs::read_to_string(path.join("speed"))
+                    .ok()
+                    .and_then(|s| s.trim().parse::<u32>().ok());
+                let dev_class = fs::read_to_string(path.join("bDeviceClass"))
+                    .ok()
+                    .map(|s| s.trim().to_string());
+
+                // Skip root hubs and devices with no product info
+                if dev_class.as_deref() == Some("09") {
+                    continue; // Hub
+                }
+
+                let name = product.unwrap_or_else(|| format!("USB Device {}", name_str));
+
+                let usb_version = match speed {
+                    Some(s) if s >= 10000 => UsbVersion::Usb3_1,
+                    Some(s) if s >= 5000 => UsbVersion::Usb3_0,
+                    Some(s) if s >= 480 => UsbVersion::Usb2_0,
+                    Some(s) if s >= 12 => UsbVersion::Usb1_1,
+                    _ => UsbVersion::Unknown,
+                };
+
+                info.usb_devices.push(UsbDeviceInfo {
+                    name,
+                    device_id: None,
+                    vendor: manufacturer,
+                    product_id,
+                    vendor_id,
+                    usb_version,
+                    device_class: dev_class,
+                    status: Some("Connected".to_string()),
+                    hub_port: None,
+                });
+            }
+        }
+    }
+
+    // Display outputs from /sys/class/drm
+    let drm_dir = Path::new("/sys/class/drm");
+    if drm_dir.exists() {
+        if let Ok(entries) = fs::read_dir(drm_dir) {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                // Only connector entries (card0-HDMI-A-1, card0-DP-1, etc)
+                if !name.contains('-') || name == "version" {
+                    continue;
+                }
+
+                let status = fs::read_to_string(entry.path().join("status"))
+                    .ok()
+                    .map(|s| s.trim().to_string());
+
+                let output_type = if name.contains("HDMI") {
+                    DisplayOutputType::Hdmi
+                } else if name.contains("DP") || name.contains("DisplayPort") {
+                    DisplayOutputType::DisplayPort
+                } else if name.contains("VGA") {
+                    DisplayOutputType::Vga
+                } else if name.contains("DVI") {
+                    DisplayOutputType::Dvi
+                } else if name.contains("eDP") {
+                    DisplayOutputType::Edp
+                } else {
+                    DisplayOutputType::Other
+                };
+
+                info.display_outputs.push(DisplayOutputInfo {
+                    name: name.clone(),
+                    output_type,
+                    connected: status.as_deref() == Some("connected"),
+                    resolution: None,
+                    refresh_rate: None,
+                });
+            }
+        }
+    }
+
+    // Audio devices from /proc/asound/cards
+    if let Ok(content) = fs::read_to_string("/proc/asound/cards") {
+        for line in content.lines() {
+            let line = line.trim();
+            // Lines like: " 0 [HDA-Intel     ]: HDA-Intel - HDA NVidia"
+            if line.starts_with(|c: char| c.is_ascii_digit()) {
+                let parts: Vec<&str> = line.splitn(2, ':').collect();
+                if parts.len() == 2 {
+                    let name = parts[1].trim().to_string();
+                    info.audio_devices.push(AudioDeviceInfo {
+                        name,
+                        device_type: AudioDeviceType::Output,
+                        driver: Some("ALSA".to_string()),
+                        status: Some("Available".to_string()),
+                    });
+                }
+            }
+        }
+    }
+
+    // Bluetooth from /sys/class/bluetooth
+    let bt_dir = Path::new("/sys/class/bluetooth");
+    if bt_dir.exists() {
+        if let Ok(entries) = fs::read_dir(bt_dir) {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                let address = fs::read_to_string(entry.path().join("address"))
+                    .ok()
+                    .map(|s| s.trim().to_string());
+                info.bluetooth_devices.push(BluetoothDeviceInfo {
+                    name: format!("Bluetooth Adapter ({})", name),
+                    address,
+                    connected: true,
+                    device_type: Some("Adapter".to_string()),
+                });
+            }
+        }
+    }
+
+    // Network ports from /sys/class/net
+    let net_dir = Path::new("/sys/class/net");
+    if net_dir.exists() {
+        if let Ok(entries) = fs::read_dir(net_dir) {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name == "lo" {
+                    continue; // Skip loopback
+                }
+
+                let speed = fs::read_to_string(entry.path().join("speed"))
+                    .ok()
+                    .and_then(|s| s.trim().parse::<u32>().ok());
+                let operstate = fs::read_to_string(entry.path().join("operstate"))
+                    .ok()
+                    .map(|s| s.trim().to_string());
+                let port_type = if name.starts_with("wl") || name.starts_with("wlan") {
+                    NetworkPortType::Wifi
+                } else if name.starts_with("eth") || name.starts_with("en") {
+                    NetworkPortType::Ethernet
+                } else {
+                    NetworkPortType::Other
+                };
+
+                info.network_ports.push(NetworkPortInfo {
+                    name,
+                    port_type,
+                    speed_mbps: speed,
+                    link_detected: operstate.as_deref() == Some("up"),
+                    mac_address: fs::read_to_string(entry.path().join("address"))
+                        .ok()
+                        .map(|s| s.trim().to_string()),
+                });
+            }
+        }
+    }
+
+    Ok(info)
+}

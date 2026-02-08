@@ -1396,11 +1396,20 @@ mod linux {
         }
 
         // Extract fields (0-indexed after splitting on ')')
+        // Reference: proc(5) man page
+        // Field 0: state, 1: ppid, 2: pgrp, 3: session, 4: tty_nr,
+        // 5: tpgid, 6: flags, 7: minflt, 8: cminflt, 9: majflt,
+        // 10: cmajflt, 11: utime, 12: stime, 13: cutime, 14: cstime,
+        // 15: priority, 16: nice, 17: num_threads, 18: itrealvalue,
+        // 19: starttime, 20: vsize, 21: rss
         let state = stat_fields[0].chars().next().unwrap_or('?');
+        let parent_pid: u32 = stat_fields[1].parse().unwrap_or(0);
         let utime: u64 = stat_fields[11].parse().unwrap_or(0);
         let stime: u64 = stat_fields[12].parse().unwrap_or(0);
         let priority: i32 = stat_fields[15].parse().unwrap_or(0);
+        let num_threads: u32 = stat_fields[17].parse().unwrap_or(0);
         let starttime: u64 = stat_fields[19].parse().unwrap_or(0);
+        let vsize: u64 = stat_fields[20].parse().unwrap_or(0); // virtual memory size in bytes
 
         // Calculate CPU percentage
         let clk_tck = 100.0; // SC_CLK_TCK, typically 100
@@ -1409,19 +1418,70 @@ mod linux {
         let proc_uptime = (seconds_since_boot - (starttime as f64 / clk_tck)).max(1.0);
         let cpu_percent = ((total_time / proc_uptime) * 100.0) as f32;
 
+        // Calculate start_time as unix timestamp
+        // Boot time from /proc/stat's btime field, or approximate from uptime
+        let boot_time_secs = std::fs::read_to_string("/proc/stat")
+            .ok()
+            .and_then(|content| {
+                content
+                    .lines()
+                    .find(|line| line.starts_with("btime "))
+                    .and_then(|line| line.split_whitespace().nth(1))
+                    .and_then(|s| s.parse::<u64>().ok())
+            });
+        let process_start_time =
+            boot_time_secs.map(|btime| btime + (starttime as f64 / clk_tck) as u64);
+
         // Read /proc/[pid]/statm for memory
         let statm_path = format!("{}/statm", proc_path);
-        let memory_bytes = if let Ok(statm_content) = fs::read_to_string(&statm_path) {
-            let parts: Vec<&str> = statm_content.split_whitespace().collect();
-            if parts.len() > 1 {
-                // RSS (Resident Set Size) in pages, multiply by page size (typically 4KB)
-                parts[1].parse::<u64>().unwrap_or(0) * 4096
+        let (memory_bytes, virtual_memory_from_statm) =
+            if let Ok(statm_content) = fs::read_to_string(&statm_path) {
+                let parts: Vec<&str> = statm_content.split_whitespace().collect();
+                let rss = if parts.len() > 1 {
+                    // RSS (Resident Set Size) in pages, multiply by page size (typically 4KB)
+                    parts[1].parse::<u64>().unwrap_or(0) * 4096
+                } else {
+                    0
+                };
+                let vsize_statm = if !parts.is_empty() {
+                    // Total program size in pages
+                    parts[0].parse::<u64>().unwrap_or(0) * 4096
+                } else {
+                    0
+                };
+                (rss, vsize_statm)
             } else {
-                0
-            }
+                (0, 0)
+            };
+
+        // Use vsize from stat (in bytes) if available, otherwise statm
+        let virtual_memory_bytes = if vsize > 0 {
+            vsize
         } else {
-            0
+            virtual_memory_from_statm
         };
+
+        // Read /proc/[pid]/io for I/O stats (may require privileges)
+        let (io_read_bytes, io_write_bytes) =
+            if let Ok(io_content) = fs::read_to_string(format!("{}/io", proc_path)) {
+                let mut read_bytes = 0u64;
+                let mut write_bytes = 0u64;
+                for line in io_content.lines() {
+                    if let Some(val) = line.strip_prefix("read_bytes: ") {
+                        read_bytes = val.trim().parse().unwrap_or(0);
+                    } else if let Some(val) = line.strip_prefix("write_bytes: ") {
+                        write_bytes = val.trim().parse().unwrap_or(0);
+                    }
+                }
+                (read_bytes, write_bytes)
+            } else {
+                (0, 0)
+            };
+
+        // Count file descriptors in /proc/[pid]/fd for handle_count
+        let handle_count: u32 = fs::read_dir(format!("{}/fd", proc_path))
+            .map(|entries| entries.count() as u32)
+            .unwrap_or(0);
 
         // Try to read user
         let user = read_process_user(pid);
@@ -1431,19 +1491,23 @@ mod linux {
 
         Ok(ProcessMonitorInfo {
             pid,
-            parent_pid: None, // TODO: Parse from /proc/[pid]/stat
+            parent_pid: if parent_pid > 0 {
+                Some(parent_pid)
+            } else {
+                None
+            },
             name,
             user,
             category,
             cpu_percent,
             memory_bytes,
-            virtual_memory_bytes: 0, // TODO: Parse from /proc/[pid]/statm
-            private_bytes: 0,        // TODO: Parse from /proc/[pid]/smaps
-            thread_count: 0,         // TODO: Parse from /proc/[pid]/stat
-            handle_count: 0,         // TODO: Count /proc/[pid]/fd
-            io_read_bytes: 0,        // TODO: Parse from /proc/[pid]/io
-            io_write_bytes: 0,       // TODO: Parse from /proc/[pid]/io
-            start_time: None,        // TODO: Parse from /proc/[pid]/stat
+            virtual_memory_bytes,
+            private_bytes: 0, // Would need /proc/[pid]/smaps parsing (expensive)
+            thread_count: num_threads,
+            handle_count,
+            io_read_bytes,
+            io_write_bytes,
+            start_time: process_start_time,
             gpu_indices: Vec::new(),
             gpu_memory_per_device: HashMap::new(),
             total_gpu_memory_bytes: 0,

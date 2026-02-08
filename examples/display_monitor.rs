@@ -4,7 +4,7 @@
 //!
 //! Run with: cargo run --example display_monitor
 
-use simon::display::{DisplayConnection, DisplayMonitor};
+use simonlib::display::{DisplayConnection, DisplayMonitor};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Display Monitor Example ===\n");
@@ -22,8 +22,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             DisplayConnection::Dvi => "🖥️",
             DisplayConnection::Vga => "🖥️",
             DisplayConnection::Internal | DisplayConnection::Edp => "💻",
-            DisplayConnection::Usb => "🔌",
-            DisplayConnection::Wireless => "📶",
+            DisplayConnection::Usb | DisplayConnection::UsbC => "🔌",
+            DisplayConnection::Wireless | DisplayConnection::Virtual => "📶",
             DisplayConnection::Unknown => "❓",
         };
 
@@ -32,36 +32,44 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("  ID: {}", display.id);
         println!("  Resolution: {}x{}", display.width, display.height);
         println!("  Refresh Rate: {} Hz", display.refresh_rate);
-        
+
         if let Some(scale) = display.scale_factor {
             println!("  Scale Factor: {:.0}%", scale * 100.0);
         }
-        
+
         if let (Some(w), Some(h)) = (display.physical_width_mm, display.physical_height_mm) {
             let diagonal_mm = ((w as f64).powi(2) + (h as f64).powi(2)).sqrt();
             let diagonal_inches = diagonal_mm / 25.4;
-            println!("  Physical Size: {}mm x {}mm ({:.1}\" diagonal)", w, h, diagonal_inches);
+            println!(
+                "  Physical Size: {}mm x {}mm ({:.1}\" diagonal)",
+                w, h, diagonal_inches
+            );
         }
-        
+
         if let Some(bits) = display.bits_per_pixel {
             println!("  Color Depth: {} bits", bits);
         }
-        
+
         println!("  Connection: {:?}", display.connection);
         println!();
     }
 
     // Summary info
     if !displays.is_empty() {
-        let total_pixels: u64 = displays.iter()
+        let total_pixels: u64 = displays
+            .iter()
             .map(|d| d.width as u64 * d.height as u64)
             .sum();
         let primary_count = displays.iter().filter(|d| d.is_primary).count();
-        
+
         println!("Summary:");
         println!("  Total Displays: {}", displays.len());
         println!("  Primary Displays: {}", primary_count);
-        println!("  Total Pixels: {} ({:.2}M)", total_pixels, total_pixels as f64 / 1_000_000.0);
+        println!(
+            "  Total Pixels: {} ({:.2}M)",
+            total_pixels,
+            total_pixels as f64 / 1_000_000.0
+        );
     }
 
     Ok(())

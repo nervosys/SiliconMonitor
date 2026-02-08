@@ -971,7 +971,9 @@ fn draw_nvtop_processes(f: &mut Frame, app: &App, area: Rect) {
     let visible_count = 25;
 
     // Calculate which display row is selected (for highlight bar)
-    let selected_display_idx = if app.selected_process_idx >= scroll_pos && app.selected_process_idx < scroll_pos + visible_count {
+    let selected_display_idx = if app.selected_process_idx >= scroll_pos
+        && app.selected_process_idx < scroll_pos + visible_count
+    {
         Some(app.selected_process_idx - scroll_pos)
     } else {
         None
@@ -1269,7 +1271,12 @@ fn draw_nvtop_processes(f: &mut Frame, app: &App, area: Rect) {
                                     glances_colors::INACTIVE
                                 }),
                             ),
-                        ]).style(if is_selected { highlight_style } else { Style::default() })
+                        ])
+                        .style(if is_selected {
+                            highlight_style
+                        } else {
+                            Style::default()
+                        })
                     } else {
                         // Total I/O (read + write) for display
                         let total_io = p.io_read_bytes + p.io_write_bytes;
@@ -1340,7 +1347,12 @@ fn draw_nvtop_processes(f: &mut Frame, app: &App, area: Rect) {
                                 },
                                 Style::default().fg(io_color),
                             ),
-                        ]).style(if is_selected { highlight_style } else { Style::default() })
+                        ])
+                        .style(if is_selected {
+                            highlight_style
+                        } else {
+                            Style::default()
+                        })
                     }
                 })
                 .collect();
@@ -1457,7 +1469,12 @@ fn draw_nvtop_processes(f: &mut Frame, app: &App, area: Rect) {
                         Span::styled(format!("{:>7}", gpu_mem), Style::default().fg(gpu_color)),
                         Span::styled(gpu_usage, Style::default().fg(gpu_color)),
                         Span::styled(proc_type, Style::default().fg(glances_colors::INACTIVE)),
-                    ]).style(if is_selected { highlight_style } else { Style::default() })
+                    ])
+                    .style(if is_selected {
+                        highlight_style
+                    } else {
+                        Style::default()
+                    })
                 })
                 .collect();
 
@@ -1564,7 +1581,12 @@ fn draw_nvtop_processes(f: &mut Frame, app: &App, area: Rect) {
                         ),
                         Span::styled(accel_usage, Style::default().fg(accel_color)),
                         Span::styled(proc_type, Style::default().fg(glances_colors::INACTIVE)),
-                    ]).style(if is_selected { highlight_style } else { Style::default() })
+                    ])
+                    .style(if is_selected {
+                        highlight_style
+                    } else {
+                        Style::default()
+                    })
                 })
                 .collect();
 
@@ -2256,119 +2278,80 @@ fn usage_color(percent: f32) -> Color {
 }
 
 #[allow(dead_code)]
-fn draw_peripherals(f: &mut Frame, _app: &App, area: Rect) {
-    use crate::audio::AudioMonitor;
-    use crate::bluetooth::BluetoothMonitor;
-    use crate::display::DisplayMonitor;
-    use crate::usb::UsbMonitor;
-    
+fn draw_peripherals(f: &mut Frame, app: &App, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Percentage(25),
-            Constraint::Percentage(25),
-            Constraint::Percentage(25),
-            Constraint::Percentage(25),
+            Constraint::Percentage(20),
+            Constraint::Percentage(20),
+            Constraint::Percentage(20),
+            Constraint::Percentage(20),
+            Constraint::Percentage(20),
         ])
         .split(area);
-    
-    // Audio section
+
+    // Audio section (from cache)
     let audio_block = Block::default()
         .borders(Borders::ALL)
         .title("Audio Devices")
         .border_style(Style::default().fg(glances_colors::TITLE));
-    
-    let audio_info = if let Ok(monitor) = AudioMonitor::new() {
-        let devices = monitor.devices();
-        if devices.is_empty() {
-            "No audio devices detected".to_string()
-        } else {
-            format!("{} audio device(s) | Volume: {:.0}% | Muted: {}",
-                devices.len(), monitor.master_volume().unwrap_or(100) as f32, if monitor.is_muted() { "Yes" } else { "No" })
-        }
-    } else {
-        "Audio monitoring not available".to_string()
-    };
-    let audio_para = Paragraph::new(audio_info).block(audio_block);
+    let audio_para = Paragraph::new(app.peripheral_cache.audio_info.as_str()).block(audio_block);
     f.render_widget(audio_para, chunks[0]);
-    
-    // Bluetooth section
-    let bt_block = Block::default()
-        .borders(Borders::ALL)
-        .title("Bluetooth")
-        .border_style(Style::default().fg(glances_colors::TITLE));
-    
-    let bt_info = if let Ok(monitor) = BluetoothMonitor::new() {
-        let adapters = monitor.adapters().len();
-        let devices = monitor.devices().len();
-        if monitor.is_available() {
-            format!("{} adapter(s) | {} device(s) paired", adapters, devices)
-        } else {
-            "Bluetooth not available".to_string()
-        }
-    } else {
-        "Bluetooth monitoring not available".to_string()
-    };
-    let bt_para = Paragraph::new(bt_info).block(bt_block);
-    f.render_widget(bt_para, chunks[1]);
-    
-    // Display section
+
+    // Display section (from cache)
     let display_block = Block::default()
         .borders(Borders::ALL)
         .title("Displays")
         .border_style(Style::default().fg(glances_colors::TITLE));
-    
-    let display_info = if let Ok(monitor) = DisplayMonitor::new() {
-        let displays = monitor.displays();
-        if displays.is_empty() {
-            "No displays detected".to_string()
-        } else {
-            let info: Vec<String> = displays.iter().map(|d| {
-                format!("{}: {}x{} @ {:.0}Hz", d.name.as_deref().unwrap_or("Display"), d.width, d.height, d.refresh_rate)
-            }).collect();
-            info.join(" | ")
-        }
-    } else {
-        "Display monitoring not available".to_string()
-    };
-    let display_para = Paragraph::new(display_info).block(display_block);
-    f.render_widget(display_para, chunks[2]);
-    
-    // USB section
+    let display_para =
+        Paragraph::new(app.peripheral_cache.display_info.as_str()).block(display_block);
+    f.render_widget(display_para, chunks[1]);
+
+    // USB section (from cache)
     let usb_block = Block::default()
         .borders(Borders::ALL)
         .title("USB Devices")
         .border_style(Style::default().fg(glances_colors::TITLE));
-    
-    let usb_info = if let Ok(monitor) = UsbMonitor::new() {
-        let devices = monitor.devices();
-        if devices.is_empty() {
-            "No USB devices detected".to_string()
-        } else {
-            format!("{} USB device(s) connected", devices.len())
-        }
-    } else {
-        "USB monitoring not available".to_string()
-    };
-    let usb_para = Paragraph::new(usb_info).block(usb_block);
-    f.render_widget(usb_para, chunks[3]);
+    let usb_para = Paragraph::new(app.peripheral_cache.usb_info.as_str()).block(usb_block);
+    f.render_widget(usb_para, chunks[2]);
+
+    // Bluetooth section (from cache)
+    let bt_block = Block::default()
+        .borders(Borders::ALL)
+        .title("Bluetooth")
+        .border_style(Style::default().fg(glances_colors::TITLE));
+    let bt_para = Paragraph::new(app.peripheral_cache.bluetooth_info.as_str()).block(bt_block);
+    f.render_widget(bt_para, chunks[3]);
+
+    // Battery section (from cache)
+    let battery_block = Block::default()
+        .borders(Borders::ALL)
+        .title("Battery / Power")
+        .border_style(Style::default().fg(glances_colors::TITLE));
+    let battery_para =
+        Paragraph::new(app.peripheral_cache.battery_info.as_str()).block(battery_block);
+    f.render_widget(battery_para, chunks[4]);
 }
 /// Draw process detail overlay
 fn draw_process_detail_overlay(f: &mut Frame, app: &App) {
     let area = centered_rect(60, 50, f.area());
-    
+
     // Semi-transparent background
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Rgb(137, 180, 250)))
         .title(" Process Detail (Enter/Esc to close) ")
-        .title_style(Style::default().fg(Color::Rgb(137, 180, 250)).add_modifier(Modifier::BOLD))
+        .title_style(
+            Style::default()
+                .fg(Color::Rgb(137, 180, 250))
+                .add_modifier(Modifier::BOLD),
+        )
         .style(Style::default().bg(Color::Rgb(30, 30, 46)));
-    
+
     let inner = block.inner(area);
     f.render_widget(ratatui::widgets::Clear, area);
     f.render_widget(block, area);
-    
+
     if let Some(process) = app.get_selected_process() {
         let lines = vec![
             Line::from(vec![
@@ -2401,20 +2384,45 @@ fn draw_process_detail_overlay(f: &mut Frame, app: &App) {
             ]),
             Line::from(""),
             Line::from(vec![
-                Span::styled("GPU Usage: ", Style::default().fg(Color::Rgb(250, 179, 135))),
-                Span::raw(process.gpu_usage_percent.map(|u| format!("{:.1}%", u)).unwrap_or_else(|| "-".to_string())),
+                Span::styled(
+                    "GPU Usage: ",
+                    Style::default().fg(Color::Rgb(250, 179, 135)),
+                ),
+                Span::raw(
+                    process
+                        .gpu_usage_percent
+                        .map(|u| format!("{:.1}%", u))
+                        .unwrap_or_else(|| "-".to_string()),
+                ),
             ]),
             Line::from(vec![
-                Span::styled("GPU Memory: ", Style::default().fg(Color::Rgb(250, 179, 135))),
-                Span::raw(if process.total_gpu_memory_bytes > 0 { auto_unit(process.total_gpu_memory_bytes) } else { "-".to_string() }),
+                Span::styled(
+                    "GPU Memory: ",
+                    Style::default().fg(Color::Rgb(250, 179, 135)),
+                ),
+                Span::raw(if process.total_gpu_memory_bytes > 0 {
+                    auto_unit(process.total_gpu_memory_bytes)
+                } else {
+                    "-".to_string()
+                }),
             ]),
             Line::from(vec![
                 Span::styled("Encoder: ", Style::default().fg(Color::Rgb(250, 179, 135))),
-                Span::raw(process.encoder_usage_percent.map(|u| format!("{:.1}%", u)).unwrap_or_else(|| "-".to_string())),
+                Span::raw(
+                    process
+                        .encoder_usage_percent
+                        .map(|u| format!("{:.1}%", u))
+                        .unwrap_or_else(|| "-".to_string()),
+                ),
             ]),
             Line::from(vec![
                 Span::styled("Decoder: ", Style::default().fg(Color::Rgb(250, 179, 135))),
-                Span::raw(process.decoder_usage_percent.map(|u| format!("{:.1}%", u)).unwrap_or_else(|| "-".to_string())),
+                Span::raw(
+                    process
+                        .decoder_usage_percent
+                        .map(|u| format!("{:.1}%", u))
+                        .unwrap_or_else(|| "-".to_string()),
+                ),
             ]),
         ];
         let para = Paragraph::new(lines);
@@ -2425,22 +2433,26 @@ fn draw_process_detail_overlay(f: &mut Frame, app: &App) {
 /// Draw theme picker overlay
 fn draw_theme_picker_overlay(f: &mut Frame, app: &App) {
     use super::app::ColorTheme;
-    
+
     let themes = ColorTheme::all();
     let height = (themes.len() + 4) as u16;
     let area = centered_rect(40, height.min(20), f.area());
-    
+
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Rgb(137, 180, 250)))
         .title(" Select Theme (Enter to apply, Esc to cancel) ")
-        .title_style(Style::default().fg(Color::Rgb(137, 180, 250)).add_modifier(Modifier::BOLD))
+        .title_style(
+            Style::default()
+                .fg(Color::Rgb(137, 180, 250))
+                .add_modifier(Modifier::BOLD),
+        )
         .style(Style::default().bg(Color::Rgb(30, 30, 46)));
-    
+
     let inner = block.inner(area);
     f.render_widget(ratatui::widgets::Clear, area);
     f.render_widget(block, area);
-    
+
     let items: Vec<ListItem> = themes
         .iter()
         .enumerate()
@@ -2453,14 +2465,16 @@ fn draw_theme_picker_overlay(f: &mut Frame, app: &App) {
                 theme.name().to_string()
             };
             let style = if is_selected {
-                Style::default().bg(Color::Rgb(69, 71, 90)).fg(Color::Rgb(205, 214, 244))
+                Style::default()
+                    .bg(Color::Rgb(69, 71, 90))
+                    .fg(Color::Rgb(205, 214, 244))
             } else {
                 Style::default().fg(Color::Rgb(166, 173, 200))
             };
             ListItem::new(name).style(style)
         })
         .collect();
-    
+
     let list = List::new(items);
     f.render_widget(list, inner);
 }
@@ -2475,7 +2489,7 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
             Constraint::Percentage((100 - percent_y) / 2),
         ])
         .split(r);
-    
+
     Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
@@ -2485,5 +2499,3 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
         ])
         .split(popup_layout[1])[1]
 }
-
-

@@ -584,7 +584,8 @@ pub fn get_all_tool_definitions() -> Vec<ToolDefinition> {
     // Display tools
     tools.push(ToolDefinition {
         name: "get_display_list".to_string(),
-        description: "List all connected displays/monitors with resolution and refresh rate.".to_string(),
+        description: "List all connected displays/monitors with resolution and refresh rate."
+            .to_string(),
         parameters: json!({"type": "object", "properties": {}, "required": []}),
         category: ToolCategory::Display,
         example: Some("get_display_list()".to_string()),
@@ -1069,7 +1070,26 @@ impl AiDataApi {
             }))
         }
 
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(target_os = "windows")]
+        {
+            use crate::platform::windows;
+            let stats =
+                windows::read_cpu_stats().map_err(|e| SimonError::CpuError(e.to_string()))?;
+
+            Ok(json!({
+                "core_count": stats.cores.len(),
+                "total": {
+                    "user_percent": stats.total.user,
+                    "system_percent": stats.total.system,
+                    "nice_percent": stats.total.nice,
+                    "idle_percent": stats.total.idle,
+                    "usage_percent": 100.0 - stats.total.idle,
+                },
+                "model": stats.cores.first().map(|c| &c.model).cloned().unwrap_or_default(),
+            }))
+        }
+
+        #[cfg(not(any(target_os = "linux", target_os = "windows")))]
         {
             Err(SimonError::NotImplemented(
                 "CPU status not implemented for this platform".to_string(),
@@ -1106,7 +1126,33 @@ impl AiDataApi {
             Ok(json!(cores))
         }
 
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(target_os = "windows")]
+        {
+            use crate::platform::windows;
+            let stats =
+                windows::read_cpu_stats().map_err(|e| SimonError::CpuError(e.to_string()))?;
+
+            let cores: Vec<_> = stats
+                .cores
+                .iter()
+                .map(|c| {
+                    json!({
+                        "id": c.id,
+                        "online": c.online,
+                        "governor": c.governor,
+                        "model": c.model,
+                        "frequency_mhz": c.frequency.as_ref().map(|f| f.current),
+                        "user_percent": c.user,
+                        "system_percent": c.system,
+                        "idle_percent": c.idle,
+                    })
+                })
+                .collect();
+
+            Ok(json!(cores))
+        }
+
+        #[cfg(not(any(target_os = "linux", target_os = "windows")))]
         {
             Err(SimonError::NotImplemented(
                 "CPU cores not implemented for this platform".to_string(),
@@ -1141,7 +1187,31 @@ impl AiDataApi {
             Ok(json!(freqs))
         }
 
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(target_os = "windows")]
+        {
+            use crate::platform::windows;
+            let stats =
+                windows::read_cpu_stats().map_err(|e| SimonError::CpuError(e.to_string()))?;
+
+            let freqs: Vec<_> = stats
+                .cores
+                .iter()
+                .filter_map(|c| {
+                    c.frequency.as_ref().map(|f| {
+                        json!({
+                            "core_id": c.id,
+                            "current_mhz": f.current,
+                            "min_mhz": f.min,
+                            "max_mhz": f.max,
+                        })
+                    })
+                })
+                .collect();
+
+            Ok(json!(freqs))
+        }
+
+        #[cfg(not(any(target_os = "linux", target_os = "windows")))]
         {
             Err(SimonError::NotImplemented(
                 "CPU frequency not implemented for this platform".to_string(),
@@ -1180,7 +1250,32 @@ impl AiDataApi {
             }))
         }
 
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(target_os = "windows")]
+        {
+            use crate::platform::windows;
+            let stats =
+                windows::read_memory_stats().map_err(|e| SimonError::MemoryError(e.to_string()))?;
+
+            Ok(json!({
+                "ram": {
+                    "total_mb": stats.ram.total / 1024,
+                    "used_mb": stats.ram.used / 1024,
+                    "free_mb": stats.ram.free / 1024,
+                    "usage_percent": if stats.ram.total > 0 {
+                        (stats.ram.used as f64 / stats.ram.total as f64) * 100.0
+                    } else { 0.0 },
+                },
+                "swap": {
+                    "total_mb": stats.swap.total / 1024,
+                    "used_mb": stats.swap.used / 1024,
+                    "usage_percent": if stats.swap.total > 0 {
+                        (stats.swap.used as f64 / stats.swap.total as f64) * 100.0
+                    } else { 0.0 },
+                }
+            }))
+        }
+
+        #[cfg(not(any(target_os = "linux", target_os = "windows")))]
         {
             Err(SimonError::NotImplemented(
                 "Memory status not implemented for this platform".to_string(),
@@ -1213,7 +1308,28 @@ impl AiDataApi {
             }))
         }
 
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(target_os = "windows")]
+        {
+            use crate::platform::windows;
+            let stats =
+                windows::read_memory_stats().map_err(|e| SimonError::MemoryError(e.to_string()))?;
+
+            Ok(json!({
+                "total_kb": stats.ram.total,
+                "used_kb": stats.ram.used,
+                "free_kb": stats.ram.free,
+                "buffers_kb": stats.ram.buffers,
+                "cached_kb": stats.ram.cached,
+                "shared_kb": stats.ram.shared,
+                "total_mb": stats.ram.total / 1024,
+                "used_mb": stats.ram.used / 1024,
+                "free_mb": stats.ram.free / 1024,
+                "buffers_mb": stats.ram.buffers / 1024,
+                "cached_mb": stats.ram.cached / 1024,
+            }))
+        }
+
+        #[cfg(not(any(target_os = "linux", target_os = "windows")))]
         {
             Err(SimonError::NotImplemented(
                 "Memory breakdown not implemented for this platform".to_string(),
@@ -1243,7 +1359,25 @@ impl AiDataApi {
             }))
         }
 
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(target_os = "windows")]
+        {
+            use crate::platform::windows;
+            let stats =
+                windows::read_memory_stats().map_err(|e| SimonError::MemoryError(e.to_string()))?;
+
+            Ok(json!({
+                "total_kb": stats.swap.total,
+                "used_kb": stats.swap.used,
+                "cached_kb": stats.swap.cached,
+                "total_mb": stats.swap.total / 1024,
+                "used_mb": stats.swap.used / 1024,
+                "usage_percent": if stats.swap.total > 0 {
+                    (stats.swap.used as f64 / stats.swap.total as f64) * 100.0
+                } else { 0.0 },
+            }))
+        }
+
+        #[cfg(not(any(target_os = "linux", target_os = "windows")))]
         {
             Err(SimonError::NotImplemented(
                 "Swap status not implemented for this platform".to_string(),
@@ -1923,9 +2057,15 @@ impl AiDataApi {
     }
 
     // ============== Audio Tools ==============
-    pub(crate) fn tool_get_audio_devices(&mut self, params: serde_json::Value) -> Result<serde_json::Value> {
+    pub(crate) fn tool_get_audio_devices(
+        &mut self,
+        params: serde_json::Value,
+    ) -> Result<serde_json::Value> {
         use crate::audio::{AudioDeviceType, AudioMonitor};
-        let device_type = params.get("device_type").and_then(|v| v.as_str()).unwrap_or("all");
+        let device_type = params
+            .get("device_type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("all");
         let monitor = AudioMonitor::new().map_err(|e| SimonError::HardwareError(e.to_string()))?;
         let devices: Vec<_> = monitor.devices().iter()
             .filter(|d| device_type == "all" || matches!((&d.device_type, device_type), (AudioDeviceType::Output, "output") | (AudioDeviceType::Input, "input") | (AudioDeviceType::Duplex, "output") | (AudioDeviceType::Duplex, "input")))
@@ -1933,54 +2073,122 @@ impl AiDataApi {
             .collect();
         Ok(json!(devices))
     }
-    pub(crate) fn tool_get_audio_status(&mut self, _params: serde_json::Value) -> Result<serde_json::Value> {
+    pub(crate) fn tool_get_audio_status(
+        &mut self,
+        _params: serde_json::Value,
+    ) -> Result<serde_json::Value> {
         use crate::audio::AudioMonitor;
         let monitor = AudioMonitor::new().map_err(|e| SimonError::HardwareError(e.to_string()))?;
-        Ok(json!({"master_volume": monitor.master_volume(), "is_muted": monitor.is_muted(), "device_count": monitor.devices().len()}))
+        Ok(
+            json!({"master_volume": monitor.master_volume(), "is_muted": monitor.is_muted(), "device_count": monitor.devices().len()}),
+        )
     }
     // ============== Bluetooth Tools ==============
-    pub(crate) fn tool_get_bluetooth_adapters(&mut self, _params: serde_json::Value) -> Result<serde_json::Value> {
+    pub(crate) fn tool_get_bluetooth_adapters(
+        &mut self,
+        _params: serde_json::Value,
+    ) -> Result<serde_json::Value> {
         use crate::bluetooth::BluetoothMonitor;
-        let monitor = BluetoothMonitor::new().map_err(|e| SimonError::HardwareError(e.to_string()))?;
-        let adapters: Vec<_> = monitor.adapters().iter().map(|a| json!({"id": a.id, "name": a.name, "address": a.address, "powered": a.powered})).collect();
+        let monitor =
+            BluetoothMonitor::new().map_err(|e| SimonError::HardwareError(e.to_string()))?;
+        let adapters: Vec<_> = monitor
+            .adapters()
+            .iter()
+            .map(
+                |a| json!({"id": a.id, "name": a.name, "address": a.address, "powered": a.powered}),
+            )
+            .collect();
         Ok(json!({"available": monitor.is_available(), "adapters": adapters}))
     }
-    pub(crate) fn tool_get_bluetooth_devices(&mut self, params: serde_json::Value) -> Result<serde_json::Value> {
+    pub(crate) fn tool_get_bluetooth_devices(
+        &mut self,
+        params: serde_json::Value,
+    ) -> Result<serde_json::Value> {
         use crate::bluetooth::{BluetoothMonitor, BluetoothState};
-        let connected_only = params.get("connected_only").and_then(|v| v.as_bool()).unwrap_or(false);
-        let monitor = BluetoothMonitor::new().map_err(|e| SimonError::HardwareError(e.to_string()))?;
+        let connected_only = params
+            .get("connected_only")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let monitor =
+            BluetoothMonitor::new().map_err(|e| SimonError::HardwareError(e.to_string()))?;
         let devices: Vec<_> = monitor.devices().iter().filter(|d| !connected_only || d.state == BluetoothState::Connected).map(|d| json!({"address": d.address, "name": d.name, "type": format!("{:?}", d.device_type), "state": format!("{:?}", d.state), "battery_percent": d.battery_percent})).collect();
         Ok(json!(devices))
     }
     // ============== Display Tools ==============
-    pub(crate) fn tool_get_display_list(&mut self, _params: serde_json::Value) -> Result<serde_json::Value> {
+    pub(crate) fn tool_get_display_list(
+        &mut self,
+        _params: serde_json::Value,
+    ) -> Result<serde_json::Value> {
         use crate::display::DisplayMonitor;
-        let monitor = DisplayMonitor::new().map_err(|e| SimonError::HardwareError(e.to_string()))?;
+        let monitor =
+            DisplayMonitor::new().map_err(|e| SimonError::HardwareError(e.to_string()))?;
         let displays: Vec<_> = monitor.displays().iter().map(|d| json!({"id": d.id, "name": d.name, "manufacturer": d.manufacturer, "connection": format!("{:?}", d.connection), "is_primary": d.is_primary, "resolution": format!("{}x{}", d.width, d.height), "aspect_ratio": d.aspect_ratio(), "refresh_rate": d.refresh_rate, "brightness": d.brightness, "hdr": format!("{:?}", d.hdr)})).collect();
         Ok(json!({"count": monitor.count(), "displays": displays}))
     }
-    pub(crate) fn tool_get_display_details(&mut self, params: serde_json::Value) -> Result<serde_json::Value> {
+    pub(crate) fn tool_get_display_details(
+        &mut self,
+        params: serde_json::Value,
+    ) -> Result<serde_json::Value> {
         use crate::display::DisplayMonitor;
-        let display_id = params.get("display_id").and_then(|v| v.as_str()).ok_or_else(|| SimonError::InvalidArgument("display_id required".to_string()))?;
-        let monitor = DisplayMonitor::new().map_err(|e| SimonError::HardwareError(e.to_string()))?;
-        let display = monitor.displays().iter().find(|d| d.id == display_id).ok_or_else(|| SimonError::DeviceNotFound(format!("Display {} not found", display_id)))?;
-        Ok(json!({"id": display.id, "name": display.name, "manufacturer": display.manufacturer, "connection": format!("{:?}", display.connection), "is_primary": display.is_primary, "width": display.width, "height": display.height, "resolution": format!("{}x{}", display.width, display.height), "aspect_ratio": display.aspect_ratio(), "refresh_rate": display.refresh_rate, "brightness": display.brightness, "hdr": format!("{:?}", display.hdr)}))
+        let display_id = params
+            .get("display_id")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| SimonError::InvalidArgument("display_id required".to_string()))?;
+        let monitor =
+            DisplayMonitor::new().map_err(|e| SimonError::HardwareError(e.to_string()))?;
+        let display = monitor
+            .displays()
+            .iter()
+            .find(|d| d.id == display_id)
+            .ok_or_else(|| {
+                SimonError::DeviceNotFound(format!("Display {} not found", display_id))
+            })?;
+        Ok(
+            json!({"id": display.id, "name": display.name, "manufacturer": display.manufacturer, "connection": format!("{:?}", display.connection), "is_primary": display.is_primary, "width": display.width, "height": display.height, "resolution": format!("{}x{}", display.width, display.height), "aspect_ratio": display.aspect_ratio(), "refresh_rate": display.refresh_rate, "brightness": display.brightness, "hdr": format!("{:?}", display.hdr)}),
+        )
     }
     // ============== USB Tools ==============
-    pub(crate) fn tool_get_usb_devices(&mut self, params: serde_json::Value) -> Result<serde_json::Value> {
+    pub(crate) fn tool_get_usb_devices(
+        &mut self,
+        params: serde_json::Value,
+    ) -> Result<serde_json::Value> {
         use crate::usb::{UsbDeviceClass, UsbMonitor};
-        let class_filter = params.get("class").and_then(|v| v.as_str()).unwrap_or("all");
+        let class_filter = params
+            .get("class")
+            .and_then(|v| v.as_str())
+            .unwrap_or("all");
         let monitor = UsbMonitor::new().map_err(|e| SimonError::HardwareError(e.to_string()))?;
         let devices: Vec<_> = monitor.devices().iter().filter(|d| class_filter == "all" || matches!((&d.class, class_filter), (UsbDeviceClass::Audio, "audio") | (UsbDeviceClass::Hid, "hid") | (UsbDeviceClass::MassStorage, "storage") | (UsbDeviceClass::Hub, "hub") | (UsbDeviceClass::Video, "video"))).map(|d| json!({"bus": d.bus_number, "port": d.port_number, "vendor_id": format!("{:04x}", d.vendor_id), "product_id": format!("{:04x}", d.product_id), "vendor_name": d.manufacturer, "product_name": d.product, "class": format!("{:?}", d.class), "speed": format!("{:?}", d.speed)})).collect();
         Ok(json!(devices))
     }
-    pub(crate) fn tool_get_usb_device_details(&mut self, params: serde_json::Value) -> Result<serde_json::Value> {
+    pub(crate) fn tool_get_usb_device_details(
+        &mut self,
+        params: serde_json::Value,
+    ) -> Result<serde_json::Value> {
         use crate::usb::UsbMonitor;
-        let bus = params.get("bus").and_then(|v| v.as_u64()).ok_or_else(|| SimonError::InvalidArgument("bus required".to_string()))? as u8;
-        let address = params.get("address").and_then(|v| v.as_u64()).ok_or_else(|| SimonError::InvalidArgument("address required".to_string()))? as u8;
+        let bus = params
+            .get("bus")
+            .and_then(|v| v.as_u64())
+            .ok_or_else(|| SimonError::InvalidArgument("bus required".to_string()))?
+            as u8;
+        let address = params
+            .get("address")
+            .and_then(|v| v.as_u64())
+            .ok_or_else(|| SimonError::InvalidArgument("address required".to_string()))?
+            as u8;
         let monitor = UsbMonitor::new().map_err(|e| SimonError::HardwareError(e.to_string()))?;
-        let device = monitor.devices().iter().find(|d| d.bus_number == bus && d.port_number == address).ok_or_else(|| SimonError::DeviceNotFound(format!("USB device at bus {} address {} not found", bus, address)))?;
-        Ok(json!({"bus": device.bus_number, "port": device.port_number, "vendor_id": format!("{:04x}", device.vendor_id), "product_id": format!("{:04x}", device.product_id), "vendor_name": device.manufacturer, "product_name": device.product, "class": format!("{:?}", device.class), "speed": format!("{:?}", device.speed)}))
+        let device = monitor
+            .devices()
+            .iter()
+            .find(|d| d.bus_number == bus && d.port_number == address)
+            .ok_or_else(|| {
+                SimonError::DeviceNotFound(format!(
+                    "USB device at bus {} address {} not found",
+                    bus, address
+                ))
+            })?;
+        Ok(
+            json!({"bus": device.bus_number, "port": device.port_number, "vendor_id": format!("{:04x}", device.vendor_id), "product_id": format!("{:04x}", device.product_id), "vendor_name": device.manufacturer, "product_name": device.product, "class": format!("{:?}", device.class), "speed": format!("{:?}", device.speed)}),
+        )
     }
-
 }

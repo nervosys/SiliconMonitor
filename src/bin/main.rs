@@ -2133,10 +2133,10 @@ fn handle_record_command(action: &RecordSubcommand) -> Result<(), Box<dyn std::e
                         memory_bytes: p.memory_bytes,
                         gpu_memory_bytes: p.gpu_memory_bytes,
                         gpu_percent: 0.0,  // ProcessState doesn't have gpu_percent
-                        disk_read_bps: 0,  // TODO: implement if available
-                        disk_write_bps: 0, // TODO: implement if available
-                        net_rx_bps: 0,     // TODO: implement if available
-                        net_tx_bps: 0,     // TODO: implement if available
+                        disk_read_bps: 0,  // Per-process I/O rates need delta tracking across snapshots
+                        disk_write_bps: 0, // Absolute I/O bytes available in ProcessMonitorInfo
+                        net_rx_bps: 0,     // Per-process network rates not tracked by OS
+                        net_tx_bps: 0,     // System-level net rates are in SystemSnapshot
                     })
                     .collect();
 

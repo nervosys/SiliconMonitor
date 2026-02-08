@@ -379,13 +379,125 @@ impl SiliconMonitor for AppleSiliconMonitor {
     }
 
     fn io_info(&self) -> Result<Vec<IoController>> {
-        // TODO: Implement I/O monitoring via IOKit
-        Ok(Vec::new())
+        let mut controllers = Vec::new();
+
+        // Get disk I/O stats from iostat
+        if let Ok(output) = Command::new("iostat")
+            .args(&["-d", "-c", "1"])
+            .output()
+        {
+            let text = String::from_utf8_lossy(&output.stdout);
+            // iostat -d outputs: device, KB/t, tps, MB/s
+            for line in text.lines().skip(2) {
+                let parts: Vec<&str> = line.split_whitespace().collect();
+                if parts.len() >= 4 {
+                    let name = parts[0].to_string();
+                    let mbps: f64 = parts[3].parse().unwrap_or(0.0);
+                    controllers.push(IoController {
+                        controller_type: if name.starts_with("disk") { "NVMe".to_string() } else { "Storage".to_string() },
+                        name,
+                        bandwidth_mbps: mbps,
+                        max_bandwidth_mbps: 7000.0, // Apple Silicon NVMe max ~7 GB/s
+                        power_watts: None,
+                    });
+                }
+            }
+        }
+
+        // Thunderbolt controllers via system_profiler
+        if let Ok(output) = Command::new("system_profiler")
+            .args(&["-detailLevel", "mini", "SPThunderboltDataType"])
+            .output()
+        {
+            let text = String::from_utf8_lossy(&output.stdout);
+            let mut tb_count = 0u32;
+            for line in text.lines() {
+                if line.trim().starts_with("Speed:") || line.trim().contains("Thunderbolt") {
+                    if line.contains("Up to") {
+                        tb_count += 1;
+                        controllers.push(IoController {
+                            controller_type: "Thunderbolt".to_string(),
+                            name: format!("Thunderbolt Port {}", tb_count),
+                            bandwidth_mbps: 5000.0, // TB4 = 40 Gbps
+                            max_bandwidth_mbps: 5000.0,
+                            power_watts: None,
+                        });
+                    }
+                }
+            }
+        }
+
+        Ok(controllers)
     }
 
     fn network_info(&self) -> Result<Vec<NetworkSilicon>> {
-        // TODO: Implement network monitoring
-        Ok(Vec::new())
+        let mut networks = Vec::new();
+
+        // Get active network interfaces via ifconfig
+        if let Ok(output) = Command::new("ifconfig").output() {
+            let text = String::from_utf8_lossy(&output.stdout);
+            let mut current_iface = String::new();
+            let mut is_up = false;
+
+            for line in text.lines() {
+                if !line.starts_with('\t') && !line.starts_with(' ') && line.contains(':') {
+                    // New interface line like "en0: flags=8863<UP,...>"
+                    let iface = line.split(':').next().unwrap_or("").to_string();
+                    if !current_iface.is_empty() && is_up && !current_iface.starts_with("lo") {
+                        let interface_type = classify_macos_interface(&current_iface);
+                        networks.push(NetworkSilicon {
+                            interface: interface_type,
+                            link_speed_mbps: estimate_link_speed(&current_iface),
+                            rx_bandwidth_mbps: 0.0,
+                            tx_bandwidth_mbps: 0.0,
+                            packet_rate: 0,
+                            power_state: Some("active".to_string()),
+                        });
+                    }
+                    current_iface = iface;
+                    is_up = line.contains("UP");
+                }
+            }
+            // Push last
+            if !current_iface.is_empty() && is_up && !current_iface.starts_with("lo") {
+                let interface_type = classify_macos_interface(&current_iface);
+                networks.push(NetworkSilicon {
+                    interface: interface_type,
+                    link_speed_mbps: estimate_link_speed(&current_iface),
+                    rx_bandwidth_mbps: 0.0,
+                    tx_bandwidth_mbps: 0.0,
+                    packet_rate: 0,
+                    power_state: Some("active".to_string()),
+                });
+            }
+        }
+
+        // Get bandwidth from netstat
+        if let Ok(output) = Command::new("netstat").args(&["-ib"]).output() {
+            let text = String::from_utf8_lossy(&output.stdout);
+            for line in text.lines().skip(1) {
+                let parts: Vec<&str> = line.split_whitespace().collect();
+                if parts.len() >= 7 {
+                    let iface = parts[0];
+                    // Find matching network entry and update bytes
+                    if let Some(net) = networks.iter_mut().find(|n| {
+                        (n.interface == "WiFi" && iface == "en0")
+                            || (n.interface == "Ethernet" && iface.starts_with("en"))
+                    }) {
+                        if let Ok(ibytes) = parts[6].parse::<u64>() {
+                            net.rx_bandwidth_mbps = ibytes as f64 / (1024.0 * 1024.0);
+                        }
+                        if parts.len() > 9 {
+                            if let Ok(obytes) = parts[9].parse::<u64>() {
+                                net.tx_bandwidth_mbps = obytes as f64 / (1024.0 * 1024.0);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(networks)
     }
 }
 
@@ -395,6 +507,24 @@ impl Drop for AppleSiliconMonitor {
             let _ = child.kill();
         }
     }
+}
+
+/// Classify macOS interface name to type
+fn classify_macos_interface(iface: &str) -> String {
+    if iface == "en0" { "WiFi".to_string() }
+    else if iface.starts_with("en") { "Ethernet".to_string() }
+    else if iface.starts_with("bridge") { "Bridge".to_string() }
+    else if iface.starts_with("awdl") { "AirDrop".to_string() }
+    else if iface.starts_with("utun") { "VPN Tunnel".to_string() }
+    else { iface.to_string() }
+}
+
+/// Estimate link speed for macOS interface
+fn estimate_link_speed(iface: &str) -> u32 {
+    if iface == "en0" { 1200 }      // WiFi 6 ~1.2 Gbps
+    else if iface.starts_with("en") { 1000 } // Gigabit Ethernet
+    else if iface.starts_with("bridge") { 1000 }
+    else { 100 }
 }
 
 #[cfg(test)]

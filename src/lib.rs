@@ -148,14 +148,13 @@
 //! - `all_gpus.rs` - Unified multi-vendor GPU example
 //! - `ai_api_demo.rs` - AI Data API demonstration with tool-based system access
 
-pub mod audio; // Audio device monitoring and control
-pub mod bluetooth; // Bluetooth device monitoring
-pub mod display; // Display/monitor information
-pub mod usb; // USB device enumeration
 pub mod agent; // AI agent for system analysis and predictions
 pub mod ai_api; // AI Data API for full system visibility with tool-based access
 pub mod ai_workload; // AI training and inference workload monitoring
+pub mod audio; // Audio device monitoring and control
 pub mod bandwidth; // Network bandwidth testing (iperf-style)
+pub mod battery; // Battery and power status monitoring
+pub mod bluetooth; // Bluetooth device monitoring
 pub mod boot_config; // Boot configuration and startup management
 pub mod config; // Configuration management with TOML persistence
 pub mod connections; // Network connection monitoring (netstat-like)
@@ -163,6 +162,7 @@ pub mod consent; // User consent management for ethical data collection
 pub mod core;
 pub mod cpufreq; // CPU frequency scaling and governor control
 pub mod disk; // Disk/storage monitoring
+pub mod display; // Display/monitor information
 pub mod error;
 pub mod fan_control; // Advanced fan monitoring and control
 pub mod gpu; // GPU abstraction layer
@@ -182,6 +182,7 @@ pub mod silicon; // New: Unified silicon monitoring (CPU, NPU, I/O, network)
 pub mod stats;
 pub mod system_stats; // System-wide stats (load avg, vmstat, uptime) - Linux/BSD style
 pub mod tsdb; // Time-series database for recording metrics
+pub mod usb; // USB device enumeration
 pub mod utils;
 
 // Unified backend for CLI, TUI, and GUI
@@ -196,12 +197,14 @@ pub use tui::{AcceleratorInfo, AcceleratorType};
 #[cfg(feature = "gui")]
 pub mod gui; // Graphical UI
 
-
 // Re-export new hardware monitors
 pub use audio::{AudioDevice, AudioDeviceType, AudioMonitor, AudioState};
-pub use bluetooth::{BluetoothAdapter, BluetoothDevice, BluetoothDeviceType, BluetoothEvent, BluetoothMonitor, BluetoothState};
+pub use bluetooth::{
+    BluetoothAdapter, BluetoothDevice, BluetoothDeviceType, BluetoothEvent, BluetoothMonitor,
+    BluetoothState,
+};
 pub use display::{DisplayConnection, DisplayInfo, DisplayMonitor, HdrMode};
-pub use usb::{UsbDeviceClass, UsbDevice, UsbEvent, UsbMonitor, UsbSpeed};
+pub use usb::{UsbDevice, UsbDeviceClass, UsbEvent, UsbMonitor, UsbSpeed};
 // Re-export main types
 pub use core::{
     cpu::CpuStats,
@@ -250,20 +253,47 @@ pub use ai_api::{AiDataApi, ToolCall, ToolCategory, ToolDefinition, ToolResult};
 
 // Re-export Observability API for external AI access with MCP-like permissions
 pub use observability::{
-    // API types
-    ApiResponse, ObservabilityApi, ObservabilityError, RequestContext, ResponseMeta,
-    // Context types
-    SystemContext, MinimalContext, SystemContextBuilder, HardwareContext, SoftwareContext,
     // Permission types
-    ApiConfig, ApiKey, Capability, Permission, PermissionChecker, Scope,
+    ApiConfig,
+    ApiKey,
+    // API types
+    ApiResponse,
+    Capability,
+    EventCategory,
+    EventFilter,
     // Event types
-    EventManager, SystemEvent, EventCategory, EventSeverity, EventFilter,
+    EventManager,
+    EventSeverity,
+    HardwareContext,
+    HttpRequest,
+    HttpResponse,
     // Metric types
-    MetricCollector, MetricSnapshot, MetricValue, MetricStats,
+    MetricCollector,
+    MetricSnapshot,
+    MetricStats,
+    MetricValue,
+    MinimalContext,
+    ObservabilityApi,
+    ObservabilityError,
+    OpenApiSpec,
+    Permission,
+    PermissionChecker,
+    RequestContext,
+    RequestHandler,
+    ResponseMeta,
+    Scope,
     // Server types
-    ServerConfig, RequestHandler, HttpRequest, HttpResponse, OpenApiSpec,
+    ServerConfig,
+    SoftwareContext,
+    StreamChannel,
     // Streaming types
-    StreamManager, StreamMessage, StreamChannel, Subscription,
+    StreamManager,
+    StreamMessage,
+    Subscription,
+    // Context types
+    SystemContext,
+    SystemContextBuilder,
+    SystemEvent,
 };
 
 // Re-export AI agent

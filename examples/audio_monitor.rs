@@ -4,7 +4,7 @@
 //!
 //! Run with: cargo run --example audio_monitor
 
-use simon::audio::AudioMonitor;
+use simonlib::audio::AudioMonitor;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Audio Monitor Example ===\n");
@@ -29,14 +29,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     for device in devices {
         let direction = match device.device_type {
-            simon::audio::AudioDeviceType::Output => "Output",
-            simon::audio::AudioDeviceType::Input => "Input",
-            simon::audio::AudioDeviceType::Duplex => "Duplex",
+            simonlib::audio::AudioDeviceType::Output => "Output",
+            simonlib::audio::AudioDeviceType::Input => "Input",
+            simonlib::audio::AudioDeviceType::Duplex => "Duplex",
         };
         let default = if device.is_default { " (Default)" } else { "" };
         let enabled = if device.is_enabled { "" } else { " [Disabled]" };
 
-        println!("  {} {}{}{}", 
+        println!(
+            "  {} {}{}{}",
             if device.is_output { "🔊" } else { "🎤" },
             device.name,
             default,

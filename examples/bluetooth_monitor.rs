@@ -4,7 +4,7 @@
 //!
 //! Run with: cargo run --example bluetooth_monitor
 
-use simon::bluetooth::{BluetoothDeviceType, BluetoothMonitor, BluetoothState};
+use simonlib::bluetooth::{BluetoothDeviceType, BluetoothMonitor, BluetoothState};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Bluetooth Monitor Example ===\n");
@@ -26,7 +26,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("  📡 {}", adapter.name);
         println!("    ID: {}", adapter.id);
         println!("    Address: {}", adapter.address);
-        println!("    Powered: {}", if adapter.powered { "Yes" } else { "No" });
+        println!(
+            "    Powered: {}",
+            if adapter.powered { "Yes" } else { "No" }
+        );
         println!();
     }
 

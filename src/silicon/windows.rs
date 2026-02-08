@@ -434,8 +434,54 @@ impl SiliconMonitor for WindowsSiliconMonitor {
     }
 
     fn npu_info(&self) -> Result<Vec<NpuInfo>> {
-        // TODO: Detect Intel AI Boost (NPU) on Windows
-        // Available on Intel Core Ultra (Meteor Lake) and later
+        // Detect Intel AI Boost (NPU) or other NPUs via WMI
+        #[cfg(target_os = "windows")]
+        {
+            let mut npus = Vec::new();
+
+            if let Ok(com) = wmi::COMLibrary::new() {
+                if let Ok(wmi_conn) = wmi::WMIConnection::new(com) {
+                    // Query PnP devices for NPU class (Processing Accelerators)
+                    #[derive(serde::Deserialize, Debug)]
+                    #[serde(rename_all = "PascalCase")]
+                    struct PnpDevice {
+                        name: Option<String>,
+                        manufacturer: Option<String>,
+                        status: Option<String>,
+                    }
+
+                    // PNPClass "System" devices with NPU/AI/Neural in name
+                    if let Ok(devices) = wmi_conn.raw_query::<PnpDevice>(
+                        "SELECT Name, Manufacturer, Status FROM Win32_PnPEntity WHERE Name LIKE '%NPU%' OR Name LIKE '%Neural%' OR Name LIKE '%AI Boost%' OR Name LIKE '%AI Accelerator%'",
+                    ) {
+                        for device in devices {
+                            if let Some(name) = device.name {
+                                let vendor = device.manufacturer.unwrap_or_else(|| {
+                                    if name.to_lowercase().contains("intel") { "Intel".to_string() }
+                                    else if name.to_lowercase().contains("qualcomm") { "Qualcomm".to_string() }
+                                    else { "Unknown".to_string() }
+                                });
+                                let cores = if vendor == "Intel" { Some(16) } // Intel NPU ~16 compute units
+                                    else if vendor == "Qualcomm" { Some(8) }
+                                    else { None };
+                                npus.push(NpuInfo {
+                                    name,
+                                    vendor,
+                                    cores,
+                                    utilization: 0, // NPU utilization requires vendor-specific APIs
+                                    power_watts: None,
+                                    frequency_mhz: None,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+
+            return Ok(npus);
+        }
+
+        #[cfg(not(target_os = "windows"))]
         Ok(Vec::new())
     }
 

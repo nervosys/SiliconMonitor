@@ -56,7 +56,9 @@ impl From<PermissionError> for ObservabilityError {
             PermissionError::RateLimited { retry_after } => Self::RateLimited {
                 retry_after_secs: retry_after.map(|d| d.as_secs()).unwrap_or(60),
             },
-            PermissionError::AccessDenied { capability, scope } => Self::PermissionDenied(format!("Access denied for {}:{:?}", capability, scope)),
+            PermissionError::AccessDenied { capability, scope } => {
+                Self::PermissionDenied(format!("Access denied for {}:{:?}", capability, scope))
+            }
         }
     }
 }
@@ -163,7 +165,12 @@ impl ObservabilityApi {
     }
 
     /// Check if a request has a specific permission
-    fn check_permission(&self, ctx: &RequestContext, capability: Capability, scope: Scope) -> Result<()> {
+    fn check_permission(
+        &self,
+        ctx: &RequestContext,
+        capability: Capability,
+        scope: Scope,
+    ) -> Result<()> {
         self.permission_checker
             .write()
             .unwrap()
@@ -177,13 +184,16 @@ impl ObservabilityApi {
     /// This is the primary method for AI systems to get context about the system.
     pub fn get_context(&mut self, ctx: &RequestContext) -> Result<ApiResponse<SystemContext>> {
         let start = Instant::now();
-        
+
         let mut builder = SystemContext::builder();
         let mut included = Vec::new();
         let mut excluded = Vec::new();
 
         // System info - requires SystemInfo:Read
-        if self.check_permission(ctx, Capability::SystemInfo, Scope::Read).is_ok() {
+        if self
+            .check_permission(ctx, Capability::SystemInfo, Scope::Read)
+            .is_ok()
+        {
             builder = builder.system(self.collect_system_identity());
             included.push("system".to_string());
         } else {
@@ -203,7 +213,10 @@ impl ObservabilityApi {
         builder = builder.metrics(metrics);
 
         // Alerts
-        if self.check_permission(ctx, Capability::Events, Scope::Read).is_ok() {
+        if self
+            .check_permission(ctx, Capability::Events, Scope::Read)
+            .is_ok()
+        {
             builder = builder.alerts(self.collect_alerts());
             included.push("alerts".to_string());
         } else {
@@ -231,13 +244,16 @@ impl ObservabilityApi {
     }
 
     /// Get minimal context (for constrained environments)
-    pub fn get_minimal_context(&mut self, ctx: &RequestContext) -> Result<ApiResponse<MinimalContext>> {
+    pub fn get_minimal_context(
+        &mut self,
+        ctx: &RequestContext,
+    ) -> Result<ApiResponse<MinimalContext>> {
         self.check_permission(ctx, Capability::SystemInfo, Scope::Read)?;
-        
+
         let start = Instant::now();
         let full_context = self.get_context(ctx)?;
         let minimal = full_context.data.minimal();
-        
+
         Ok(ApiResponse {
             data: minimal,
             meta: ResponseMeta {
@@ -255,10 +271,10 @@ impl ObservabilityApi {
     /// Get GPU information
     pub fn get_gpus(&self, ctx: &RequestContext) -> Result<ApiResponse<Vec<GpuContext>>> {
         self.check_permission(ctx, Capability::Gpu, Scope::Read)?;
-        
+
         let start = Instant::now();
         let gpus = self.collect_gpu_inventory();
-        
+
         Ok(ApiResponse {
             data: gpus,
             meta: ResponseMeta {
@@ -276,10 +292,10 @@ impl ObservabilityApi {
     /// Get GPU metrics
     pub fn get_gpu_metrics(&self, ctx: &RequestContext) -> Result<ApiResponse<Vec<GpuMetrics>>> {
         self.check_permission(ctx, Capability::Gpu, Scope::Read)?;
-        
+
         let start = Instant::now();
         let metrics = self.collect_gpu_metrics();
-        
+
         Ok(ApiResponse {
             data: metrics,
             meta: ResponseMeta {
@@ -297,12 +313,12 @@ impl ObservabilityApi {
     /// Get CPU metrics
     pub fn get_cpu_metrics(&self, ctx: &RequestContext) -> Result<ApiResponse<CpuMetrics>> {
         self.check_permission(ctx, Capability::Cpu, Scope::Read)?;
-        
+
         let start = Instant::now();
-        let metrics = self.collect_cpu_metrics().ok_or_else(|| {
-            ObservabilityError::NotAvailable("CPU metrics not available".into())
-        })?;
-        
+        let metrics = self
+            .collect_cpu_metrics()
+            .ok_or_else(|| ObservabilityError::NotAvailable("CPU metrics not available".into()))?;
+
         Ok(ApiResponse {
             data: metrics,
             meta: ResponseMeta {
@@ -320,12 +336,12 @@ impl ObservabilityApi {
     /// Get memory metrics
     pub fn get_memory_metrics(&self, ctx: &RequestContext) -> Result<ApiResponse<MemoryMetrics>> {
         self.check_permission(ctx, Capability::Memory, Scope::Read)?;
-        
+
         let start = Instant::now();
         let metrics = self.collect_memory_metrics().ok_or_else(|| {
             ObservabilityError::NotAvailable("Memory metrics not available".into())
         })?;
-        
+
         Ok(ApiResponse {
             data: metrics,
             meta: ResponseMeta {
@@ -343,10 +359,10 @@ impl ObservabilityApi {
     /// Get disk information
     pub fn get_disks(&self, ctx: &RequestContext) -> Result<ApiResponse<Vec<DiskContext>>> {
         self.check_permission(ctx, Capability::Disk, Scope::Read)?;
-        
+
         let start = Instant::now();
         let disks = self.collect_disk_inventory();
-        
+
         Ok(ApiResponse {
             data: disks,
             meta: ResponseMeta {
@@ -364,10 +380,10 @@ impl ObservabilityApi {
     /// Get disk metrics
     pub fn get_disk_metrics(&self, ctx: &RequestContext) -> Result<ApiResponse<Vec<DiskMetrics>>> {
         self.check_permission(ctx, Capability::Disk, Scope::Read)?;
-        
+
         let start = Instant::now();
         let metrics = self.collect_disk_metrics();
-        
+
         Ok(ApiResponse {
             data: metrics,
             meta: ResponseMeta {
@@ -383,12 +399,15 @@ impl ObservabilityApi {
     }
 
     /// Get network interface information
-    pub fn get_network_interfaces(&self, ctx: &RequestContext) -> Result<ApiResponse<Vec<NetworkInterfaceContext>>> {
+    pub fn get_network_interfaces(
+        &self,
+        ctx: &RequestContext,
+    ) -> Result<ApiResponse<Vec<NetworkInterfaceContext>>> {
         self.check_permission(ctx, Capability::Network, Scope::Read)?;
-        
+
         let start = Instant::now();
         let interfaces = self.collect_network_interfaces();
-        
+
         Ok(ApiResponse {
             data: interfaces,
             meta: ResponseMeta {
@@ -404,12 +423,15 @@ impl ObservabilityApi {
     }
 
     /// Get network metrics
-    pub fn get_network_metrics(&self, ctx: &RequestContext) -> Result<ApiResponse<Vec<NetworkMetrics>>> {
+    pub fn get_network_metrics(
+        &self,
+        ctx: &RequestContext,
+    ) -> Result<ApiResponse<Vec<NetworkMetrics>>> {
         self.check_permission(ctx, Capability::Network, Scope::Read)?;
-        
+
         let start = Instant::now();
         let metrics = self.collect_network_metrics();
-        
+
         Ok(ApiResponse {
             data: metrics,
             meta: ResponseMeta {
@@ -425,16 +447,20 @@ impl ObservabilityApi {
     }
 
     /// Get process list
-    pub fn get_processes(&self, ctx: &RequestContext, limit: Option<usize>) -> Result<ApiResponse<Vec<ProcessMetrics>>> {
+    pub fn get_processes(
+        &self,
+        ctx: &RequestContext,
+        limit: Option<usize>,
+    ) -> Result<ApiResponse<Vec<ProcessMetrics>>> {
         self.check_permission(ctx, Capability::Process, Scope::Read)?;
-        
+
         let start = Instant::now();
         let mut processes = self.collect_processes();
-        
+
         if let Some(limit) = limit {
             processes.truncate(limit);
         }
-        
+
         Ok(ApiResponse {
             data: processes,
             meta: ResponseMeta {
@@ -452,12 +478,12 @@ impl ObservabilityApi {
     /// Get motherboard information
     pub fn get_motherboard(&self, ctx: &RequestContext) -> Result<ApiResponse<MotherboardContext>> {
         self.check_permission(ctx, Capability::Motherboard, Scope::Read)?;
-        
+
         let start = Instant::now();
         let motherboard = self.collect_motherboard_info().ok_or_else(|| {
             ObservabilityError::NotAvailable("Motherboard info not available".into())
         })?;
-        
+
         Ok(ApiResponse {
             data: motherboard,
             meta: ResponseMeta {
@@ -473,14 +499,17 @@ impl ObservabilityApi {
     }
 
     /// Get power/battery status
-    pub fn get_power_status(&self, ctx: &RequestContext) -> Result<ApiResponse<PowerSupplyContext>> {
+    pub fn get_power_status(
+        &self,
+        ctx: &RequestContext,
+    ) -> Result<ApiResponse<PowerSupplyContext>> {
         self.check_permission(ctx, Capability::Power, Scope::Read)?;
-        
+
         let start = Instant::now();
-        let power = self.collect_power_info().ok_or_else(|| {
-            ObservabilityError::NotAvailable("Power info not available".into())
-        })?;
-        
+        let power = self
+            .collect_power_info()
+            .ok_or_else(|| ObservabilityError::NotAvailable("Power info not available".into()))?;
+
         Ok(ApiResponse {
             data: power,
             meta: ResponseMeta {
@@ -498,10 +527,10 @@ impl ObservabilityApi {
     /// Get fan status
     pub fn get_fans(&self, ctx: &RequestContext) -> Result<ApiResponse<Vec<FanContext>>> {
         self.check_permission(ctx, Capability::Fan, Scope::Read)?;
-        
+
         let start = Instant::now();
         let fans = self.collect_fans();
-        
+
         Ok(ApiResponse {
             data: fans,
             meta: ResponseMeta {
@@ -517,12 +546,15 @@ impl ObservabilityApi {
     }
 
     /// Get temperature sensors
-    pub fn get_temperatures(&self, ctx: &RequestContext) -> Result<ApiResponse<Vec<TemperatureSensorContext>>> {
+    pub fn get_temperatures(
+        &self,
+        ctx: &RequestContext,
+    ) -> Result<ApiResponse<Vec<TemperatureSensorContext>>> {
         self.check_permission(ctx, Capability::Cpu, Scope::Read)?; // Temperatures are part of general system monitoring
-        
+
         let start = Instant::now();
         let temps = self.collect_temperature_sensors();
-        
+
         Ok(ApiResponse {
             data: temps,
             meta: ResponseMeta {
@@ -540,15 +572,14 @@ impl ObservabilityApi {
     /// List available capabilities for an API key
     pub fn list_capabilities(&self, ctx: &RequestContext) -> Result<ApiResponse<Vec<String>>> {
         let start = Instant::now();
-        
+
         let checker = self.permission_checker.read().unwrap();
-        let api_key = checker.get_key(&ctx.api_key)
+        let api_key = checker
+            .get_key(&ctx.api_key)
             .ok_or_else(|| ObservabilityError::PermissionDenied("Invalid API key".into()))?;
-        
-        let capabilities: Vec<String> = api_key.permissions.iter()
-            .map(|p| p.to_string())
-            .collect();
-        
+
+        let capabilities: Vec<String> = api_key.permissions.iter().map(|p| p.to_string()).collect();
+
         Ok(ApiResponse {
             data: capabilities,
             meta: ResponseMeta {
@@ -567,16 +598,50 @@ impl ObservabilityApi {
     // These would integrate with the actual monitoring systems
 
     fn collect_system_identity(&self) -> SystemIdentity {
-        // TODO: Integrate with actual system info collection
+        use crate::motherboard;
+        let sys_info = motherboard::get_system_info().ok();
+        let os_version = sys_info
+            .as_ref()
+            .map(|s| s.os_version.clone())
+            .unwrap_or_default();
+        let kernel_version = sys_info
+            .as_ref()
+            .and_then(|s| s.kernel_version.clone())
+            .unwrap_or_default();
+        let hostname = sys_info
+            .as_ref()
+            .and_then(|s| s.hostname.clone())
+            .or_else(|| std::env::var("COMPUTERNAME").ok())
+            .or_else(|| std::env::var("HOSTNAME").ok())
+            .unwrap_or_else(|| "unknown".into());
+
+        #[cfg(target_os = "windows")]
+        let uptime_seconds = Some(crate::platform::windows::get_system_uptime().as_secs());
+        #[cfg(not(target_os = "windows"))]
+        let uptime_seconds = std::fs::read_to_string("/proc/uptime")
+            .ok()
+            .and_then(|s| {
+                s.split_whitespace()
+                    .next()
+                    .and_then(|v| v.parse::<f64>().ok())
+            })
+            .map(|v| v as u64);
+
         SystemIdentity {
-            hostname: std::env::var("COMPUTERNAME").or_else(|_| std::env::var("HOSTNAME")).unwrap_or_else(|_| "unknown".into()),
-            os_name: std::env::consts::OS.to_string(),
-            os_version: String::new(), // Platform-specific
-            kernel_version: String::new(), // Platform-specific
-            architecture: std::env::consts::ARCH.to_string(),
-            machine_id: None,
+            hostname,
+            os_name: sys_info
+                .as_ref()
+                .map(|s| s.os_name.clone())
+                .unwrap_or_else(|| std::env::consts::OS.to_string()),
+            os_version,
+            kernel_version,
+            architecture: sys_info
+                .as_ref()
+                .map(|s| s.architecture.clone())
+                .unwrap_or_else(|| std::env::consts::ARCH.to_string()),
+            machine_id: sys_info.as_ref().and_then(|s| s.uuid.clone()),
             boot_time: None,
-            uptime_seconds: None,
+            uptime_seconds,
         }
     }
 
@@ -589,7 +654,10 @@ impl ObservabilityApi {
         let mut hw = HardwareContext::default();
 
         // CPU
-        if self.check_permission(ctx, Capability::Cpu, Scope::Read).is_ok() {
+        if self
+            .check_permission(ctx, Capability::Cpu, Scope::Read)
+            .is_ok()
+        {
             hw.cpu = self.collect_cpu_info();
             included.push("cpu".to_string());
         } else {
@@ -597,7 +665,10 @@ impl ObservabilityApi {
         }
 
         // GPU
-        if self.check_permission(ctx, Capability::Gpu, Scope::Read).is_ok() {
+        if self
+            .check_permission(ctx, Capability::Gpu, Scope::Read)
+            .is_ok()
+        {
             hw.gpus = self.collect_gpu_inventory();
             included.push("gpu".to_string());
         } else {
@@ -605,7 +676,10 @@ impl ObservabilityApi {
         }
 
         // Memory
-        if self.check_permission(ctx, Capability::Memory, Scope::Read).is_ok() {
+        if self
+            .check_permission(ctx, Capability::Memory, Scope::Read)
+            .is_ok()
+        {
             hw.memory = self.collect_memory_info();
             included.push("memory".to_string());
         } else {
@@ -613,7 +687,10 @@ impl ObservabilityApi {
         }
 
         // Disk
-        if self.check_permission(ctx, Capability::Disk, Scope::Read).is_ok() {
+        if self
+            .check_permission(ctx, Capability::Disk, Scope::Read)
+            .is_ok()
+        {
             hw.disks = self.collect_disk_inventory();
             included.push("disk".to_string());
         } else {
@@ -621,7 +698,10 @@ impl ObservabilityApi {
         }
 
         // Network
-        if self.check_permission(ctx, Capability::Network, Scope::Read).is_ok() {
+        if self
+            .check_permission(ctx, Capability::Network, Scope::Read)
+            .is_ok()
+        {
             hw.network_interfaces = self.collect_network_interfaces();
             included.push("network".to_string());
         } else {
@@ -629,7 +709,10 @@ impl ObservabilityApi {
         }
 
         // Motherboard
-        if self.check_permission(ctx, Capability::Motherboard, Scope::Read).is_ok() {
+        if self
+            .check_permission(ctx, Capability::Motherboard, Scope::Read)
+            .is_ok()
+        {
             hw.motherboard = self.collect_motherboard_info();
             included.push("motherboard".to_string());
         } else {
@@ -637,7 +720,10 @@ impl ObservabilityApi {
         }
 
         // Power
-        if self.check_permission(ctx, Capability::Power, Scope::Read).is_ok() {
+        if self
+            .check_permission(ctx, Capability::Power, Scope::Read)
+            .is_ok()
+        {
             hw.power_supply = self.collect_power_info();
             included.push("power".to_string());
         } else {
@@ -645,7 +731,10 @@ impl ObservabilityApi {
         }
 
         // Fans
-        if self.check_permission(ctx, Capability::Fan, Scope::Read).is_ok() {
+        if self
+            .check_permission(ctx, Capability::Fan, Scope::Read)
+            .is_ok()
+        {
             hw.fans = self.collect_fans();
             included.push("fan".to_string());
         } else {
@@ -664,7 +753,10 @@ impl ObservabilityApi {
         let mut sw = SoftwareContext::default();
 
         // Process count
-        if self.check_permission(ctx, Capability::Process, Scope::Read).is_ok() {
+        if self
+            .check_permission(ctx, Capability::Process, Scope::Read)
+            .is_ok()
+        {
             sw.process_count = self.collect_processes().len();
             included.push("processes".to_string());
         } else {
@@ -672,7 +764,10 @@ impl ObservabilityApi {
         }
 
         // Services
-        if self.check_permission(ctx, Capability::Services, Scope::Read).is_ok() {
+        if self
+            .check_permission(ctx, Capability::Services, Scope::Read)
+            .is_ok()
+        {
             sw.services = self.collect_services();
             included.push("services".to_string());
         } else {
@@ -680,7 +775,10 @@ impl ObservabilityApi {
         }
 
         // Drivers
-        if self.check_permission(ctx, Capability::Drivers, Scope::Read).is_ok() {
+        if self
+            .check_permission(ctx, Capability::Drivers, Scope::Read)
+            .is_ok()
+        {
             sw.drivers = self.collect_drivers();
             included.push("drivers".to_string());
         } else {
@@ -688,7 +786,10 @@ impl ObservabilityApi {
         }
 
         // Boot config
-        if self.check_permission(ctx, Capability::BootConfig, Scope::Read).is_ok() {
+        if self
+            .check_permission(ctx, Capability::BootConfig, Scope::Read)
+            .is_ok()
+        {
             sw.boot_config = self.collect_boot_config();
             included.push("boot_config".to_string());
         } else {
@@ -707,7 +808,10 @@ impl ObservabilityApi {
         let mut metrics = MetricsContext::default();
 
         // CPU metrics
-        if self.check_permission(ctx, Capability::Cpu, Scope::Read).is_ok() {
+        if self
+            .check_permission(ctx, Capability::Cpu, Scope::Read)
+            .is_ok()
+        {
             metrics.cpu = self.collect_cpu_metrics();
             included.push("cpu_metrics".to_string());
         } else {
@@ -715,7 +819,10 @@ impl ObservabilityApi {
         }
 
         // GPU metrics
-        if self.check_permission(ctx, Capability::Gpu, Scope::Read).is_ok() {
+        if self
+            .check_permission(ctx, Capability::Gpu, Scope::Read)
+            .is_ok()
+        {
             metrics.gpus = self.collect_gpu_metrics();
             included.push("gpu_metrics".to_string());
         } else {
@@ -723,7 +830,10 @@ impl ObservabilityApi {
         }
 
         // Memory metrics
-        if self.check_permission(ctx, Capability::Memory, Scope::Read).is_ok() {
+        if self
+            .check_permission(ctx, Capability::Memory, Scope::Read)
+            .is_ok()
+        {
             metrics.memory = self.collect_memory_metrics();
             included.push("memory_metrics".to_string());
         } else {
@@ -731,7 +841,10 @@ impl ObservabilityApi {
         }
 
         // Disk metrics
-        if self.check_permission(ctx, Capability::Disk, Scope::Read).is_ok() {
+        if self
+            .check_permission(ctx, Capability::Disk, Scope::Read)
+            .is_ok()
+        {
             metrics.disks = self.collect_disk_metrics();
             included.push("disk_metrics".to_string());
         } else {
@@ -739,7 +852,10 @@ impl ObservabilityApi {
         }
 
         // Network metrics
-        if self.check_permission(ctx, Capability::Network, Scope::Read).is_ok() {
+        if self
+            .check_permission(ctx, Capability::Network, Scope::Read)
+            .is_ok()
+        {
             metrics.network = self.collect_network_metrics();
             included.push("network_metrics".to_string());
         } else {
@@ -747,9 +863,16 @@ impl ObservabilityApi {
         }
 
         // Top processes
-        if self.check_permission(ctx, Capability::Process, Scope::Read).is_ok() {
+        if self
+            .check_permission(ctx, Capability::Process, Scope::Read)
+            .is_ok()
+        {
             let mut procs = self.collect_processes();
-            procs.sort_by(|a, b| b.cpu_percent.partial_cmp(&a.cpu_percent).unwrap_or(std::cmp::Ordering::Equal));
+            procs.sort_by(|a, b| {
+                b.cpu_percent
+                    .partial_cmp(&a.cpu_percent)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
             procs.truncate(10); // Top 10
             metrics.top_processes = procs;
             included.push("top_processes".to_string());
@@ -758,7 +881,10 @@ impl ObservabilityApi {
         }
 
         // System load
-        if self.check_permission(ctx, Capability::SystemInfo, Scope::Read).is_ok() {
+        if self
+            .check_permission(ctx, Capability::SystemInfo, Scope::Read)
+            .is_ok()
+        {
             metrics.system_load = self.collect_system_load();
             included.push("system_load".to_string());
         } else {
@@ -768,104 +894,557 @@ impl ObservabilityApi {
         metrics
     }
 
-    // Placeholder collection methods - these integrate with actual silicon monitor APIs
+    // ========== Real Data Collection Methods ==========
+    // These integrate with the actual monitoring subsystems
+
     fn collect_cpu_info(&self) -> Option<CpuContext> {
-        // TODO: Integrate with core::cpu
+        #[cfg(target_os = "linux")]
+        {
+            use crate::platform::linux::cpu;
+            if let Ok(stats) = cpu::read_cpu_stats() {
+                let first_core = stats.cores.first();
+                let model = first_core.map(|c| c.model.clone()).unwrap_or_default();
+                let freq = first_core.and_then(|c| c.frequency.as_ref());
+                return Some(CpuContext {
+                    model,
+                    vendor: String::new(), // parsed from model
+                    core_count: stats.cores.len(),
+                    thread_count: stats.cores.len(), // /proc doesn't distinguish easily
+                    base_frequency_mhz: freq.map(|f| f.current),
+                    max_frequency_mhz: freq.map(|f| f.max),
+                    l1_cache_kb: None,
+                    l2_cache_kb: None,
+                    l3_cache_kb: None,
+                    features: Vec::new(),
+                });
+            }
+        }
+        #[cfg(target_os = "windows")]
+        {
+            use crate::platform::windows;
+            if let Ok(stats) = windows::read_cpu_stats() {
+                let first_core = stats.cores.first();
+                let model = first_core.map(|c| c.model.clone()).unwrap_or_default();
+                let freq = first_core.and_then(|c| c.frequency.as_ref());
+                return Some(CpuContext {
+                    model,
+                    vendor: String::new(),
+                    core_count: stats.cores.len(),
+                    thread_count: stats.cores.len(),
+                    base_frequency_mhz: freq.map(|f| f.current),
+                    max_frequency_mhz: freq.map(|f| f.max),
+                    l1_cache_kb: None,
+                    l2_cache_kb: None,
+                    l3_cache_kb: None,
+                    features: Vec::new(),
+                });
+            }
+        }
         None
     }
 
     fn collect_gpu_inventory(&self) -> Vec<GpuContext> {
-        // TODO: Integrate with gpu::GpuCollection
-        Vec::new()
+        use crate::gpu::GpuCollection;
+        let mut result = Vec::new();
+        if let Ok(gpus) = GpuCollection::auto_detect() {
+            if let Ok(snapshots) = gpus.snapshot_all() {
+                for snap in &snapshots {
+                    result.push(GpuContext {
+                        index: snap.static_info.index,
+                        name: snap.static_info.name.clone(),
+                        vendor: format!("{:?}", snap.static_info.vendor),
+                        vram_mb: snap.dynamic_info.memory.total / (1024 * 1024),
+                        driver_version: snap.static_info.driver_version.clone(),
+                        compute_version: snap
+                            .static_info
+                            .compute_capability
+                            .map(|(major, minor)| format!("{}.{}", major, minor)),
+                        pcie: snap
+                            .static_info
+                            .pci_bus_id
+                            .as_ref()
+                            .map(|bus_id| PcieContext {
+                                generation: 0,
+                                width: 0,
+                                bus_id: Some(bus_id.clone()),
+                            }),
+                        capabilities: Vec::new(),
+                    });
+                }
+            }
+        }
+        result
     }
 
     fn collect_memory_info(&self) -> Option<MemoryContext> {
-        // TODO: Integrate with core::memory
+        #[cfg(target_os = "linux")]
+        {
+            use crate::platform::linux::memory;
+            if let Ok(stats) = memory::read_memory_stats() {
+                return Some(MemoryContext {
+                    total_gb: stats.ram.total as f64 / (1024.0 * 1024.0),
+                    memory_type: None,
+                    speed_mhz: None,
+                    dimm_count: None,
+                    swap_total_gb: stats.swap.total as f64 / (1024.0 * 1024.0),
+                });
+            }
+        }
+        #[cfg(target_os = "windows")]
+        {
+            use crate::platform::windows;
+            if let Ok(stats) = windows::read_memory_stats() {
+                return Some(MemoryContext {
+                    total_gb: stats.ram.total as f64 / (1024.0 * 1024.0),
+                    memory_type: None,
+                    speed_mhz: None,
+                    dimm_count: None,
+                    swap_total_gb: stats.swap.total as f64 / (1024.0 * 1024.0),
+                });
+            }
+        }
         None
     }
 
     fn collect_disk_inventory(&self) -> Vec<DiskContext> {
-        // TODO: Integrate with disk module
-        Vec::new()
+        use crate::disk;
+        let mut result = Vec::new();
+        if let Ok(disks) = disk::enumerate_disks() {
+            for d in &disks {
+                let info = d.info().ok();
+                let fs_info = d.filesystem_info().ok().unwrap_or_default();
+                let first_fs = fs_info.first();
+                result.push(DiskContext {
+                    device: d.name().to_string(),
+                    model: info.as_ref().and_then(|i| {
+                        if i.model.is_empty() {
+                            None
+                        } else {
+                            Some(i.model.clone())
+                        }
+                    }),
+                    disk_type: format!("{:?}", d.disk_type()),
+                    size_gb: info
+                        .as_ref()
+                        .map(|i| i.capacity as f64 / (1024.0 * 1024.0 * 1024.0))
+                        .unwrap_or(0.0),
+                    mount_point: first_fs.map(|f| f.mount_point.to_string_lossy().to_string()),
+                    filesystem: first_fs.and_then(|f| {
+                        if f.fs_type.is_empty() {
+                            None
+                        } else {
+                            Some(f.fs_type.clone())
+                        }
+                    }),
+                    serial: info
+                        .as_ref()
+                        .and_then(|i| i.serial.as_ref().filter(|s| !s.is_empty()).cloned()),
+                });
+            }
+        }
+        result
     }
 
     fn collect_network_interfaces(&self) -> Vec<NetworkInterfaceContext> {
-        // TODO: Integrate with network_monitor
-        Vec::new()
+        use crate::NetworkMonitor;
+        let mut result = Vec::new();
+        if let Ok(mut monitor) = NetworkMonitor::new() {
+            if let Ok(ifaces) = monitor.interfaces() {
+                for iface in &ifaces {
+                    let mut ips = iface.ipv4_addresses.clone();
+                    ips.extend(iface.ipv6_addresses.clone());
+                    result.push(NetworkInterfaceContext {
+                        name: iface.name.clone(),
+                        interface_type: if iface.name.starts_with("lo")
+                            || iface.name == "Loopback Pseudo-Interface 1"
+                        {
+                            "loopback".to_string()
+                        } else if iface.name.starts_with("wl")
+                            || iface.name.contains("Wi-Fi")
+                            || iface.name.contains("Wireless")
+                        {
+                            "wifi".to_string()
+                        } else {
+                            "ethernet".to_string()
+                        },
+                        mac_address: iface.mac_address.clone(),
+                        ip_addresses: ips,
+                        speed_mbps: iface.speed_mbps,
+                        mtu: iface.mtu,
+                        is_up: iface.is_up,
+                    });
+                }
+            }
+        }
+        result
     }
 
     fn collect_motherboard_info(&self) -> Option<MotherboardContext> {
-        // TODO: Integrate with motherboard module
+        use crate::motherboard;
+        if let Ok(sys_info) = motherboard::get_system_info() {
+            return Some(MotherboardContext {
+                manufacturer: sys_info.manufacturer.unwrap_or_default(),
+                product: sys_info.product_name.unwrap_or_default(),
+                bios_vendor: sys_info.bios.vendor.clone(),
+                bios_version: sys_info.bios.version.clone(),
+                bios_date: sys_info.bios.release_date.clone(),
+                chassis_type: None,
+            });
+        }
         None
     }
 
     fn collect_power_info(&self) -> Option<PowerSupplyContext> {
-        // TODO: Integrate with core::power
+        use crate::power_supply::PowerSupplyMonitor;
+        if let Ok(monitor) = PowerSupplyMonitor::new() {
+            let battery = monitor.primary_battery();
+            return Some(PowerSupplyContext {
+                status: if monitor.on_ac_power() {
+                    "AC Power".to_string()
+                } else {
+                    "Battery".to_string()
+                },
+                on_ac_power: monitor.on_ac_power(),
+                battery_percent: battery.and_then(|b| b.capacity_percent.map(|c| c as f32)),
+                battery_status: battery.map(|b| format!("{:?}", b.status)),
+                time_remaining_minutes: battery.and_then(|b| b.time_to_empty_min),
+            });
+        }
         None
     }
 
     fn collect_fans(&self) -> Vec<FanContext> {
-        // TODO: Integrate with core::fan
-        Vec::new()
+        use crate::fan_control::FanMonitor;
+        let mut result = Vec::new();
+        if let Ok(monitor) = FanMonitor::new() {
+            for fan in monitor.fans() {
+                result.push(FanContext {
+                    name: fan.name.clone(),
+                    speed_rpm: fan.rpm,
+                    speed_percent: Some(fan.speed_percent as u8),
+                    min_rpm: fan.rpm_min,
+                    max_rpm: fan.rpm_max,
+                });
+            }
+        }
+        result
     }
 
     fn collect_temperature_sensors(&self) -> Vec<TemperatureSensorContext> {
-        // TODO: Integrate with core::temperature
-        Vec::new()
+        let mut result = Vec::new();
+        // Use fan_control ThermalZone data for temperature sensors
+        use crate::fan_control::FanMonitor;
+        if let Ok(monitor) = FanMonitor::new() {
+            for zone in monitor.thermal_zones() {
+                result.push(TemperatureSensorContext {
+                    name: zone.name.clone(),
+                    temperature_c: zone.temp_celsius,
+                    high_threshold_c: None,
+                    critical_threshold_c: None,
+                    location: Some(zone.zone_type.clone()),
+                });
+            }
+        }
+        // Also try hwmon/motherboard sensors
+        use crate::motherboard;
+        if let Ok(sensors) = motherboard::enumerate_sensors() {
+            for sensor_dev in &sensors {
+                if let Ok(temp_sensors) = sensor_dev.temperature_sensors() {
+                    for ts in &temp_sensors {
+                        result.push(TemperatureSensorContext {
+                            name: ts.label.clone(),
+                            temperature_c: ts.temperature,
+                            high_threshold_c: ts.max,
+                            critical_threshold_c: ts.critical,
+                            location: Some(format!("{:?}", ts.sensor_type)),
+                        });
+                    }
+                }
+            }
+        }
+        result
     }
 
     fn collect_cpu_metrics(&self) -> Option<CpuMetrics> {
-        // TODO: Integrate with core::cpu
+        #[cfg(target_os = "linux")]
+        {
+            use crate::platform::linux::cpu;
+            if let Ok(stats) = cpu::read_cpu_stats() {
+                let utilization = 100.0 - stats.total.idle;
+                let per_core: Vec<f32> = stats
+                    .cores
+                    .iter()
+                    .map(|c| 100.0 - c.idle.unwrap_or(100.0))
+                    .collect();
+                let freq = stats
+                    .cores
+                    .first()
+                    .and_then(|c| c.frequency.as_ref())
+                    .map(|f| f.current);
+                return Some(CpuMetrics {
+                    utilization_percent: utilization,
+                    per_core_utilization: per_core,
+                    frequency_mhz: freq,
+                    temperature_c: None,
+                });
+            }
+        }
+        #[cfg(target_os = "windows")]
+        {
+            use crate::platform::windows;
+            if let Ok(stats) = windows::read_cpu_stats() {
+                let utilization = 100.0 - stats.total.idle;
+                let per_core: Vec<f32> = stats
+                    .cores
+                    .iter()
+                    .map(|c| 100.0 - c.idle.unwrap_or(100.0))
+                    .collect();
+                let freq = stats
+                    .cores
+                    .first()
+                    .and_then(|c| c.frequency.as_ref())
+                    .map(|f| f.current);
+                return Some(CpuMetrics {
+                    utilization_percent: utilization,
+                    per_core_utilization: per_core,
+                    frequency_mhz: freq,
+                    temperature_c: None,
+                });
+            }
+        }
         None
     }
 
     fn collect_gpu_metrics(&self) -> Vec<GpuMetrics> {
-        // TODO: Integrate with gpu::GpuCollection
-        Vec::new()
+        use crate::gpu::GpuCollection;
+        let mut result = Vec::new();
+        if let Ok(gpus) = GpuCollection::auto_detect() {
+            if let Ok(snapshots) = gpus.snapshot_all() {
+                for snap in &snapshots {
+                    result.push(GpuMetrics {
+                        index: snap.static_info.index,
+                        utilization_percent: snap.dynamic_info.utilization as f32,
+                        memory_used_mb: snap.dynamic_info.memory.used / (1024 * 1024),
+                        memory_total_mb: snap.dynamic_info.memory.total / (1024 * 1024),
+                        temperature_c: snap.dynamic_info.thermal.temperature.map(|t| t as f32),
+                        power_watts: snap.dynamic_info.power.draw.map(|p| p as f32 / 1000.0),
+                        fan_speed_percent: snap.dynamic_info.thermal.fan_speed.map(|f| f as u8),
+                        clocks: Some(GpuClocks {
+                            graphics_mhz: snap.dynamic_info.clocks.graphics,
+                            memory_mhz: snap.dynamic_info.clocks.memory,
+                            sm_mhz: snap.dynamic_info.clocks.sm,
+                        }),
+                    });
+                }
+            }
+        }
+        result
     }
 
     fn collect_memory_metrics(&self) -> Option<MemoryMetrics> {
-        // TODO: Integrate with core::memory
+        #[cfg(target_os = "linux")]
+        {
+            use crate::platform::linux::memory;
+            if let Ok(stats) = memory::read_memory_stats() {
+                return Some(MemoryMetrics {
+                    used_mb: stats.ram.used / 1024,
+                    free_mb: stats.ram.free / 1024,
+                    total_mb: stats.ram.total / 1024,
+                    cached_mb: Some(stats.ram.cached / 1024),
+                    buffers_mb: Some(stats.ram.buffers / 1024),
+                    swap_used_mb: stats.swap.used / 1024,
+                    swap_total_mb: stats.swap.total / 1024,
+                });
+            }
+        }
+        #[cfg(target_os = "windows")]
+        {
+            use crate::platform::windows;
+            if let Ok(stats) = windows::read_memory_stats() {
+                return Some(MemoryMetrics {
+                    used_mb: stats.ram.used / 1024,
+                    free_mb: stats.ram.free / 1024,
+                    total_mb: stats.ram.total / 1024,
+                    cached_mb: if stats.ram.cached > 0 {
+                        Some(stats.ram.cached / 1024)
+                    } else {
+                        None
+                    },
+                    buffers_mb: if stats.ram.buffers > 0 {
+                        Some(stats.ram.buffers / 1024)
+                    } else {
+                        None
+                    },
+                    swap_used_mb: stats.swap.used / 1024,
+                    swap_total_mb: stats.swap.total / 1024,
+                });
+            }
+        }
         None
     }
 
     fn collect_disk_metrics(&self) -> Vec<DiskMetrics> {
-        // TODO: Integrate with disk module
-        Vec::new()
+        use crate::disk;
+        let mut result = Vec::new();
+        if let Ok(disks) = disk::enumerate_disks() {
+            for d in &disks {
+                let fs_list = d.filesystem_info().ok().unwrap_or_default();
+                let io = d.io_stats().ok();
+                for fs in &fs_list {
+                    result.push(DiskMetrics {
+                        device: format!("{} ({})", d.name(), fs.mount_point.display()),
+                        used_gb: fs.used_size as f64 / (1024.0 * 1024.0 * 1024.0),
+                        free_gb: fs.available_size as f64 / (1024.0 * 1024.0 * 1024.0),
+                        total_gb: fs.total_size as f64 / (1024.0 * 1024.0 * 1024.0),
+                        read_bps: io.as_ref().and_then(|i| i.read_throughput),
+                        write_bps: io.as_ref().and_then(|i| i.write_throughput),
+                        iops_read: io.as_ref().map(|i| i.read_ops),
+                        iops_write: io.as_ref().map(|i| i.write_ops),
+                    });
+                }
+            }
+        }
+        result
     }
 
     fn collect_network_metrics(&self) -> Vec<NetworkMetrics> {
-        // TODO: Integrate with network_monitor
-        Vec::new()
+        use crate::NetworkMonitor;
+        let mut result = Vec::new();
+        if let Ok(mut monitor) = NetworkMonitor::new() {
+            if let Ok(ifaces) = monitor.interfaces() {
+                for iface in &ifaces {
+                    let (rx_rate, tx_rate) = monitor.bandwidth_rate(&iface.name, iface);
+                    result.push(NetworkMetrics {
+                        interface: iface.name.clone(),
+                        rx_bps: rx_rate,
+                        tx_bps: tx_rate,
+                        rx_bytes_total: iface.rx_bytes,
+                        tx_bytes_total: iface.tx_bytes,
+                        rx_packets: iface.rx_packets,
+                        tx_packets: iface.tx_packets,
+                        errors: iface.rx_errors + iface.tx_errors,
+                        dropped: iface.rx_drops + iface.tx_drops,
+                    });
+                }
+            }
+        }
+        result
     }
 
     fn collect_processes(&self) -> Vec<ProcessMetrics> {
-        // TODO: Integrate with process_monitor
-        Vec::new()
+        use crate::ProcessMonitor;
+        let mut result = Vec::new();
+        if let Ok(mut monitor) = ProcessMonitor::without_gpu() {
+            if let Ok(procs) = monitor.processes() {
+                for p in &procs {
+                    result.push(ProcessMetrics {
+                        pid: p.pid,
+                        name: p.name.clone(),
+                        cpu_percent: p.cpu_percent,
+                        memory_mb: p.memory_bytes / (1024 * 1024),
+                        gpu_memory_mb: if p.total_gpu_memory_bytes > 0 {
+                            Some(p.total_gpu_memory_bytes / (1024 * 1024))
+                        } else {
+                            None
+                        },
+                        threads: p.thread_count,
+                        user: p.user.clone(),
+                        command: Some(p.name.clone()),
+                    });
+                }
+            }
+        }
+        result
     }
 
     fn collect_services(&self) -> Vec<ServiceContext> {
-        // TODO: Platform-specific service enumeration
+        // Service enumeration is platform-specific and expensive; return empty for now
         Vec::new()
     }
 
     fn collect_drivers(&self) -> Vec<DriverContext> {
-        // TODO: Platform-specific driver enumeration
-        Vec::new()
+        use crate::motherboard;
+        let mut result = Vec::new();
+        if let Ok(drivers) = motherboard::get_driver_versions() {
+            for d in &drivers {
+                result.push(DriverContext {
+                    name: d.name.clone(),
+                    version: Some(d.version.clone()),
+                    provider: d.vendor.clone(),
+                    date: d.date.clone(),
+                });
+            }
+        }
+        result
     }
 
     fn collect_boot_config(&self) -> Option<BootConfigContext> {
-        // TODO: Platform-specific boot config
+        use crate::motherboard;
+        if let Ok(sys_info) = motherboard::get_system_info() {
+            {
+                let bios = &sys_info.bios;
+                return Some(BootConfigContext {
+                    boot_mode: format!("{:?}", bios.firmware_type),
+                    secure_boot: bios.secure_boot,
+                    boot_entries: Vec::new(),
+                });
+            }
+        }
         None
     }
 
     fn collect_system_load(&self) -> Option<SystemLoadMetrics> {
-        // TODO: Platform-specific load average
+        #[cfg(target_os = "linux")]
+        {
+            if let Ok(content) = std::fs::read_to_string("/proc/loadavg") {
+                let parts: Vec<&str> = content.split_whitespace().collect();
+                if parts.len() >= 5 {
+                    let load_1 = parts[0].parse::<f64>().unwrap_or(0.0);
+                    let load_5 = parts[1].parse::<f64>().unwrap_or(0.0);
+                    let load_15 = parts[2].parse::<f64>().unwrap_or(0.0);
+                    // parts[3] is "running/total" processes
+                    let proc_parts: Vec<&str> = parts[3].split('/').collect();
+                    let running = proc_parts
+                        .first()
+                        .and_then(|s| s.parse::<u32>().ok())
+                        .unwrap_or(0);
+                    let total = proc_parts
+                        .get(1)
+                        .and_then(|s| s.parse::<u32>().ok())
+                        .unwrap_or(0);
+                    return Some(SystemLoadMetrics {
+                        load_1,
+                        load_5,
+                        load_15,
+                        running_processes: running,
+                        total_processes: total,
+                    });
+                }
+            }
+        }
+        #[cfg(target_os = "windows")]
+        {
+            // Windows doesn't have load averages; approximate from CPU utilization
+            use crate::platform::windows;
+            if let Ok(stats) = windows::read_cpu_stats() {
+                let usage = 100.0 - stats.total.idle;
+                let cores = stats.cores.len() as f64;
+                // Approximate load average as (usage% / 100) * core_count
+                let load = (usage as f64 / 100.0) * cores;
+                return Some(SystemLoadMetrics {
+                    load_1: load,
+                    load_5: load,
+                    load_15: load,
+                    running_processes: 0,
+                    total_processes: 0,
+                });
+            }
+        }
         None
     }
 
     fn collect_alerts(&self) -> Vec<AlertContext> {
-        // TODO: Integrate with event system
+        // Alert collection could be wired to health module in the future
         Vec::new()
     }
 }

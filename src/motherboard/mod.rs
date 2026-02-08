@@ -108,7 +108,17 @@ pub fn get_pcie_devices() -> Result<Vec<PcieDeviceInfo>, Error> {
         windows::get_pcie_devices()
     }
 
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "linux")]
+    {
+        linux::get_pcie_devices()
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        macos::get_pcie_devices()
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
     {
         Err(Error::NotSupported(
             "PCIe device enumeration not yet implemented for this platform".into(),
@@ -123,7 +133,17 @@ pub fn get_sata_devices() -> Result<Vec<SataDeviceInfo>, Error> {
         windows::get_sata_devices()
     }
 
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "linux")]
+    {
+        linux::get_sata_devices()
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        macos::get_sata_devices()
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
     {
         Err(Error::NotSupported(
             "SATA device enumeration not yet implemented for this platform".into(),
@@ -138,7 +158,17 @@ pub fn get_system_temperatures() -> Result<SystemTemperatures, Error> {
         windows::get_system_temperatures()
     }
 
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "linux")]
+    {
+        linux::get_system_temperatures()
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        macos::get_system_temperatures()
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
     {
         Err(Error::NotSupported(
             "System temperature monitoring not yet implemented for this platform".into(),
@@ -153,7 +183,17 @@ pub fn get_peripherals() -> Result<PeripheralsInfo, Error> {
         windows::get_peripherals()
     }
 
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "linux")]
+    {
+        linux::get_peripherals()
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        macos::get_peripherals()
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
     {
         Err(Error::NotSupported(
             "Peripheral enumeration not yet implemented for this platform".into(),

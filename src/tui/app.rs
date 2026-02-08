@@ -129,7 +129,6 @@ impl Default for ProcessDisplayMode {
     }
 }
 
-
 /// Current view mode for the TUI
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum ViewMode {
@@ -203,15 +202,15 @@ impl ColorTheme {
     pub fn colors(&self) -> ThemeColors {
         match self {
             ColorTheme::CatppuccinMocha => ThemeColors {
-                ok: (166, 227, 161),        // green
-                careful: (137, 180, 250),   // blue
-                warning: (249, 226, 175),   // yellow
-                critical: (243, 139, 168),  // red
-                title: (137, 180, 250),     // blue
-                separator: (88, 91, 112),   // surface2
-                inactive: (108, 112, 134),  // overlay0
-                surface: (69, 71, 90),      // surface0
-                text: (205, 214, 244),      // text
+                ok: (166, 227, 161),       // green
+                careful: (137, 180, 250),  // blue
+                warning: (249, 226, 175),  // yellow
+                critical: (243, 139, 168), // red
+                title: (137, 180, 250),    // blue
+                separator: (88, 91, 112),  // surface2
+                inactive: (108, 112, 134), // overlay0
+                surface: (69, 71, 90),     // surface0
+                text: (205, 214, 244),     // text
             },
             ColorTheme::CatppuccinLatte => ThemeColors {
                 ok: (64, 160, 43),
@@ -268,7 +267,7 @@ impl ColorTheme {
                 surface: (60, 56, 54),
                 text: (235, 219, 178),
             },
-    }
+        }
     }
 }
 
@@ -284,6 +283,206 @@ pub struct ThemeColors {
     pub inactive: (u8, u8, u8),
     pub surface: (u8, u8, u8),
     pub text: (u8, u8, u8),
+}
+
+/// Cached peripheral information to avoid expensive monitor creation on every frame
+#[derive(Clone, Default)]
+pub struct PeripheralCache {
+    /// Audio device info string
+    pub audio_info: String,
+    /// Bluetooth info string
+    pub bluetooth_info: String,
+    /// Display info string
+    pub display_info: String,
+    /// USB device info string
+    pub usb_info: String,
+    /// Battery info string
+    pub battery_info: String,
+}
+
+impl PeripheralCache {
+    /// Update all peripheral information (call this periodically, not every frame)
+    pub fn refresh(&mut self) {
+        use crate::audio::AudioMonitor;
+        use crate::battery::BatteryMonitor;
+        use crate::bluetooth::BluetoothMonitor;
+        use crate::display::DisplayMonitor;
+        use crate::usb::UsbMonitor;
+
+        // Audio
+        self.audio_info = if let Ok(monitor) = AudioMonitor::new() {
+            let devices = monitor.devices();
+            if devices.is_empty() {
+                "No audio devices detected".to_string()
+            } else {
+                let mut lines: Vec<String> = Vec::new();
+                lines.push(format!(
+                    "{} audio device(s) | Volume: {}% | Muted: {}",
+                    devices.len(),
+                    monitor.master_volume().unwrap_or(100),
+                    if monitor.is_muted() { "Yes" } else { "No" }
+                ));
+                for dev in devices.iter().take(4) {
+                    let icon = if dev.is_output { "♪" } else { "⚬" };
+                    let dflt = if dev.is_default { " [default]" } else { "" };
+                    lines.push(format!("  {} {}{}", icon, dev.name, dflt));
+                }
+                if devices.len() > 4 {
+                    lines.push(format!("  ... and {} more", devices.len() - 4));
+                }
+                lines.join("\n")
+            }
+        } else {
+            "Audio monitoring not available".to_string()
+        };
+
+        // Bluetooth
+        self.bluetooth_info = if let Ok(monitor) = BluetoothMonitor::new() {
+            let adapters = monitor.adapters();
+            let devices = monitor.devices();
+            if monitor.is_available() {
+                let mut lines: Vec<String> = Vec::new();
+                for a in adapters {
+                    lines.push(format!(
+                        "Adapter: {} ({})",
+                        a.name,
+                        if a.powered { "ON" } else { "OFF" }
+                    ));
+                }
+                if devices.is_empty() {
+                    lines.push("No paired devices".to_string());
+                } else {
+                    for dev in devices.iter().take(6) {
+                        let state_str = match dev.state {
+                            crate::bluetooth::BluetoothState::Connected => "connected",
+                            crate::bluetooth::BluetoothState::Paired => "paired",
+                            crate::bluetooth::BluetoothState::Discovered => "discovered",
+                            crate::bluetooth::BluetoothState::Disconnected => "disconnected",
+                        };
+                        let name = dev.name.as_deref().unwrap_or("Unknown");
+                        let batt = dev
+                            .battery_percent
+                            .map(|b| format!(" [{}%]", b))
+                            .unwrap_or_default();
+                        lines.push(format!("  {} ({}){}", name, state_str, batt));
+                    }
+                }
+                lines.join("\n")
+            } else {
+                "Bluetooth not available".to_string()
+            }
+        } else {
+            "Bluetooth monitoring not available".to_string()
+        };
+
+        // Displays
+        self.display_info = if let Ok(monitor) = DisplayMonitor::new() {
+            let displays = monitor.displays();
+            if displays.is_empty() {
+                "No displays detected".to_string()
+            } else {
+                let info: Vec<String> = displays
+                    .iter()
+                    .map(|d| {
+                        let name = d.name.as_deref().unwrap_or("Display");
+                        let conn = format!("{:?}", d.connection);
+                        let primary = if d.is_primary { " [primary]" } else { "" };
+                        let brightness = d
+                            .brightness
+                            .map(|b| format!(" | Brightness: {:.0}%", b * 100.0))
+                            .unwrap_or_default();
+                        let mfr = d
+                            .manufacturer
+                            .as_deref()
+                            .map(|m| format!(" ({})", m))
+                            .unwrap_or_default();
+                        format!(
+                            "{}{}: {}x{} @ {:.0}Hz | {}{}{}",
+                            name, mfr, d.width, d.height, d.refresh_rate, conn, primary, brightness
+                        )
+                    })
+                    .collect();
+                info.join("\n")
+            }
+        } else {
+            "Display monitoring not available".to_string()
+        };
+
+        // USB
+        self.usb_info = if let Ok(monitor) = UsbMonitor::new() {
+            let devices = monitor.devices();
+            if devices.is_empty() {
+                "No USB devices detected".to_string()
+            } else {
+                let mut lines: Vec<String> = Vec::new();
+                lines.push(format!("{} USB device(s) connected", devices.len()));
+                for dev in devices.iter().take(8) {
+                    let name = dev
+                        .product
+                        .as_deref()
+                        .or(dev.description.as_deref())
+                        .unwrap_or("USB Device");
+                    let vid_pid = if dev.vendor_id != 0 || dev.product_id != 0 {
+                        format!(" [{:04X}:{:04X}]", dev.vendor_id, dev.product_id)
+                    } else {
+                        String::new()
+                    };
+                    let speed = format!("{:?}", dev.speed);
+                    lines.push(format!("  {}{} ({})", name, vid_pid, speed));
+                }
+                if devices.len() > 8 {
+                    lines.push(format!("  ... and {} more", devices.len() - 8));
+                }
+                lines.join("\n")
+            }
+        } else {
+            "USB monitoring not available".to_string()
+        };
+
+        // Battery
+        self.battery_info = if let Ok(monitor) = BatteryMonitor::new() {
+            if monitor.has_battery() {
+                let mut lines: Vec<String> = Vec::new();
+                lines.push(format!(
+                    "AC: {}",
+                    if monitor.ac_connected() {
+                        "Connected"
+                    } else {
+                        "Disconnected"
+                    }
+                ));
+                for bat in monitor.batteries() {
+                    let state = format!("{:?}", bat.state);
+                    lines.push(format!(
+                        "{}: {:.0}% ({})",
+                        bat.name, bat.charge_percent, state
+                    ));
+                    if let Some(time) = &bat.time_to_empty {
+                        lines.push(format!(
+                            "  Time remaining: {}:{:02}",
+                            time.as_secs() / 3600,
+                            (time.as_secs() % 3600) / 60
+                        ));
+                    }
+                    if let Some(health) = bat.wear_level_percent {
+                        lines.push(format!("  Health: {:.0}%", health));
+                    }
+                }
+                lines.join("\n")
+            } else {
+                format!(
+                    "AC Power: {}",
+                    if monitor.ac_connected() {
+                        "Connected"
+                    } else {
+                        "Unknown"
+                    }
+                )
+            }
+        } else {
+            "Battery monitoring not available".to_string()
+        };
+    }
 }
 
 /// Application state
@@ -368,6 +567,10 @@ pub struct App {
     pub color_theme: ColorTheme,
     /// Selected theme index in theme picker
     pub selected_theme_idx: usize,
+    /// Cached peripheral data (refreshed periodically, not every frame)
+    pub peripheral_cache: PeripheralCache,
+    /// Last time peripheral cache was refreshed
+    peripheral_cache_last_refresh: Instant,
 }
 
 /// Background initialization state
@@ -647,11 +850,13 @@ impl App {
             init_state: InitState::Loading,
             gpu_init_rx: Some(gpu_rx),
             agent_init_rx: Some(agent_rx),
-                        process_init_rx: Some(proc_rx),
+            process_init_rx: Some(proc_rx),
             view_mode: ViewMode::default(),
             selected_process_idx: 0,
             color_theme: ColorTheme::default(),
             selected_theme_idx: 0,
+            peripheral_cache: PeripheralCache::default(),
+            peripheral_cache_last_refresh: Instant::now() - Duration::from_secs(60), // force initial refresh
         };
 
         // Do initial fast update for immediate data (CPU, Memory are fast)
@@ -760,6 +965,11 @@ impl App {
         self.update_system()?;
         self.update_disks()?;
         self.update_processes()?;
+        // Refresh peripherals every 10 seconds (they're expensive due to subprocess calls)
+        if self.peripheral_cache_last_refresh.elapsed() >= Duration::from_secs(10) {
+            self.peripheral_cache.refresh();
+            self.peripheral_cache_last_refresh = Instant::now();
+        }
         Ok(())
     }
 
@@ -1463,7 +1673,9 @@ impl App {
 
         // Clamp selected index and scroll position to valid range
         if self.filtered_process_count > 0 {
-            self.selected_process_idx = self.selected_process_idx.min(self.filtered_process_count - 1);
+            self.selected_process_idx = self
+                .selected_process_idx
+                .min(self.filtered_process_count - 1);
             // Ensure scroll position keeps selected item visible
             let visible_rows = 25;
             if self.selected_process_idx < self.scroll_position {
@@ -1682,7 +1894,10 @@ impl App {
 
     /// Open theme picker
     pub fn open_theme_picker(&mut self) {
-        self.selected_theme_idx = ColorTheme::all().iter().position(|t| *t == self.color_theme).unwrap_or(0);
+        self.selected_theme_idx = ColorTheme::all()
+            .iter()
+            .position(|t| *t == self.color_theme)
+            .unwrap_or(0);
         self.view_mode = ViewMode::ThemeSelection;
     }
 
@@ -1694,7 +1909,11 @@ impl App {
     /// Theme picker prev
     pub fn theme_picker_prev(&mut self) {
         let len = ColorTheme::all().len();
-        self.selected_theme_idx = if self.selected_theme_idx == 0 { len - 1 } else { self.selected_theme_idx - 1 };
+        self.selected_theme_idx = if self.selected_theme_idx == 0 {
+            len - 1
+        } else {
+            self.selected_theme_idx - 1
+        };
     }
 
     /// Apply selected theme
@@ -1711,7 +1930,6 @@ impl App {
         self.color_theme = self.color_theme.next();
         self.set_status_message(format!("Theme: {}", self.color_theme.name()));
     }
-
 
     /// Cycle to next process display mode
     pub fn next_process_mode(&mut self) {
