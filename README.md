@@ -1,4 +1,4 @@
-<p align="center">
+﻿<p align="center">
   <img src="assets/banner.png" alt="Silicon Monitor (simon)" width="100%">
 </p>
 
@@ -238,6 +238,7 @@ amon manifest --format mcp         # Model Context Protocol
 ```
 
 This enables AI agents to:
+
 - **Discover** available hardware monitoring capabilities at runtime
 - **Understand** the data types and units for each metric
 - **Query** system state using structured tool calls
@@ -285,7 +286,6 @@ simon processes
 simon audio           # List audio devices and volume
 simon bluetooth       # List Bluetooth adapters and devices
 simon displays        # Show connected displays
-simon usb             # List USB devices
 simon usb             # List USB devices
 
 # Watch mode: continuously monitor devices (press 'q' to quit)
@@ -461,6 +461,7 @@ println!("Port 80: {}", if open { "OPEN" } else { "CLOSED" });
 ```
 
 ## AI Agent CLI and API
+
 ### Peripheral Hardware Monitoring
 
 Silicon Monitor provides cross-platform monitoring for audio, Bluetooth, display, and USB devices:
@@ -836,20 +837,26 @@ cargo run --release --features full --example agent_simple
 
 ```plaintext
 simon/
-├── cpu/                   CPU monitoring (per-core, frequency, temperature)
-├── memory/                Memory and swap monitoring
-├── disk/                  Disk I/O and SMART monitoring
-├── motherboard/           System info, BIOS, sensors
+├── core/                  Core metric structs (CPU, memory, power, etc.)
 ├── gpu/                   Multi-vendor GPU abstraction
 │   ├── mod.rs               Unified Device trait, GpuCollection
 │   ├── nvidia_new.rs        NVIDIA backend (NVML)
 │   ├── amd_rocm.rs          AMD backend (sysfs/DRM)
 │   └── intel_levelzero.rs   Intel backend (i915/xe)
+├── disk/                  Disk I/O and SMART monitoring
+├── motherboard/           System info, BIOS, sensors
+├── silicon/               Apple/Intel/AMD silicon-level monitoring
+├── audio/                 Audio device enumeration
+├── bluetooth/             Bluetooth adapter/device monitoring
+├── display/               Connected display monitoring
+├── usb/                   USB device enumeration
+├── hwmon/                 Hardware monitor sensors
+├── observability/         AI-oriented observability API
+├── ai_api/                AI agent tools and ontology
 ├── process_monitor.rs     Process enumeration with GPU attribution
 ├── network_monitor.rs     Network interface statistics
-├── tui/                   Terminal user interface
-│   ├── app.rs               Application state and logic
-│   └── ui.rs                Rendering with ratatui
+├── tui/                   Terminal user interface (ratatui)
+├── bin/main.rs            CLI/TUI entry point
 └── platform/              Platform-specific implementations
 ```
 
@@ -991,10 +998,11 @@ cargo run --release --features nvidia --example gpu_monitor
 
 Contributions are welcome! Areas that need help:
 
-- **Windows Support**: Process monitoring, network monitoring
-- **macOS Support**: Process monitoring, network monitoring, Apple GPU integration
-- **AMD GPU**: Windows support via AMD Display Library (ADL)
-- **Intel GPU**: Windows support via Intel GPU monitoring APIs
+- **CPU Percentage**: Windows and macOS process CPU% calculation (requires periodic sampling)
+- **macOS Process I/O**: I/O read/write bytes and handle counts on macOS
+- **AMD GPU on Windows**: Support via AMD Display Library (ADL)
+- **Intel GPU on Windows**: Support via Intel GPU monitoring APIs
+- **Apple GPU Integration**: Metal Performance Shaders for Apple Silicon GPU metrics
 - **Documentation**: More examples, tutorials, API documentation
 - **Testing**: Multi-GPU setups, edge cases, platform-specific bugs
 
