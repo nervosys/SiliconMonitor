@@ -17,8 +17,9 @@ pub fn read_gpu_temperatures() -> Vec<HwSensor> {
         sensors.extend(read_nvidia_gpu_temps());
     }
 
-    // TODO: Add AMD ADL support
-    // TODO: Add Intel GPU support via Windows APIs
+    // AMD and Intel GPU temperatures are collected via their respective
+    // GPU backends (WmiAmdGpu/WmiIntelGpu) using performance counters
+    // and WMI thermal zones. See gpu/amd.rs and gpu/intel.rs.
 
     sensors
 }

@@ -643,15 +643,15 @@ fn detect_amd_gpus_wmi(collection: &mut GpuCollection) -> Result<(), Error> {
             .unwrap_or("unknown")
             .to_string();
 
-        let mut gpu = AmdGpu::new(gpu_index, pci_bus_id)?;
+        let mut gpu = AmdGpu::new(gpu_index, pci_bus_id.clone())?;
         gpu.name = name.to_string();
 
-        // Store WMI data for static_info/dynamic_info
-        // The adapter RAM and driver version will be available through static_info
+        // Store WMI data for static_info/dynamic_info with perf counter support
         collection.add_gpu(Box::new(WmiAmdGpu {
             inner: gpu,
             adapter_ram: ctrl.adapter_r_a_m.unwrap_or(0),
             driver_version: ctrl.driver_version.clone(),
+            pnp_device_id: pci_bus_id,
         }));
         gpu_index += 1;
     }
@@ -665,6 +665,117 @@ struct WmiAmdGpu {
     inner: AmdGpu,
     adapter_ram: u64,
     driver_version: Option<String>,
+    /// LUID (Locally Unique Identifier) for matching with performance counters
+    pnp_device_id: String,
+}
+
+/// Windows GPU performance counter data from D3DKMT/WMI
+#[cfg(windows)]
+#[derive(Debug, Default)]
+struct WinGpuPerfData {
+    utilization: u8,
+    dedicated_used: u64,
+    shared_used: u64,
+    temperature: Option<u32>,
+}
+
+#[cfg(windows)]
+fn query_gpu_perf_counters_wmi(adapter_name_filter: &str) -> WinGpuPerfData {
+    use std::collections::HashMap;
+    use wmi::{COMLibrary, Variant, WMIConnection};
+
+    let mut data = WinGpuPerfData::default();
+
+    let Ok(com) = COMLibrary::new() else {
+        return data;
+    };
+    let Ok(wmi) = WMIConnection::with_namespace_path("root\\CIMV2", com) else {
+        return data;
+    };
+
+    // Query GPU engine utilization via performance counters
+    // Windows exposes GPU metrics through Win32_PerfFormattedData_GPUPerformanceCounters_GPUEngine
+    let engine_query = "SELECT Name, UtilizationPercentage FROM Win32_PerfFormattedData_GPUPerformanceCounters_GPUEngine";
+    if let Ok(results) = wmi.raw_query::<HashMap<String, Variant>>(engine_query) {
+        let filter_lower = adapter_name_filter.to_lowercase();
+        let mut total_util: f64 = 0.0;
+        let mut engine_count: u32 = 0;
+
+        for item in &results {
+            // Filter to our specific adapter
+            let name = match item.get("Name") {
+                Some(Variant::String(s)) => s.to_lowercase(),
+                _ => continue,
+            };
+
+            // Match by PNP device ID substring or adapter index
+            if !name.contains(&filter_lower) && !filter_lower.is_empty() {
+                // Try matching by "pid_" prefix for adapter LUID
+                let matches = name.contains("engtype_3d")
+                    || name.contains("engtype_videodecode")
+                    || name.contains("engtype_videoencode")
+                    || name.contains("engtype_copy");
+                if !matches {
+                    continue;
+                }
+            }
+
+            if let Some(Variant::UI8(util)) = item.get("UtilizationPercentage") {
+                total_util += *util as f64;
+                engine_count += 1;
+            } else if let Some(Variant::UI4(util)) = item.get("UtilizationPercentage") {
+                total_util += *util as f64;
+                engine_count += 1;
+            }
+        }
+
+        if engine_count > 0 {
+            data.utilization = (total_util / engine_count as f64).min(100.0) as u8;
+        }
+    }
+
+    // Query adapter memory usage
+    let mem_query = "SELECT Name, DedicatedUsage, SharedUsage FROM Win32_PerfFormattedData_GPUPerformanceCounters_GPUAdapterMemory";
+    if let Ok(results) = wmi.raw_query::<HashMap<String, Variant>>(mem_query) {
+        for item in &results {
+            // Get dedicated memory usage
+            if let Some(Variant::UI8(dedicated)) = item.get("DedicatedUsage") {
+                data.dedicated_used = *dedicated;
+            } else if let Some(Variant::UI4(dedicated)) = item.get("DedicatedUsage") {
+                data.dedicated_used = *dedicated as u64;
+            }
+
+            if let Some(Variant::UI8(shared)) = item.get("SharedUsage") {
+                data.shared_used = *shared;
+            } else if let Some(Variant::UI4(shared)) = item.get("SharedUsage") {
+                data.shared_used = *shared as u64;
+            }
+
+            // Only take the first matching result
+            if data.dedicated_used > 0 || data.shared_used > 0 {
+                break;
+            }
+        }
+    }
+
+    // Query temperature from WMI thermal zones
+    let temp_query = "SELECT CurrentTemperature FROM MSAcpi_ThermalZoneTemperature";
+    if let Ok(wmi_root) = WMIConnection::with_namespace_path("root\\WMI", COMLibrary::new().unwrap())
+    {
+        if let Ok(results) = wmi_root.raw_query::<HashMap<String, Variant>>(temp_query) {
+            for item in &results {
+                if let Some(Variant::UI4(temp_tenths_kelvin)) = item.get("CurrentTemperature") {
+                    let temp_c = (*temp_tenths_kelvin as f32 / 10.0) - 273.15;
+                    if temp_c > 0.0 && temp_c < 150.0 {
+                        data.temperature = Some(temp_c as u32);
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    data
 }
 
 #[cfg(windows)]
@@ -694,13 +805,29 @@ impl Gpu for WmiAmdGpu {
     }
 
     fn dynamic_info(&self) -> Result<GpuDynamicInfo, Error> {
+        // Query real-time GPU performance counters via WMI
+        let perf = query_gpu_perf_counters_wmi(&self.pnp_device_id);
+
+        let mem_used = perf.dedicated_used;
+        let mem_total = if self.adapter_ram > 0 {
+            self.adapter_ram
+        } else {
+            mem_used
+        };
+        let mem_free = mem_total.saturating_sub(mem_used);
+        let mem_util = if mem_total > 0 {
+            ((mem_used as f64 / mem_total as f64) * 100.0).min(100.0) as u8
+        } else {
+            0
+        };
+
         Ok(GpuDynamicInfo {
-            utilization: 0,
+            utilization: perf.utilization,
             memory: GpuMemory {
-                total: self.adapter_ram,
-                used: 0,
-                free: self.adapter_ram,
-                utilization: 0,
+                total: mem_total,
+                used: mem_used,
+                free: mem_free,
+                utilization: mem_util,
             },
             clocks: GpuClocks {
                 graphics: None,
@@ -717,7 +844,7 @@ impl Gpu for WmiAmdGpu {
                 usage_percent: None,
             },
             thermal: GpuThermal {
-                temperature: None,
+                temperature: perf.temperature.map(|t| t as i32),
                 max_temperature: None,
                 critical_temperature: None,
                 fan_speed: None,
@@ -734,7 +861,11 @@ impl Gpu for WmiAmdGpu {
                 rx_throughput: None,
             },
             engines: GpuEngines {
-                graphics: None,
+                graphics: if perf.utilization > 0 {
+                    Some(perf.utilization)
+                } else {
+                    None
+                },
                 compute: None,
                 encoder: None,
                 decoder: None,

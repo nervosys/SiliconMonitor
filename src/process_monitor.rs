@@ -1781,7 +1781,7 @@ mod windows_impl {
                         let mut kernel_time = Default::default();
                         let mut user_time = Default::default();
 
-                        let (_cpu_time_ms, start_time) = if GetProcessTimes(
+                        let (cpu_percent, start_time) = if GetProcessTimes(
                             handle,
                             &mut creation_time,
                             &mut exit_time,
@@ -1790,7 +1790,7 @@ mod windows_impl {
                         )
                         .is_ok()
                         {
-                            // Convert FILETIME (100ns units) to milliseconds
+                            // Convert FILETIME (100ns units)
                             let kernel_100ns = (kernel_time.dwHighDateTime as u64) << 32
                                 | (kernel_time.dwLowDateTime as u64);
                             let user_100ns = (user_time.dwHighDateTime as u64) << 32
@@ -1804,14 +1804,35 @@ mod windows_impl {
                             let unix_epoch_diff: u64 = 116444736000000000;
                             let start_unix = if creation_100ns > unix_epoch_diff {
                                 Some((creation_100ns - unix_epoch_diff) / 10_000_000)
-                            // Convert to seconds
                             } else {
                                 None
                             };
 
-                            (((kernel_100ns + user_100ns) / 10_000) as u64, start_unix)
+                            // Calculate CPU% as lifetime average (same as Linux approach)
+                            // total_cpu_seconds / process_uptime_seconds * 100
+                            let total_cpu_secs =
+                                (kernel_100ns + user_100ns) as f64 / 10_000_000.0;
+
+                            // Get current time as FILETIME for uptime calculation
+                            let now_ft =
+                                windows::Win32::System::SystemInformation::GetSystemTimeAsFileTime();
+                            let now_100ns = (now_ft.dwHighDateTime as u64) << 32
+                                | (now_ft.dwLowDateTime as u64);
+                            let uptime_secs = if now_100ns > creation_100ns {
+                                (now_100ns - creation_100ns) as f64 / 10_000_000.0
+                            } else {
+                                1.0
+                            };
+
+                            let pct = if uptime_secs > 0.0 {
+                                ((total_cpu_secs / uptime_secs) * 100.0) as f32
+                            } else {
+                                0.0
+                            };
+
+                            (pct, start_unix)
                         } else {
-                            (0, None)
+                            (0.0, None)
                         };
 
                         // Get user
@@ -1825,7 +1846,7 @@ mod windows_impl {
                             name,
                             user,
                             category,
-                            cpu_percent: 0.0, // Would need multiple samples to calculate
+                            cpu_percent,
                             memory_bytes,
                             gpu_indices: Vec::new(),
                             gpu_memory_per_device: HashMap::new(),
@@ -2033,8 +2054,26 @@ mod macos {
                 };
 
                 // Convert times from microseconds to milliseconds
-                let cpu_time_ms =
-                    (task_info.ptinfo.pti_total_user + task_info.ptinfo.pti_total_system) / 1000;
+                let cpu_time_us =
+                    task_info.ptinfo.pti_total_user + task_info.ptinfo.pti_total_system;
+
+                // Calculate CPU% as lifetime average (same as Linux approach)
+                let process_start_secs = task_info.pbsd.pbi_start_tvsec;
+                let now_secs = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                let uptime_secs = if now_secs > process_start_secs {
+                    (now_secs - process_start_secs) as f64
+                } else {
+                    1.0
+                };
+                let total_cpu_secs = cpu_time_us as f64 / 1_000_000.0;
+                let cpu_percent = if uptime_secs > 0.0 {
+                    ((total_cpu_secs / uptime_secs) * 100.0) as f32
+                } else {
+                    0.0
+                };
 
                 // Status mapping
                 let status = match task_info.pbsd.pbi_status {
@@ -2056,7 +2095,7 @@ mod macos {
                     name,
                     user: Some(user_str),
                     category,
-                    cpu_percent: 0.0, // Would need multiple samples to calculate
+                    cpu_percent,
                     memory_bytes: task_info.ptinfo.pti_resident_size,
                     virtual_memory_bytes: task_info.ptinfo.pti_virtual_size,
                     private_bytes: 0, // Not easily available on macOS

@@ -1774,9 +1774,33 @@ impl App {
                 });
                 procs
             }
-            Npu(_npu_idx) => {
-                // TODO: Implement NPU process filtering when NPU support is added
-                Vec::new()
+            Npu(npu_idx) => {
+                // Filter processes using the nth NPU device
+                // NPU processes are tracked via gpu_indices when the accelerator
+                // type is NPU. Find the global accelerator index for this NPU.
+                let npu_accel_indices: Vec<usize> = self
+                    .accelerators
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, a)| a.accel_type == AcceleratorType::Npu)
+                    .map(|(i, _)| i)
+                    .collect();
+
+                if let Some(&global_idx) = npu_accel_indices.get(npu_idx) {
+                    let mut procs: Vec<&ProcessMonitorInfo> = self
+                        .processes
+                        .iter()
+                        .filter(|p| p.gpu_indices.contains(&global_idx))
+                        .collect();
+                    procs.sort_by(|a, b| {
+                        let a_mem = a.gpu_memory_per_device.get(&global_idx).unwrap_or(&0);
+                        let b_mem = b.gpu_memory_per_device.get(&global_idx).unwrap_or(&0);
+                        b_mem.cmp(a_mem)
+                    });
+                    procs
+                } else {
+                    Vec::new()
+                }
             }
             Accelerator(accel_idx) => {
                 // Show processes using this specific accelerator (GPU-based for now)
@@ -1965,9 +1989,18 @@ impl App {
                     All
                 }
             }
-            Npu(_idx) => {
-                // TODO: Implement NPU cycling when NPU support is added
-                All
+            Npu(idx) => {
+                // Cycle through NPU devices
+                let npu_count = self
+                    .accelerators
+                    .iter()
+                    .filter(|a| a.accel_type == AcceleratorType::Npu)
+                    .count();
+                if idx + 1 < npu_count {
+                    Npu(idx + 1)
+                } else {
+                    All
+                }
             }
         };
         self.scroll_position = 0;
@@ -2002,9 +2035,10 @@ impl App {
                     Cpu
                 }
             }
-            Npu(_idx) => {
-                // TODO: Implement NPU cycling when NPU support is added
-                if !self.accelerators.is_empty() {
+            Npu(idx) => {
+                if idx > 0 {
+                    Npu(idx - 1)
+                } else if !self.accelerators.is_empty() {
                     Accelerator(self.accelerators.len() - 1)
                 } else if !self.gpu_info.is_empty() {
                     Gpu(self.gpu_info.len() - 1)

@@ -178,6 +178,31 @@ impl ObservabilityApi {
             .map_err(Into::into)
     }
 
+    /// Get rate limit info for the current API key
+    fn get_rate_limit_info(&self, ctx: &RequestContext) -> Option<RateLimitInfo> {
+        let checker = self.permission_checker.read().unwrap();
+        checker
+            .rate_limit_status(&ctx.api_key)
+            .map(|(remaining, limit, reset_at)| RateLimitInfo {
+                remaining,
+                limit,
+                reset_at,
+            })
+    }
+
+    /// Build response metadata with rate limit info
+    fn build_response_meta(&self, ctx: &RequestContext, start: Instant) -> ResponseMeta {
+        ResponseMeta {
+            request_id: ctx.request_id.clone(),
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0),
+            duration_ms: start.elapsed().as_millis() as u64,
+            rate_limit: self.get_rate_limit_info(ctx),
+        }
+    }
+
     /// Get full system context
     ///
     /// Returns a complete snapshot of the system state based on permissions.
@@ -227,19 +252,9 @@ impl ObservabilityApi {
         context.meta.included_capabilities = included;
         context.meta.excluded_capabilities = excluded;
 
-        let duration = start.elapsed().as_millis() as u64;
-
         Ok(ApiResponse {
             data: context,
-            meta: ResponseMeta {
-                request_id: ctx.request_id.clone(),
-                timestamp: std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_secs())
-                    .unwrap_or(0),
-                duration_ms: duration,
-                rate_limit: None, // TODO: Get from rate limiter
-            },
+            meta: self.build_response_meta(ctx, start),
         })
     }
 
@@ -256,15 +271,7 @@ impl ObservabilityApi {
 
         Ok(ApiResponse {
             data: minimal,
-            meta: ResponseMeta {
-                request_id: ctx.request_id.clone(),
-                timestamp: std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_secs())
-                    .unwrap_or(0),
-                duration_ms: start.elapsed().as_millis() as u64,
-                rate_limit: None,
-            },
+            meta: self.build_response_meta(ctx, start),
         })
     }
 
@@ -277,15 +284,7 @@ impl ObservabilityApi {
 
         Ok(ApiResponse {
             data: gpus,
-            meta: ResponseMeta {
-                request_id: ctx.request_id.clone(),
-                timestamp: std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_secs())
-                    .unwrap_or(0),
-                duration_ms: start.elapsed().as_millis() as u64,
-                rate_limit: None,
-            },
+            meta: self.build_response_meta(ctx, start),
         })
     }
 
@@ -298,15 +297,7 @@ impl ObservabilityApi {
 
         Ok(ApiResponse {
             data: metrics,
-            meta: ResponseMeta {
-                request_id: ctx.request_id.clone(),
-                timestamp: std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_secs())
-                    .unwrap_or(0),
-                duration_ms: start.elapsed().as_millis() as u64,
-                rate_limit: None,
-            },
+            meta: self.build_response_meta(ctx, start),
         })
     }
 
@@ -321,15 +312,7 @@ impl ObservabilityApi {
 
         Ok(ApiResponse {
             data: metrics,
-            meta: ResponseMeta {
-                request_id: ctx.request_id.clone(),
-                timestamp: std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_secs())
-                    .unwrap_or(0),
-                duration_ms: start.elapsed().as_millis() as u64,
-                rate_limit: None,
-            },
+            meta: self.build_response_meta(ctx, start),
         })
     }
 
@@ -344,15 +327,7 @@ impl ObservabilityApi {
 
         Ok(ApiResponse {
             data: metrics,
-            meta: ResponseMeta {
-                request_id: ctx.request_id.clone(),
-                timestamp: std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_secs())
-                    .unwrap_or(0),
-                duration_ms: start.elapsed().as_millis() as u64,
-                rate_limit: None,
-            },
+            meta: self.build_response_meta(ctx, start),
         })
     }
 
@@ -365,15 +340,7 @@ impl ObservabilityApi {
 
         Ok(ApiResponse {
             data: disks,
-            meta: ResponseMeta {
-                request_id: ctx.request_id.clone(),
-                timestamp: std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_secs())
-                    .unwrap_or(0),
-                duration_ms: start.elapsed().as_millis() as u64,
-                rate_limit: None,
-            },
+            meta: self.build_response_meta(ctx, start),
         })
     }
 
@@ -386,15 +353,7 @@ impl ObservabilityApi {
 
         Ok(ApiResponse {
             data: metrics,
-            meta: ResponseMeta {
-                request_id: ctx.request_id.clone(),
-                timestamp: std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_secs())
-                    .unwrap_or(0),
-                duration_ms: start.elapsed().as_millis() as u64,
-                rate_limit: None,
-            },
+            meta: self.build_response_meta(ctx, start),
         })
     }
 
@@ -410,15 +369,7 @@ impl ObservabilityApi {
 
         Ok(ApiResponse {
             data: interfaces,
-            meta: ResponseMeta {
-                request_id: ctx.request_id.clone(),
-                timestamp: std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_secs())
-                    .unwrap_or(0),
-                duration_ms: start.elapsed().as_millis() as u64,
-                rate_limit: None,
-            },
+            meta: self.build_response_meta(ctx, start),
         })
     }
 
@@ -434,15 +385,7 @@ impl ObservabilityApi {
 
         Ok(ApiResponse {
             data: metrics,
-            meta: ResponseMeta {
-                request_id: ctx.request_id.clone(),
-                timestamp: std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_secs())
-                    .unwrap_or(0),
-                duration_ms: start.elapsed().as_millis() as u64,
-                rate_limit: None,
-            },
+            meta: self.build_response_meta(ctx, start),
         })
     }
 
@@ -463,15 +406,7 @@ impl ObservabilityApi {
 
         Ok(ApiResponse {
             data: processes,
-            meta: ResponseMeta {
-                request_id: ctx.request_id.clone(),
-                timestamp: std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_secs())
-                    .unwrap_or(0),
-                duration_ms: start.elapsed().as_millis() as u64,
-                rate_limit: None,
-            },
+            meta: self.build_response_meta(ctx, start),
         })
     }
 
@@ -486,15 +421,7 @@ impl ObservabilityApi {
 
         Ok(ApiResponse {
             data: motherboard,
-            meta: ResponseMeta {
-                request_id: ctx.request_id.clone(),
-                timestamp: std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_secs())
-                    .unwrap_or(0),
-                duration_ms: start.elapsed().as_millis() as u64,
-                rate_limit: None,
-            },
+            meta: self.build_response_meta(ctx, start),
         })
     }
 
@@ -512,15 +439,7 @@ impl ObservabilityApi {
 
         Ok(ApiResponse {
             data: power,
-            meta: ResponseMeta {
-                request_id: ctx.request_id.clone(),
-                timestamp: std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_secs())
-                    .unwrap_or(0),
-                duration_ms: start.elapsed().as_millis() as u64,
-                rate_limit: None,
-            },
+            meta: self.build_response_meta(ctx, start),
         })
     }
 
@@ -533,15 +452,7 @@ impl ObservabilityApi {
 
         Ok(ApiResponse {
             data: fans,
-            meta: ResponseMeta {
-                request_id: ctx.request_id.clone(),
-                timestamp: std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_secs())
-                    .unwrap_or(0),
-                duration_ms: start.elapsed().as_millis() as u64,
-                rate_limit: None,
-            },
+            meta: self.build_response_meta(ctx, start),
         })
     }
 
@@ -557,15 +468,7 @@ impl ObservabilityApi {
 
         Ok(ApiResponse {
             data: temps,
-            meta: ResponseMeta {
-                request_id: ctx.request_id.clone(),
-                timestamp: std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_secs())
-                    .unwrap_or(0),
-                duration_ms: start.elapsed().as_millis() as u64,
-                rate_limit: None,
-            },
+            meta: self.build_response_meta(ctx, start),
         })
     }
 
@@ -579,18 +482,11 @@ impl ObservabilityApi {
             .ok_or_else(|| ObservabilityError::PermissionDenied("Invalid API key".into()))?;
 
         let capabilities: Vec<String> = api_key.permissions.iter().map(|p| p.to_string()).collect();
+        drop(checker);
 
         Ok(ApiResponse {
             data: capabilities,
-            meta: ResponseMeta {
-                request_id: ctx.request_id.clone(),
-                timestamp: std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_secs())
-                    .unwrap_or(0),
-                duration_ms: start.elapsed().as_millis() as u64,
-                rate_limit: None,
-            },
+            meta: self.build_response_meta(ctx, start),
         })
     }
 

@@ -599,6 +599,31 @@ impl PermissionChecker {
         self.keys.remove(api_key);
         self.rate_limiters.remove(api_key);
     }
+
+    /// Get current rate limit status for an API key
+    ///
+    /// Returns (remaining_requests, total_limit, reset_timestamp) if the key exists.
+    pub fn rate_limit_status(&self, api_key: &str) -> Option<(u32, u32, u64)> {
+        let key = self.keys.get(api_key)?;
+        let rate_limit = key
+            .rate_limit
+            .clone()
+            .unwrap_or_else(|| self.default_rate_limit.clone());
+
+        let remaining = self
+            .rate_limiters
+            .get(api_key)
+            .map(|limiter| limiter.remaining())
+            .unwrap_or(rate_limit.max_requests);
+
+        // Reset time is current time + period
+        let reset_at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() + rate_limit.period_secs)
+            .unwrap_or(0);
+
+        Some((remaining, rate_limit.max_requests, reset_at))
+    }
 }
 
 /// Permission check error
