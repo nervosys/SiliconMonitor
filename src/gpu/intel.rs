@@ -893,4 +893,29 @@ mod tests {
         assert_eq!(IntelDriver::I915.name(), "i915");
         assert_eq!(IntelDriver::Xe.name(), "xe");
     }
+
+    #[cfg(windows)]
+    #[test]
+    fn test_win_intel_perf_data_default() {
+        let data = WinIntelPerfData::default();
+        assert_eq!(data.utilization, 0);
+        assert_eq!(data.dedicated_used, 0);
+        assert_eq!(data.shared_used, 0);
+        assert!(data.temperature.is_none());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn test_win_intel_perf_data_fields() {
+        let data = WinIntelPerfData {
+            utilization: 42,
+            dedicated_used: 256 * 1024 * 1024,
+            shared_used: 64 * 1024 * 1024,
+            temperature: Some(55),
+        };
+        assert_eq!(data.utilization, 42);
+        assert_eq!(data.dedicated_used, 256 * 1024 * 1024);
+        assert_eq!(data.shared_used, 64 * 1024 * 1024);
+        assert_eq!(data.temperature, Some(55));
+    }
 }

@@ -2294,4 +2294,70 @@ mod tests {
         p.reclassify();
         assert_eq!(p.category, ProcessCategory::Browser);
     }
+
+    #[test]
+    fn test_process_gpu_type_from_engine_usage() {
+        assert_eq!(
+            ProcessGpuType::from_engine_usage(100, 0),
+            ProcessGpuType::Graphical
+        );
+        assert_eq!(
+            ProcessGpuType::from_engine_usage(0, 100),
+            ProcessGpuType::Compute
+        );
+        assert_eq!(
+            ProcessGpuType::from_engine_usage(100, 100),
+            ProcessGpuType::GraphicalCompute
+        );
+        assert_eq!(
+            ProcessGpuType::from_engine_usage(0, 0),
+            ProcessGpuType::Unknown
+        );
+    }
+
+    #[test]
+    fn test_process_gpu_type_display() {
+        assert_eq!(format!("{}", ProcessGpuType::Graphical), "Graphics");
+        assert_eq!(format!("{}", ProcessGpuType::Compute), "Compute");
+        assert_eq!(
+            format!("{}", ProcessGpuType::GraphicalCompute),
+            "Gfx+Compute"
+        );
+        assert_eq!(format!("{}", ProcessGpuType::Unknown), "Unknown");
+    }
+
+    #[test]
+    fn test_category_display_name() {
+        assert_eq!(ProcessCategory::System.display_name(), "System");
+        assert_eq!(ProcessCategory::Browser.display_name(), "Browsers");
+        assert_eq!(ProcessCategory::AiMl.display_name(), "AI/ML");
+        assert_eq!(ProcessCategory::GpuCompute.display_name(), "GPU Compute");
+    }
+
+    #[test]
+    fn test_category_icon() {
+        assert!(!ProcessCategory::System.icon().is_empty());
+        assert!(!ProcessCategory::Browser.icon().is_empty());
+        assert!(!ProcessCategory::Unknown.icon().is_empty());
+    }
+
+    #[test]
+    fn test_category_all_unique() {
+        let all = ProcessCategory::all();
+        let unique: std::collections::HashSet<_> = all.iter().collect();
+        assert_eq!(all.len(), unique.len());
+    }
+
+    #[test]
+    fn test_process_gpu_count() {
+        let mut p = make_test_process();
+        assert_eq!(p.gpu_count(), 0);
+        p.gpu_indices = vec![0, 1];
+        assert_eq!(p.gpu_count(), 2);
+    }
+
+    #[test]
+    fn test_process_category_default() {
+        assert_eq!(ProcessCategory::default(), ProcessCategory::Unknown);
+    }
 }

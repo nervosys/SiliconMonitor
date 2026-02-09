@@ -2282,4 +2282,43 @@ mod tests {
     fn test_process_display_mode_default() {
         assert_eq!(ProcessDisplayMode::default(), ProcessDisplayMode::All);
     }
+
+    #[test]
+    fn test_accelerator_type_default() {
+        assert_eq!(AcceleratorType::default(), AcceleratorType::Gpu);
+    }
+
+    #[test]
+    fn test_accelerator_type_display() {
+        assert_eq!(format!("{}", AcceleratorType::Gpu), "GPU");
+        assert_eq!(format!("{}", AcceleratorType::Npu), "NPU");
+        assert_eq!(format!("{}", AcceleratorType::Tpu), "TPU");
+        assert_eq!(format!("{}", AcceleratorType::Fpga), "FPGA");
+        assert_eq!(format!("{}", AcceleratorType::Dla), "DLA");
+        assert_eq!(format!("{}", AcceleratorType::Vpu), "VPU");
+        assert_eq!(format!("{}", AcceleratorType::Ipu), "IPU");
+        assert_eq!(format!("{}", AcceleratorType::Other), "ACC");
+    }
+
+    #[test]
+    fn test_process_display_mode_npu_variant() {
+        let mode = ProcessDisplayMode::Npu(0);
+        assert_ne!(mode, ProcessDisplayMode::All);
+        assert_ne!(mode, ProcessDisplayMode::Cpu);
+        // Different NPU indices are different modes
+        assert_ne!(ProcessDisplayMode::Npu(0), ProcessDisplayMode::Npu(1));
+        assert_eq!(ProcessDisplayMode::Npu(2), ProcessDisplayMode::Npu(2));
+    }
+
+    #[test]
+    fn test_accelerator_info_default() {
+        let info = AcceleratorInfo::default();
+        assert_eq!(info.accel_type, AcceleratorType::Gpu);
+        assert!(info.name.is_empty());
+        assert_eq!(info.utilization, 0.0);
+        assert_eq!(info.memory_total, 0);
+        assert_eq!(info.memory_used, 0);
+        assert!(info.temperature.is_none());
+        assert!(info.power.is_none());
+    }
 }

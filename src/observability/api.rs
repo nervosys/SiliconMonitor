@@ -1344,3 +1344,87 @@ impl ObservabilityApi {
         Vec::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_rate_limit_info_serialization() {
+        let info = RateLimitInfo {
+            remaining: 95,
+            limit: 100,
+            reset_at: 1700000000,
+        };
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains("\"remaining\":95"));
+        assert!(json.contains("\"limit\":100"));
+        assert!(json.contains("\"reset_at\":1700000000"));
+    }
+
+    #[test]
+    fn test_rate_limit_info_deserialization() {
+        let json = r#"{"remaining":50,"limit":200,"reset_at":1700000060}"#;
+        let info: RateLimitInfo = serde_json::from_str(json).unwrap();
+        assert_eq!(info.remaining, 50);
+        assert_eq!(info.limit, 200);
+        assert_eq!(info.reset_at, 1700000060);
+    }
+
+    #[test]
+    fn test_response_meta_without_rate_limit() {
+        let meta = ResponseMeta {
+            request_id: Some("req-123".to_string()),
+            timestamp: 1700000000,
+            duration_ms: 42,
+            rate_limit: None,
+        };
+        assert_eq!(meta.request_id.as_deref(), Some("req-123"));
+        assert_eq!(meta.timestamp, 1700000000);
+        assert_eq!(meta.duration_ms, 42);
+        assert!(meta.rate_limit.is_none());
+    }
+
+    #[test]
+    fn test_response_meta_with_rate_limit() {
+        let meta = ResponseMeta {
+            request_id: None,
+            timestamp: 1700000000,
+            duration_ms: 5,
+            rate_limit: Some(RateLimitInfo {
+                remaining: 99,
+                limit: 100,
+                reset_at: 1700000060,
+            }),
+        };
+        assert!(meta.request_id.is_none());
+        let rl = meta.rate_limit.unwrap();
+        assert_eq!(rl.remaining, 99);
+        assert_eq!(rl.limit, 100);
+    }
+
+    #[test]
+    fn test_api_response_serialization() {
+        let response: ApiResponse<String> = ApiResponse {
+            data: "hello".to_string(),
+            meta: ResponseMeta {
+                request_id: Some("test-id".to_string()),
+                timestamp: 1700000000,
+                duration_ms: 1,
+                rate_limit: None,
+            },
+        };
+        let json = serde_json::to_string(&response).unwrap();
+        assert!(json.contains("\"data\":\"hello\""));
+        assert!(json.contains("\"request_id\":\"test-id\""));
+    }
+
+    #[test]
+    fn test_observability_api_new() {
+        let config = ApiConfig::default();
+        let api = ObservabilityApi::new(config);
+        // Should create successfully with empty config
+        let checker = api.permission_checker();
+        assert!(checker.read().unwrap().rate_limit_status("nonexistent").is_none());
+    }
+}

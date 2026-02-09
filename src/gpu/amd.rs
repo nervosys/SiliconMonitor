@@ -918,4 +918,29 @@ mod tests {
             let _ = result;
         }
     }
+
+    #[cfg(windows)]
+    #[test]
+    fn test_win_gpu_perf_data_default() {
+        let data = WinGpuPerfData::default();
+        assert_eq!(data.utilization, 0);
+        assert_eq!(data.dedicated_used, 0);
+        assert_eq!(data.shared_used, 0);
+        assert!(data.temperature.is_none());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn test_win_gpu_perf_data_fields() {
+        let data = WinGpuPerfData {
+            utilization: 75,
+            dedicated_used: 1024 * 1024 * 512,
+            shared_used: 1024 * 1024 * 128,
+            temperature: Some(65),
+        };
+        assert_eq!(data.utilization, 75);
+        assert_eq!(data.dedicated_used, 512 * 1024 * 1024);
+        assert_eq!(data.shared_used, 128 * 1024 * 1024);
+        assert_eq!(data.temperature, Some(65));
+    }
 }

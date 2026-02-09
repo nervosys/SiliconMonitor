@@ -789,4 +789,54 @@ mod tests {
         assert!(!limiter.check()); // Should be rate limited
         assert_eq!(limiter.remaining(), 0);
     }
+
+    #[test]
+    fn test_rate_limit_status_unknown_key() {
+        let checker = PermissionChecker::new(vec![]);
+        assert!(checker.rate_limit_status("nonexistent").is_none());
+    }
+
+    #[test]
+    fn test_rate_limit_status_known_key() {
+        let key = ApiKey::read_only("test", "sk-test");
+        let checker = PermissionChecker::new(vec![key]);
+        let status = checker.rate_limit_status("sk-test");
+        assert!(status.is_some());
+        let (remaining, limit, reset_at) = status.unwrap();
+        // Default rate limit: 100 requests per 60 seconds
+        assert_eq!(limit, 100);
+        assert_eq!(remaining, 100); // No requests made yet
+        assert!(reset_at > 0);
+    }
+
+    #[test]
+    fn test_rate_limit_status_after_requests() {
+        let key = ApiKey::new(
+            "test",
+            "sk-test",
+            vec![Permission::read(Capability::Gpu)],
+        );
+        let mut checker = PermissionChecker::new(vec![key]);
+
+        // Make some requests
+        let _ = checker.check("sk-test", Capability::Gpu, &Scope::Read);
+        let _ = checker.check("sk-test", Capability::Gpu, &Scope::Read);
+
+        let (remaining, limit, _) = checker.rate_limit_status("sk-test").unwrap();
+        assert_eq!(limit, 100);
+        assert_eq!(remaining, 98); // 2 requests consumed
+    }
+
+    #[test]
+    fn test_rate_limit_status_with_custom_limit() {
+        let mut key = ApiKey::read_only("test", "sk-test");
+        key.rate_limit = Some(RateLimit {
+            max_requests: 10,
+            period_secs: 30,
+        });
+        let checker = PermissionChecker::new(vec![key]);
+        let (remaining, limit, _) = checker.rate_limit_status("sk-test").unwrap();
+        assert_eq!(limit, 10);
+        assert_eq!(remaining, 10);
+    }
 }
