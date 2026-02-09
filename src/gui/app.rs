@@ -328,6 +328,7 @@ pub enum AlertSeverity {
 /// An active alert
 #[derive(Debug, Clone)]
 pub struct Alert {
+    #[allow(dead_code)]
     pub severity: AlertSeverity,
     pub message: String,
     pub timestamp: std::time::Instant,
@@ -379,6 +380,7 @@ pub struct AppSettings {
     pub show_grid_lines: bool,
     pub animation_speed: f32,
     pub alert_settings: AlertSettings,
+    #[allow(dead_code)]
     pub minimize_to_tray: bool,
 }
 
