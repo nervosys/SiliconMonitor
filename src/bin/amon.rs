@@ -4,8 +4,8 @@
 //!
 //! Usage:
 //!   amon                    - Enter interactive query mode
-//!   amon query [question]   - Ask a question
-//!   amon manifest [opts]    - Export tool manifests for AI agents
+//!   amon query \[question\]   - Ask a question
+//!   amon manifest \[opts\]    - Export tool manifests for AI agents
 //!   amon server             - Start MCP server for Claude Desktop
 
 #[cfg(feature = "cli")]

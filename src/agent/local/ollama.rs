@@ -5,7 +5,7 @@
 //!
 //! # Requirements
 //!
-//! - Ollama must be installed and running: https://ollama.ai
+//! - Ollama must be installed and running: <https://ollama.ai>
 //! - Default endpoint: http://localhost:11434
 //!
 //! # Supported API Endpoints

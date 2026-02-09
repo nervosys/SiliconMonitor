@@ -8,9 +8,13 @@ use std::fmt;
 /// GPU Vendor
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Vendor {
+    /// NVIDIA GPU (NVML/CUDA)
     Nvidia,
+    /// AMD GPU (ROCm/sysfs)
     Amd,
+    /// Intel GPU (i915/xe/Level Zero)
     Intel,
+    /// Apple Silicon GPU (Metal/powermetrics)
     Apple,
 }
 
@@ -175,15 +179,22 @@ pub trait GpuProcess: Send + Sync {
 
 // === Data Structures ===
 
-/// PCI Bus Information
+/// PCI bus location and link information for a GPU device.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PciInfo {
+    /// PCI domain number
     pub domain: u32,
+    /// PCI bus number
     pub bus: u8,
+    /// PCI device number
     pub device: u8,
+    /// PCI function number
     pub function: u8,
-    pub bus_id: String, // Format: "0000:01:00.0"
+    /// Full PCI bus ID string (e.g., `"0000:01:00.0"`)
+    pub bus_id: String,
+    /// PCIe generation (1-5), if available
     pub pcie_generation: Option<u32>,
+    /// PCIe link width in lanes, if available
     pub pcie_link_width: Option<u32>,
 }
 
@@ -397,51 +408,71 @@ impl Memory {
     }
 }
 
-/// Fan speed
+/// Fan speed measurement.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum FanSpeed {
+    /// Fan speed in revolutions per minute
     Rpm(u32),
+    /// Fan speed as a percentage of maximum
     Percent(u32),
 }
 
-/// Process type
+/// Type of workload a GPU process is running.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ProcessType {
+    /// GPGPU / compute-only workload
     Compute,
+    /// Graphics / rendering workload
     Graphics,
+    /// Mixed compute and graphics workload
     Mixed,
 }
 
-/// Compute mode (NVIDIA)
+/// Compute mode controlling how many processes may use the GPU (NVIDIA).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ComputeMode {
+    /// Multiple contexts allowed per device (default)
     Default,
+    /// Only one context per device, per thread
     ExclusiveThread,
+    /// No compute contexts allowed
     Prohibited,
+    /// Only one context per device, per process
     ExclusiveProcess,
 }
 
-/// NVLink status (NVIDIA)
+/// NVLink interconnect status (NVIDIA).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NvLinkStatus {
+    /// NVLink lane identifier
     pub link_id: u32,
+    /// Current link state
     pub state: LinkState,
+    /// NVLink version (e.g., 3 for NVLink 3.0)
     pub version: u32,
+    /// Type of remote device (e.g., "GPU", "CPU")
     pub remote_device_type: String,
+    /// PCI bus ID of the remote device
     pub remote_pci_bus_id: String,
 }
 
+/// State of an NVLink connection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LinkState {
+    /// Link is up and operational
     Active,
+    /// Link is down or disabled
     Inactive,
+    /// Link state could not be determined
     Unknown,
 }
 
-/// MIG mode (NVIDIA Multi-Instance GPU)
+/// MIG mode (NVIDIA Multi-Instance GPU).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MigMode {
+    /// Whether MIG is currently enabled
     pub current: bool,
+    /// Whether MIG will be enabled after next GPU reset
     pub pending: bool,
 }
 
@@ -458,35 +489,43 @@ pub struct EccErrors {
     pub aggregate_double_bit: u64,
 }
 
-// === Error Types ===
-
+/// Errors that can occur during GPU operations.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    /// The requested operation is not supported by this GPU backend.
     #[error("Operation not supported on this device")]
     NotSupported,
 
+    /// No GPU devices were detected on the system.
     #[error("No GPU devices found")]
     NoDevicesFound,
 
+    /// GPU driver or library initialization failed.
     #[error("Device initialization failed: {0}")]
     InitializationFailed(String),
 
+    /// A query for device metrics or properties failed.
     #[error("Failed to query device: {0}")]
     QueryFailed(String),
 
+    /// A device control operation (e.g., setting clocks) failed.
     #[error("Failed to control device: {0}")]
     ControlFailed(String),
 
+    /// Insufficient permissions to perform the operation.
     #[error("Insufficient permissions: {0}")]
     PermissionDenied(String),
 
+    /// An invalid argument was provided.
     #[error("Invalid argument: {0}")]
     InvalidArgument(String),
 
+    /// Error from the NVML wrapper library.
     #[cfg(feature = "nvidia")]
     #[error("NVML error: {0}")]
     NvmlError(#[from] nvml_wrapper::error::NvmlError),
 
+    /// An unclassified error.
     #[error("Unknown error: {0}")]
     Unknown(String),
 }

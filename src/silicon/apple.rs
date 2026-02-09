@@ -3,7 +3,7 @@
 //! This module implements comprehensive monitoring for Apple Silicon (M1/M2/M3/M4 series)
 //! using macOS's powermetrics utility and IOKit framework.
 //!
-//! Based on asitop: https://github.com/tlkh/asitop
+//! Based on asitop: <https://github.com/tlkh/asitop>
 
 use super::*;
 use crate::error::{Error, Result};
