@@ -136,6 +136,10 @@ pub mod intel;
 #[cfg(feature = "apple")]
 pub mod apple;
 
+/// Shared Windows GPU helpers (DXGI, WMI perf counters, OHM/LHM temperature)
+#[cfg(windows)]
+pub mod windows_helpers;
+
 /// GPU vendor identifier
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum GpuVendor {

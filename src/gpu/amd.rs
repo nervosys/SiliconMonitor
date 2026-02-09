@@ -646,12 +646,25 @@ fn detect_amd_gpus_wmi(collection: &mut GpuCollection) -> Result<(), Error> {
         let mut gpu = AmdGpu::new(gpu_index, pci_bus_id.clone())?;
         gpu.name = name.to_string();
 
+        // Use DXGI for accurate VRAM and LUID (fixes 4GB WMI cap)
+        let dxgi_adapters = super::windows_helpers::enumerate_dxgi_adapters();
+        let dxgi_match = super::windows_helpers::find_dxgi_adapter(&dxgi_adapters, name)
+            .or_else(|| super::windows_helpers::find_dxgi_adapter_by_vendor(&dxgi_adapters, 0x1002));
+
+        let (dedicated_video_memory, luid_filter) = if let Some(dxgi) = &dxgi_match {
+            let luid = super::windows_helpers::format_luid(dxgi.luid_high, dxgi.luid_low);
+            (dxgi.dedicated_video_memory, Some(luid))
+        } else {
+            (ctrl.adapter_r_a_m.unwrap_or(0), None)
+        };
+
         // Store WMI data for static_info/dynamic_info with perf counter support
         collection.add_gpu(Box::new(WmiAmdGpu {
             inner: gpu,
-            adapter_ram: ctrl.adapter_r_a_m.unwrap_or(0),
+            dedicated_video_memory,
             driver_version: ctrl.driver_version.clone(),
-            pnp_device_id: pci_bus_id,
+            luid_filter,
+            gpu_name_hint: name.to_string(),
         }));
         gpu_index += 1;
     }
@@ -663,10 +676,13 @@ fn detect_amd_gpus_wmi(collection: &mut GpuCollection) -> Result<(), Error> {
 #[cfg(windows)]
 struct WmiAmdGpu {
     inner: AmdGpu,
-    adapter_ram: u64,
+    /// Accurate VRAM from DXGI (64-bit, no 4GB cap). Falls back to WMI AdapterRAM.
+    dedicated_video_memory: u64,
     driver_version: Option<String>,
-    /// LUID (Locally Unique Identifier) for matching with performance counters
-    pnp_device_id: String,
+    /// LUID hex string for matching with GPU performance counters
+    luid_filter: Option<String>,
+    /// GPU name used as hint for OHM/LHM temperature lookup
+    gpu_name_hint: String,
 }
 
 /// Windows GPU performance counter data from D3DKMT/WMI
@@ -675,107 +691,37 @@ struct WmiAmdGpu {
 struct WinGpuPerfData {
     utilization: u8,
     dedicated_used: u64,
+    #[allow(dead_code)]
     shared_used: u64,
     temperature: Option<u32>,
+    /// Per-engine utilization breakdown
+    engines_graphics: Option<u8>,
+    engines_compute: Option<u8>,
+    engines_video_decode: Option<u8>,
+    engines_video_encode: Option<u8>,
+    engines_copy: Option<u8>,
 }
 
 #[cfg(windows)]
-fn query_gpu_perf_counters_wmi(adapter_name_filter: &str) -> WinGpuPerfData {
-    use std::collections::HashMap;
-    use wmi::{COMLibrary, Variant, WMIConnection};
+fn query_gpu_perf_counters_wmi(adapter_name_filter: &str, luid_filter: Option<&str>) -> WinGpuPerfData {
+    // Use shared helper for engine + memory data
+    let perf = super::windows_helpers::query_gpu_perf_counters(luid_filter);
 
-    let mut data = WinGpuPerfData::default();
+    // Use OHM/LHM for GPU-specific temperature instead of generic ACPI zones
+    let temperature = super::windows_helpers::query_gpu_temperature_ohm(adapter_name_filter)
+        .map(|t| t as u32);
 
-    let Ok(com) = COMLibrary::new() else {
-        return data;
-    };
-    let Ok(wmi) = WMIConnection::with_namespace_path("root\\CIMV2", com) else {
-        return data;
-    };
-
-    // Query GPU engine utilization via performance counters
-    // Windows exposes GPU metrics through Win32_PerfFormattedData_GPUPerformanceCounters_GPUEngine
-    let engine_query = "SELECT Name, UtilizationPercentage FROM Win32_PerfFormattedData_GPUPerformanceCounters_GPUEngine";
-    if let Ok(results) = wmi.raw_query::<HashMap<String, Variant>>(engine_query) {
-        let filter_lower = adapter_name_filter.to_lowercase();
-        let mut total_util: f64 = 0.0;
-        let mut engine_count: u32 = 0;
-
-        for item in &results {
-            // Filter to our specific adapter
-            let name = match item.get("Name") {
-                Some(Variant::String(s)) => s.to_lowercase(),
-                _ => continue,
-            };
-
-            // Match by PNP device ID substring or adapter index
-            if !name.contains(&filter_lower) && !filter_lower.is_empty() {
-                // Try matching by "pid_" prefix for adapter LUID
-                let matches = name.contains("engtype_3d")
-                    || name.contains("engtype_videodecode")
-                    || name.contains("engtype_videoencode")
-                    || name.contains("engtype_copy");
-                if !matches {
-                    continue;
-                }
-            }
-
-            if let Some(Variant::UI8(util)) = item.get("UtilizationPercentage") {
-                total_util += *util as f64;
-                engine_count += 1;
-            } else if let Some(Variant::UI4(util)) = item.get("UtilizationPercentage") {
-                total_util += *util as f64;
-                engine_count += 1;
-            }
-        }
-
-        if engine_count > 0 {
-            data.utilization = (total_util / engine_count as f64).min(100.0) as u8;
-        }
+    WinGpuPerfData {
+        utilization: perf.engines.overall,
+        dedicated_used: perf.dedicated_used,
+        shared_used: perf.shared_used,
+        temperature,
+        engines_graphics: perf.engines.graphics,
+        engines_compute: perf.engines.compute,
+        engines_video_decode: perf.engines.video_decode,
+        engines_video_encode: perf.engines.video_encode,
+        engines_copy: perf.engines.copy,
     }
-
-    // Query adapter memory usage
-    let mem_query = "SELECT Name, DedicatedUsage, SharedUsage FROM Win32_PerfFormattedData_GPUPerformanceCounters_GPUAdapterMemory";
-    if let Ok(results) = wmi.raw_query::<HashMap<String, Variant>>(mem_query) {
-        for item in &results {
-            // Get dedicated memory usage
-            if let Some(Variant::UI8(dedicated)) = item.get("DedicatedUsage") {
-                data.dedicated_used = *dedicated;
-            } else if let Some(Variant::UI4(dedicated)) = item.get("DedicatedUsage") {
-                data.dedicated_used = *dedicated as u64;
-            }
-
-            if let Some(Variant::UI8(shared)) = item.get("SharedUsage") {
-                data.shared_used = *shared;
-            } else if let Some(Variant::UI4(shared)) = item.get("SharedUsage") {
-                data.shared_used = *shared as u64;
-            }
-
-            // Only take the first matching result
-            if data.dedicated_used > 0 || data.shared_used > 0 {
-                break;
-            }
-        }
-    }
-
-    // Query temperature from WMI thermal zones
-    let temp_query = "SELECT CurrentTemperature FROM MSAcpi_ThermalZoneTemperature";
-    if let Ok(wmi_root) = WMIConnection::with_namespace_path("root\\WMI", COMLibrary::new().unwrap())
-    {
-        if let Ok(results) = wmi_root.raw_query::<HashMap<String, Variant>>(temp_query) {
-            for item in &results {
-                if let Some(Variant::UI4(temp_tenths_kelvin)) = item.get("CurrentTemperature") {
-                    let temp_c = (*temp_tenths_kelvin as f32 / 10.0) - 273.15;
-                    if temp_c > 0.0 && temp_c < 150.0 {
-                        data.temperature = Some(temp_c as u32);
-                        break;
-                    }
-                }
-            }
-        }
-    }
-
-    data
 }
 
 #[cfg(windows)]
@@ -786,7 +732,7 @@ impl Gpu for WmiAmdGpu {
             || self.inner.name.to_lowercase().contains("renoir")
             || self.inner.name.to_lowercase().contains("cezanne")
             || self.inner.name.to_lowercase().contains("phoenix")
-            || self.adapter_ram == 0;
+            || self.dedicated_video_memory == 0;
 
         Ok(GpuStaticInfo {
             index: self.inner.index,
@@ -805,12 +751,15 @@ impl Gpu for WmiAmdGpu {
     }
 
     fn dynamic_info(&self) -> Result<GpuDynamicInfo, Error> {
-        // Query real-time GPU performance counters via WMI
-        let perf = query_gpu_perf_counters_wmi(&self.pnp_device_id);
+        // Query real-time GPU performance counters via shared helpers
+        let perf = query_gpu_perf_counters_wmi(
+            &self.gpu_name_hint,
+            self.luid_filter.as_deref(),
+        );
 
         let mem_used = perf.dedicated_used;
-        let mem_total = if self.adapter_ram > 0 {
-            self.adapter_ram
+        let mem_total = if self.dedicated_video_memory > 0 {
+            self.dedicated_video_memory
         } else {
             mem_used
         };
@@ -861,15 +810,11 @@ impl Gpu for WmiAmdGpu {
                 rx_throughput: None,
             },
             engines: GpuEngines {
-                graphics: if perf.utilization > 0 {
-                    Some(perf.utilization)
-                } else {
-                    None
-                },
-                compute: None,
-                encoder: None,
-                decoder: None,
-                copy: None,
+                graphics: perf.engines_graphics,
+                compute: perf.engines_compute,
+                encoder: perf.engines_video_encode,
+                decoder: perf.engines_video_decode,
+                copy: perf.engines_copy,
                 vendor_specific: vec![],
             },
             processes: vec![],
@@ -927,6 +872,11 @@ mod tests {
         assert_eq!(data.dedicated_used, 0);
         assert_eq!(data.shared_used, 0);
         assert!(data.temperature.is_none());
+        assert!(data.engines_graphics.is_none());
+        assert!(data.engines_compute.is_none());
+        assert!(data.engines_video_decode.is_none());
+        assert!(data.engines_video_encode.is_none());
+        assert!(data.engines_copy.is_none());
     }
 
     #[cfg(windows)]
@@ -937,10 +887,17 @@ mod tests {
             dedicated_used: 1024 * 1024 * 512,
             shared_used: 1024 * 1024 * 128,
             temperature: Some(65),
+            engines_graphics: Some(80),
+            engines_compute: Some(10),
+            engines_video_decode: Some(50),
+            engines_video_encode: Some(30),
+            engines_copy: Some(5),
         };
         assert_eq!(data.utilization, 75);
         assert_eq!(data.dedicated_used, 512 * 1024 * 1024);
         assert_eq!(data.shared_used, 128 * 1024 * 1024);
         assert_eq!(data.temperature, Some(65));
+        assert_eq!(data.engines_graphics, Some(80));
+        assert_eq!(data.engines_video_decode, Some(50));
     }
 }
