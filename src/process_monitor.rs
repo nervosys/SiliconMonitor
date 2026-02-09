@@ -104,8 +104,8 @@
 //! | Platform | Process Enum | GPU Attribution | CPU % | Memory | User |
 //! |----------|--------------|-----------------|-------|--------|------|
 //! | Linux    | ✅ /proc      | ✅ All vendors  | ✅    | ✅     | ✅   |
-//! | Windows  | ✅ Win32 API  | 🚧              | 🚧    | ✅     | ✅   |
-//! | macOS    | ✅ libproc    | 🚧              | 🚧    | ✅     | 🚧   |
+//! | Windows  | ✅ Win32 API  | 🚧              | ✅    | ✅     | ✅   |
+//! | macOS    | ✅ libproc    | 🚧              | ✅    | ✅     | 🚧   |
 
 use crate::error::{Result, SimonError};
 use crate::gpu::GpuCollection;

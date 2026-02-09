@@ -805,7 +805,7 @@ cargo run --release --features full --example agent_simple
 | Platform | CPU | Memory | Disk | GPU (NVIDIA) | GPU (AMD) | GPU (Intel) | Network | Audio | Bluetooth | Display | USB |
 | -------- | --- | ------ | ---- | ------------ | --------- | ----------- | ------- | ----- | --------- | ------- | --- |
 | Linux    | ✅   | ✅      | ✅    | ✅            | ✅         | ✅           | ✅       | ✅     | ✅         | ✅       | ✅   |
-| Windows  | ✅   | ✅      | ✅    | ✅            | 🚧         | 🚧           | ✅       | ✅     | ✅         | ✅       | ✅   |
+| Windows  | ✅   | ✅      | ✅    | ✅            | ✅         | ✅           | ✅       | ✅     | ✅         | ✅       | ✅   |
 | macOS    | ✅   | ✅      | ✅    | ❌            | ❌         | ❌           | ✅       | ✅     | ✅         | ✅       | ✅   |
 
 ✅ Fully Supported | 🚧 Partial/In Progress | ❌ Not Supported
@@ -822,16 +822,18 @@ cargo run --release --features full --example agent_simple
 **AMD:**
 
 - **Linux**: sysfs via `/sys/class/drm/card*/device/`
+- **Windows**: WMI performance counters (`Win32_PerfFormattedData_GPUPerformanceCounters`) for utilization, memory, and temperature
 - **Metrics**: Utilization (GFX/compute), VRAM, clocks (SCLK/MCLK), temperature, power, fan speed
 - **Devices**: RDNA 1/2/3, CDNA 1/2 (Radeon RX 5000+, Instinct MI series)
-- **Requirements**: amdgpu driver
+- **Requirements**: amdgpu driver (Linux), AMD display driver (Windows)
 
 **Intel:**
 
 - **Linux**: i915/xe drivers via `/sys/class/drm/card*/`
+- **Windows**: WMI performance counters for utilization, memory (shared + dedicated), and temperature
 - **Metrics**: GT frequency, memory (discrete GPUs), temperature, power via hwmon
 - **Devices**: Arc A-series, Iris Xe, UHD Graphics, Data Center GPU Max
-- **Requirements**: i915 (legacy) or xe (modern) kernel driver
+- **Requirements**: i915 (legacy) or xe (modern) kernel driver (Linux), Intel graphics driver (Windows)
 
 ## Architecture
 
@@ -998,13 +1000,12 @@ cargo run --release --features nvidia --example gpu_monitor
 
 Contributions are welcome! Areas that need help:
 
-- **CPU Percentage**: Windows and macOS process CPU% calculation (requires periodic sampling)
+- **Apple GPU Integration**: Metal Performance Shaders / IOKit for Apple Silicon GPU metrics
 - **macOS Process I/O**: I/O read/write bytes and handle counts on macOS
-- **AMD GPU on Windows**: Support via AMD Display Library (ADL)
-- **Intel GPU on Windows**: Support via Intel GPU monitoring APIs
-- **Apple GPU Integration**: Metal Performance Shaders for Apple Silicon GPU metrics
+- **Delta-based CPU%**: Current CPU% uses lifetime average; real-time delta-based sampling would match Task Manager/top behavior
 - **Documentation**: More examples, tutorials, API documentation
 - **Testing**: Multi-GPU setups, edge cases, platform-specific bugs
+- **GUI**: Native desktop application (egui) — planned but not yet implemented
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
