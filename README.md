@@ -1,4 +1,4 @@
-﻿<p align="center">
+<p align="center">
   <img src="assets/banner.png" alt="Silicon Monitor (simon)" width="100%">
 </p>
 
@@ -111,7 +111,7 @@ Silicon Monitor provides comprehensive hardware monitoring:
 Silicon Monitor uniquely correlates system processes with GPU usage across all vendors:
 
 ```rust
-use simon::{ProcessMonitor, GpuCollection};
+use simonlib::{ProcessMonitor, GpuCollection};
 
 let gpu_collection = GpuCollection::auto_detect()?;
 let mut monitor = ProcessMonitor::with_gpus(gpu_collection)?;
@@ -129,7 +129,7 @@ for proc in gpu_procs.iter().take(10) {
 Ask questions about your system in natural language:
 
 ```rust
-use simon::agent::{Agent, AgentConfig, ModelSize};
+use simonlib::agent::{Agent, AgentConfig, ModelSize};
 
 let config = AgentConfig::new(ModelSize::Medium); // 500M parameters
 let mut agent = Agent::new(config)?;
@@ -160,7 +160,7 @@ Silicon Monitor is designed from the ground up to be **discoverable by AI agents
 The library exposes a machine-readable ontology describing hardware domains, properties, and their data types:
 
 ```rust
-use simon::ai_api::HardwareOntology;
+use simonlib::ai_api::HardwareOntology;
 
 let ontology = HardwareOntology::complete();
 println!("{}", serde_json::to_string_pretty(&ontology)?);
@@ -194,7 +194,7 @@ println!("{}", serde_json::to_string_pretty(&ontology)?);
 AI agents can enumerate all available monitoring tools with their schemas:
 
 ```rust
-use simon::ai_api::{AiDataApi, ToolDefinition};
+use simonlib::ai_api::{AiDataApi, ToolDefinition};
 
 let api = AiDataApi::new()?;
 let tools: Vec<ToolDefinition> = api.list_tools();
@@ -352,7 +352,7 @@ cargo build --release --features cli
 ### GPU Monitoring
 
 ```rust
-use simon::gpu::GpuCollection;
+use simonlib::gpu::GpuCollection;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Auto-detect all GPUs (NVIDIA, AMD, Intel)
@@ -377,7 +377,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ### CPU Monitoring
 
 ```rust
-use simon::cpu::CpuMonitor;
+use simonlib::cpu::CpuMonitor;
 
 let mut monitor = CpuMonitor::new()?;
 let info = monitor.update()?;
@@ -392,7 +392,7 @@ for (idx, core) in info.cores.iter().enumerate() {
 ### Memory Monitoring
 
 ```rust
-use simon::memory::MemoryMonitor;
+use simonlib::memory::MemoryMonitor;
 
 let mut monitor = MemoryMonitor::new()?;
 let info = monitor.update()?;
@@ -406,7 +406,7 @@ println!("Swap: {} / {} MB",
 ### Network Monitoring
 
 ```rust
-use simon::network_monitor::NetworkMonitor;
+use simonlib::network_monitor::NetworkMonitor;
 
 let mut monitor = NetworkMonitor::new()?;
 let interfaces = monitor.interfaces()?;
@@ -425,7 +425,7 @@ for iface in interfaces {
 Silicon Monitor includes network diagnostic utilities inspired by popular CLI tools:
 
 ```rust
-use simon::{ping, traceroute, scan_ports, dns_lookup, check_port};
+use simonlib::{ping, traceroute, scan_ports, dns_lookup, check_port};
 use std::time::Duration;
 
 // Ping a host
@@ -468,7 +468,7 @@ Silicon Monitor provides cross-platform monitoring for audio, Bluetooth, display
 #### Audio Devices
 
 ```rust
-use simon::audio::AudioMonitor;
+use simonlib::audio::AudioMonitor;
 
 let mut monitor = AudioMonitor::new()?;
 let devices = monitor.devices();
@@ -492,7 +492,7 @@ if let Some(volume) = monitor.master_volume() {
 #### Bluetooth Devices
 
 ```rust
-use simon::bluetooth::BluetoothMonitor;
+use simonlib::bluetooth::BluetoothMonitor;
 
 let mut monitor = BluetoothMonitor::new()?;
 
@@ -514,7 +514,7 @@ for device in monitor.devices() {
 #### Display/Monitor Information
 
 ```rust
-use simon::display::DisplayMonitor;
+use simonlib::display::DisplayMonitor;
 
 let monitor = DisplayMonitor::new()?;
 
@@ -534,7 +534,7 @@ for display in monitor.displays() {
 #### USB Devices
 
 ```rust
-use simon::usb::UsbMonitor;
+use simonlib::usb::UsbMonitor;
 
 let monitor = UsbMonitor::new()?;
 
@@ -573,8 +573,8 @@ simon ai  # Interactive mode
 ### Programmatic Usage
 
 ```rust
-use simon::agent::{Agent, AgentConfig, ModelSize};
-use simon::SiliconMonitor;
+use simonlib::agent::{Agent, AgentConfig, ModelSize};
+use simonlib::SiliconMonitor;
 
 let monitor = SiliconMonitor::new()?;
 let config = AgentConfig::new(ModelSize::Medium);
@@ -652,7 +652,7 @@ ollama serve                         # Ollama on port 11434
 ### Programmatic Backend Selection
 
 ```rust
-use simon::agent::{AgentConfig, BackendConfig, BackendType};
+use simonlib::agent::{AgentConfig, BackendConfig, BackendType};
 
 // Auto-detect best backend
 let config = AgentConfig::auto_detect()?;
@@ -860,7 +860,7 @@ simon/
 The `GpuCollection` provides a unified interface for all GPU vendors:
 
 ```rust
-use simon::gpu::{GpuCollection, Device};
+use simonlib::gpu::{GpuCollection, Device};
 
 // Auto-detect all available GPUs
 let collection = GpuCollection::auto_detect()?;
@@ -882,8 +882,8 @@ for device in collection.gpus() {
 The `ProcessMonitor` correlates system processes with GPU usage:
 
 ```rust
-use simon::process_monitor::ProcessMonitor;
-use simon::gpu::GpuCollection;
+use simonlib::process_monitor::ProcessMonitor;
+use simonlib::gpu::GpuCollection;
 
 let gpus = GpuCollection::auto_detect()?;
 let mut monitor = ProcessMonitor::with_gpus(gpus)?;
@@ -906,7 +906,7 @@ let gpu_only = monitor.gpu_processes()?;
 The `NetworkMonitor` tracks network interface statistics:
 
 ```rust
-use simon::network_monitor::NetworkMonitor;
+use simonlib::network_monitor::NetworkMonitor;
 
 let mut monitor = NetworkMonitor::new()?;
 

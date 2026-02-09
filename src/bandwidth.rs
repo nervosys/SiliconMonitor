@@ -269,14 +269,19 @@ pub fn loopback_test(duration: Duration) -> Result<BandwidthResult> {
     // Bind to a random port
     let listener =
         TcpListener::bind("127.0.0.1:0").map_err(|e| SimonError::Other(e.to_string()))?;
-    let port = listener.local_addr().unwrap().port();
+    let port = listener
+        .local_addr()
+        .map_err(|e| SimonError::Other(format!("failed to get local address: {}", e)))?
+        .port();
 
     let buffer_size = DEFAULT_BUFFER_SIZE;
     let test_duration = duration;
 
     // Spawn receiver thread
     let receiver = thread::spawn(move || {
-        let (mut stream, _) = listener.accept().unwrap();
+        let Ok((mut stream, _)) = listener.accept() else {
+            return 0u64;
+        };
         stream
             .set_read_timeout(Some(Duration::from_millis(100)))
             .ok();

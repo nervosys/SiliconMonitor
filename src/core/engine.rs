@@ -56,7 +56,9 @@ impl EngineStats {
 
 impl Default for EngineStats {
     fn default() -> Self {
-        Self::new().unwrap()
+        Self::new().unwrap_or_else(|_| Self {
+            groups: HashMap::new(),
+        })
     }
 }
 

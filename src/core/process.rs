@@ -72,7 +72,10 @@ impl ProcessStats {
 
 impl Default for ProcessStats {
     fn default() -> Self {
-        Self::new().unwrap()
+        Self::new().unwrap_or_else(|_| Self {
+            processes: Vec::new(),
+            total_gpu_memory_kb: 0,
+        })
     }
 }
 

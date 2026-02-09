@@ -86,6 +86,14 @@ impl CpuStats {
 
 impl Default for CpuStats {
     fn default() -> Self {
-        Self::new().unwrap()
+        Self::new().unwrap_or_else(|_| Self {
+            cores: Vec::new(),
+            total: CpuTotal {
+                user: 0.0,
+                nice: 0.0,
+                system: 0.0,
+                idle: 100.0,
+            },
+        })
     }
 }

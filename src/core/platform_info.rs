@@ -97,6 +97,30 @@ impl BoardInfo {
 
 impl Default for BoardInfo {
     fn default() -> Self {
-        Self::new().unwrap()
+        Self::new().unwrap_or_else(|_| Self {
+            platform: PlatformInfo {
+                machine: String::new(),
+                system: String::new(),
+                distribution: None,
+                release: String::new(),
+            },
+            hardware: HardwareInfo {
+                model: String::new(),
+                p_number: None,
+                module: None,
+                soc: None,
+                cuda_arch: None,
+                codename: None,
+                serial_number: None,
+                l4t: None,
+                jetpack: None,
+            },
+            libraries: LibraryVersions {
+                cuda: None,
+                cudnn: None,
+                tensorrt: None,
+                other: HashMap::new(),
+            },
+        })
     }
 }

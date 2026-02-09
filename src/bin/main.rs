@@ -1547,7 +1547,7 @@ fn handle_jetson_command(cmd: &JetsonSubcommand) -> Result<(), Box<dyn std::erro
     }
 }
 
-#[cfg(all(feature = "cli", target_os = "linux"))]
+#[cfg(all(feature = "cli", feature = "jetson-utils", target_os = "linux"))]
 fn handle_jetson_clocks(action: &JetsonClocksAction) -> Result<(), Box<dyn std::error::Error>> {
     use simonlib::utils::clocks;
 
@@ -1586,7 +1586,7 @@ fn handle_jetson_clocks(action: &JetsonClocksAction) -> Result<(), Box<dyn std::
     Ok(())
 }
 
-#[cfg(all(feature = "cli", target_os = "linux"))]
+#[cfg(all(feature = "cli", feature = "jetson-utils", target_os = "linux"))]
 fn handle_nvpmodel(action: &NvpmodelAction) -> Result<(), Box<dyn std::error::Error>> {
     use simonlib::utils::power_mode;
 
@@ -1653,7 +1653,7 @@ fn handle_nvpmodel(action: &NvpmodelAction) -> Result<(), Box<dyn std::error::Er
     Ok(())
 }
 
-#[cfg(all(feature = "cli", target_os = "linux"))]
+#[cfg(all(feature = "cli", feature = "jetson-utils", target_os = "linux"))]
 fn handle_swap(action: &SwapAction) -> Result<(), Box<dyn std::error::Error>> {
     use simonlib::utils::swap;
 

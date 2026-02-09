@@ -48,13 +48,18 @@ pub struct IntelGpu {
 impl IntelGpu {
     /// Create new Intel GPU instance
     #[cfg(target_os = "linux")]
-    pub fn new(index: usize, pci_bus_id: String, card_path: String, driver: IntelDriver) -> Result<Self, Error> {
+    pub fn new(
+        index: usize,
+        pci_bus_id: String,
+        card_path: String,
+        driver: IntelDriver,
+    ) -> Result<Self, Error> {
         let device_path = format!("{}/device", card_path);
-        
+
         // Try to read GPU name from product_name or derive from PCI ID
         let name = read_intel_gpu_name(&device_path, &driver)
             .unwrap_or_else(|| format!("Intel GPU {} ({})", index, driver.name()));
-        
+
         // Find hwmon path
         let hwmon_path = find_hwmon_path(&device_path);
 
@@ -102,7 +107,7 @@ fn read_intel_gpu_name(device_path: &str, driver: &IntelDriver) -> Option<String
     let device = fs::read_to_string(format!("{}/device", device_path))
         .ok()
         .map(|s| s.trim().to_string())?;
-    
+
     // Map common Intel GPU device IDs to names
     let name = match device.as_str() {
         // Integrated Graphics (common ones)
@@ -126,7 +131,7 @@ fn read_intel_gpu_name(device_path: &str, driver: &IntelDriver) -> Option<String
             return Some(format!("Intel Graphics [{}] ({})", device, driver.name()));
         }
     };
-    
+
     Some(name.to_string())
 }
 
@@ -158,8 +163,8 @@ impl Gpu for IntelGpu {
                 .map(|s| s.trim().to_string());
 
             // Intel GPUs are almost always integrated (except Arc)
-            let is_discrete = self.name.to_lowercase().contains("arc") || 
-                             self.name.to_lowercase().contains("data center");
+            let is_discrete = self.name.to_lowercase().contains("arc")
+                || self.name.to_lowercase().contains("data center");
 
             Ok(GpuStaticInfo {
                 index: self.index,
@@ -198,7 +203,7 @@ impl Gpu for IntelGpu {
         #[cfg(target_os = "linux")]
         {
             let device_path = format!("{}/device", self.card_path);
-            
+
             // Read GPU frequency
             let freq_path = match self.driver {
                 IntelDriver::I915 => format!("{}/gt_cur_freq_mhz", device_path),
@@ -390,27 +395,30 @@ impl Gpu for IntelGpu {
 
 /// Parse fdinfo for Intel GPU processes
 #[cfg(target_os = "linux")]
-fn parse_intel_fdinfo_processes(card_path: &str, driver: &IntelDriver) -> Result<Vec<GpuProcess>, Error> {
+fn parse_intel_fdinfo_processes(
+    card_path: &str,
+    driver: &IntelDriver,
+) -> Result<Vec<GpuProcess>, Error> {
     let mut processes = Vec::new();
     let proc_dir = Path::new("/proc");
-    
+
     let driver_name = driver.name();
-    
+
     if let Ok(proc_entries) = fs::read_dir(proc_dir) {
         for proc_entry in proc_entries.flatten() {
             let pid_str = proc_entry.file_name();
             let pid_str = pid_str.to_string_lossy();
-            
+
             let pid: u32 = match pid_str.parse() {
                 Ok(p) => p,
                 Err(_) => continue,
             };
-            
+
             let fdinfo_dir = proc_entry.path().join("fdinfo");
             if !fdinfo_dir.exists() {
                 continue;
             }
-            
+
             if let Ok(fdinfo_entries) = fs::read_dir(&fdinfo_dir) {
                 for fdinfo_entry in fdinfo_entries.flatten() {
                     if let Ok(content) = fs::read_to_string(fdinfo_entry.path()) {
@@ -419,7 +427,7 @@ fn parse_intel_fdinfo_processes(card_path: &str, driver: &IntelDriver) -> Result
                         if content.contains(&driver_match) {
                             // Parse engine usage
                             let mut total_time = 0u64;
-                            
+
                             for line in content.lines() {
                                 // Parse drm-engine-render, drm-engine-video, etc.
                                 if line.starts_with("drm-engine-") {
@@ -428,12 +436,12 @@ fn parse_intel_fdinfo_processes(card_path: &str, driver: &IntelDriver) -> Result
                                     }
                                 }
                             }
-                            
+
                             if total_time > 0 {
                                 let name = fs::read_to_string(proc_entry.path().join("comm"))
                                     .map(|s| s.trim().to_string())
                                     .unwrap_or_else(|_| format!("Process {}", pid));
-                                
+
                                 processes.push(GpuProcess {
                                     pid,
                                     name,
@@ -452,16 +460,16 @@ fn parse_intel_fdinfo_processes(card_path: &str, driver: &IntelDriver) -> Result
             }
         }
     }
-    
+
     processes.sort_by_key(|p| p.pid);
     processes.dedup_by_key(|p| p.pid);
-    
+
     Ok(processes)
 }
 
 #[cfg(target_os = "linux")]
 fn parse_engine_time(line: &str) -> Option<u64> {
-    // Parse "drm-engine-render:\t12345 ns" 
+    // Parse "drm-engine-render:\t12345 ns"
     let parts: Vec<&str> = line.split_whitespace().collect();
     if parts.len() >= 2 {
         return parts[1].parse().ok();
@@ -474,13 +482,13 @@ pub fn detect_gpus(collection: &mut GpuCollection) -> Result<(), Error> {
     #[cfg(target_os = "linux")]
     {
         let dri_path = Path::new("/sys/class/drm");
-        
+
         if !dri_path.exists() {
             return Ok(());
         }
-        
+
         let mut gpu_index = 0;
-        
+
         if let Ok(entries) = fs::read_dir(dri_path) {
             let mut cards: Vec<_> = entries
                 .flatten()
@@ -493,25 +501,25 @@ pub fn detect_gpus(collection: &mut GpuCollection) -> Result<(), Error> {
                     }
                 })
                 .collect();
-            
+
             cards.sort_by(|a, b| a.0.cmp(&b.0));
-            
+
             for (_card_name, card_path) in cards {
                 let device_path = card_path.join("device");
                 let driver_path = device_path.join("driver");
-                
+
                 if let Ok(driver_target) = fs::read_link(&driver_path) {
                     let driver_name = driver_target
                         .file_name()
                         .and_then(|s| s.to_str())
                         .unwrap_or("");
-                    
+
                     let driver = match driver_name {
                         "i915" => Some(IntelDriver::I915),
                         "xe" => Some(IntelDriver::Xe),
                         _ => None,
                     };
-                    
+
                     if let Some(driver) = driver {
                         // Get PCI bus ID
                         let pci_bus_id = if let Ok(dev_link) = fs::read_link(&device_path) {
@@ -523,7 +531,7 @@ pub fn detect_gpus(collection: &mut GpuCollection) -> Result<(), Error> {
                         } else {
                             "unknown".to_string()
                         };
-                        
+
                         if let Ok(gpu) = IntelGpu::new(
                             gpu_index,
                             pci_bus_id,
@@ -538,7 +546,7 @@ pub fn detect_gpus(collection: &mut GpuCollection) -> Result<(), Error> {
             }
         }
     }
-    
+
     #[cfg(windows)]
     {
         detect_intel_gpus_wmi(collection)?;
@@ -548,7 +556,7 @@ pub fn detect_gpus(collection: &mut GpuCollection) -> Result<(), Error> {
     {
         let _ = collection;
     }
-    
+
     Ok(())
 }
 
@@ -569,9 +577,8 @@ fn detect_intel_gpus_wmi(collection: &mut GpuCollection) -> Result<(), Error> {
         status: Option<String>,
     }
 
-    let com = wmi::COMLibrary::new().map_err(|e| {
-        Error::Other(format!("Failed to initialize COM: {}", e))
-    })?;
+    let com = wmi::COMLibrary::new()
+        .map_err(|e| Error::Other(format!("Failed to initialize COM: {}", e)))?;
     let wmi_con = wmi::WMIConnection::with_namespace_path("root\\CIMV2", com.into())
         .map_err(|e| Error::Other(format!("Failed to connect to WMI: {}", e)))?;
 
@@ -610,8 +617,7 @@ fn detect_intel_gpus_wmi(collection: &mut GpuCollection) -> Result<(), Error> {
         let mut gpu = IntelGpu::new(gpu_index, pci_bus_id, driver)?;
         gpu.name = name.to_string();
 
-        let is_discrete = name_lower.contains("arc")
-            || name_lower.contains("data center");
+        let is_discrete = name_lower.contains("arc") || name_lower.contains("data center");
         let adapter_ram = ctrl.adapter_r_a_m.unwrap_or(0);
 
         collection.add_gpu(Box::new(WmiIntelGpu {
@@ -738,8 +744,8 @@ mod tests {
         #[cfg(target_os = "linux")]
         {
             let result = IntelGpu::new(
-                0, 
-                "0000:00:02.0".to_string(), 
+                0,
+                "0000:00:02.0".to_string(),
                 "/sys/class/drm/card0".to_string(),
                 IntelDriver::I915,
             );

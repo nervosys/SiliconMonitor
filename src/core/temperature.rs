@@ -49,6 +49,8 @@ impl TemperatureStats {
 
 impl Default for TemperatureStats {
     fn default() -> Self {
-        Self::new().unwrap()
+        Self::new().unwrap_or_else(|_| Self {
+            sensors: HashMap::new(),
+        })
     }
 }

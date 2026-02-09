@@ -183,6 +183,10 @@ pub mod stats;
 pub mod system_stats; // System-wide stats (load avg, vmstat, uptime) - Linux/BSD style
 pub mod tsdb; // Time-series database for recording metrics
 pub mod usb; // USB device enumeration
+
+// Unsafe utilities (swap, clocks, power_mode) - gated behind feature flag
+// See SECURITY.md for vulnerability details
+#[cfg(feature = "jetson-utils")]
 pub mod utils;
 
 // Unified backend for CLI, TUI, and GUI

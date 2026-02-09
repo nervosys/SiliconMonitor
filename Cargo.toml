@@ -38,9 +38,7 @@ serde_json = "1.0"
 bincode = "1.3"                                    # For TSDB binary serialization
 toml = "0.8"
 log = "0.4"
-chrono = "0.4"
 lru = "0.12"                                       # For agent response caching
-async-trait = "0.1"
 
 # Platform-specific dependencies
 [target.'cfg(unix)'.dependencies]
@@ -86,7 +84,8 @@ colored = { version = "2.1", optional = true }
 ratatui = { version = "0.29", optional = true }
 crossterm = { version = "0.28", optional = true }
 tokio = { version = "1.41", features = ["full"], optional = true }
-chrono = { version = "0.4", optional = true }
+chrono = "0.4"
+async-trait = "0.1"
 hostname = { version = "0.4", optional = true }
 num_cpus = { version = "1.16", optional = true }
 ctrlc = { version = "3.4", optional = true }
@@ -104,7 +103,7 @@ open = { version = "5.3", optional = true }
 
 # Optional dependencies for remote AI backends
 reqwest = { version = "0.12", features = ["blocking", "json"], optional = true }
-async-trait = { version = "0.1", optional = true }
+# async-trait is now a required dependency (used unconditionally in agent module)
 
 # Logging
 env_logger = { version = "0.11", optional = true }
@@ -121,6 +120,7 @@ default = []
 # Platform-specific silicon support
 nvidia = ["nvml-wrapper"] # NVML support for NVIDIA GPUs (Jetson & desktop)
 amd = [] # AMD GPU support via DRM (direct implementation)
+jetson-utils = [] # Unsafe Jetson utilities (swap, clocks, power_mode) - see SECURITY.md
 intel = ["drm", "drm-ffi"] # Intel GPU support via i915/xe drivers
 apple = [
     "plist",
@@ -137,7 +137,7 @@ cli = [
     "ratatui",
     "crossterm",
     "tokio",
-    "chrono",
+
     "env_logger",
     "hostname",
     "num_cpus",
@@ -152,13 +152,13 @@ gui = [
     "egui_plot",
     "open",
     "tokio",
-    "chrono",
+
     "hostname",
     "num_cpus",
     "remote-backends", # Required for AI backend detection (Ollama, OpenAI, etc.)
 ]
 # Remote AI backend support (OpenAI, Anthropic, Ollama, etc.)
-remote-backends = ["reqwest", "async-trait"]
+remote-backends = ["reqwest"]
 # Local AI backends
 local-ollama = ["remote-backends"]   # Ollama local inference server
 local-llamacpp = []                  # llama.cpp direct model loading (TODO: needs llama-cpp-rs)

@@ -384,9 +384,11 @@ impl Agent {
     /// Note: Model loading happens lazily on first query to avoid startup latency
     pub fn new(config: AgentConfig) -> Result<Self> {
         let cache_size = if config.enable_caching {
-            std::num::NonZeroUsize::new(config.cache_size).unwrap()
+            std::num::NonZeroUsize::new(config.cache_size.max(1))
+                .expect("max(1) guarantees non-zero")
         } else {
-            std::num::NonZeroUsize::new(1).unwrap()
+            // SAFETY: literal 1 is always non-zero
+            std::num::NonZeroUsize::new(1).expect("literal 1 is non-zero")
         };
 
         Ok(Self {

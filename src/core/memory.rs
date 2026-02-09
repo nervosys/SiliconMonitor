@@ -116,6 +116,23 @@ impl MemoryStats {
 
 impl Default for MemoryStats {
     fn default() -> Self {
-        Self::new().unwrap()
+        Self::new().unwrap_or_else(|_| Self {
+            ram: RamInfo {
+                total: 0,
+                used: 0,
+                free: 0,
+                buffers: 0,
+                cached: 0,
+                shared: 0,
+                lfb: None,
+            },
+            swap: SwapInfo {
+                total: 0,
+                used: 0,
+                cached: 0,
+            },
+            emc: None,
+            iram: None,
+        })
     }
 }

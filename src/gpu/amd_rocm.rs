@@ -403,9 +403,9 @@ pub fn enumerate() -> Result<Vec<Box<dyn Device>>, Error> {
         // Extract card number
         let index = name_str.trim_start_matches("card").parse::<u32>().ok();
 
-        if index.is_none() {
+        let Some(index) = index else {
             continue;
-        }
+        };
 
         let card_path = entry.path();
         let device_path = card_path.join("device");
@@ -414,7 +414,7 @@ pub fn enumerate() -> Result<Vec<Box<dyn Device>>, Error> {
         if let Ok(vendor_id) = fs::read_to_string(device_path.join("vendor")) {
             if vendor_id.trim() == "0x1002" {
                 // This is an AMD GPU
-                match AmdGpu::new(index.unwrap(), card_path) {
+                match AmdGpu::new(index, card_path) {
                     Ok(gpu) => devices.push(Box::new(gpu)),
                     Err(_) => continue,
                 }
