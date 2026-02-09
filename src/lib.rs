@@ -427,39 +427,97 @@ pub use tsdb::{
     SystemSnapshot, TimeSeriesDb,
 };
 
-/// Main entry point for unified silicon monitoring
+/// Main entry point for unified silicon monitoring.
+///
+/// Provides a single struct that wraps all available hardware monitors (GPU,
+/// CPU, memory, disk, network, and processes).
 pub struct SiliconMonitor {
     gpus: GpuCollection,
+    process_monitor: Option<ProcessMonitor>,
+    network_monitor: Option<NetworkMonitor>,
 }
 
 impl SiliconMonitor {
-    /// Create new silicon monitor with auto-detection
+    /// Create new silicon monitor with auto-detection of all subsystems.
     pub fn new() -> Result<Self> {
         let gpus = GpuCollection::auto_detect()
             .map_err(|e| SimonError::InitializationError(e.to_string()))?;
-        Ok(Self { gpus })
+
+        let process_monitor = ProcessMonitor::new().ok();
+        let network_monitor = NetworkMonitor::new().ok();
+
+        Ok(Self {
+            gpus,
+            process_monitor,
+            network_monitor,
+        })
     }
 
-    /// Get all GPU information snapshots
+    /// Get all GPU information snapshots.
     pub fn snapshot_gpus(&self) -> Result<Vec<GpuInfo>> {
         self.gpus
             .snapshot_all()
             .map_err(|e| SimonError::Other(e.to_string()))
     }
 
-    /// Get GPU collection
+    /// Get GPU collection reference.
     pub fn gpus(&self) -> &GpuCollection {
         &self.gpus
     }
 
-    /// Get mutable GPU collection
+    /// Get mutable GPU collection reference.
     pub fn gpus_mut(&mut self) -> &mut GpuCollection {
         &mut self.gpus
     }
 
-    /// Get number of detected GPUs
+    /// Get number of detected GPUs.
     pub fn gpu_count(&self) -> usize {
         self.gpus.len()
+    }
+
+    /// Snapshot current CPU statistics.
+    pub fn snapshot_cpu(&self) -> Result<CpuStats> {
+        CpuStats::new()
+    }
+
+    /// Snapshot current memory statistics.
+    pub fn snapshot_memory(&self) -> Result<MemoryStats> {
+        MemoryStats::new()
+    }
+
+    /// Snapshot disk information for all detected volumes.
+    pub fn snapshot_disks(&self) -> std::result::Result<Vec<Box<dyn disk::DiskDevice>>, disk::Error> {
+        disk::enumerate_disks()
+    }
+
+    /// Snapshot all network interface statistics.
+    pub fn snapshot_network(&mut self) -> Option<Result<Vec<NetworkInterfaceInfo>>> {
+        self.network_monitor.as_mut().map(|nm| nm.interfaces())
+    }
+
+    /// Get network monitor reference, if available.
+    pub fn network_monitor(&self) -> Option<&NetworkMonitor> {
+        self.network_monitor.as_ref()
+    }
+
+    /// Get mutable network monitor reference, if available.
+    pub fn network_monitor_mut(&mut self) -> Option<&mut NetworkMonitor> {
+        self.network_monitor.as_mut()
+    }
+
+    /// Snapshot all running processes with optional GPU attribution.
+    pub fn snapshot_processes(&mut self) -> Option<Result<Vec<ProcessMonitorInfo>>> {
+        self.process_monitor.as_mut().map(|pm| pm.processes())
+    }
+
+    /// Get process monitor reference, if available.
+    pub fn process_monitor(&self) -> Option<&ProcessMonitor> {
+        self.process_monitor.as_ref()
+    }
+
+    /// Get mutable process monitor reference, if available.
+    pub fn process_monitor_mut(&mut self) -> Option<&mut ProcessMonitor> {
+        self.process_monitor.as_mut()
     }
 }
 
@@ -467,11 +525,14 @@ impl Default for SiliconMonitor {
     fn default() -> Self {
         Self::new().unwrap_or_else(|_| Self {
             gpus: GpuCollection::new(),
+            process_monitor: None,
+            network_monitor: None,
         })
     }
 }
 
 // Backward compatibility alias
+#[deprecated(since = "0.3.0", note = "Use `SiliconMonitor` directly instead")]
 pub type GpuInterface = SiliconMonitor;
 
 /// Library version

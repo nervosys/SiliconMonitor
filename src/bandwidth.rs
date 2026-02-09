@@ -23,7 +23,7 @@
 //! # }
 //! ```
 
-use crate::error::{SimonError, Result};
+use crate::error::{Result, SimonError};
 use serde::{Deserialize, Serialize};
 use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};

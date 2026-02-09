@@ -746,3 +746,92 @@ pub fn battery_percent() -> Option<u8> {
         .ok()
         .and_then(|m| m.primary_battery().and_then(|b| b.capacity_percent))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_power_supply_info_new_defaults() {
+        let info = PowerSupplyInfo::new("BAT0");
+        assert_eq!(info.name, "BAT0");
+        assert_eq!(info.supply_type, PowerSupplyType::Unknown);
+        assert!(!info.online);
+        assert_eq!(info.status, ChargingStatus::Unknown);
+        assert_eq!(info.health, BatteryHealth::Unknown);
+        assert!(info.capacity_percent.is_none());
+    }
+
+    #[test]
+    fn test_is_battery() {
+        let mut info = PowerSupplyInfo::new("BAT0");
+        assert!(!info.is_battery());
+        info.supply_type = PowerSupplyType::Battery;
+        assert!(info.is_battery());
+        info.supply_type = PowerSupplyType::Mains;
+        assert!(!info.is_battery());
+    }
+
+    #[test]
+    fn test_unit_conversions() {
+        let mut info = PowerSupplyInfo::new("BAT0");
+        info.voltage_now_mv = Some(12000);
+        assert_eq!(info.voltage_v(), Some(12.0));
+
+        info.power_now_mw = Some(5000);
+        assert_eq!(info.power_w(), Some(5.0));
+
+        info.energy_now_uwh = Some(40_000_000);
+        assert_eq!(info.energy_wh(), Some(40.0));
+
+        info.temperature_tenths_c = Some(350);
+        assert_eq!(info.temperature_celsius(), Some(35.0));
+
+        info.current_now_ua = Some(2_000_000);
+        assert_eq!(info.current_a(), Some(2.0));
+    }
+
+    #[test]
+    fn test_wear_level_calculation() {
+        let mut info = PowerSupplyInfo::new("BAT0");
+        info.energy_full_uwh = Some(40_000_000);
+        info.energy_full_design_uwh = Some(50_000_000);
+        let wear = info.wear_level_percent().unwrap();
+        assert!((wear - 80.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_charging_status_display() {
+        assert_eq!(ChargingStatus::Charging.to_string(), "Charging");
+        assert_eq!(ChargingStatus::Discharging.to_string(), "Discharging");
+        assert_eq!(ChargingStatus::Full.to_string(), "Full");
+        assert_eq!(ChargingStatus::NotCharging.to_string(), "Not Charging");
+        assert_eq!(ChargingStatus::Unknown.to_string(), "Unknown");
+    }
+
+    #[test]
+    fn test_power_supply_type_display() {
+        assert_eq!(PowerSupplyType::Mains.to_string(), "Mains");
+        assert_eq!(PowerSupplyType::Battery.to_string(), "Battery");
+        assert_eq!(PowerSupplyType::Usb.to_string(), "USB");
+        assert_eq!(PowerSupplyType::UsbPd.to_string(), "USB-PD");
+        assert_eq!(PowerSupplyType::Ups.to_string(), "UPS");
+    }
+
+    #[test]
+    fn test_battery_health_display() {
+        assert_eq!(BatteryHealth::Good.to_string(), "Good");
+        assert_eq!(BatteryHealth::Dead.to_string(), "Dead");
+        assert_eq!(BatteryHealth::Overheat.to_string(), "Overheat");
+        assert_eq!(BatteryHealth::Cold.to_string(), "Cold");
+    }
+
+    #[test]
+    fn test_power_supply_serde_roundtrip() {
+        let info = PowerSupplyInfo::new("AC0");
+        let json = serde_json::to_string(&info).unwrap();
+        let parsed: PowerSupplyInfo = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.name, "AC0");
+        assert_eq!(parsed.supply_type, PowerSupplyType::Unknown);
+    }
+}

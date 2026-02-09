@@ -1,4 +1,4 @@
-//! Error types for GPU Interface (gpui)
+//! Error types for Silicon Monitor
 
 use std::io;
 use thiserror::Error;
@@ -54,9 +54,6 @@ pub enum SimonError {
     #[error("Initialization error: {0}")]
     InitializationError(String),
 
-    /// Configuration error
-    #[error("Configuration error: {0}")]
-    ConfigError(String),
 
     /// Network error (for remote backends)
     #[error("Network error: {0}")]
@@ -70,7 +67,7 @@ pub enum SimonError {
     #[error("Not implemented: {0}")]
     NotImplemented(String),
 
-    /// Configuration error (alias for ConfigError)
+    /// Configuration error
     #[error("Configuration error: {0}")]
     Configuration(String),
 
@@ -102,9 +99,6 @@ pub enum SimonError {
     #[error("Disk error: {0}")]
     DiskError(String),
 
-    /// Network-related error
-    #[error("Network error: {0}")]
-    NetworkError(String),
 
     /// Hardware-related error
     #[error("Hardware error: {0}")]
@@ -123,7 +117,7 @@ pub enum SimonError {
     Other(String),
 }
 
-/// Main error type for unified GPU interface
+/// Main error type for Silicon Monitor
 #[derive(Error, Debug)]
 pub enum Error {
     /// I/O error

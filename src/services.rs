@@ -21,7 +21,7 @@
 //! }
 //! ```
 
-use crate::error::{SimonError, Result};
+use crate::error::{Result, SimonError};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::Instant;
@@ -762,10 +762,7 @@ impl ServiceMonitor {
                 "Failed to start service '{}' (run as Administrator)",
                 name
             ))),
-            Err(e) => Err(SimonError::System(format!(
-                "Failed to execute sc: {}",
-                e
-            ))),
+            Err(e) => Err(SimonError::System(format!("Failed to execute sc: {}", e))),
         }
     }
 
@@ -781,10 +778,7 @@ impl ServiceMonitor {
                 "Failed to stop service '{}' (run as Administrator)",
                 name
             ))),
-            Err(e) => Err(SimonError::System(format!(
-                "Failed to execute sc: {}",
-                e
-            ))),
+            Err(e) => Err(SimonError::System(format!("Failed to execute sc: {}", e))),
         }
     }
 
@@ -809,10 +803,7 @@ impl ServiceMonitor {
                 "Failed to configure service '{}' (run as Administrator)",
                 name
             ))),
-            Err(e) => Err(SimonError::System(format!(
-                "Failed to execute sc: {}",
-                e
-            ))),
+            Err(e) => Err(SimonError::System(format!("Failed to execute sc: {}", e))),
         }
     }
 
@@ -992,5 +983,68 @@ pub fn common_services() -> Vec<&'static str> {
     #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
     {
         vec![]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_service_info_new_defaults() {
+        let info = ServiceInfo::new("sshd");
+        assert_eq!(info.name, "sshd");
+        assert_eq!(info.status, ServiceStatus::Unknown);
+        assert!(!info.enabled);
+        assert!(info.dependencies.is_empty());
+        assert!(info.dependents.is_empty());
+        assert!(info.pid.is_none());
+    }
+
+    #[test]
+    fn test_service_info_is_active() {
+        let mut info = ServiceInfo::new("test");
+        assert!(!info.is_active());
+        info.status = ServiceStatus::Running;
+        assert!(info.is_active());
+        info.status = ServiceStatus::Stopped;
+        assert!(!info.is_active());
+    }
+
+    #[test]
+    fn test_service_info_is_failed() {
+        let mut info = ServiceInfo::new("test");
+        assert!(!info.is_failed());
+        info.status = ServiceStatus::Failed;
+        assert!(info.is_failed());
+    }
+
+    #[test]
+    fn test_service_status_display() {
+        assert_eq!(ServiceStatus::Running.to_string(), "running");
+        assert_eq!(ServiceStatus::Stopped.to_string(), "stopped");
+        assert_eq!(ServiceStatus::Starting.to_string(), "starting");
+        assert_eq!(ServiceStatus::Stopping.to_string(), "stopping");
+        assert_eq!(ServiceStatus::Failed.to_string(), "failed");
+        assert_eq!(ServiceStatus::Unknown.to_string(), "unknown");
+        assert_eq!(ServiceStatus::NotFound.to_string(), "not-found");
+    }
+
+    #[test]
+    fn test_startup_type_display() {
+        assert_eq!(StartupType::Automatic.to_string(), "automatic");
+        assert_eq!(StartupType::Manual.to_string(), "manual");
+        assert_eq!(StartupType::Disabled.to_string(), "disabled");
+        assert_eq!(StartupType::OnDemand.to_string(), "on-demand");
+        assert_eq!(StartupType::Unknown.to_string(), "unknown");
+    }
+
+    #[test]
+    fn test_service_info_serde_roundtrip() {
+        let info = ServiceInfo::new("nginx");
+        let json = serde_json::to_string(&info).unwrap();
+        let parsed: ServiceInfo = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.name, "nginx");
+        assert_eq!(parsed.status, ServiceStatus::Unknown);
     }
 }

@@ -480,3 +480,132 @@ mod macos {
         Ok(stats)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_cpu_time_total() {
+        let ct = CpuTime {
+            user: 100,
+            nice: 10,
+            system: 50,
+            idle: 200,
+            iowait: 5,
+            irq: 3,
+            softirq: 2,
+            steal: 1,
+            guest: 0,
+            guest_nice: 0,
+        };
+        assert_eq!(ct.total(), 100 + 10 + 50 + 200 + 5 + 3 + 2 + 1);
+    }
+
+    #[test]
+    fn test_cpu_time_busy() {
+        let ct = CpuTime {
+            user: 100,
+            nice: 10,
+            system: 50,
+            idle: 200,
+            iowait: 5,
+            irq: 3,
+            softirq: 2,
+            steal: 1,
+            guest: 0,
+            guest_nice: 0,
+        };
+        assert_eq!(ct.busy(), 100 + 10 + 50 + 3 + 2 + 1);
+    }
+
+    #[test]
+    fn test_load_average_serde_roundtrip() {
+        let load = LoadAverage {
+            one: 1.5,
+            five: 2.0,
+            fifteen: 0.8,
+        };
+        let json = serde_json::to_string(&load).unwrap();
+        let parsed: LoadAverage = serde_json::from_str(&json).unwrap();
+        assert!((parsed.one - 1.5).abs() < f64::EPSILON);
+        assert!((parsed.five - 2.0).abs() < f64::EPSILON);
+        assert!((parsed.fifteen - 0.8).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_uptime_string_formatting() {
+        let stats = SystemStats {
+            load_average: None,
+            uptime_seconds: Some(90061),
+            idle_seconds: None,
+            boot_time: None,
+            num_cpus: 4,
+            total_processes: 100,
+            running_processes: 5,
+            cpu_time: None,
+            vm_stats: None,
+            hostname: None,
+            kernel_version: None,
+        };
+        assert_eq!(stats.uptime_string(), "1 days, 01:01");
+    }
+
+    #[test]
+    fn test_uptime_string_no_days() {
+        let stats = SystemStats {
+            load_average: None,
+            uptime_seconds: Some(3661),
+            idle_seconds: None,
+            boot_time: None,
+            num_cpus: 4,
+            total_processes: 100,
+            running_processes: 5,
+            cpu_time: None,
+            vm_stats: None,
+            hostname: None,
+            kernel_version: None,
+        };
+        assert_eq!(stats.uptime_string(), "01:01:01");
+    }
+
+    #[test]
+    fn test_load_string_none() {
+        let stats = SystemStats {
+            load_average: None,
+            uptime_seconds: None,
+            idle_seconds: None,
+            boot_time: None,
+            num_cpus: 4,
+            total_processes: 0,
+            running_processes: 0,
+            cpu_time: None,
+            vm_stats: None,
+            hostname: None,
+            kernel_version: None,
+        };
+        assert_eq!(stats.load_string(), "N/A");
+    }
+
+    #[test]
+    fn test_load_string_present() {
+        let stats = SystemStats {
+            load_average: Some(LoadAverage {
+                one: 1.5,
+                five: 2.0,
+                fifteen: 0.8,
+            }),
+            uptime_seconds: None,
+            idle_seconds: None,
+            boot_time: None,
+            num_cpus: 4,
+            total_processes: 0,
+            running_processes: 0,
+            cpu_time: None,
+            vm_stats: None,
+            hostname: None,
+            kernel_version: None,
+        };
+        assert_eq!(stats.load_string(), "1.50, 2.00, 0.80");
+    }
+}

@@ -964,3 +964,83 @@ impl std::fmt::Display for Error {
 }
 
 impl std::error::Error for Error {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::{IpAddr, Ipv4Addr};
+
+    #[test]
+    fn test_protocol_display() {
+        assert_eq!(Protocol::Tcp.to_string(), "TCP");
+        assert_eq!(Protocol::Tcp6.to_string(), "TCP6");
+        assert_eq!(Protocol::Udp.to_string(), "UDP");
+        assert_eq!(Protocol::Udp6.to_string(), "UDP6");
+    }
+
+    #[test]
+    fn test_connection_state_default() {
+        assert_eq!(ConnectionState::default(), ConnectionState::Unknown);
+    }
+
+    #[test]
+    fn test_connection_state_display_all_variants() {
+        let states = [
+            ConnectionState::Unknown,
+            ConnectionState::Closed,
+            ConnectionState::Listen,
+            ConnectionState::SynSent,
+            ConnectionState::SynReceived,
+            ConnectionState::Established,
+            ConnectionState::FinWait1,
+            ConnectionState::FinWait2,
+            ConnectionState::CloseWait,
+            ConnectionState::Closing,
+            ConnectionState::LastAck,
+            ConnectionState::TimeWait,
+            ConnectionState::DeleteTcb,
+            ConnectionState::Stateless,
+        ];
+        for state in &states {
+            let s = state.to_string();
+            assert!(!s.is_empty(), "Display for {:?} should not be empty", state);
+        }
+    }
+
+    #[test]
+    fn test_protocol_serde_roundtrip() {
+        for proto in &[Protocol::Tcp, Protocol::Tcp6, Protocol::Udp, Protocol::Udp6] {
+            let json = serde_json::to_string(proto).unwrap();
+            let parsed: Protocol = serde_json::from_str(&json).unwrap();
+            assert_eq!(&parsed, proto);
+        }
+    }
+
+    #[test]
+    fn test_connection_info_serde_roundtrip() {
+        let info = ConnectionInfo {
+            protocol: Protocol::Tcp,
+            local_address: "127.0.0.1:8080".into(),
+            local_ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
+            local_port: 8080,
+            remote_address: Some("10.0.0.1:443".into()),
+            remote_ip: Some(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))),
+            remote_port: Some(443),
+            state: ConnectionState::Established,
+            pid: Some(1234),
+            process_name: Some("curl".into()),
+        };
+        let json = serde_json::to_string(&info).unwrap();
+        let parsed: ConnectionInfo = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.protocol, Protocol::Tcp);
+        assert_eq!(parsed.local_port, 8080);
+        assert_eq!(parsed.state, ConnectionState::Established);
+        assert_eq!(parsed.pid, Some(1234));
+    }
+
+    #[test]
+    fn test_connection_monitor_new() {
+        let monitor = ConnectionMonitor::new();
+        assert!(monitor.is_ok());
+    }
+}

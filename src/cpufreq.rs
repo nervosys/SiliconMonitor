@@ -1320,3 +1320,73 @@ pub fn available_governors() -> Result<Vec<Governor>> {
     let monitor = CpuFreqMonitor::new()?;
     Ok(monitor.available_governors())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_governor_display_roundtrip() {
+        let governors = vec![
+            Governor::Performance,
+            Governor::Powersave,
+            Governor::Ondemand,
+            Governor::Conservative,
+            Governor::Userspace,
+            Governor::Schedutil,
+            Governor::IntelPstate,
+            Governor::AmdPstate,
+            Governor::Interactive,
+        ];
+        for gov in governors {
+            let s = gov.to_string();
+            let parsed: Governor = s.parse().unwrap();
+            assert_eq!(parsed, gov);
+        }
+    }
+
+    #[test]
+    fn test_governor_unknown_variant() {
+        let gov: Governor = "custom_gov".parse().unwrap();
+        assert_eq!(gov, Governor::Unknown("custom_gov".to_string()));
+        assert_eq!(gov.to_string(), "custom_gov");
+    }
+
+    #[test]
+    fn test_energy_preference_display() {
+        assert_eq!(EnergyPreference::Performance.to_string(), "performance");
+        assert_eq!(
+            EnergyPreference::BalancePerformance.to_string(),
+            "balance_performance"
+        );
+        assert_eq!(EnergyPreference::BalancePower.to_string(), "balance_power");
+        assert_eq!(EnergyPreference::Power.to_string(), "power");
+    }
+
+    #[test]
+    fn test_governor_serde_roundtrip() {
+        let gov = Governor::Schedutil;
+        let json = serde_json::to_string(&gov).unwrap();
+        let parsed: Governor = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, gov);
+
+        let gov_unk = Governor::Unknown("turbo".into());
+        let json = serde_json::to_string(&gov_unk).unwrap();
+        let parsed: Governor = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, gov_unk);
+    }
+
+    #[test]
+    fn test_energy_preference_serde_roundtrip() {
+        for pref in &[
+            EnergyPreference::Performance,
+            EnergyPreference::BalancePerformance,
+            EnergyPreference::BalancePower,
+            EnergyPreference::Power,
+        ] {
+            let json = serde_json::to_string(pref).unwrap();
+            let parsed: EnergyPreference = serde_json::from_str(&json).unwrap();
+            assert_eq!(&parsed, pref);
+        }
+    }
+}

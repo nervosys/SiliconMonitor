@@ -120,7 +120,8 @@ default = []
 # Platform-specific silicon support
 nvidia = ["nvml-wrapper"] # NVML support for NVIDIA GPUs (Jetson & desktop)
 amd = [] # AMD GPU support via DRM (direct implementation)
-jetson-utils = [] # Unsafe Jetson utilities (swap, clocks, power_mode) - see SECURITY.md
+jetson-utils = [
+] # Unsafe Jetson utilities (swap, clocks, power_mode) - see SECURITY.md
 intel = ["drm", "drm-ffi"] # Intel GPU support via i915/xe drivers
 apple = [
     "plist",

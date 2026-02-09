@@ -232,11 +232,11 @@ impl ConsentManager {
         let config_dir = if cfg!(windows) {
             std::env::var("APPDATA")
                 .map(PathBuf::from)
-                .map_err(|_| SimonError::ConfigError("APPDATA not set".into()))?
+                .map_err(|_| SimonError::Configuration("APPDATA not set".into()))?
         } else {
             std::env::var("HOME")
                 .map(|h| PathBuf::from(h).join(".config"))
-                .map_err(|_| SimonError::ConfigError("HOME not set".into()))?
+                .map_err(|_| SimonError::Configuration("HOME not set".into()))?
         };
 
         Ok(config_dir.join("simon").join("consent.toml"))
@@ -252,10 +252,10 @@ impl ConsentManager {
     pub fn load_from(path: &PathBuf) -> Result<Self> {
         let config = if path.exists() {
             let contents = fs::read_to_string(path)
-                .map_err(|e| SimonError::ConfigError(format!("Failed to read consent config: {}", e)))?;
+                .map_err(|e| SimonError::Configuration(format!("Failed to read consent config: {}", e)))?;
             
             toml::from_str(&contents)
-                .map_err(|e| SimonError::ConfigError(format!("Failed to parse consent config: {}", e)))?
+                .map_err(|e| SimonError::Configuration(format!("Failed to parse consent config: {}", e)))?
         } else {
             ConsentConfig::default()
         };
@@ -271,14 +271,14 @@ impl ConsentManager {
         // Create parent directory if it doesn't exist
         if let Some(parent) = self.config_path.parent() {
             fs::create_dir_all(parent)
-                .map_err(|e| SimonError::ConfigError(format!("Failed to create config directory: {}", e)))?;
+                .map_err(|e| SimonError::Configuration(format!("Failed to create config directory: {}", e)))?;
         }
 
         let contents = toml::to_string_pretty(&self.config)
-            .map_err(|e| SimonError::ConfigError(format!("Failed to serialize consent config: {}", e)))?;
+            .map_err(|e| SimonError::Configuration(format!("Failed to serialize consent config: {}", e)))?;
 
         fs::write(&self.config_path, contents)
-            .map_err(|e| SimonError::ConfigError(format!("Failed to write consent config: {}", e)))?;
+            .map_err(|e| SimonError::Configuration(format!("Failed to write consent config: {}", e)))?;
 
         Ok(())
     }
@@ -472,7 +472,7 @@ impl ConsentManager {
             let mut input = String::new();
             std::io::stdin()
                 .read_line(&mut input)
-                .map_err(|e| SimonError::ConfigError(format!("Failed to read input: {}", e)))?;
+                .map_err(|e| SimonError::Configuration(format!("Failed to read input: {}", e)))?;
             
             let input = input.trim().to_lowercase();
             match input.as_str() {

@@ -1732,11 +1732,11 @@ impl AiDataApi {
         let interfaces = if active_only {
             net_mon
                 .active_interfaces()
-                .map_err(|e| SimonError::NetworkError(e.to_string()))?
+                .map_err(|e| SimonError::Network(e.to_string()))?
         } else {
             net_mon
                 .interfaces()
-                .map_err(|e| SimonError::NetworkError(e.to_string()))?
+                .map_err(|e| SimonError::Network(e.to_string()))?
         };
 
         let list: Vec<_> = interfaces
@@ -1769,7 +1769,7 @@ impl AiDataApi {
 
         let interfaces = net_mon
             .active_interfaces()
-            .map_err(|e| SimonError::NetworkError(e.to_string()))?;
+            .map_err(|e| SimonError::Network(e.to_string()))?;
 
         let bandwidth: Vec<_> = interfaces
             .iter()
@@ -1804,7 +1804,7 @@ impl AiDataApi {
 
         let iface = net_mon
             .interface_by_name(interface_name)
-            .map_err(|e| SimonError::NetworkError(e.to_string()))?
+            .map_err(|e| SimonError::Network(e.to_string()))?
             .ok_or_else(|| {
                 SimonError::InvalidArgument(format!("Interface {} not found", interface_name))
             })?;

@@ -198,15 +198,15 @@ println!("{}", json);
 
 ## Feature Flags
 
-| Feature | Description |
-|---------|-------------|
-| `nvidia` | NVIDIA GPU support (NVML) |
-| `amd` | AMD GPU support (sysfs/DRM) |
-| `intel` | Intel GPU support (i915/xe) |
-| `apple` | Apple Silicon (M1/M2/M3/M4) |
-| `cli` | Command-line interface + TUI |
-| `gui` | Native GUI (egui) |
-| `full` | All features enabled |
+| Feature        | Description                               |
+| -------------- | ----------------------------------------- |
+| `nvidia`       | NVIDIA GPU support (NVML)                 |
+| `amd`          | AMD GPU support (sysfs/DRM)               |
+| `intel`        | Intel GPU support (i915/xe)               |
+| `apple`        | Apple Silicon (M1/M2/M3/M4)               |
+| `cli`          | Command-line interface + TUI              |
+| `gui`          | Native GUI (egui)                         |
+| `full`         | All features enabled                      |
 | `jetson-utils` | Unsafe Jetson utilities (see SECURITY.md) |
 
 ## Examples
