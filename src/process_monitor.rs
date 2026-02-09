@@ -807,7 +807,7 @@ pub struct ProcessMonitorInfo {
     pub user: Option<String>,
     /// Process category (smart classification)
     pub category: ProcessCategory,
-    /// CPU usage percentage (0-100 per core, can exceed 100 on multi-core)
+    /// CPU usage percentage (delta-based between samples; first sample uses lifetime average)
     pub cpu_percent: f32,
     /// Memory usage in bytes (Working Set / RSS)
     pub memory_bytes: u64,
@@ -855,6 +855,9 @@ pub struct ProcessMonitorInfo {
     pub gpu_process_type: ProcessGpuType,
     /// GPU memory percentage of total device memory
     pub gpu_memory_percentage: Option<f32>,
+    /// Cumulative CPU time in microseconds (used for delta-based CPU% calculation)
+    #[serde(skip)]
+    pub cpu_time_us: u64,
 }
 
 impl ProcessMonitorInfo {
@@ -930,6 +933,9 @@ pub struct ProcessMonitor {
     gpu_collection: Option<GpuCollection>,
     /// Cache of last update time (for CPU percentage calculation)
     last_update: std::time::Instant,
+    /// Previous per-process CPU times for delta-based CPU% calculation
+    /// Maps PID -> (cumulative_cpu_time_us, wall_clock_instant)
+    prev_cpu_times: HashMap<u32, (u64, std::time::Instant)>,
 }
 
 impl ProcessMonitor {
@@ -942,6 +948,7 @@ impl ProcessMonitor {
         Ok(Self {
             gpu_collection,
             last_update: std::time::Instant::now(),
+            prev_cpu_times: HashMap::new(),
         })
     }
 
@@ -953,6 +960,7 @@ impl ProcessMonitor {
         Ok(Self {
             gpu_collection: Some(gpu_collection),
             last_update: std::time::Instant::now(),
+            prev_cpu_times: HashMap::new(),
         })
     }
 
@@ -961,13 +969,36 @@ impl ProcessMonitor {
         Ok(Self {
             gpu_collection: None,
             last_update: std::time::Instant::now(),
+            prev_cpu_times: HashMap::new(),
         })
     }
 
     /// Get all running processes with GPU attribution
     pub fn processes(&mut self) -> Result<Vec<ProcessMonitorInfo>> {
+        let now = std::time::Instant::now();
+
         // Get system processes
         let mut system_processes = self.get_system_processes()?;
+
+        // Compute delta-based CPU% from stored previous samples
+        let mut new_cpu_times = HashMap::with_capacity(system_processes.len());
+        for proc in &mut system_processes {
+            if proc.cpu_time_us > 0 {
+                if let Some(&(prev_time_us, prev_instant)) = self.prev_cpu_times.get(&proc.pid) {
+                    let elapsed = now.duration_since(prev_instant);
+                    let elapsed_us = elapsed.as_micros() as f64;
+                    if elapsed_us > 0.0 && proc.cpu_time_us >= prev_time_us {
+                        let delta_cpu_us = (proc.cpu_time_us - prev_time_us) as f64;
+                        // CPU% = (cpu_time_delta / wall_time_delta) * 100
+                        // Can exceed 100% on multi-core systems
+                        proc.cpu_percent = ((delta_cpu_us / elapsed_us) * 100.0) as f32;
+                    }
+                }
+                // else: first sample — keep the lifetime-average from platform code
+                new_cpu_times.insert(proc.pid, (proc.cpu_time_us, now));
+            }
+        }
+        self.prev_cpu_times = new_cpu_times;
 
         // Add GPU information if available
         if let Some(ref gpu_collection) = self.gpu_collection {
@@ -981,7 +1012,7 @@ impl ProcessMonitor {
             }
         }
 
-        self.last_update = std::time::Instant::now();
+        self.last_update = now;
 
         Ok(system_processes)
     }
@@ -1319,6 +1350,7 @@ impl Default for ProcessMonitor {
         Self::new().unwrap_or_else(|_| Self {
             gpu_collection: None,
             last_update: std::time::Instant::now(),
+            prev_cpu_times: HashMap::new(),
         })
     }
 }
@@ -1411,12 +1443,16 @@ mod linux {
         let starttime: u64 = stat_fields[19].parse().unwrap_or(0);
         let vsize: u64 = stat_fields[20].parse().unwrap_or(0); // virtual memory size in bytes
 
-        // Calculate CPU percentage
-        let clk_tck = 100.0; // SC_CLK_TCK, typically 100
-        let total_time = (utime + stime) as f64 / clk_tck;
+        // Calculate CPU percentage (lifetime average as fallback for first delta sample)
+        let clk_tck: u64 = 100; // SC_CLK_TCK, typically 100
+        let total_ticks = utime + stime;
+        let total_time = total_ticks as f64 / clk_tck as f64;
         let seconds_since_boot = uptime;
-        let proc_uptime = (seconds_since_boot - (starttime as f64 / clk_tck)).max(1.0);
+        let proc_uptime = (seconds_since_boot - (starttime as f64 / clk_tck as f64)).max(1.0);
         let cpu_percent = ((total_time / proc_uptime) * 100.0) as f32;
+
+        // Cumulative CPU time in microseconds for delta-based calculation
+        let cpu_time_us = total_ticks * 1_000_000 / clk_tck;
 
         // Calculate start_time as unix timestamp
         // Boot time from /proc/stat's btime field, or approximate from uptime
@@ -1522,6 +1558,7 @@ mod linux {
             decoder_usage_percent: None,
             gpu_process_type: ProcessGpuType::Unknown,
             gpu_memory_percentage: None,
+            cpu_time_us,
         })
     }
 
@@ -1781,7 +1818,7 @@ mod windows_impl {
                         let mut kernel_time = Default::default();
                         let mut user_time = Default::default();
 
-                        let (cpu_percent, start_time) = if GetProcessTimes(
+                        let (cpu_percent, start_time, cpu_time_us) = if GetProcessTimes(
                             handle,
                             &mut creation_time,
                             &mut exit_time,
@@ -1796,6 +1833,9 @@ mod windows_impl {
                             let user_100ns = (user_time.dwHighDateTime as u64) << 32
                                 | (user_time.dwLowDateTime as u64);
 
+                            // Cumulative CPU time in microseconds for delta-based calculation
+                            let cpu_us = (kernel_100ns + user_100ns) / 10;
+
                             // Convert creation_time FILETIME to Unix timestamp
                             // FILETIME is 100ns intervals since Jan 1, 1601
                             // Unix epoch is Jan 1, 1970 - difference is 116444736000000000 (100ns intervals)
@@ -1808,10 +1848,8 @@ mod windows_impl {
                                 None
                             };
 
-                            // Calculate CPU% as lifetime average (same as Linux approach)
-                            // total_cpu_seconds / process_uptime_seconds * 100
-                            let total_cpu_secs =
-                                (kernel_100ns + user_100ns) as f64 / 10_000_000.0;
+                            // Calculate CPU% as lifetime average (fallback for first delta sample)
+                            let total_cpu_secs = cpu_us as f64 / 1_000_000.0;
 
                             // Get current time as FILETIME for uptime calculation
                             let now_ft =
@@ -1830,9 +1868,9 @@ mod windows_impl {
                                 0.0
                             };
 
-                            (pct, start_unix)
+                            (pct, start_unix, cpu_us)
                         } else {
-                            (0.0, None)
+                            (0.0, None, 0)
                         };
 
                         // Get user
@@ -1871,6 +1909,7 @@ mod windows_impl {
                             io_read_bytes,
                             io_write_bytes,
                             start_time,
+                            cpu_time_us,
                         });
 
                         let _ = CloseHandle(handle);
@@ -2053,11 +2092,11 @@ mod macos {
                     String::from_utf8_lossy(&task_info.pbsd.pbi_comm[..null_pos]).to_string()
                 };
 
-                // Convert times from microseconds to milliseconds
+                // Cumulative CPU time in microseconds for delta-based calculation
                 let cpu_time_us =
                     task_info.ptinfo.pti_total_user + task_info.ptinfo.pti_total_system;
 
-                // Calculate CPU% as lifetime average (same as Linux approach)
+                // Calculate CPU% as lifetime average (fallback for first delta sample)
                 let process_start_secs = task_info.pbsd.pbi_start_tvsec;
                 let now_secs = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
@@ -2118,6 +2157,7 @@ mod macos {
                     decoder_usage_percent: None,
                     gpu_process_type: ProcessGpuType::Unknown,
                     gpu_memory_percentage: None,
+                    cpu_time_us,
                 });
             }
         }
@@ -2159,6 +2199,7 @@ mod tests {
             encoder_usage_percent: None,
             decoder_usage_percent: None,
             gpu_process_type: ProcessGpuType::Unknown,
+            cpu_time_us: 0,
             gpu_memory_percentage: None,
         }
     }

@@ -1002,7 +1002,7 @@ Contributions are welcome! Areas that need help:
 
 - **Apple GPU Integration**: Metal Performance Shaders / IOKit for Apple Silicon GPU metrics
 - **macOS Process I/O**: I/O read/write bytes and handle counts on macOS
-- **Delta-based CPU%**: Current CPU% uses lifetime average; real-time delta-based sampling would match Task Manager/top behavior
+- **CPU% refinements**: CPU% now uses delta-based sampling (matching Task Manager/top behavior); further improvements could include per-core attribution
 - **Documentation**: More examples, tutorials, API documentation
 - **Testing**: Multi-GPU setups, edge cases, platform-specific bugs
 - **GUI**: Native desktop application (egui) — planned but not yet implemented
