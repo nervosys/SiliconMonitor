@@ -734,6 +734,9 @@ impl GpuCollection {
         #[cfg(feature = "intel")]
         collection.detect_intel()?;
 
+        #[cfg(feature = "apple")]
+        collection.detect_apple()?;
+
         Ok(collection)
     }
 
@@ -779,6 +782,23 @@ impl GpuCollection {
 
         // Fall back to legacy implementation
         intel::detect_gpus(self)?;
+        Ok(())
+    }
+
+    /// Detect Apple Silicon GPUs
+    #[cfg(feature = "apple")]
+    pub fn detect_apple(&mut self) -> Result<(), crate::Error> {
+        #[cfg(target_os = "macos")]
+        {
+            match apple::AppleGpu::detect_gpus() {
+                Ok(gpus) => {
+                    for gpu in gpus {
+                        self.add_gpu(Box::new(gpu));
+                    }
+                }
+                Err(_) => {} // Silently skip if no Apple GPU found
+            }
+        }
         Ok(())
     }
 

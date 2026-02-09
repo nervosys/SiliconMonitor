@@ -802,11 +802,11 @@ cargo run --release --features full --example agent_simple
 
 ## Platform Support
 
-| Platform | CPU | Memory | Disk | GPU (NVIDIA) | GPU (AMD) | GPU (Intel) | Network | Audio | Bluetooth | Display | USB |
-| -------- | --- | ------ | ---- | ------------ | --------- | ----------- | ------- | ----- | --------- | ------- | --- |
-| Linux    | ✅   | ✅      | ✅    | ✅            | ✅         | ✅           | ✅       | ✅     | ✅         | ✅       | ✅   |
-| Windows  | ✅   | ✅      | ✅    | ✅            | ✅         | ✅           | ✅       | ✅     | ✅         | ✅       | ✅   |
-| macOS    | ✅   | ✅      | ✅    | ❌            | ❌         | ❌           | ✅       | ✅     | ✅         | ✅       | ✅   |
+| Platform | CPU | Memory | Disk | GPU (NVIDIA) | GPU (AMD) | GPU (Intel) | GPU (Apple) | Network | Audio | Bluetooth | Display | USB |
+| -------- | --- | ------ | ---- | ------------ | --------- | ----------- | ----------- | ------- | ----- | --------- | ------- | --- |
+| Linux    | ✅   | ✅      | ✅    | ✅            | ✅         | ✅           | ❌           | ✅       | ✅     | ✅         | ✅       | ✅   |
+| Windows  | ✅   | ✅      | ✅    | ✅            | ✅         | ✅           | ❌           | ✅       | ✅     | ✅         | ✅       | ✅   |
+| macOS    | ✅   | ✅      | ✅    | ❌            | ❌         | ❌           | ✅           | ✅       | ✅     | ✅         | ✅       | ✅   |
 
 ✅ Fully Supported | 🚧 Partial/In Progress | ❌ Not Supported
 
@@ -834,6 +834,13 @@ cargo run --release --features full --example agent_simple
 - **Metrics**: GT frequency, memory (discrete GPUs), temperature, power via hwmon
 - **Devices**: Arc A-series, Iris Xe, UHD Graphics, Data Center GPU Max
 - **Requirements**: i915 (legacy) or xe (modern) kernel driver (Linux), Intel graphics driver (Windows)
+
+**Apple:**
+
+- **macOS**: `powermetrics` + `system_profiler` for GPU detection and monitoring
+- **Metrics**: Utilization, frequency, power draw (via powermetrics plist output)
+- **Devices**: Apple Silicon M1/M2/M3/M4 (Base, Pro, Max, Ultra) integrated GPUs
+- **Requirements**: macOS with Apple Silicon; sudo for full powermetrics data
 
 ## Architecture
 
@@ -1000,7 +1007,7 @@ cargo run --release --features nvidia --example gpu_monitor
 
 Contributions are welcome! Areas that need help:
 
-- **Apple GPU Integration**: Metal Performance Shaders / IOKit for Apple Silicon GPU metrics
+- **Apple GPU enhancements**: Apple Silicon GPU auto-detection is integrated via `GpuCollection::auto_detect()`; could add Metal Performance Shaders for richer metrics
 - **macOS Process I/O**: I/O read/write bytes and handle counts on macOS
 - **CPU% refinements**: CPU% now uses delta-based sampling (matching Task Manager/top behavior); further improvements could include per-core attribution
 - **Documentation**: More examples, tutorials, API documentation
