@@ -316,6 +316,51 @@ impl LinuxSiliconMonitor {
 
         CpuClusterType::Standard
     }
+
+    /// Read NPU utilization using runtime PM active/suspended time deltas.
+    ///
+    /// The kernel exposes cumulative `runtime_active_time` and `runtime_suspended_time`
+    /// in milliseconds.  By comparing two readings we can derive a duty-cycle percentage.
+    fn read_npu_utilization(accel_path: &Path) -> u8 {
+        use std::sync::Mutex;
+        use std::collections::HashMap;
+
+        // Static storage for previous readings keyed by sysfs path
+        static PREV: std::sync::OnceLock<Mutex<HashMap<String, (u64, u64)>>> =
+            std::sync::OnceLock::new();
+        let prev_map = PREV.get_or_init(|| Mutex::new(HashMap::new()));
+
+        let key = accel_path.to_string_lossy().to_string();
+
+        let active = std::fs::read_to_string(accel_path.join("device/power/runtime_active_time"))
+            .ok()
+            .and_then(|s| s.trim().parse::<u64>().ok());
+        let suspended = std::fs::read_to_string(accel_path.join("device/power/runtime_suspended_time"))
+            .ok()
+            .and_then(|s| s.trim().parse::<u64>().ok());
+
+        if let (Some(active_ms), Some(suspended_ms)) = (active, suspended) {
+            if let Ok(mut map) = prev_map.lock() {
+                if let Some(&(prev_active, prev_suspended)) = map.get(&key) {
+                    let delta_active = active_ms.saturating_sub(prev_active);
+                    let delta_suspended = suspended_ms.saturating_sub(prev_suspended);
+                    let delta_total = delta_active + delta_suspended;
+
+                    // Update stored values
+                    map.insert(key, (active_ms, suspended_ms));
+
+                    if delta_total > 0 {
+                        return ((delta_active * 100) / delta_total).min(100) as u8;
+                    }
+                } else {
+                    // First reading — store baseline, return 0
+                    map.insert(key, (active_ms, suspended_ms));
+                }
+            }
+        }
+
+        0
+    }
 }
 
 impl SiliconMonitor for LinuxSiliconMonitor {
@@ -432,16 +477,8 @@ impl SiliconMonitor for LinuxSiliconMonitor {
                         })
                         .unwrap_or_else(|| format!("NPU {}", index));
 
-                    // Try to read utilization from device stats
-                    let utilization =
-                        std::fs::read_to_string(path.join("device/power/runtime_active_time"))
-                            .ok()
-                            .and_then(|s| s.trim().parse::<u64>().ok())
-                            .map(|active_time| {
-                                // Rough approximation based on active time
-                                (active_time % 100) as u8
-                            })
-                            .unwrap_or(0);
+                    // Read utilization via runtime PM active/suspended time deltas
+                    let utilization = Self::read_npu_utilization(&path);
 
                     // Try to read power consumption
                     let power_watts =
@@ -462,35 +499,45 @@ impl SiliconMonitor for LinuxSiliconMonitor {
             }
         }
 
-        // AMD AI Engine detection via /sys/class/drm
-        if let Ok(entries) = std::fs::read_dir("/sys/class/drm") {
+        // AMD XDNA NPU detection via /sys/class/accel
+        // AMD NPUs (Ryzen AI / XDNA) appear as accel devices with vendor 0x1022
+        if let Ok(entries) = std::fs::read_dir("/sys/class/accel") {
             for entry in entries.flatten() {
                 let path = entry.path();
-                let name = entry.file_name().to_string_lossy().to_string();
+                let dev_name = entry.file_name().to_string_lossy().to_string();
 
-                // Look for AMD devices with AI engine
-                if name.starts_with("card") && !name.contains("-") {
-                    if let Ok(vendor) = std::fs::read_to_string(path.join("device/vendor")) {
-                        if vendor.trim() == "0x1002" {
-                            // AMD vendor ID
-                            // Check for AI engine support
-                            if let Ok(device_id) =
-                                std::fs::read_to_string(path.join("device/device"))
-                            {
-                                let device_id = device_id.trim();
-                                // RDNA3+ devices with AI accelerators
-                                if matches!(device_id, "0x744c" | "0x7448" | "0x73df" | "0x73ef") {
-                                    npus.push(NpuInfo {
-                                        name: format!("AMD AI Engine ({})", name),
-                                        vendor: "AMD".to_string(),
-                                        cores: Some(256), // Typical for RDNA3
-                                        utilization: 0,   // Would need ROCm integration
-                                        power_watts: None,
-                                        frequency_mhz: None,
-                                    });
-                                }
-                            }
-                        }
+                // Check for AMD vendor ID (0x1022) in the underlying PCI device
+                if let Ok(vendor) = std::fs::read_to_string(path.join("device/vendor")) {
+                    if vendor.trim() == "0x1022" {
+                        // Read device ID for model identification
+                        let device_id = std::fs::read_to_string(path.join("device/device"))
+                            .ok()
+                            .map(|s| s.trim().to_string())
+                            .unwrap_or_default();
+
+                        let npu_name = match device_id.as_str() {
+                            "0x1502" => "AMD Ryzen AI (Phoenix XDNA)".to_string(),
+                            "0x17f0" => "AMD Ryzen AI (Hawk Point XDNA)".to_string(),
+                            "0x1569" => "AMD Ryzen AI (Strix Point XDNA2)".to_string(),
+                            _ => format!("AMD XDNA NPU ({})", dev_name),
+                        };
+
+                        let utilization = Self::read_npu_utilization(&path);
+
+                        let power_watts =
+                            std::fs::read_to_string(path.join("device/power/power_usage"))
+                                .ok()
+                                .and_then(|s| s.trim().parse::<f32>().ok())
+                                .map(|p| p / 1_000_000.0);
+
+                        npus.push(NpuInfo {
+                            name: npu_name,
+                            vendor: "AMD".to_string(),
+                            cores: None,
+                            utilization,
+                            power_watts,
+                            frequency_mhz: None,
+                        });
                     }
                 }
             }
