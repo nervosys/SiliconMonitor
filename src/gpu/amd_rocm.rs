@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: OCL-1.0
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! AMD GPU monitoring via sysfs
 //!
 //! This module provides AMD GPU monitoring through sysfs on Linux.

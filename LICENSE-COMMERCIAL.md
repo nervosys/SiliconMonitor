@@ -6,30 +6,26 @@ Copyright (C) 2024-2026 NERVOSYS. All rights reserved.
 
 Silicon Monitor is available under two licensing options:
 
-### 1. Open Community License v1 (OCL)
+### 1. GNU Affero General Public License v3 (AGPL-3.0-or-later)
 
-The default license for Silicon Monitor is the **Open Community License v1** (OCL). Under this license:
+The default license for Silicon Monitor is the **GNU Affero General Public License v3**. Under this license:
 
-**Non-commercial end users** may freely use, copy, modify, and hack the software. If you distribute derivatives, you must do so under the OCL or a compatible non-commercial share-alike license.
+- You may freely use, copy, modify, and distribute the software.
+- If you modify the software and make it available over a network (e.g., as a web service), you **must** make the complete source code of your modified version available to users of that service.
+- Any derivative works must also be licensed under the AGPL v3.
+- Full text: [LICENSE](LICENSE)
 
-**Commercial business users** may use and modify the software solely for internal production use. You must not copy, replicate, or redistribute the software or its components for any commercial purpose beyond internal use without obtaining a separate business license.
+### 2. Commercial License
 
-**Data mining restriction**: Systematic or automated text/data mining of the software is prohibited without explicit permission.
+If the AGPL requirements are incompatible with your use case — for example, if you want to:
 
-See [LICENSE](LICENSE) for the full OCL v1 text.  
-Canonical license: <https://github.com/OpenCommunityLicence/OpenCommunityLicence>
-
-### 2. Commercial Business License
-
-If the OCL terms are not suitable for your use case — for example, if you want to:
-
-- Distribute Silicon Monitor as part of a commercial product
-- Resell or white-label Silicon Monitor
-- Offer Silicon Monitor as a hosted/SaaS service
-- Replicate or embed the software in ways beyond internal production use
+- Integrate Silicon Monitor into proprietary/closed-source software
+- Distribute Silicon Monitor without disclosing your source code
+- Offer Silicon Monitor as a hosted/SaaS service without AGPL obligations
+- Use the software under terms that do not require network-use disclosure
 - Receive dedicated support, warranty, or indemnification
 
-Then a **commercial business license** is available from NERVOSYS.
+Then a **commercial license** is available from NERVOSYS.
 
 ## Obtaining a Commercial License
 
@@ -40,6 +36,8 @@ For commercial licensing inquiries, please contact:
 
 Commercial licenses are available with flexible terms tailored to your needs, including per-seat, per-deployment, and enterprise-wide options.
 
-## Contributor License Agreement
+## Contributor License Agreement (CLA)
 
-By contributing to Silicon Monitor, you agree that your contributions may be distributed under both the OCL and commercial licenses. This enables the dual-licensing model to work for all users. See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
+All contributors must agree to the [Contributor License Agreement](CLA.md) before their contributions can be accepted. By submitting a pull request, you agree that your contributions may be distributed under both the AGPL v3 and commercial licenses. This enables the dual-licensing model to work for all users.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines.

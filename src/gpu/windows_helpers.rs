@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: OCL-1.0
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2024 NervoSys
 
 //! Shared Windows GPU monitoring helpers

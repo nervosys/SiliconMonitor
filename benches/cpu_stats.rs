@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: OCL-1.0
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Benchmark for CPU statistics collection.
 //!
 //! Measures the cost of reading per-core CPU stats from the platform.
