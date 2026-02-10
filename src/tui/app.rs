@@ -3,6 +3,7 @@
 use crate::agent::{Agent, AgentConfig, AgentResponse};
 use crate::gpu::traits::Device;
 use crate::network_monitor::NetworkMonitor;
+use crate::silicon::NpuInfo;
 use crate::{ProcessMonitor, ProcessMonitorInfo, SiliconMonitor};
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
@@ -670,6 +671,37 @@ impl From<&GpuInfo> for AcceleratorInfo {
     }
 }
 
+impl From<&NpuInfo> for AcceleratorInfo {
+    fn from(npu: &NpuInfo) -> Self {
+        AcceleratorInfo {
+            name: npu.name.clone(),
+            vendor: npu.vendor.clone(),
+            accel_type: AcceleratorType::Npu,
+            utilization: npu.utilization as f32,
+            temperature: None,
+            power: npu.power_watts,
+            power_limit: None,
+            memory_total: 0,
+            memory_used: 0,
+            clock_core: npu.frequency_mhz,
+            clock_memory: None,
+            fan_speed_rpm: None,
+            fan_speed_percent: None,
+            pcie_gen: None,
+            pcie_width: None,
+            pcie_throughput: None,
+            encoder_util: None,
+            decoder_util: None,
+            encoder_last_active: None,
+            decoder_last_active: None,
+            status: None,
+            firmware_version: None,
+            serial: None,
+            pcie_slot: None,
+        }
+    }
+}
+
 #[derive(Clone, Default)]
 pub struct SystemInfo {
     pub hostname: String,
@@ -941,6 +973,41 @@ impl App {
     /// Check if app is still initializing
     pub fn is_loading(&self) -> bool {
         self.init_state == InitState::Loading
+    }
+
+    /// Query NPU info from the platform-specific silicon monitor.
+    fn query_npus() -> std::result::Result<Vec<NpuInfo>, Box<dyn std::error::Error>> {
+        use crate::silicon::SiliconMonitor as SiliconMonitorTrait;
+
+        #[cfg(target_os = "linux")]
+        {
+            let monitor = crate::silicon::linux::LinuxSiliconMonitor::new()?;
+            Ok(monitor.npu_info()?)
+        }
+
+        #[cfg(target_os = "windows")]
+        {
+            let monitor = crate::silicon::windows::WindowsSiliconMonitor::new()?;
+            Ok(monitor.npu_info()?)
+        }
+
+        #[cfg(target_os = "macos")]
+        {
+            #[cfg(feature = "apple")]
+            {
+                let monitor = crate::silicon::apple::AppleSiliconMonitor::new()?;
+                Ok(monitor.npu_info()?)
+            }
+            #[cfg(not(feature = "apple"))]
+            {
+                Ok(Vec::new())
+            }
+        }
+
+        #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
+        {
+            Ok(Vec::new())
+        }
     }
 
     /// Update all monitoring data (legacy - calls both fast and slow)
@@ -1307,8 +1374,13 @@ impl App {
             }
         }
 
-        // Update unified accelerators list from GPU info
+        // Update unified accelerators list from GPU info + NPUs
         self.accelerators = self.gpu_info.iter().map(AcceleratorInfo::from).collect();
+
+        // Append NPU accelerators from platform-specific silicon monitor
+        if let Ok(npus) = Self::query_npus() {
+            self.accelerators.extend(npus.iter().map(AcceleratorInfo::from));
+        }
 
         // Update accelerator histories
         while self.accelerator_histories.len() < self.accelerators.len() {
