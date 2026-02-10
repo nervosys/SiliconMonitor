@@ -2,16 +2,32 @@
 name = "silicon-monitor"
 version = "0.3.0"
 edition = "2021"
+rust-version = "1.70"
 authors = ["nervosys"]
 license = "AGPL-3.0-or-later"
 description = "Silicon Monitor: Comprehensive hardware monitoring for CPUs, GPUs, NPUs, memory, I/O, and network silicon across all platforms"
 repository = "https://github.com/nervosys/SiliconMonitor"
+homepage = "https://github.com/nervosys/SiliconMonitor"
+documentation = "https://docs.rs/silicon-monitor"
+readme = "README.md"
 keywords = ["silicon", "monitor", "gpu", "cpu", "hardware"]
 categories = [
     "hardware-support",
     "os",
     "api-bindings",
     "command-line-utilities",
+]
+exclude = [
+    "assets/banner.png",
+    "assets/fonts/",
+    "docs/images/",
+    ".github/",
+    "BUILD.md",
+    "CLI.md",
+    "UNIFIED_BACKEND.md",
+    "AI_INTEGRATION.md",
+    "ROADMAP.md",
+    "CHANGELOG.md",
 ]
 
 [lib]

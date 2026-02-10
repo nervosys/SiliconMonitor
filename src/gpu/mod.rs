@@ -727,6 +727,7 @@ impl GpuCollection {
 
     /// Auto-detect and add all available GPUs
     pub fn auto_detect() -> Result<Self, crate::Error> {
+        #[allow(unused_mut)]
         let mut collection = Self::new();
 
         #[cfg(feature = "nvidia")]
