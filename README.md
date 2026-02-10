@@ -19,7 +19,6 @@
 
 Silicon Monitor is a powerful, cross-platform hardware monitoring utility designed primarily for **AI agents** and **interactive interfaces**. It provides deep insights into CPUs, GPUs, memory, disks, motherboards, and network interfaces across Windows, Linux, and macOS.
 
-[![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg)](https://www.rust-lang.org/)
 
 
@@ -1037,12 +1036,14 @@ cargo run --release --features nvidia --example gpu_monitor
 
 ## License
 
-This project is licensed under either of:
+This project is dual-licensed:
 
-- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE) or <http://www.apache.org/licenses/LICENSE-2.0>)
-- MIT License ([LICENSE-MIT](LICENSE-MIT) or <http://opensource.org/licenses/MIT>)
+- **Open Source**: [GNU Affero General Public License v3.0](LICENSE) (AGPL-3.0) — free for open-source use with copyleft obligations
+- **Commercial**: A proprietary license is available for closed-source, SaaS, or embedded use without AGPL requirements
 
-at your option.
+Contributors must agree to the [Contributor License Agreement](CLA.md) to enable dual licensing.
+
+See [LICENSE-COMMERCIAL.md](LICENSE-COMMERCIAL.md) for commercial licensing details and contact information.
 
 ## Acknowledgments
 
