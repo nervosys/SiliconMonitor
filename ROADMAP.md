@@ -1,114 +1,125 @@
-# Silicon Monitor (simon) - Development Roadmap
+# Silicon Monitor (simon) — Development Roadmap
 
 ## Overview
 
-Silicon Monitor is a comprehensive cross-platform hardware monitoring library for Rust, providing unified APIs for CPUs, GPUs (NVIDIA/AMD/Intel), memory, disks, motherboards, processes, and network interfaces.
+Silicon Monitor is the world's first agentic system monitoring utility and API. Built in Rust, it provides unified cross-platform APIs for CPUs, GPUs (NVIDIA/AMD/Intel/Apple), NPUs, memory, disks, motherboards, processes, network interfaces, peripherals (audio, Bluetooth, display, USB), and more — with native AI agent integration.
+
+- **Crate**: [`silicon-monitor`](https://crates.io/crates/silicon-monitor) v0.4.0
+- **License**: AGPL-3.0-or-later (commercial dual-license available)
+- **MSRV**: Rust 1.70+
 
 ---
 
 ## ✅ Completed Features
 
 ### Core Monitoring
-- [x] **GPU Monitoring** - Multi-vendor support (NVIDIA via NVML, AMD via sysfs, Intel via i915/xe)
-- [x] **CPU Monitoring** - Per-core utilization, frequency, governors (Linux)
-- [x] **Memory Monitoring** - RAM/swap usage, detailed breakdown
-- [x] **Disk Monitoring** - NVMe/SATA/USB detection, SMART health, I/O stats
-- [x] **Network Monitoring** - Interface statistics, bandwidth rates
-- [x] **Process Monitoring** - CPU/memory usage with GPU attribution
-- [x] **Motherboard Sensors** - Temperature, voltage, fan readings via hwmon
+- [x] **GPU Monitoring** — NVIDIA (NVML), AMD (sysfs/WMI), Intel (i915/xe/WMI), Apple Silicon (powermetrics)
+- [x] **CPU Monitoring** — Per-core utilization, frequency, governors, hybrid P/E architecture, cpufreq scaling
+- [x] **Memory Monitoring** — RAM/swap, ZRAM, NUMA, huge pages, pressure levels, watermarks
+- [x] **Disk Monitoring** — NVMe/SATA/USB detection, SMART health, I/O stats, cross-platform (Linux/Windows/macOS)
+- [x] **Network Monitoring** — Interface statistics, bandwidth rates, connection tracking (TCP/UDP with PID mapping)
+- [x] **Network Tools** — nmap-style port scanning, ping, traceroute, DNS lookup, banner grabbing, packet capture
+- [x] **Process Monitoring** — CPU/memory usage, GPU attribution, delta-based per-process CPU%
+- [x] **Motherboard Sensors** — Temperature, voltage, fan readings via hwmon/WMI
+- [x] **NPU/Neural Engine** — ANE (Apple), Intel NPU, AMD AI Engine monitoring (via `npu` feature)
+- [x] **Audio Monitoring** — Device enumeration, volume levels, mute states (Linux/Windows/macOS)
+- [x] **Bluetooth Monitoring** — Adapter/device enumeration, battery levels, connection states
+- [x] **Display Monitoring** — Resolutions, refresh rates, HDR, scaling, connection types
+- [x] **USB Monitoring** — Device enumeration, device classes, speeds (up to USB4), topology
+- [x] **Battery/Power Supply** — Charge state, health, wear level, cycle count, USB-PD/UPS support
+- [x] **Fan Control** — PWM control, fan profiles (Silent/Quiet/Cool/Performance), thermal zone integration
+- [x] **Boot Configuration** — UEFI/Legacy/SecureBoot detection, startup items, kernel modules
+- [x] **System Services** — Cross-platform service monitoring (systemd on Linux, WMI on Windows)
+- [x] **Health Scoring** — 0–100 system health score with per-subsystem status levels
 
 ### GPU Backend Architecture
 - [x] Trait-based `Device` abstraction (`src/gpu/traits.rs`)
 - [x] NVIDIA backend via NVML (`src/gpu/nvidia_new.rs`)
-- [x] AMD backend via sysfs (`src/gpu/amd_rocm.rs`)
-- [x] Intel backend via i915/xe drivers (`src/gpu/intel_levelzero.rs`)
-- [x] Unified `GpuCollection` for auto-detection
+- [x] AMD backend via sysfs/WMI (`src/gpu/amd_rocm.rs`)
+- [x] Intel backend via i915/xe/WMI (`src/gpu/intel_levelzero.rs`)
+- [x] Apple Silicon backend via powermetrics (`src/gpu/apple.rs`)
+- [x] Windows GPU helpers — DXGI adapter enumeration, WMI perf counters, per-engine metrics
+- [x] Unified `GpuCollection` with `auto_detect()` across all vendors
 - [x] GPU process attribution (PIDs using GPU memory)
 
-### AI Integration
-- [x] **AI Data API** - 35+ monitoring tools for AI agent integration
-  - System summary, GPU/CPU/memory/disk/network status
-  - Process queries (top CPU, top memory, top GPU, search)
-  - Hardware sensors (temperatures, fans, voltages)
-- [x] **Auto-query system** - Detects relevant tools from natural language
-- [x] **Multi-format export** - OpenAI functions, Anthropic tools, prompt format
-- [x] **GUI Chatbot Integration** - Real-time system data in agent responses
+### AI Agent Integration
+- [x] **AI Data API** — 35+ monitoring tools for AI agent integration
+- [x] **Agent Framework** — Local + remote backends, Ollama integration, ModelSize selection (100M–1B)
+- [x] **Auto-query system** — Natural language to tool selection
+- [x] **Multi-format export** — OpenAI functions, Anthropic tools, MCP server, prompt format
+- [x] **MCP Server** — Model Context Protocol for Claude/LLM integration
+- [x] **Hardware Ontology** — Structured hardware description for AI discoverability
+- [x] **AI Workload Detection** — Framework auto-detect (PyTorch/TF/JAX), training metrics, inference latency
+- [x] **GUI Chatbot** — Real-time system data in agent responses, tool call visualization
+- [x] **Historical data queries** — 30-minute history, AI agent integration
+- [x] **Response caching** — LRU cache for agent responses
 
 ### User Interfaces
-- [x] **GUI (egui/eframe)** - Modern hardware monitoring dashboard
-  - Real-time graphs with 60-second history
-  - Tabbed interface (Overview, CPU, Accelerators, Memory, Storage, Network, AI Chat)
-  - Cyber theme with neon colors
+- [x] **GUI (egui/eframe)** — Full native desktop application
+  - Real-time charts with 60-second history
+  - Tabbed interface (Overview, CPU, Accelerators, Memory, Storage, Network, Connections, AI Chat)
+  - Cyber theme with neon colors, dark/light toggle
+  - Alert/notification system (threshold-based)
+  - Data export (JSON/CSV)
   - Emoji font support (Noto Emoji)
-- [x] **TUI (ratatui)** - Terminal-based monitoring
-- [x] **CLI** - Command-line tools (`simon`, `amon`)
+- [x] **TUI (ratatui)** — Terminal dashboard with selectable color themes, Peripherals tab, process detail view
+- [x] **CLI** — `simon` (component monitoring) + `amon` (AI agent interface), `--watch` mode
+
+### Infrastructure
+- [x] **Time-series DB** — File-based TSDB with binary format, rotation, process snapshots
+- [x] **Observability API** — Metrics, events, streaming, API keys, capabilities, rate limiting
+- [x] **Sandbox Detection** — VM (VMware/VBox/QEMU/Hyper-V/KVM), containers (Docker/LXC), Wine, debugger
+- [x] **Consent Management** — GDPR/CCPA-compliant with `--no-telemetry`/`--offline` flags, audit trail
+- [x] **Configuration** — TOML-based config with persistence (interval, color scheme, GPU selection)
+- [x] **Bandwidth Testing** — iperf-style TCP client with parallel streams
 
 ### Code Quality
-- [x] Zero compiler warnings (all suppressed with `#[allow(dead_code)]` where appropriate)
+- [x] Zero compiler warnings
 - [x] Serde serialization for all metric types
-- [x] Feature flags for platform/vendor-specific code
+- [x] Feature flags for platform/vendor-specific code (`nvidia`, `amd`, `intel`, `apple`, `cpu`, `npu`, `io`, `network`, `cli`, `gui`)
 - [x] Comprehensive error handling with `thiserror`
-
----
-
-## 🚧 In Progress
-
-### Windows Platform Support
-- [ ] Complete CPU monitoring (currently partial)
-- [ ] Complete memory monitoring (currently partial)
-- [ ] Disk I/O statistics
-- [ ] Motherboard sensor support via WMI/OpenHardwareMonitor
-
-### macOS Platform Support
-- [ ] Apple Silicon GPU monitoring (M1/M2/M3)
-- [ ] IOKit integration for sensors
-- [ ] powermetrics integration
+- [x] Criterion benchmarks (CPU stats, GPU queries, process enumeration)
+- [x] 250+ tests
+- [x] Release profile optimized (`lto = true`, `codegen-units = 1`, `strip = true`)
+- [x] Published to [crates.io](https://crates.io/crates/silicon-monitor)
 
 ---
 
 ## 📋 Planned Features
 
-### Near-term (v0.2.0)
+### Near-term (v0.5.0)
 
-#### GPU Enhancements
+#### GPU Control & Tuning
 - [ ] GPU clock control (safe wrappers with proper permissions)
 - [ ] Power limit adjustment
 - [ ] Fan curve control (NVIDIA/AMD)
 - [ ] Multi-GPU workload balancing info
 
-#### Process Monitoring Enhancements
-- [ ] Per-process GPU utilization (not just memory)
+#### Process Monitoring
 - [ ] Process tree visualization
 - [ ] Container/cgroup awareness
 - [ ] Process resource limiting suggestions
 
-#### AI Agent Improvements
+#### AI Agent
 - [ ] Streaming responses in GUI chatbot
-- [x] Tool call visualization (show which tools were called)
-- [x] Historical data queries ("What was GPU temp 5 minutes ago?")
 - [ ] Anomaly detection prompts
 - [ ] System optimization recommendations
 
-### Medium-term (v0.3.0)
+#### GUI
+- [ ] Custom dashboard layouts
+- [ ] System tray mode (setting added, tray-icon integration pending)
+
+### Medium-term (v0.6.0)
 
 #### Platform Expansion
 - [ ] FreeBSD support
-- [ ] ARM Linux support (Raspberry Pi, Jetson)
 - [ ] WSL2 GPU passthrough detection
+- [ ] Intel discrete GPU support (Arc series)
 
-#### New Monitoring Capabilities
+#### Monitoring Enhancements
 - [ ] PCIe bandwidth monitoring
-- [ ] USB device enumeration
-- [ ] Bluetooth adapter info
-- [ ] Audio device monitoring
-- [ ] Display/monitor information
-
-#### GUI Enhancements
-- [ ] Custom dashboard layouts
-- [x] Alert/notification system (threshold-based with UI panel)
-- [x] Data export (CSV, JSON)
-- [ ] System tray mode (setting added, tray-icon integration pending)
-- [x] Dark/light theme toggle
+- [ ] Thunderbolt device monitoring
+- [ ] EDID parsing for display details
 
 ### Long-term (v1.0.0)
 
@@ -119,30 +130,25 @@ Silicon Monitor is a comprehensive cross-platform hardware monitoring library fo
 - [ ] Multi-host aggregation
 - [ ] REST API server mode
 
-#### Advanced AI Features
-- [ ] Local LLM integration (llama.cpp)
+#### Advanced AI
+- [ ] Local LLM integration (llama.cpp via `local-llamacpp` feature)
 - [ ] Predictive maintenance alerts
 - [ ] Automated performance tuning
-- [ ] Natural language system control
+- [ ] Natural language system control ("reduce fan noise", "limit GPU power")
 
 ---
 
 ## 🐛 Known Issues
 
-### Critical
-- None currently
-
 ### High Priority
-- [x] ~~TUI gauge panic when percentage exceeds 100%~~ (Fixed: added clamping in ui.rs)
-- [ ] Windows: Limited sensor support compared to Linux
+- [ ] Windows: Some hwmon sensors fall back to WMI (slower than direct sysfs on Linux)
 
 ### Medium Priority
-- [ ] AMD GPU: Some metrics unavailable without root/admin
-- [ ] Intel GPU: Limited to i915/xe drivers (no discrete GPU support yet)
+- [ ] AMD GPU: Some metrics unavailable without root/admin privileges
+- [ ] Intel GPU: Limited to i915/xe drivers (no discrete Arc GPU support yet)
 - [ ] Network: Virtual interfaces may show incorrect rates
 
 ### Low Priority
-- [x] ~~README.md has markdown linting warnings~~ (Fixed: all issues resolved)
 - [ ] Some reserved code paths marked `#[allow(dead_code)]`
 
 ---
@@ -152,52 +158,59 @@ Silicon Monitor is a comprehensive cross-platform hardware monitoring library fo
 | Feature        | Linux | Windows | macOS |
 | -------------- | ----- | ------- | ----- |
 | NVIDIA GPU     | ✅     | ✅       | ❌     |
-| AMD GPU        | ✅     | 🚧       | ❌     |
-| Intel GPU      | ✅     | 🚧       | ❌     |
-| Apple Silicon  | ❌     | ❌       | 🚧     |
-| CPU Monitoring | ✅     | 🚧       | 🚧     |
-| Memory         | ✅     | 🚧       | 🚧     |
-| Disk           | ✅     | ✅       | 🚧     |
-| Network        | ✅     | ✅       | 🚧     |
-| Processes      | ✅     | ✅       | 🚧     |
-| Motherboard    | ✅     | 🚧       | 🚧     |
+| AMD GPU        | ✅     | ✅       | ❌     |
+| Intel GPU      | ✅     | ✅       | ❌     |
+| Apple Silicon  | ❌     | ❌       | ✅     |
+| CPU Monitoring | ✅     | ✅       | ✅     |
+| Memory         | ✅     | ✅       | ✅     |
+| Disk           | ✅     | ✅       | ✅     |
+| Network        | ✅     | ✅       | ✅     |
+| Processes      | ✅     | ✅       | ✅     |
+| Motherboard    | ✅     | ✅       | ✅     |
+| Audio          | ✅     | ✅       | ✅     |
+| Bluetooth      | ✅     | ✅       | ✅     |
+| Display        | ✅     | ✅       | ✅     |
+| USB            | ✅     | ✅       | ✅     |
 | GUI            | ✅     | ✅       | ✅     |
 | TUI            | ✅     | ✅       | ✅     |
 | AI Agent       | ✅     | ✅       | ✅     |
 
-Legend: ✅ Full support | 🚧 Partial/WIP | ❌ Not supported
+Legend: ✅ Supported | ❌ Not applicable
 
 ---
 
 ## 📅 Release History
 
-### v0.1.0 (Current - January 2026)
+### v0.4.0 (February 2026)
+- Switched to AGPL-3.0-or-later with commercial dual-license and CLA
+- Packaging readiness for crates.io (exclude lists, metadata, docs)
+- Performance profiling with Criterion benchmarks
+- NPU monitoring wired into TUI and platform backends
+- Windows GPU backends enhanced with DXGI, per-engine metrics, OHM/LHM temps
+
+### v0.3.0 (January 2026)
+- Peripheral monitoring: audio, Bluetooth, display, USB
+- CLI watch mode for peripheral commands
+- Hardware control APIs for audio and Bluetooth
+- Peripherals tab in TUI
+
+### v0.2.0 (January 2026)
+- AI agent discoverability (MCP, OpenAI, Claude, Gemini)
+- CLI restructured with subcommands
+- Cross-platform improvements
+
+### v0.1.0 (January 2026)
 - Initial public release
 - Multi-vendor GPU monitoring
 - AI Data API with 35+ tools
 - GUI and TUI interfaces
-- Linux full support, Windows/macOS partial
-
-### Recent Updates (January 24, 2026)
-- ✅ Added data export functionality (JSON/CSV) in GUI status bar
-- ✅ Fixed TUI gauge panic when percentage exceeds 100%
-- ✅ Added tool call visualization in GUI chatbot
-- ✅ Fixed all markdown linting issues in README.md
-- ✅ Added ROADMAP.md for development tracking
-- ✅ Added dark/light theme toggle (Light theme with full color palette)
-- ✅ Added alert/notification system (CPU/memory/GPU thresholds with UI panel)
-- ✅ Added historical data queries (30-min history, AI agent integration)
-- ✅ Added system tray mode setting (UI ready, tray-icon pending)
+- Process monitoring with GPU attribution
 
 ---
 
 ## 🤝 Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on:
-- Code style and conventions
-- Testing requirements
-- Pull request process
-- Feature flag usage
+See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines. All contributions require signing the [CLA](CLA.md).
 
 ---
 
