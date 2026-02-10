@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: OCL-1.0
 // Copyright (c) 2024 NervoSys
 
 //! AMD GPU monitoring via amdgpu driver and libdrm

@@ -6,7 +6,7 @@
   <a href="https://crates.io/crates/silicon-monitor"><img src="https://img.shields.io/crates/v/silicon-monitor.svg?style=flat-square&logo=rust&color=orange" alt="Crates.io"></a>
   <a href="https://github.com/nervosys/SiliconMonitor/actions/workflows/build-and-push.yml"><img src="https://img.shields.io/github/actions/workflow/status/nervosys/SiliconMonitor/build-and-push.yml?style=flat-square&logo=github&label=CI" alt="CI Status"></a>
   <a href="https://github.com/nervosys/SiliconMonitor/actions"><img src="https://img.shields.io/github/actions/workflow/status/nervosys/SiliconMonitor/build-and-push.yml?style=flat-square&logo=github&label=build" alt="Security"></a>
-  <a href="https://github.com/nervosys/SiliconMonitor/blob/master/LICENSE"><img src="https://img.shields.io/badge/License-AGPL%20v3-blue.svg?style=flat-square" alt="License"></a>
+  <a href="https://github.com/nervosys/SiliconMonitor/blob/master/LICENSE"><img src="https://img.shields.io/badge/License-OCL%20v1-blue.svg?style=flat-square" alt="License"></a>
   <a href="https://github.com/nervosys/SiliconMonitor/stargazers"><img src="https://img.shields.io/github/stars/nervosys/SiliconMonitor?style=flat-square&color=yellow" alt="Stars"></a>
 </p>
 
@@ -1038,8 +1038,8 @@ cargo run --release --features nvidia --example gpu_monitor
 
 This project is dual-licensed:
 
-- **Open Source**: [GNU Affero General Public License v3.0](LICENSE) (AGPL-3.0) — free for open-source use with copyleft obligations
-- **Commercial**: A proprietary license is available for closed-source, SaaS, or embedded use without AGPL requirements
+- **Open Source**: [Open Community License v1](LICENSE) (OCL) — free for non-commercial use with share-alike obligations; commercial users may use and modify for internal production only
+- **Commercial**: A separate business license is available for commercial use beyond internal production (replication, resale, SaaS distribution, etc.)
 
 See [LICENSE-COMMERCIAL.md](LICENSE-COMMERCIAL.md) for commercial licensing details and contact information.
 
