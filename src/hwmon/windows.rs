@@ -10,6 +10,7 @@ use nvml_wrapper::{enum_wrappers::device::TemperatureSensor, Nvml};
 
 /// Read all GPU temperatures
 pub fn read_gpu_temperatures() -> Vec<HwSensor> {
+    #[allow(unused_mut)]
     let mut sensors = Vec::new();
 
     #[cfg(feature = "nvidia")]

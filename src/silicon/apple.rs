@@ -529,6 +529,7 @@ fn estimate_link_speed(iface: &str) -> u32 {
 
 #[cfg(test)]
 mod tests {
+    #[allow(unused_imports)]
     use super::*;
 
     #[test]
