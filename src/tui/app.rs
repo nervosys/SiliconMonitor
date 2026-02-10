@@ -1263,8 +1263,9 @@ impl App {
                 (None, None)
             };
 
-            // Get utilization
-            let utilization = if let Ok(util) = device.utilization() {
+            // Get utilization (single call — reuse for encoder/decoder)
+            let util_result = device.utilization();
+            let utilization = if let Ok(ref util) = util_result {
                 util.gpu
             } else {
                 0.0
@@ -1312,8 +1313,8 @@ impl App {
                 (None, None)
             };
 
-            // Get encoder/decoder utilization
-            let (encoder_util, decoder_util) = if let Ok(util) = device.utilization() {
+            // Get encoder/decoder utilization (reuse the result from above)
+            let (encoder_util, decoder_util) = if let Ok(ref util) = util_result {
                 (util.encoder, util.decoder)
             } else {
                 (None, None)

@@ -15,6 +15,8 @@ pub struct AmdGpu {
     #[allow(dead_code)]
     card_path: PathBuf,
     device_path: PathBuf,
+    /// Cached hwmon directory path (resolved once at init)
+    hwmon_dir: Option<PathBuf>,
 }
 
 impl AmdGpu {
@@ -25,10 +27,21 @@ impl AmdGpu {
                 "Device path does not exist".to_string(),
             ));
         }
+
+        // Resolve hwmon directory once — it never changes at runtime
+        let hwmon_dir = fs::read_dir(device_path.join("hwmon"))
+            .ok()
+            .and_then(|rd| {
+                rd.filter_map(|e| e.ok())
+                    .find(|e| e.file_name().to_string_lossy().starts_with("hwmon"))
+                    .map(|e| e.path())
+            });
+
         Ok(Self {
             index,
             card_path,
             device_path,
+            hwmon_dir,
         })
     }
 
@@ -200,24 +213,8 @@ impl Device for AmdGpu {
         Ok("amdgpu".to_string())
     }
     fn temperature(&self) -> Result<Temperature, Error> {
-        // AMD GPUs expose temperature via hwmon
-        // Find hwmon directory
-        let hwmon_path = self.device_path.join("hwmon");
-        if !hwmon_path.exists() {
-            return Err(Error::NotSupported);
-        }
-
-        let hwmon_dirs: Vec<_> = fs::read_dir(&hwmon_path)
-            .map_err(|e| Error::QueryFailed(format!("Failed to read hwmon dir: {}", e)))?
-            .filter_map(|e| e.ok())
-            .filter(|e| e.file_name().to_string_lossy().starts_with("hwmon"))
-            .collect();
-
-        if hwmon_dirs.is_empty() {
-            return Err(Error::NotSupported);
-        }
-
-        let hwmon = hwmon_dirs[0].path();
+        // AMD GPUs expose temperature via hwmon (cached path)
+        let hwmon = self.hwmon_dir.as_ref().ok_or(Error::NotSupported)?;
 
         // Read temperature sensors (in millidegrees, convert to Celsius)
         let edge = self.read_hwmon_temp(&hwmon, "temp1_input");
@@ -241,23 +238,8 @@ impl Device for AmdGpu {
     }
 
     fn power(&self) -> Result<Power, Error> {
-        // Find hwmon directory for power readings
-        let hwmon_path = self.device_path.join("hwmon");
-        if !hwmon_path.exists() {
-            return Err(Error::NotSupported);
-        }
-
-        let hwmon_dirs: Vec<_> = fs::read_dir(&hwmon_path)
-            .map_err(|e| Error::QueryFailed(format!("Failed to read hwmon dir: {}", e)))?
-            .filter_map(|e| e.ok())
-            .filter(|e| e.file_name().to_string_lossy().starts_with("hwmon"))
-            .collect();
-
-        if hwmon_dirs.is_empty() {
-            return Err(Error::NotSupported);
-        }
-
-        let hwmon = hwmon_dirs[0].path();
+        // Read power from hwmon (cached path)
+        let hwmon = self.hwmon_dir.as_ref().ok_or(Error::NotSupported)?;
 
         // Read power values (in microwatts, convert to watts)
         let read_power = |sensor: &str| -> f32 {
@@ -331,40 +313,33 @@ impl Device for AmdGpu {
         })
     }
     fn fan_speed(&self) -> Result<Option<FanSpeed>, Error> {
-        // Find hwmon directory for fan readings
-        let hwmon_path = self.device_path.join("hwmon");
-        if !hwmon_path.exists() {
-            return Ok(None);
+        // Read fan speed from hwmon (cached path)
+        let hwmon = match self.hwmon_dir.as_ref() {
+            Some(p) => p,
+            None => return Ok(None),
+        };
+
+        // Try to read fan percentage from PWM first (nvtop parity)
+        // PWM is 0-255, pwm1_max defines the maximum value
+        if let Some(pwm) = fs::read_to_string(hwmon.join("pwm1"))
+            .ok()
+            .and_then(|s| s.trim().parse::<u32>().ok())
+        {
+            let pwm_max = fs::read_to_string(hwmon.join("pwm1_max"))
+                .ok()
+                .and_then(|s| s.trim().parse::<u32>().ok())
+                .unwrap_or(255); // Default to 255 if pwm1_max not available
+
+            let percentage = (pwm * 100) / pwm_max;
+            return Ok(Some(FanSpeed::Percent(percentage)));
         }
 
-        let hwmon_dir = fs::read_dir(&hwmon_path)
+        // Fallback: Read fan speed in RPM
+        if let Some(rpm) = fs::read_to_string(hwmon.join("fan1_input"))
             .ok()
-            .and_then(|rd| rd.filter_map(|e| e.ok()).nth(0))
-            .map(|e| e.path());
-
-        if let Some(hwmon) = hwmon_dir {
-            // Try to read fan percentage from PWM first (nvtop parity)
-            // PWM is 0-255, pwm1_max defines the maximum value
-            if let Some(pwm) = fs::read_to_string(hwmon.join("pwm1"))
-                .ok()
-                .and_then(|s| s.trim().parse::<u32>().ok())
-            {
-                let pwm_max = fs::read_to_string(hwmon.join("pwm1_max"))
-                    .ok()
-                    .and_then(|s| s.trim().parse::<u32>().ok())
-                    .unwrap_or(255); // Default to 255 if pwm1_max not available
-
-                let percentage = (pwm * 100) / pwm_max;
-                return Ok(Some(FanSpeed::Percent(percentage)));
-            }
-
-            // Fallback: Read fan speed in RPM
-            if let Some(rpm) = fs::read_to_string(hwmon.join("fan1_input"))
-                .ok()
-                .and_then(|s| s.trim().parse::<u32>().ok())
-            {
-                return Ok(Some(FanSpeed::Rpm(rpm)));
-            }
+            .and_then(|s| s.trim().parse::<u32>().ok())
+        {
+            return Ok(Some(FanSpeed::Rpm(rpm)));
         }
 
         Ok(None)

@@ -36,18 +36,23 @@ pub fn read_cpu_stats() -> Result<CpuStats> {
     // Get system times for overall CPU utilization
     let (user_percent, system_percent, idle_percent) = get_system_cpu_utilization()?;
 
+    // Cache CPU model name and frequency — these never change at runtime
+    // but are expensive (subprocess spawn via wmic).  Read once per call.
+    let model = get_cpu_model_name();
+    let frequency = get_cpu_frequency();
+
     // Create cores (Windows doesn't provide per-core stats easily without PDH)
     for cpu_id in 0..cpu_count {
         let core = CpuCore {
             id: cpu_id,
             online: true,
             governor: "windows".to_string(),
-            frequency: get_cpu_frequency(),
+            frequency: frequency.clone(),
             user: Some(user_percent),
             nice: Some(0.0), // Windows doesn't have nice
             system: Some(system_percent),
             idle: Some(idle_percent),
-            model: get_cpu_model_name(),
+            model: model.clone(),
         };
         stats.cores.push(core);
     }
