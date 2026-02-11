@@ -29,13 +29,11 @@ impl AmdGpu {
         }
 
         // Resolve hwmon directory once — it never changes at runtime
-        let hwmon_dir = fs::read_dir(device_path.join("hwmon"))
-            .ok()
-            .and_then(|rd| {
-                rd.filter_map(|e| e.ok())
-                    .find(|e| e.file_name().to_string_lossy().starts_with("hwmon"))
-                    .map(|e| e.path())
-            });
+        let hwmon_dir = fs::read_dir(device_path.join("hwmon")).ok().and_then(|rd| {
+            rd.filter_map(|e| e.ok())
+                .find(|e| e.file_name().to_string_lossy().starts_with("hwmon"))
+                .map(|e| e.path())
+        });
 
         Ok(Self {
             index,
@@ -350,6 +348,94 @@ impl Device for AmdGpu {
     }
     fn processes(&self) -> Result<Vec<Box<dyn GpuProcess>>, Error> {
         Ok(Vec::new())
+    }
+
+    // === Control Functions (require root/admin) ===
+
+    fn set_power_limit(&mut self, watts: f32) -> Result<(), Error> {
+        let hwmon = self.hwmon_dir.as_ref().ok_or(Error::NotSupported)?;
+        let microwatts = (watts * 1_000_000.0) as u64;
+
+        // Validate against min/max caps
+        let max_cap = fs::read_to_string(hwmon.join("power1_cap_max"))
+            .ok()
+            .and_then(|s| s.trim().parse::<u64>().ok())
+            .unwrap_or(u64::MAX);
+        let min_cap = fs::read_to_string(hwmon.join("power1_cap_min"))
+            .ok()
+            .and_then(|s| s.trim().parse::<u64>().ok())
+            .unwrap_or(0);
+
+        if microwatts > max_cap || microwatts < min_cap {
+            return Err(Error::InvalidArgument(format!(
+                "Power limit {:.1}W outside range [{:.1}W, {:.1}W]",
+                watts,
+                min_cap as f32 / 1_000_000.0,
+                max_cap as f32 / 1_000_000.0
+            )));
+        }
+
+        fs::write(hwmon.join("power1_cap"), microwatts.to_string()).map_err(|e| {
+            if e.kind() == std::io::ErrorKind::PermissionDenied {
+                Error::PermissionDenied("Setting power limit requires root".to_string())
+            } else {
+                Error::ControlFailed(format!("Failed to set power limit: {}", e))
+            }
+        })
+    }
+
+    fn lock_gpu_clocks(&mut self, min_mhz: u32, max_mhz: u32) -> Result<(), Error> {
+        // AMD uses pp_od_clk_voltage for manual clock control
+        // First set performance level to manual
+        fs::write(
+            self.device_path.join("power_dpm_force_performance_level"),
+            "manual",
+        )
+        .map_err(|e| {
+            if e.kind() == std::io::ErrorKind::PermissionDenied {
+                Error::PermissionDenied("Setting GPU clocks requires root".to_string())
+            } else {
+                Error::ControlFailed(format!("Failed to set performance level: {}", e))
+            }
+        })?;
+
+        // Write clock range via pp_od_clk_voltage
+        let od_path = self.device_path.join("pp_od_clk_voltage");
+        if od_path.exists() {
+            // Format: "s 0 <min_mhz>" and "s 1 <max_mhz>" then "c" to commit
+            fs::write(&od_path, format!("s 0 {}", min_mhz))
+                .map_err(|e| Error::ControlFailed(format!("Failed to set min clock: {}", e)))?;
+            fs::write(&od_path, format!("s 1 {}", max_mhz))
+                .map_err(|e| Error::ControlFailed(format!("Failed to set max clock: {}", e)))?;
+            fs::write(&od_path, "c")
+                .map_err(|e| Error::ControlFailed(format!("Failed to commit clocks: {}", e)))?;
+        }
+
+        Ok(())
+    }
+
+    fn reset_gpu_clocks(&mut self) -> Result<(), Error> {
+        // Reset to auto performance level
+        fs::write(
+            self.device_path.join("power_dpm_force_performance_level"),
+            "auto",
+        )
+        .map_err(|e| {
+            if e.kind() == std::io::ErrorKind::PermissionDenied {
+                Error::PermissionDenied("Resetting GPU clocks requires root".to_string())
+            } else {
+                Error::ControlFailed(format!("Failed to reset performance level: {}", e))
+            }
+        })?;
+
+        // Reset overclocking if pp_od_clk_voltage exists
+        let od_path = self.device_path.join("pp_od_clk_voltage");
+        if od_path.exists() {
+            fs::write(&od_path, "r").ok(); // "r" resets to defaults
+            fs::write(&od_path, "c").ok(); // "c" commits
+        }
+
+        Ok(())
     }
 }
 

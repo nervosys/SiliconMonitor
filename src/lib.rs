@@ -151,6 +151,7 @@
 pub mod agent; // AI agent for system analysis and predictions
 pub mod ai_api; // AI Data API for full system visibility with tool-based access
 pub mod ai_workload; // AI training and inference workload monitoring
+pub mod anomaly; // Anomaly detection and optimization recommendations
 pub mod audio; // Audio device monitoring and control
 pub mod bandwidth; // Network bandwidth testing (iperf-style)
 pub mod battery; // Battery and power status monitoring
@@ -176,6 +177,7 @@ pub mod observability; // Full system observability API with MCP-like permission
 pub mod platform;
 pub mod power_supply; // Battery and power supply monitoring
 pub mod process_monitor; // Unified process monitoring with GPU attribution
+pub mod process_tree; // Process tree visualization with container/cgroup awareness
 pub mod sandbox; // Sandbox and VM detection for ethical data collection
 pub mod services; // System service monitoring and control
 pub mod silicon; // New: Unified silicon monitoring (CPU, NPU, I/O, network)
@@ -408,6 +410,14 @@ pub use memory_management::{
     ProcessMemory, SwapDevice, SwapInfo, SwapType, ZramInfo,
 };
 
+// Re-export anomaly detection
+pub use anomaly::{
+    Anomaly, AnomalyConfig, AnomalyDetector, AnomalySeverity, AnomalySummary, Recommendation,
+};
+
+// Re-export process tree
+pub use process_tree::{ContainerRuntime, ProcessNode, ProcessTree, ProcessTreeSummary};
+
 // Re-export boot configuration
 pub use boot_config::{
     boot_summary, format_uptime, BootInfo, BootMonitor, BootSummary, BootTime, BootType,
@@ -486,7 +496,9 @@ impl SiliconMonitor {
     }
 
     /// Snapshot disk information for all detected volumes.
-    pub fn snapshot_disks(&self) -> std::result::Result<Vec<Box<dyn disk::DiskDevice>>, disk::Error> {
+    pub fn snapshot_disks(
+        &self,
+    ) -> std::result::Result<Vec<Box<dyn disk::DiskDevice>>, disk::Error> {
         disk::enumerate_disks()
     }
 
