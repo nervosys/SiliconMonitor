@@ -1,6 +1,6 @@
 [package]
 name = "silicon-monitor"
-version = "0.5.0"
+version = "1.0.0"
 edition = "2021"
 rust-version = "1.70"
 authors = ["nervosys"]

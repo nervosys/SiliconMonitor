@@ -79,13 +79,13 @@ impl PcieLinkSpeed {
     pub fn per_lane_gbps(&self) -> f64 {
         match self {
             // Gen1/2: 8b/10b encoding (20% overhead)
-            Self::Gen1 => 0.25,   // 2.5 GT/s * 8/10 / 8
-            Self::Gen2 => 0.5,    // 5.0 GT/s * 8/10 / 8
+            Self::Gen1 => 0.25, // 2.5 GT/s * 8/10 / 8
+            Self::Gen2 => 0.5,  // 5.0 GT/s * 8/10 / 8
             // Gen3+: 128b/130b encoding (~1.5% overhead)
-            Self::Gen3 => 0.985,  // ~1 GB/s per lane
-            Self::Gen4 => 1.969,  // ~2 GB/s per lane
-            Self::Gen5 => 3.938,  // ~4 GB/s per lane
-            Self::Gen6 => 7.877,  // ~8 GB/s per lane (PAM4)
+            Self::Gen3 => 0.985, // ~1 GB/s per lane
+            Self::Gen4 => 1.969, // ~2 GB/s per lane
+            Self::Gen5 => 3.938, // ~4 GB/s per lane
+            Self::Gen6 => 7.877, // ~8 GB/s per lane (PAM4)
             Self::Unknown => 0.0,
         }
     }
@@ -321,14 +321,12 @@ impl PcieMonitor {
             let device_class = PcieDeviceClass::from_class_code(class_code);
 
             // Read link information
-            let current_speed_str = fs::read_to_string(path.join("current_link_speed"))
-                .unwrap_or_default();
-            let max_speed_str = fs::read_to_string(path.join("max_link_speed"))
-                .unwrap_or_default();
-            let current_width_str = fs::read_to_string(path.join("current_link_width"))
-                .unwrap_or_default();
-            let max_width_str = fs::read_to_string(path.join("max_link_width"))
-                .unwrap_or_default();
+            let current_speed_str =
+                fs::read_to_string(path.join("current_link_speed")).unwrap_or_default();
+            let max_speed_str = fs::read_to_string(path.join("max_link_speed")).unwrap_or_default();
+            let current_width_str =
+                fs::read_to_string(path.join("current_link_width")).unwrap_or_default();
+            let max_width_str = fs::read_to_string(path.join("max_link_width")).unwrap_or_default();
 
             let current_link_speed = PcieLinkSpeed::from_sysfs(&current_speed_str);
             let max_link_speed = if max_speed_str.trim().is_empty() {
@@ -362,18 +360,16 @@ impl PcieMonitor {
                 .unwrap_or(-1);
 
             // Read IOMMU group
-            let iommu_group = fs::read_link(path.join("iommu_group"))
-                .ok()
-                .and_then(|p| {
-                    p.file_name()
-                        .and_then(|n| n.to_string_lossy().parse::<u32>().ok())
-                });
+            let iommu_group = fs::read_link(path.join("iommu_group")).ok().and_then(|p| {
+                p.file_name()
+                    .and_then(|n| n.to_string_lossy().parse::<u32>().ok())
+            });
 
             // Read subsystem
-            let subsys_vendor = Self::read_hex_file(&path.join("subsystem_vendor"))
-                .map(|v| format!("{:04x}", v));
-            let subsys_device = Self::read_hex_file(&path.join("subsystem_device"))
-                .map(|v| format!("{:04x}", v));
+            let subsys_vendor =
+                Self::read_hex_file(&path.join("subsystem_vendor")).map(|v| format!("{:04x}", v));
+            let subsys_device =
+                Self::read_hex_file(&path.join("subsystem_device")).map(|v| format!("{:04x}", v));
             let subsystem = match (subsys_vendor, subsys_device) {
                 (Some(v), Some(d)) => Some(format!("{}:{}", v, d)),
                 _ => None,
@@ -564,25 +560,23 @@ mod tests {
 
     #[test]
     fn test_bandwidth_summary() {
-        let devices = vec![
-            PcieDevice {
-                bdf: "0000:01:00.0".into(),
-                vendor_id: 0x10DE,
-                device_id: 0x2684,
-                device_class: PcieDeviceClass::VgaCompatible,
-                name: "GPU".into(),
-                vendor_name: "NVIDIA".into(),
-                numa_node: 0,
-                iommu_group: None,
-                current_link_speed: PcieLinkSpeed::Gen4,
-                max_link_speed: Some(PcieLinkSpeed::Gen4),
-                current_link_width: 16,
-                max_link_width: 16,
-                driver: None,
-                subsystem: None,
-                power_state: None,
-            },
-        ];
+        let devices = vec![PcieDevice {
+            bdf: "0000:01:00.0".into(),
+            vendor_id: 0x10DE,
+            device_id: 0x2684,
+            device_class: PcieDeviceClass::VgaCompatible,
+            name: "GPU".into(),
+            vendor_name: "NVIDIA".into(),
+            numa_node: 0,
+            iommu_group: None,
+            current_link_speed: PcieLinkSpeed::Gen4,
+            max_link_speed: Some(PcieLinkSpeed::Gen4),
+            current_link_width: 16,
+            max_link_width: 16,
+            driver: None,
+            subsystem: None,
+            power_state: None,
+        }];
         let summary = PcieBandwidthSummary::from_devices(&devices);
         assert_eq!(summary.gpu_devices, 1);
         assert_eq!(summary.downgraded_devices, 0);

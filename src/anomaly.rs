@@ -189,7 +189,9 @@ impl MetricWindow {
     fn z_score(&self, value: f64) -> f64 {
         let sd = self.std_dev();
         if sd < 1e-10 {
-            0.0
+            // When std_dev is ~0 (constant series), a deviation is highly anomalous
+            let diff = (value - self.mean()).abs();
+            if diff < 1e-10 { 0.0 } else { diff.signum() * 100.0 }
         } else {
             (value - self.mean()) / sd
         }

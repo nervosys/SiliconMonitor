@@ -4,7 +4,7 @@
 
 Silicon Monitor is the world's first agentic system monitoring utility and API. Built in Rust, it provides unified cross-platform APIs for CPUs, GPUs (NVIDIA/AMD/Intel/Apple), NPUs, memory, disks, motherboards, processes, network interfaces, peripherals (audio, Bluetooth, display, USB), and more — with native AI agent integration.
 
-- **Crate**: [`silicon-monitor`](https://crates.io/crates/silicon-monitor) v0.4.0
+- **Crate**: [`silicon-monitor`](https://crates.io/crates/silicon-monitor) v1.0.0
 - **License**: AGPL-3.0-or-later (commercial dual-license available)
 - **MSRV**: Rust 1.70+
 
@@ -73,68 +73,55 @@ Silicon Monitor is the world's first agentic system monitoring utility and API. 
 - [x] **Configuration** — TOML-based config with persistence (interval, color scheme, GPU selection)
 - [x] **Bandwidth Testing** — iperf-style TCP client with parallel streams
 
+### v0.5.0 — GPU Control, Process Trees, Anomaly Detection
+- [x] **AMD GPU Control** — Power limit adjustment, clock locking/reset via sysfs
+- [x] **Process Tree Visualization** — Hierarchical process tree with cycle-safe BFS traversal
+- [x] **Container/Cgroup Awareness** — Docker, Podman, containerd, Kubernetes, LXC, systemd-nspawn detection
+- [x] **Anomaly Detection** — Z-score spike detection, trend analysis, threshold alerts, recommendations
+
+### v0.6.0 — WSL2, PCIe Monitoring
+- [x] **WSL2 GPU Passthrough Detection** — /dev/dxg, CUDA/D3D12 libs, virtual GPU adapter enumeration
+- [x] **PCIe Bandwidth Monitoring** — Link speed/width/generation (Gen1–Gen6), device classification, degradation detection
+
+### v1.0.0 — REST API, Prometheus, Predictive Maintenance
+- [x] **REST API HTTP Server** — Lightweight tokio-based HTTP/1.1 server with CORS, metric collection, ObservabilityAPI dispatch
+- [x] **Prometheus Metrics Exporter** — Proper exposition format with HELP/TYPE annotations, per-GPU/per-core/per-disk labels
+- [x] **Predictive Maintenance** — Linear regression trend analysis, GPU thermal/clock degradation, disk SMART failure, fan bearing wear, memory error predictions
+
 ### Code Quality
 - [x] Zero compiler warnings
 - [x] Serde serialization for all metric types
 - [x] Feature flags for platform/vendor-specific code (`nvidia`, `amd`, `intel`, `apple`, `cpu`, `npu`, `io`, `network`, `cli`, `gui`)
 - [x] Comprehensive error handling with `thiserror`
 - [x] Criterion benchmarks (CPU stats, GPU queries, process enumeration)
-- [x] 250+ tests
+- [x] 241+ tests passing
 - [x] Release profile optimized (`lto = true`, `codegen-units = 1`, `strip = true`)
 - [x] Published to [crates.io](https://crates.io/crates/silicon-monitor)
 
 ---
 
-## 📋 Planned Features
+## 📋 Planned Features (Post-1.0)
 
-### Near-term (v0.5.0)
+### Enterprise Features
+- [ ] Grafana dashboard templates
+- [ ] Multi-host aggregation
+- [ ] Remote monitoring daemon
 
-#### GPU Control & Tuning
-- [ ] GPU clock control (safe wrappers with proper permissions)
-- [ ] Power limit adjustment
-- [ ] Fan curve control (NVIDIA/AMD)
-- [ ] Multi-GPU workload balancing info
-
-#### Process Monitoring
-- [ ] Process tree visualization
-- [ ] Container/cgroup awareness
-- [ ] Process resource limiting suggestions
-
-#### AI Agent
-- [ ] Streaming responses in GUI chatbot
-- [ ] Anomaly detection prompts
-- [ ] System optimization recommendations
-
-#### GUI
-- [ ] Custom dashboard layouts
-- [ ] System tray mode (setting added, tray-icon integration pending)
-
-### Medium-term (v0.6.0)
-
-#### Platform Expansion
+### Platform Expansion
 - [ ] FreeBSD support
-- [ ] WSL2 GPU passthrough detection
 - [ ] Intel discrete GPU support (Arc series)
-
-#### Monitoring Enhancements
-- [ ] PCIe bandwidth monitoring
 - [ ] Thunderbolt device monitoring
 - [ ] EDID parsing for display details
 
-### Long-term (v1.0.0)
-
-#### Enterprise Features
-- [ ] Remote monitoring (network daemon)
-- [ ] Prometheus metrics endpoint
-- [ ] Grafana dashboard templates
-- [ ] Multi-host aggregation
-- [ ] REST API server mode
-
-#### Advanced AI
+### Advanced AI
 - [ ] Local LLM integration (llama.cpp via `local-llamacpp` feature)
-- [ ] Predictive maintenance alerts
 - [ ] Automated performance tuning
 - [ ] Natural language system control ("reduce fan noise", "limit GPU power")
+- [ ] Streaming responses in GUI chatbot
+
+### GUI
+- [ ] Custom dashboard layouts
+- [ ] System tray mode
 
 ---
 
@@ -181,6 +168,17 @@ Legend: ✅ Supported | ❌ Not applicable
 
 ## 📅 Release History
 
+### v1.0.0 (January 2026)
+- REST API HTTP server with tokio TCP and ObservabilityAPI dispatch
+- Prometheus metrics exporter with proper exposition format and labels
+- Predictive maintenance engine with linear regression trend analysis
+- AMD GPU control (power limits, clock locking via sysfs)
+- Process tree visualization with container/cgroup detection
+- Anomaly detection with z-score, trend analysis, and alerting
+- WSL2 GPU passthrough detection
+- PCIe bandwidth monitoring with degradation detection
+- 241+ tests passing, zero compiler warnings
+
 ### v0.4.0 (February 2026)
 - Switched to AGPL-3.0-or-later with commercial dual-license and CLA
 - Packaging readiness for crates.io (exclude lists, metadata, docs)
@@ -222,4 +220,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines. All contributions require
 
 ---
 
-*Last updated: January 24, 2026*
+*Last updated: January 27, 2026*

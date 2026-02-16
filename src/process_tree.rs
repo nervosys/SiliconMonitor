@@ -131,10 +131,10 @@ impl ProcessTree {
             Self::build_macos(&mut nodes, &mut children_map)?;
         }
 
-        // Wire up children
+        // Wire up children (filter self-referencing to prevent cycles, e.g. Windows PID 0)
         for (ppid, kids) in &children_map {
             if let Some(parent) = nodes.get_mut(ppid) {
-                parent.children = kids.clone();
+                parent.children = kids.iter().copied().filter(|&kid| kid != *ppid).collect();
             }
         }
 
@@ -548,15 +548,19 @@ impl ProcessTree {
         groups
     }
 
-    /// Get all descendants of a process (recursive)
+    /// Get all descendants of a process (iterative, cycle-safe)
     pub fn descendants(&self, pid: u32) -> Vec<u32> {
         let mut result = Vec::new();
+        let mut visited = std::collections::HashSet::new();
         let mut stack = vec![pid];
+        visited.insert(pid);
         while let Some(current) = stack.pop() {
             if let Some(node) = self.nodes.get(&current) {
                 for &child in &node.children {
-                    result.push(child);
-                    stack.push(child);
+                    if visited.insert(child) {
+                        result.push(child);
+                        stack.push(child);
+                    }
                 }
             }
         }
@@ -580,6 +584,21 @@ impl ProcessTree {
     /// Print the process tree from a given root
     pub fn print_tree(&self, pid: u32, depth: usize) -> String {
         let mut output = String::new();
+        let mut visited = std::collections::HashSet::new();
+        self.print_tree_inner(pid, depth, &mut output, &mut visited);
+        output
+    }
+
+    fn print_tree_inner(
+        &self,
+        pid: u32,
+        depth: usize,
+        output: &mut String,
+        visited: &mut std::collections::HashSet<u32>,
+    ) {
+        if !visited.insert(pid) || depth > 50 {
+            return;
+        }
         if let Some(node) = self.nodes.get(&pid) {
             let indent = if depth == 0 {
                 String::new()
@@ -597,10 +616,9 @@ impl ProcessTree {
                 indent, node.pid, node.name, container_tag
             ));
             for &child in &node.children {
-                output.push_str(&self.print_tree(child, depth + 1));
+                self.print_tree_inner(child, depth + 1, output, visited);
             }
         }
-        output
     }
 
     /// Summary statistics
@@ -633,19 +651,23 @@ impl ProcessTree {
     }
 
     fn tree_depth(&self, pid: u32) -> usize {
-        if let Some(node) = self.nodes.get(&pid) {
-            if node.children.is_empty() {
-                return 1;
+        use std::collections::{HashSet, VecDeque};
+        let mut max_depth = 0usize;
+        let mut visited = HashSet::new();
+        let mut queue: VecDeque<(u32, usize)> = VecDeque::new();
+        queue.push_back((pid, 1));
+        visited.insert(pid);
+        while let Some((current, depth)) = queue.pop_front() {
+            max_depth = max_depth.max(depth);
+            if let Some(node) = self.nodes.get(&current) {
+                for &child in &node.children {
+                    if visited.insert(child) {
+                        queue.push_back((child, depth + 1));
+                    }
+                }
             }
-            1 + node
-                .children
-                .iter()
-                .map(|&c| self.tree_depth(c))
-                .max()
-                .unwrap_or(0)
-        } else {
-            0
         }
+        max_depth
     }
 }
 
