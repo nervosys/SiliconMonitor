@@ -209,7 +209,7 @@ impl PrometheusExporter {
             self.add(MetricFamily::gauge(
                 &self.prefixed("cpu_usage_percent"),
                 "Total CPU utilization percentage",
-                cpu.total_usage as f64,
+                (100.0_f64 - cpu.total.idle as f64),
             ));
 
             // Per-core utilization
@@ -219,13 +219,14 @@ impl PrometheusExporter {
                 metric_type: MetricType::Gauge,
                 samples: Vec::new(),
             };
-            for (i, usage) in cpu.per_cpu_usage.iter().enumerate() {
+            for core in &cpu.cores {
+                let usage = 100.0 - core.idle.unwrap_or(100.0) as f64;
                 let mut labels = BTreeMap::new();
-                labels.insert("core".into(), i.to_string());
+                labels.insert("core".into(), core.id.to_string());
                 per_core.samples.push(MetricSample {
                     suffix: String::new(),
                     labels,
-                    value: *usage as f64,
+                    value: usage,
                 });
             }
             if !per_core.samples.is_empty() {
@@ -235,7 +236,7 @@ impl PrometheusExporter {
             self.add(MetricFamily::gauge(
                 &self.prefixed("cpu_cores_total"),
                 "Total number of CPU cores",
-                cpu.per_cpu_usage.len() as f64,
+                cpu.cores.len() as f64,
             ));
         }
     }
@@ -245,23 +246,23 @@ impl PrometheusExporter {
             self.add(MetricFamily::gauge(
                 &self.prefixed("memory_total_bytes"),
                 "Total physical memory in bytes",
-                mem.total as f64,
+                mem.ram.total as f64,
             ));
             self.add(MetricFamily::gauge(
                 &self.prefixed("memory_used_bytes"),
                 "Used physical memory in bytes",
-                mem.used as f64,
+                mem.ram.used as f64,
             ));
             self.add(MetricFamily::gauge(
                 &self.prefixed("memory_free_bytes"),
                 "Free physical memory in bytes",
-                mem.free as f64,
+                mem.ram.free as f64,
             ));
-            if mem.total > 0 {
+            if mem.ram.total > 0 {
                 self.add(MetricFamily::gauge(
                     &self.prefixed("memory_usage_percent"),
                     "Memory utilization percentage",
-                    (mem.used as f64 / mem.total as f64) * 100.0,
+                    (mem.ram.used as f64 / mem.ram.total as f64) * 100.0,
                 ));
             }
         }
@@ -332,11 +333,11 @@ impl PrometheusExporter {
                     ));
 
                     // Clocks
-                    if let Some(core) = info.dynamic_info.clocks.core {
+                    if let Some(graphics) = info.dynamic_info.clocks.graphics {
                         self.add(MetricFamily::gauge_with_labels(
                             &self.prefixed("gpu_clock_core_mhz"),
                             "GPU core clock in MHz",
-                            core as f64,
+                            graphics as f64,
                             base_labels.clone(),
                         ));
                     }
@@ -350,11 +351,11 @@ impl PrometheusExporter {
                     }
 
                     // Fan
-                    if let Some(fan) = info.dynamic_info.fan.speed_percent {
+                    if let Some(fan_speed) = info.dynamic_info.thermal.fan_speed {
                         self.add(MetricFamily::gauge_with_labels(
                             &self.prefixed("gpu_fan_speed_percent"),
                             "GPU fan speed percentage",
-                            fan as f64,
+                            fan_speed as f64,
                             base_labels.clone(),
                         ));
                     }
@@ -366,35 +367,39 @@ impl PrometheusExporter {
     fn collect_disk_metrics(&mut self) {
         if let Ok(disks) = crate::disk::enumerate_disks() {
             for disk in &disks {
-                let mut labels = BTreeMap::new();
-                labels.insert("device".into(), disk.name().to_string());
-                labels.insert("mount".into(), disk.mount_point().to_string());
+                if let Ok(filesystems) = disk.filesystem_info() {
+                    for fs in &filesystems {
+                        let mut labels = BTreeMap::new();
+                        labels.insert("device".into(), disk.name().to_string());
+                        labels.insert("mount".into(), fs.mount_point.to_string_lossy().to_string());
 
-                self.add(MetricFamily::gauge_with_labels(
-                    &self.prefixed("disk_total_bytes"),
-                    "Total disk capacity in bytes",
-                    disk.total_bytes() as f64,
-                    labels.clone(),
-                ));
-                self.add(MetricFamily::gauge_with_labels(
-                    &self.prefixed("disk_used_bytes"),
-                    "Used disk space in bytes",
-                    disk.used_bytes() as f64,
-                    labels.clone(),
-                ));
-                self.add(MetricFamily::gauge_with_labels(
-                    &self.prefixed("disk_available_bytes"),
-                    "Available disk space in bytes",
-                    disk.available_bytes() as f64,
-                    labels.clone(),
-                ));
-                if disk.total_bytes() > 0 {
-                    self.add(MetricFamily::gauge_with_labels(
-                        &self.prefixed("disk_usage_percent"),
-                        "Disk utilization percentage",
-                        (disk.used_bytes() as f64 / disk.total_bytes() as f64) * 100.0,
-                        labels.clone(),
-                    ));
+                        self.add(MetricFamily::gauge_with_labels(
+                            &self.prefixed("disk_total_bytes"),
+                            "Total disk capacity in bytes",
+                            fs.total_size as f64,
+                            labels.clone(),
+                        ));
+                        self.add(MetricFamily::gauge_with_labels(
+                            &self.prefixed("disk_used_bytes"),
+                            "Used disk space in bytes",
+                            fs.used_size as f64,
+                            labels.clone(),
+                        ));
+                        self.add(MetricFamily::gauge_with_labels(
+                            &self.prefixed("disk_available_bytes"),
+                            "Available disk space in bytes",
+                            fs.available_size as f64,
+                            labels.clone(),
+                        ));
+                        if fs.total_size > 0 {
+                            self.add(MetricFamily::gauge_with_labels(
+                                &self.prefixed("disk_usage_percent"),
+                                "Disk utilization percentage",
+                                (fs.used_size as f64 / fs.total_size as f64) * 100.0,
+                                labels.clone(),
+                            ));
+                        }
+                    }
                 }
             }
         }
@@ -410,6 +415,7 @@ impl PrometheusExporter {
                     self.add(MetricFamily::counter(
                         &self.prefixed("network_rx_bytes_total"),
                         "Total bytes received",
+                        iface.rx_bytes as f64,
                     ));
 
                     // Use gauges for current rates

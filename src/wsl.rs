@@ -251,7 +251,7 @@ impl WslDetector {
     }
 
     #[cfg(windows)]
-    fn detect_windows(info: &mut WslInfo) {
+    fn detect_windows(_info: &mut WslInfo) {
         // On Windows, check if WSL is installed by looking for the wsl.exe command
         // We don't run inside WSL on Windows, so is_wsl = false
         // But we can report whether WSL is available on this host

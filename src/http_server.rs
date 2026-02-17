@@ -29,7 +29,7 @@ use crate::observability::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 /// HTTP server configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -101,16 +101,18 @@ impl HttpServer {
             ApiConfig::default()
         };
 
-        let api = Arc::new(RwLock::new(ObservabilityApi::new(api_config)));
-        let event_manager = Arc::new(crate::observability::EventManager::new(1000));
-        let metric_collector = Arc::new(MetricCollector::new(3600));
+        let api = ObservabilityApi::new(api_config);
+        let event_manager = crate::observability::EventManager::new(1000);
+        let metric_collector = MetricCollector::new();
 
         let handler = Arc::new(RequestHandler::new(
             api,
             event_manager,
-            metric_collector.clone(),
+            metric_collector,
             server_config,
         ));
+
+        let metric_collector = handler.metric_collector.clone();
 
         Ok(Self {
             config,
@@ -292,8 +294,8 @@ impl HttpServer {
             path,
             query,
             headers,
-            body: String::new(), // GET requests don't have bodies typically
-            client_addr: client_addr.to_string(),
+            body: None, // GET requests don't have bodies typically
+            client_addr: client_addr.parse().ok(),
         })
     }
 

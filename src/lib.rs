@@ -186,6 +186,17 @@ pub mod system_stats; // System-wide stats (load avg, vmstat, uptime) - Linux/BS
 pub mod tsdb; // Time-series database for recording metrics
 pub mod usb; // USB device enumeration
 
+// Datacenter, virtualization, and fleet monitoring
+pub mod daemon; // Monitoring daemon for headless/remote operation
+pub mod datacenter; // Datacenter chassis, IPMI, rack topology
+pub mod fleet; // Fleet-level multi-host monitoring and aggregation
+pub mod http_server; // HTTP server for REST API and Prometheus
+pub mod pcie; // PCIe device monitoring
+pub mod predictive; // Predictive maintenance and failure analysis
+pub mod prometheus; // Prometheus metrics exporter
+pub mod virtualization; // VM/container detection and resource monitoring
+pub mod wsl; // WSL2 detection and monitoring
+
 // Unsafe utilities (swap, clocks, power_mode) - gated behind feature flag
 // See SECURITY.md for vulnerability details
 #[cfg(feature = "jetson-utils")]
@@ -436,6 +447,18 @@ pub use tsdb::{
     format_size, parse_size, DatabaseStats, MetricSample, MetricsRecorder, ProcessSnapshot,
     SystemSnapshot, TimeSeriesDb,
 };
+
+// Re-export datacenter monitoring
+pub use datacenter::{ChassisInfo, ChassisType, DatacenterError, DatacenterMonitor, DatacenterSnapshot, FormFactor, IpmiController, IpmiSensor, RackInfo};
+
+// Re-export virtualization detection
+pub use virtualization::{ContainerEngine, ContainerInfo, CpuVirtCapability, GuestResources, Hypervisor, HypervisorInfo, VirtMonitor, VirtPlatform, VirtSnapshot};
+
+// Re-export fleet management
+pub use fleet::{AlertCategory, AlertSeverity, FleetAlert, FleetConfig, FleetManager, FleetSnapshot, FleetThresholds, HostInfo, HostMetrics, HostStatus, HostSummary};
+
+// Re-export daemon
+pub use daemon::{DaemonConfig, DaemonError, MonitoringDaemon};
 
 /// Main entry point for unified silicon monitoring.
 ///
