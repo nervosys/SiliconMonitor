@@ -203,6 +203,18 @@ pub mod smart; // S.M.A.R.T. disk health monitoring with AI inference
 pub mod storage_controller; // Storage controllers, RAID arrays, NVMe
 pub mod tpm; // Trusted Platform Module monitoring
 
+// Deep hardware topology, security, and resource monitors
+pub mod cgroup_monitor; // Linux cgroup v1/v2 resource monitoring for containers
+pub mod cpu_microarch; // CPU microarchitecture detection and ISA extensions
+pub mod crypto_accel; // Cryptographic hardware acceleration (AES-NI, SHA, RNG)
+pub mod drm_monitor; // DRM/KMS subsystem monitoring (connectors, CRTCs, planes)
+pub mod interconnect; // CPU interconnect topology (QPI/UPI, Infinity Fabric, Apple UMA)
+pub mod interrupt_map; // IRQ topology, per-CPU counts, MSI/MSI-X, affinity
+pub mod memory_bandwidth; // Memory bandwidth monitoring and estimation
+pub mod memory_topology; // Physical DIMM enumeration, speed, timing, ECC
+pub mod rapl; // Intel RAPL / AMD power capping energy monitoring
+pub mod security_mitigations; // CPU vulnerability mitigations, kernel security, posture scoring
+
 // Datacenter, virtualization, and fleet monitoring
 pub mod daemon; // Monitoring daemon for headless/remote operation
 pub mod datacenter; // Datacenter chassis, IPMI, rack topology
@@ -528,6 +540,39 @@ pub use power_profile::{
 };
 pub use sensors::{SensorInfo, SensorMonitor, SensorType, SensorValue};
 pub use smart::{DiskHealth, DriveMediaType, SmartAttribute, SmartDiskInfo, SmartMonitor};
+
+// Re-export deep hardware topology, security, and resource monitors
+pub use cgroup_monitor::{
+    CgroupCpu, CgroupInfo, CgroupMemory, CgroupMonitor, CgroupOverview, CgroupVersion,
+};
+pub use cpu_microarch::{
+    CpuMicroarchMonitor, CpuMicroarchReport, CpuVendor as MicroarchVendor, InferredPerformance,
+    IsaExtension, Microarchitecture,
+};
+pub use crypto_accel::{
+    CryptoAccelMonitor, CryptoAccelReport, CryptoCategory, CryptoFeature, HardwareRng, TpmCrypto,
+};
+pub use drm_monitor::{
+    ConnectorStatus, ConnectorType, DrmClient, DrmConnector, DrmDevice, DrmMonitor, DrmOverview,
+};
+pub use interconnect::{
+    ChipletTopology, CoherenceProtocol, InterconnectLink, InterconnectMonitor, InterconnectTopology,
+    InterconnectType,
+};
+pub use interrupt_map::{InterruptAnalysis, InterruptInfo, InterruptMapMonitor, InterruptType};
+pub use memory_bandwidth::{
+    BandwidthAnalysis, BandwidthEstimate, ChannelConfig, MemoryBandwidthMonitor,
+    MemoryGeneration,
+};
+pub use memory_topology::{
+    DimmInfo, FormFactor as DimmFormFactor, MemoryAnalysis, MemoryTopologyMonitor,
+    MemoryType as DimmMemoryType,
+};
+pub use rapl::{EnergyReading, PowerDomain, PowerEfficiency, PowerSnapshot, RaplMonitor};
+pub use security_mitigations::{
+    CpuVulnerability, KernelHardening, MitigationStatus, SecurityMitigationsMonitor, SecurityModule,
+    SecurityPosture,
+};
 
 /// Main entry point for unified silicon monitoring.
 ///
