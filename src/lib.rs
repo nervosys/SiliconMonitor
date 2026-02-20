@@ -186,6 +186,15 @@ pub mod system_stats; // System-wide stats (load avg, vmstat, uptime) - Linux/BS
 pub mod tsdb; // Time-series database for recording metrics
 pub mod usb; // USB device enumeration
 
+// Additional hardware monitors
+pub mod camera; // Camera and webcam device monitoring
+pub mod cpu_cache; // CPU cache topology (L1/L2/L3 sizes, associativity)
+pub mod input; // Input device monitoring (keyboards, mice, touchpads, game controllers)
+pub mod os_info; // OS and kernel information (version, modules, boot info)
+pub mod printer; // Printer and print queue monitoring
+pub mod storage_controller; // Storage controllers, RAID arrays, NVMe
+pub mod tpm; // Trusted Platform Module monitoring
+
 // Datacenter, virtualization, and fleet monitoring
 pub mod daemon; // Monitoring daemon for headless/remote operation
 pub mod datacenter; // Datacenter chassis, IPMI, rack topology
@@ -459,6 +468,34 @@ pub use fleet::{AlertCategory, AlertSeverity, FleetAlert, FleetConfig, FleetMana
 
 // Re-export daemon
 pub use daemon::{DaemonConfig, DaemonError, MonitoringDaemon};
+
+// Re-export camera monitoring
+pub use camera::{CameraCapability, CameraConnection, CameraInfo, CameraMonitor};
+
+// Re-export CPU cache topology
+pub use cpu_cache::{
+    CacheLevel, CacheType, CpuCacheInfo, CpuCacheMonitor, CpuCacheTopology,
+};
+
+// Re-export input device monitoring
+pub use input::{InputDevice, InputDeviceType, InputInterface, InputMonitor};
+
+// Re-export OS/kernel information
+pub use os_info::{BootMode, KernelModule, OsFamily, OsInfo, OsInfoMonitor};
+
+// Re-export printer monitoring
+pub use printer::{
+    PrinterConnection, PrinterInfo, PrinterMonitor, PrinterStatus, PrinterType,
+};
+
+// Re-export storage controller monitoring
+pub use storage_controller::{
+    NvmeControllerInfo, RaidArrayInfo, RaidLevel, RaidStatus, StorageControllerInfo,
+    StorageControllerMonitor, StorageInterface,
+};
+
+// Re-export TPM monitoring
+pub use tpm::{TpmInfo, TpmMonitor, TpmStatus, TpmVersion};
 
 /// Main entry point for unified silicon monitoring.
 ///
