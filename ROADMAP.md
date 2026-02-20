@@ -106,7 +106,7 @@ Silicon Monitor is the world's first agentic system monitoring utility and API. 
 - [x] Feature flags for platform/vendor-specific code (`nvidia`, `amd`, `intel`, `apple`, `cpu`, `npu`, `io`, `network`, `cli`, `gui`)
 - [x] Comprehensive error handling with `thiserror`
 - [x] Criterion benchmarks (CPU stats, GPU queries, process enumeration)
-- [x] 241+ tests passing
+- [x] 293 tests passing
 - [x] Release profile optimized (`lto = true`, `codegen-units = 1`, `strip = true`)
 - [x] Published to [crates.io](https://crates.io/crates/silicon-monitor)
 
@@ -184,25 +184,20 @@ Legend: ✅ Supported | ⚠️ Partial | ❌ Not applicable
 
 ## 📅 Release History
 
-### v1.1.0 (February 2026)
+### v1.1.0 (February 19, 2026) — [crates.io](https://crates.io/crates/silicon-monitor/1.1.0)
 - Datacenter monitoring: IPMI/BMC sensors, chassis detection, rack topology
 - Virtualization: hypervisor detection (17 types), guest resources, container engines (10 types)
 - Fleet management: multi-host registration, health scoring, threshold alerting
 - Monitoring daemon with TOML configuration
 - Grafana dashboard templates (fleet overview, GPU detail, host detail)
 - Kubernetes pod info extraction
-- Zero compiler warnings (clean build)
+- 293 tests passing, zero compiler warnings
 
-### v1.0.0 (January 2026)
+### v1.0.0 (February 16, 2026)
 - REST API HTTP server with tokio TCP and ObservabilityAPI dispatch
 - Prometheus metrics exporter with proper exposition format and labels
 - Predictive maintenance engine with linear regression trend analysis
-- AMD GPU control (power limits, clock locking via sysfs)
-- Process tree visualization with container/cgroup detection
-- Anomaly detection with z-score, trend analysis, and alerting
-- WSL2 GPU passthrough detection
-- PCIe bandwidth monitoring with degradation detection
-- 241+ tests passing, zero compiler warnings
+- Includes v0.5.0 (GPU control, process trees, anomaly detection) and v0.6.0 (WSL2, PCIe monitoring)
 
 ### v0.4.0 (February 2026)
 - Switched to AGPL-3.0-or-later with commercial dual-license and CLA
@@ -246,4 +241,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines. All contributions require
 
 ---
 
-*Last updated: February 16, 2026*
+*Last updated: February 19, 2026*
