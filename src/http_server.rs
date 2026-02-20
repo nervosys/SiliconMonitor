@@ -71,6 +71,7 @@ impl Default for HttpServerConfig {
 }
 
 /// HTTP server that exposes Silicon Monitor data
+#[allow(dead_code)]
 pub struct HttpServer {
     config: HttpServerConfig,
     handler: Arc<RequestHandler>,
@@ -250,6 +251,7 @@ impl HttpServer {
     }
 
     /// Parse raw HTTP/1.1 request into ObsRequest
+    #[allow(dead_code)]
     fn parse_http_request(raw: &str, client_addr: &str) -> Option<ObsRequest> {
         let mut lines = raw.lines();
         let request_line = lines.next()?;
@@ -347,6 +349,7 @@ impl HttpServer {
     }
 }
 
+#[allow(dead_code)]
 fn status_text(code: u16) -> &'static str {
     match code {
         200 => "OK",
