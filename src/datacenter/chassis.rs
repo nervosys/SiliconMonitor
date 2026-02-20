@@ -182,6 +182,7 @@ impl ChassisInfo {
         })
     }
 
+    #[allow(dead_code)]
     fn from_smbios_byte(b: u8) -> ChassisType {
         match b {
             3 => ChassisType::Desktop,
@@ -214,6 +215,7 @@ impl ChassisInfo {
         }
     }
 
+    #[allow(dead_code)]
     fn infer_form_factor(ct: ChassisType, product: &str) -> FormFactor {
         let p = product.to_lowercase();
         match ct {

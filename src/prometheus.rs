@@ -209,7 +209,7 @@ impl PrometheusExporter {
             self.add(MetricFamily::gauge(
                 &self.prefixed("cpu_usage_percent"),
                 "Total CPU utilization percentage",
-                (100.0_f64 - cpu.total.idle as f64),
+                100.0_f64 - cpu.total.idle as f64,
             ));
 
             // Per-core utilization

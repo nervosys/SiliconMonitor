@@ -294,6 +294,7 @@ pub fn detect_orchestrator() -> Option<OrchestratorInfo> {
     None
 }
 
+#[allow(dead_code)]
 fn hostname() -> String {
     std::env::var("HOSTNAME")
         .or_else(|_| {

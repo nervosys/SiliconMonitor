@@ -304,16 +304,16 @@ impl HttpServer {
         loop {
             // Collect CPU stats
             if let Ok(cpu) = crate::CpuStats::new() {
-                collector.record("cpu_usage_percent", cpu.total_usage as f64);
+                collector.record("cpu_usage_percent", 100.0 - cpu.total.idle as f64);
             }
             // Collect memory
             if let Ok(mem) = crate::MemoryStats::new() {
-                collector.record("memory_used_bytes", mem.used as f64);
-                collector.record("memory_total_bytes", mem.total as f64);
-                if mem.total > 0 {
+                collector.record("memory_used_bytes", mem.ram.used as f64);
+                collector.record("memory_total_bytes", mem.ram.total as f64);
+                if mem.ram.total > 0 {
                     collector.record(
                         "memory_usage_percent",
-                        (mem.used as f64 / mem.total as f64) * 100.0,
+                        (mem.ram.used as f64 / mem.ram.total as f64) * 100.0,
                     );
                 }
             }

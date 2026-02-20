@@ -214,6 +214,7 @@ impl TimeSeries {
     }
 
     /// Predict value at future index (from current last position)
+    #[allow(dead_code)]
     fn predict_at(&self, steps_ahead: usize) -> Option<f64> {
         let (slope, intercept) = self.linear_regression()?;
         let future_x = (self.values.len() + steps_ahead - 1) as f64;

@@ -4,7 +4,7 @@
 
 Silicon Monitor is the world's first agentic system monitoring utility and API. Built in Rust, it provides unified cross-platform APIs for CPUs, GPUs (NVIDIA/AMD/Intel/Apple), NPUs, memory, disks, motherboards, processes, network interfaces, peripherals (audio, Bluetooth, display, USB), and more — with native AI agent integration.
 
-- **Crate**: [`silicon-monitor`](https://crates.io/crates/silicon-monitor) v1.0.0
+- **Crate**: [`silicon-monitor`](https://crates.io/crates/silicon-monitor) v1.1.0
 - **License**: AGPL-3.0-or-later (commercial dual-license available)
 - **MSRV**: Rust 1.70+
 
@@ -88,6 +88,18 @@ Silicon Monitor is the world's first agentic system monitoring utility and API. 
 - [x] **Prometheus Metrics Exporter** — Proper exposition format with HELP/TYPE annotations, per-GPU/per-core/per-disk labels
 - [x] **Predictive Maintenance** — Linear regression trend analysis, GPU thermal/clock degradation, disk SMART failure, fan bearing wear, memory error predictions
 
+### v1.1.0 — Datacenter, Virtualization, Fleet Monitoring
+- [x] **Datacenter Monitoring** — IPMI/BMC sensor reading (ipmitool + sysfs backends), power draw, SEL events
+- [x] **Chassis Detection** — SMBIOS/DMI chassis type identification (36 standard types), form factor inference
+- [x] **Rack Topology** — Builder-pattern rack configuration, PDU power tracking, cooling zones
+- [x] **Virtualization Detection** — CPUID hypervisor leaf + DMI detection (17 hypervisors), cloud provider identification
+- [x] **Guest Resource Monitoring** — Virtual CPU topology, virtio/SCSI/IDE disk, SR-IOV/virtio NICs, memory ballooning
+- [x] **Container Engine Support** — 10 container engines (Docker, Podman, containerd, CRI-O, LXC, etc.), cgroup v1/v2 metrics
+- [x] **Kubernetes Pod Info** — Pod name, namespace, labels, resource limits extraction from downward API
+- [x] **Fleet Management** — Multi-host registration, metric recording, tag-based grouping, health scoring, threshold alerting
+- [x] **Monitoring Daemon** — TOML-configurable daemon with PID file management, sample config generation
+- [x] **Grafana Dashboards** — Fleet overview, GPU detail, and host detail dashboard templates
+
 ### Code Quality
 - [x] Zero compiler warnings
 - [x] Serde serialization for all metric types
@@ -100,12 +112,13 @@ Silicon Monitor is the world's first agentic system monitoring utility and API. 
 
 ---
 
-## 📋 Planned Features (Post-1.0)
+## 📋 Planned Features (Post-1.1)
 
 ### Enterprise Features
-- [ ] Grafana dashboard templates
-- [ ] Multi-host aggregation
-- [ ] Remote monitoring daemon
+- [ ] Multi-host aggregation (live fleet data via gRPC/QUIC)
+- [ ] Alert routing (PagerDuty, Slack, email, webhook)
+- [ ] SNMP trap support
+- [ ] Remote agent deployment
 
 ### Platform Expansion
 - [ ] FreeBSD support
@@ -158,15 +171,27 @@ Silicon Monitor is the world's first agentic system monitoring utility and API. 
 | Bluetooth      | ✅     | ✅       | ✅     |
 | Display        | ✅     | ✅       | ✅     |
 | USB            | ✅     | ✅       | ✅     |
+| Datacenter     | ✅     | ⚠️      | ❌     |
+| Virtualization | ✅     | ✅       | ✅     |
+| Fleet Mgmt     | ✅     | ✅       | ✅     |
 | GUI            | ✅     | ✅       | ✅     |
 | TUI            | ✅     | ✅       | ✅     |
 | AI Agent       | ✅     | ✅       | ✅     |
 
-Legend: ✅ Supported | ❌ Not applicable
+Legend: ✅ Supported | ⚠️ Partial | ❌ Not applicable
 
 ---
 
 ## 📅 Release History
+
+### v1.1.0 (February 2026)
+- Datacenter monitoring: IPMI/BMC sensors, chassis detection, rack topology
+- Virtualization: hypervisor detection (17 types), guest resources, container engines (10 types)
+- Fleet management: multi-host registration, health scoring, threshold alerting
+- Monitoring daemon with TOML configuration
+- Grafana dashboard templates (fleet overview, GPU detail, host detail)
+- Kubernetes pod info extraction
+- Zero compiler warnings (clean build)
 
 ### v1.0.0 (January 2026)
 - REST API HTTP server with tokio TCP and ObservabilityAPI dispatch
@@ -217,7 +242,8 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines. All contributions require
 - Security-sensitive utilities in `src/utils/` require audit before production use
 - GPU control features require elevated privileges
 - Some metrics are vendor/platform-specific
+- Datacenter features (IPMI) require ipmitool or sysfs access on Linux
 
 ---
 
-*Last updated: January 27, 2026*
+*Last updated: February 16, 2026*
