@@ -215,6 +215,18 @@ pub mod memory_topology; // Physical DIMM enumeration, speed, timing, ECC
 pub mod rapl; // Intel RAPL / AMD power capping energy monitoring
 pub mod security_mitigations; // CPU vulnerability mitigations, kernel security, posture scoring
 
+// OS-level, device, and silicon subsystem monitors
+pub mod dma_engine; // DMA engine monitoring (Intel IOAT/DSA/IAX, channels)
+pub mod edac; // Error Detection and Correction (ECC memory errors)
+pub mod gpu_topology; // Multi-GPU topology, NVLink/xGMI/PCIe P2P, NUMA affinity
+pub mod io_scheduler; // Block I/O scheduler monitoring (mq-deadline, BFQ, kyber)
+pub mod iommu; // IOMMU detection (VT-d, AMD-Vi, SMMU), group enumeration
+pub mod kernel_params; // Kernel sysctl parameter monitoring and security scoring
+pub mod scheduler; // Linux process scheduler (CFS/EEVDF, PSI, schedstat)
+pub mod thermal_zone; // Thermal zone, trip point, and cooling device monitoring
+pub mod voltage_regulator; // Voltage regulator monitoring (SoC/CPU/GPU rails)
+pub mod watchdog; // Hardware/software watchdog timer monitoring
+
 // Datacenter, virtualization, and fleet monitoring
 pub mod daemon; // Monitoring daemon for headless/remote operation
 pub mod datacenter; // Datacenter chassis, IPMI, rack topology
@@ -573,6 +585,18 @@ pub use security_mitigations::{
     CpuVulnerability, KernelHardening, MitigationStatus, SecurityMitigationsMonitor, SecurityModule,
     SecurityPosture,
 };
+
+// Re-export OS-level, device, and silicon subsystem monitors
+pub use dma_engine::{DmaCapabilities, DmaChannel, DmaController, DmaEngineMonitor, DmaEngineType, DmaOverview};
+pub use edac::{EdacCsRow, EdacMemType, EdacMemoryController, EdacMonitor, EdacOverview};
+pub use gpu_topology::{GpuInterconnectType, GpuLink, GpuTopologyMonitor, GpuTopologyNode, GpuTopologyOverview};
+pub use io_scheduler::{BlockDeviceIo, IoSchedulerMonitor, IoSchedulerOverview, IoSchedulerType, IoStats};
+pub use iommu::{IommuDevice, IommuGroup, IommuMonitor, IommuOverview, IommuType};
+pub use kernel_params::{KernelParam, KernelParamsMonitor, KernelParamsReport, ParamCategory};
+pub use scheduler::{CpuSchedStats, PressureInfo, SchedPolicy, SchedTuning, SchedulerAnalysis, SchedulerMonitor};
+pub use thermal_zone::{CoolingDeviceInfo, ThermalZoneInfo, ThermalZoneMonitor, ThermalZoneOverview, ThermalZoneType, TripPoint as ThermalTripPoint, TripPointType};
+pub use voltage_regulator::{RegulatorMode, RegulatorState, VoltageRegulatorInfo, VoltageRegulatorMonitor, VoltageRegulatorOverview};
+pub use watchdog::{PreTimeoutGovernor, WatchdogInfo, WatchdogMonitor, WatchdogOverview, WatchdogType};
 
 /// Main entry point for unified silicon monitoring.
 ///

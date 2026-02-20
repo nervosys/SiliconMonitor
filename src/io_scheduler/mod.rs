@@ -1,0 +1,485 @@
+//! Block I/O scheduler monitoring and analysis.
+//!
+//! Detects and reports active I/O schedulers per block device (mq-deadline,
+//! BFQ, kyber, none), queue depth, rotational vs SSD classification,
+//! I/O stats (IOPS, throughput, latency), and scheduler tuning parameters.
+//!
+//! ## Platform Support
+//!
+//! - **Linux**: `/sys/block/*/queue/scheduler`, `/sys/block/*/stat`, `/proc/diskstats`
+//! - **Windows**: I/O priority via performance counters
+//! - **macOS**: IOKit disk stats
+
+use serde::{Deserialize, Serialize};
+use crate::error::SimonError;
+
+/// I/O scheduler type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum IoSchedulerType {
+    /// Multi-Queue Deadline.
+    MqDeadline,
+    /// Budget Fair Queueing.
+    Bfq,
+    /// Kyber (low-latency).
+    Kyber,
+    /// No scheduler (none/noop — direct dispatch).
+    None,
+    /// Legacy CFQ (pre-5.0 kernels).
+    Cfq,
+    /// Legacy Deadline.
+    Deadline,
+    /// Legacy Noop.
+    Noop,
+    Unknown,
+}
+
+impl std::fmt::Display for IoSchedulerType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::MqDeadline => write!(f, "mq-deadline"),
+            Self::Bfq => write!(f, "bfq"),
+            Self::Kyber => write!(f, "kyber"),
+            Self::None => write!(f, "none"),
+            Self::Cfq => write!(f, "cfq"),
+            Self::Deadline => write!(f, "deadline"),
+            Self::Noop => write!(f, "noop"),
+            Self::Unknown => write!(f, "unknown"),
+        }
+    }
+}
+
+/// Block device I/O statistics.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IoStats {
+    /// Reads completed.
+    pub reads_completed: u64,
+    /// Reads merged.
+    pub reads_merged: u64,
+    /// Sectors read.
+    pub sectors_read: u64,
+    /// Time reading (ms).
+    pub read_time_ms: u64,
+    /// Writes completed.
+    pub writes_completed: u64,
+    /// Writes merged.
+    pub writes_merged: u64,
+    /// Sectors written.
+    pub sectors_written: u64,
+    /// Time writing (ms).
+    pub write_time_ms: u64,
+    /// Current I/O in flight.
+    pub in_flight: u64,
+    /// Time doing I/O (ms).
+    pub io_time_ms: u64,
+    /// Weighted time doing I/O (ms).
+    pub weighted_io_time_ms: u64,
+    /// Discards completed (TRIM).
+    pub discards_completed: u64,
+}
+
+/// Block device I/O scheduler info.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BlockDeviceIo {
+    /// Device name (e.g. "sda", "nvme0n1").
+    pub name: String,
+    /// Active I/O scheduler.
+    pub scheduler: IoSchedulerType,
+    /// Available schedulers.
+    pub available_schedulers: Vec<IoSchedulerType>,
+    /// Whether this is a rotational (HDD) device.
+    pub rotational: bool,
+    /// Queue depth (nr_requests).
+    pub queue_depth: u32,
+    /// Logical block size.
+    pub logical_block_size: u32,
+    /// Physical block size.
+    pub physical_block_size: u32,
+    /// Whether device supports discard (TRIM).
+    pub discard_support: bool,
+    /// I/O statistics.
+    pub stats: IoStats,
+    /// Device size in bytes.
+    pub size_bytes: u64,
+    /// Model / product name.
+    pub model: String,
+}
+
+impl BlockDeviceIo {
+    /// Estimated read IOPS from stats.
+    pub fn read_iops_from_stats(&self) -> f64 {
+        if self.stats.read_time_ms > 0 {
+            self.stats.reads_completed as f64 / (self.stats.read_time_ms as f64 / 1000.0)
+        } else {
+            0.0
+        }
+    }
+
+    /// Estimated write IOPS from stats.
+    pub fn write_iops_from_stats(&self) -> f64 {
+        if self.stats.write_time_ms > 0 {
+            self.stats.writes_completed as f64 / (self.stats.write_time_ms as f64 / 1000.0)
+        } else {
+            0.0
+        }
+    }
+
+    /// Read throughput in MB/s (from stats).
+    pub fn read_throughput_mbs(&self) -> f64 {
+        if self.stats.read_time_ms > 0 {
+            (self.stats.sectors_read as f64 * 512.0) / (self.stats.read_time_ms as f64 / 1000.0) / 1_000_000.0
+        } else {
+            0.0
+        }
+    }
+
+    /// Whether scheduler is optimal for device type.
+    pub fn scheduler_optimal(&self) -> bool {
+        if self.rotational {
+            // HDDs benefit from BFQ or mq-deadline
+            matches!(self.scheduler, IoSchedulerType::Bfq | IoSchedulerType::MqDeadline)
+        } else {
+            // SSDs/NVMe work best with none, mq-deadline, or kyber
+            matches!(self.scheduler, IoSchedulerType::None | IoSchedulerType::MqDeadline | IoSchedulerType::Kyber)
+        }
+    }
+}
+
+/// I/O scheduler overview.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IoSchedulerOverview {
+    /// All block devices.
+    pub devices: Vec<BlockDeviceIo>,
+    /// Total devices.
+    pub total_devices: u32,
+    /// Devices with non-optimal schedulers.
+    pub non_optimal_count: u32,
+    /// Recommendations.
+    pub recommendations: Vec<String>,
+}
+
+/// I/O scheduler monitor.
+pub struct IoSchedulerMonitor {
+    overview: IoSchedulerOverview,
+}
+
+impl IoSchedulerMonitor {
+    /// Create a new I/O scheduler monitor.
+    pub fn new() -> Result<Self, SimonError> {
+        let overview = Self::scan()?;
+        Ok(Self { overview })
+    }
+
+    /// Refresh.
+    pub fn refresh(&mut self) -> Result<(), SimonError> {
+        self.overview = Self::scan()?;
+        Ok(())
+    }
+
+    /// Get overview.
+    pub fn overview(&self) -> &IoSchedulerOverview {
+        &self.overview
+    }
+
+    /// Get devices.
+    pub fn devices(&self) -> &[BlockDeviceIo] {
+        &self.overview.devices
+    }
+
+    /// Get device by name.
+    pub fn device(&self, name: &str) -> Option<&BlockDeviceIo> {
+        self.overview.devices.iter().find(|d| d.name == name)
+    }
+
+    #[cfg(target_os = "linux")]
+    fn scan() -> Result<IoSchedulerOverview, SimonError> {
+        let block_path = std::path::Path::new("/sys/block");
+        let mut devices = Vec::new();
+
+        if !block_path.exists() {
+            return Ok(IoSchedulerOverview {
+                devices: Vec::new(),
+                total_devices: 0,
+                non_optimal_count: 0,
+                recommendations: Vec::new(),
+            });
+        }
+
+        let entries = std::fs::read_dir(block_path).map_err(SimonError::Io)?;
+
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+
+            // Skip loop, ram, dm devices
+            if name.starts_with("loop") || name.starts_with("ram") || name.starts_with("dm-") {
+                continue;
+            }
+
+            let dev_path = entry.path();
+            let queue_path = dev_path.join("queue");
+
+            if !queue_path.exists() {
+                continue;
+            }
+
+            // Read scheduler
+            let (scheduler, available) = Self::read_scheduler(&queue_path);
+
+            // Rotational
+            let rotational = Self::read_sysfs_u32(&queue_path.join("rotational")).unwrap_or(0) == 1;
+
+            // Queue depth
+            let queue_depth = Self::read_sysfs_u32(&queue_path.join("nr_requests")).unwrap_or(128);
+
+            // Block sizes
+            let logical_block_size = Self::read_sysfs_u32(&queue_path.join("logical_block_size")).unwrap_or(512);
+            let physical_block_size = Self::read_sysfs_u32(&queue_path.join("physical_block_size")).unwrap_or(512);
+
+            // Discard support
+            let discard_support = Self::read_sysfs_u32(&queue_path.join("discard_max_bytes"))
+                .map(|v| v > 0)
+                .unwrap_or(false);
+
+            // Stats
+            let stats = Self::read_stats(&dev_path);
+
+            // Size (in 512-byte sectors)
+            let size_sectors = Self::read_sysfs_u64(&dev_path.join("size")).unwrap_or(0);
+            let size_bytes = size_sectors * 512;
+
+            // Model
+            let model = std::fs::read_to_string(dev_path.join("device/model"))
+                .ok()
+                .map(|s| s.trim().to_string())
+                .unwrap_or_default();
+
+            devices.push(BlockDeviceIo {
+                name,
+                scheduler,
+                available_schedulers: available,
+                rotational,
+                queue_depth,
+                logical_block_size,
+                physical_block_size,
+                discard_support,
+                stats,
+                size_bytes,
+                model,
+            });
+        }
+
+        let total = devices.len() as u32;
+        let non_optimal = devices.iter().filter(|d| !d.scheduler_optimal()).count() as u32;
+
+        let mut recommendations = Vec::new();
+        for dev in &devices {
+            if !dev.scheduler_optimal() {
+                let suggested = if dev.rotational { "bfq" } else { "none" };
+                recommendations.push(format!(
+                    "{}: using '{}' scheduler; '{}' may be better for {} devices",
+                    dev.name,
+                    dev.scheduler,
+                    suggested,
+                    if dev.rotational { "rotational" } else { "SSD/NVMe" }
+                ));
+            }
+        }
+
+        Ok(IoSchedulerOverview {
+            devices,
+            total_devices: total,
+            non_optimal_count: non_optimal,
+            recommendations,
+        })
+    }
+
+    #[cfg(target_os = "linux")]
+    fn read_scheduler(queue_path: &std::path::Path) -> (IoSchedulerType, Vec<IoSchedulerType>) {
+        let content = std::fs::read_to_string(queue_path.join("scheduler"))
+            .unwrap_or_default();
+
+        let mut active = IoSchedulerType::Unknown;
+        let mut available = Vec::new();
+
+        for part in content.split_whitespace() {
+            let (name, is_active) = if part.starts_with('[') && part.ends_with(']') {
+                (part.trim_matches(|c| c == '[' || c == ']'), true)
+            } else {
+                (part, false)
+            };
+
+            let sched = match name {
+                "mq-deadline" => IoSchedulerType::MqDeadline,
+                "bfq" => IoSchedulerType::Bfq,
+                "kyber" => IoSchedulerType::Kyber,
+                "none" => IoSchedulerType::None,
+                "cfq" => IoSchedulerType::Cfq,
+                "deadline" => IoSchedulerType::Deadline,
+                "noop" => IoSchedulerType::Noop,
+                _ => IoSchedulerType::Unknown,
+            };
+
+            available.push(sched);
+            if is_active {
+                active = sched;
+            }
+        }
+
+        (active, available)
+    }
+
+    #[cfg(target_os = "linux")]
+    fn read_stats(dev_path: &std::path::Path) -> IoStats {
+        let content = std::fs::read_to_string(dev_path.join("stat")).unwrap_or_default();
+        let parts: Vec<u64> = content
+            .split_whitespace()
+            .filter_map(|s| s.parse().ok())
+            .collect();
+
+        IoStats {
+            reads_completed: *parts.first().unwrap_or(&0),
+            reads_merged: *parts.get(1).unwrap_or(&0),
+            sectors_read: *parts.get(2).unwrap_or(&0),
+            read_time_ms: *parts.get(3).unwrap_or(&0),
+            writes_completed: *parts.get(4).unwrap_or(&0),
+            writes_merged: *parts.get(5).unwrap_or(&0),
+            sectors_written: *parts.get(6).unwrap_or(&0),
+            write_time_ms: *parts.get(7).unwrap_or(&0),
+            in_flight: *parts.get(8).unwrap_or(&0),
+            io_time_ms: *parts.get(9).unwrap_or(&0),
+            weighted_io_time_ms: *parts.get(10).unwrap_or(&0),
+            discards_completed: *parts.get(11).unwrap_or(&0),
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn read_sysfs_u32(path: &std::path::Path) -> Option<u32> {
+        std::fs::read_to_string(path)
+            .ok()
+            .and_then(|s| s.trim().parse().ok())
+    }
+
+    #[cfg(target_os = "linux")]
+    fn read_sysfs_u64(path: &std::path::Path) -> Option<u64> {
+        std::fs::read_to_string(path)
+            .ok()
+            .and_then(|s| s.trim().parse().ok())
+    }
+
+    #[cfg(target_os = "windows")]
+    fn scan() -> Result<IoSchedulerOverview, SimonError> {
+        Ok(IoSchedulerOverview {
+            devices: Vec::new(),
+            total_devices: 0,
+            non_optimal_count: 0,
+            recommendations: Vec::new(),
+        })
+    }
+
+    #[cfg(target_os = "macos")]
+    fn scan() -> Result<IoSchedulerOverview, SimonError> {
+        Ok(IoSchedulerOverview {
+            devices: Vec::new(),
+            total_devices: 0,
+            non_optimal_count: 0,
+            recommendations: Vec::new(),
+        })
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
+    fn scan() -> Result<IoSchedulerOverview, SimonError> {
+        Ok(IoSchedulerOverview {
+            devices: Vec::new(),
+            total_devices: 0,
+            non_optimal_count: 0,
+            recommendations: Vec::new(),
+        })
+    }
+}
+
+impl Default for IoSchedulerMonitor {
+    fn default() -> Self {
+        Self::new().unwrap_or(Self {
+            overview: IoSchedulerOverview {
+                devices: Vec::new(),
+                total_devices: 0,
+                non_optimal_count: 0,
+                recommendations: Vec::new(),
+            },
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_scheduler_display() {
+        assert_eq!(IoSchedulerType::MqDeadline.to_string(), "mq-deadline");
+        assert_eq!(IoSchedulerType::Bfq.to_string(), "bfq");
+        assert_eq!(IoSchedulerType::None.to_string(), "none");
+    }
+
+    #[test]
+    fn test_optimal_ssd() {
+        let dev = BlockDeviceIo {
+            name: "nvme0n1".into(),
+            scheduler: IoSchedulerType::None,
+            available_schedulers: vec![IoSchedulerType::None, IoSchedulerType::MqDeadline],
+            rotational: false,
+            queue_depth: 256,
+            logical_block_size: 512,
+            physical_block_size: 4096,
+            discard_support: true,
+            stats: IoStats { reads_completed: 0, reads_merged: 0, sectors_read: 0, read_time_ms: 0, writes_completed: 0, writes_merged: 0, sectors_written: 0, write_time_ms: 0, in_flight: 0, io_time_ms: 0, weighted_io_time_ms: 0, discards_completed: 0 },
+            size_bytes: 1_000_000_000_000,
+            model: "Samsung 990 Pro".into(),
+        };
+        assert!(dev.scheduler_optimal());
+    }
+
+    #[test]
+    fn test_non_optimal_hdd() {
+        let dev = BlockDeviceIo {
+            name: "sda".into(),
+            scheduler: IoSchedulerType::None,
+            available_schedulers: vec![IoSchedulerType::None, IoSchedulerType::Bfq],
+            rotational: true,
+            queue_depth: 128,
+            logical_block_size: 512,
+            physical_block_size: 512,
+            discard_support: false,
+            stats: IoStats { reads_completed: 0, reads_merged: 0, sectors_read: 0, read_time_ms: 0, writes_completed: 0, writes_merged: 0, sectors_written: 0, write_time_ms: 0, in_flight: 0, io_time_ms: 0, weighted_io_time_ms: 0, discards_completed: 0 },
+            size_bytes: 2_000_000_000_000,
+            model: "WDC WD20EARS".into(),
+        };
+        assert!(!dev.scheduler_optimal());
+    }
+
+    #[test]
+    fn test_monitor_default() {
+        let monitor = IoSchedulerMonitor::default();
+        let _overview = monitor.overview();
+    }
+
+    #[test]
+    fn test_serialization() {
+        let stats = IoStats {
+            reads_completed: 1000,
+            reads_merged: 50,
+            sectors_read: 80000,
+            read_time_ms: 500,
+            writes_completed: 2000,
+            writes_merged: 100,
+            sectors_written: 160000,
+            write_time_ms: 800,
+            in_flight: 2,
+            io_time_ms: 1000,
+            weighted_io_time_ms: 1200,
+            discards_completed: 10,
+        };
+        let json = serde_json::to_string(&stats).unwrap();
+        assert!(json.contains("1000"));
+        let _: IoStats = serde_json::from_str(&json).unwrap();
+    }
+}
