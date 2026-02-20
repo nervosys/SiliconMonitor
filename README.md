@@ -843,29 +843,29 @@ cargo run --release --features full --example agent_simple
 
 ## Architecture
 
-```plaintext
+```shell
 simon/
-├── core/                  Core metric structs (CPU, memory, power, etc.)
-├── gpu/                   Multi-vendor GPU abstraction
-│   ├── mod.rs               Unified Device trait, GpuCollection
-│   ├── nvidia_new.rs        NVIDIA backend (NVML)
-│   ├── amd_rocm.rs          AMD backend (sysfs/DRM)
-│   └── intel_levelzero.rs   Intel backend (i915/xe)
-├── disk/                  Disk I/O and SMART monitoring
-├── motherboard/           System info, BIOS, sensors
-├── silicon/               Apple/Intel/AMD silicon-level monitoring
-├── audio/                 Audio device enumeration
-├── bluetooth/             Bluetooth adapter/device monitoring
-├── display/               Connected display monitoring
-├── usb/                   USB device enumeration
-├── hwmon/                 Hardware monitor sensors
-├── observability/         AI-oriented observability API
-├── ai_api/                AI agent tools and ontology
-├── process_monitor.rs     Process enumeration with GPU attribution
-├── network_monitor.rs     Network interface statistics
-├── tui/                   Terminal user interface (ratatui)
-├── bin/main.rs            CLI/TUI entry point
-└── platform/              Platform-specific implementations
+├── core/                    # Core metric structs (CPU, memory, power, etc.)
+├── gpu/                     # Multi-vendor GPU abstraction
+│   ├── mod.rs               # Unified Device trait, GpuCollection
+│   ├── nvidia_new.rs        # NVIDIA backend (NVML)
+│   ├── amd_rocm.rs          # AMD backend (sysfs/DRM)
+│   └── intel_levelzero.rs   # Intel backend (i915/xe)
+├── disk/                    # Disk I/O and SMART monitoring
+├── motherboard/             # System info, BIOS, sensors
+├── silicon/                 # Apple/Intel/AMD silicon-level monitoring
+├── audio/                   # Audio device enumeration
+├── bluetooth/               # Bluetooth adapter/device monitoring
+├── display/                 # Connected display monitoring
+├── usb/                     # USB device enumeration
+├── hwmon/                   # Hardware monitor sensors
+├── observability/           # AI-oriented observability API
+├── ai_api/                  # AI agent tools and ontology
+├── process_monitor.rs       # Process enumeration with GPU attribution
+├── network_monitor.rs       # Network interface statistics
+├── tui/                     # Terminal user interface (ratatui)
+├── bin/main.rs              # CLI/TUI entry point
+└── platform/                # Platform-specific implementations
 ```
 
 ## API Documentation
