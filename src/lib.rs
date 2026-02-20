@@ -188,10 +188,18 @@ pub mod usb; // USB device enumeration
 
 // Additional hardware monitors
 pub mod camera; // Camera and webcam device monitoring
+pub mod codec; // Hardware codec and media capability detection
 pub mod cpu_cache; // CPU cache topology (L1/L2/L3 sizes, associativity)
+pub mod firmware; // Firmware inventory (BIOS, ME, NIC, storage)
+pub mod hardware_ai; // AI-based hardware inference engine
 pub mod input; // Input device monitoring (keyboards, mice, touchpads, game controllers)
+pub mod numa; // NUMA topology and memory affinity
 pub mod os_info; // OS and kernel information (version, modules, boot info)
+pub mod pci_devices; // PCI device enumeration and classification
+pub mod power_profile; // Power profile and energy management
 pub mod printer; // Printer and print queue monitoring
+pub mod sensors; // Environmental sensors (accelerometer, gyroscope, light)
+pub mod smart; // S.M.A.R.T. disk health monitoring with AI inference
 pub mod storage_controller; // Storage controllers, RAID arrays, NVMe
 pub mod tpm; // Trusted Platform Module monitoring
 
@@ -496,6 +504,30 @@ pub use storage_controller::{
 
 // Re-export TPM monitoring
 pub use tpm::{TpmInfo, TpmMonitor, TpmStatus, TpmVersion};
+
+// Re-export new hardware monitors
+pub use codec::{
+    BitDepth, CapabilitySource, CodecCapability, CodecDirection, CodecMonitor, ComputeCapability,
+    MaxResolution, VideoCodec,
+};
+pub use firmware::{
+    BootMode as FirmwareBootMode, FirmwareComponent, FirmwareEntry, FirmwareInventory,
+    SecureBootStatus,
+};
+pub use hardware_ai::{
+    AnomalySeverity as HwAnomalySeverity, Bottleneck, BottleneckType, HardwareAge,
+    HardwareAnalysisReport, HardwareAnomaly, HardwareInferenceEngine, PerformanceTier,
+    SystemClass, ThermalEnvelope, ThermalHeadroom, UpgradeRecommendation, Workload,
+    WorkloadSuitability,
+};
+pub use numa::{NumaDistanceMatrix, NumaMonitor, NumaNode, NumaSummary};
+pub use pci_devices::{PciClass, PciDeviceInfo, PciDeviceMonitor, PciLinkInfo};
+pub use power_profile::{
+    ChargePolicy, CpuFreqConfig, CpuGovernor, InferredPowerBehavior, PowerPlanInfo,
+    PowerProfile, PowerProfileMonitor,
+};
+pub use sensors::{SensorInfo, SensorMonitor, SensorType, SensorValue};
+pub use smart::{DiskHealth, DriveMediaType, SmartAttribute, SmartDiskInfo, SmartMonitor};
 
 /// Main entry point for unified silicon monitoring.
 ///
