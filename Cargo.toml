@@ -20,7 +20,6 @@ categories = [
 ]
 exclude = [
     "assets/banner.png",
-    "assets/fonts/",
     "docs/images/",
     ".github/",
     "BUILD.md",
