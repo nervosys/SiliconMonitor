@@ -936,6 +936,8 @@ pub struct ProcessMonitor {
     /// Previous per-process CPU times for delta-based CPU% calculation
     /// Maps PID -> (cumulative_cpu_time_us, wall_clock_instant)
     prev_cpu_times: HashMap<u32, (u64, std::time::Instant)>,
+    /// Number of logical CPUs for normalizing per-process CPU%
+    num_logical_cpus: f32,
 }
 
 impl ProcessMonitor {
@@ -944,11 +946,15 @@ impl ProcessMonitor {
     /// Automatically detects available GPUs for GPU process attribution.
     pub fn new() -> Result<Self> {
         let gpu_collection = GpuCollection::auto_detect().ok();
+        let num_logical_cpus = std::thread::available_parallelism()
+            .map(|n| n.get() as f32)
+            .unwrap_or(1.0);
 
         Ok(Self {
             gpu_collection,
             last_update: std::time::Instant::now(),
             prev_cpu_times: HashMap::new(),
+            num_logical_cpus,
         })
     }
 
@@ -957,19 +963,29 @@ impl ProcessMonitor {
     /// This is useful when you already have a [`GpuCollection`] instance
     /// and want to reuse it for process monitoring.
     pub fn with_gpus(gpu_collection: GpuCollection) -> Result<Self> {
+        let num_logical_cpus = std::thread::available_parallelism()
+            .map(|n| n.get() as f32)
+            .unwrap_or(1.0);
+
         Ok(Self {
             gpu_collection: Some(gpu_collection),
             last_update: std::time::Instant::now(),
             prev_cpu_times: HashMap::new(),
+            num_logical_cpus,
         })
     }
 
     /// Create a process monitor without GPU tracking
     pub fn without_gpu() -> Result<Self> {
+        let num_logical_cpus = std::thread::available_parallelism()
+            .map(|n| n.get() as f32)
+            .unwrap_or(1.0);
+
         Ok(Self {
             gpu_collection: None,
             last_update: std::time::Instant::now(),
             prev_cpu_times: HashMap::new(),
+            num_logical_cpus,
         })
     }
 
@@ -989,12 +1005,16 @@ impl ProcessMonitor {
                     let elapsed_us = elapsed.as_micros() as f64;
                     if elapsed_us > 0.0 && proc.cpu_time_us >= prev_time_us {
                         let delta_cpu_us = (proc.cpu_time_us - prev_time_us) as f64;
-                        // CPU% = (cpu_time_delta / wall_time_delta) * 100
-                        // Can exceed 100% on multi-core systems
-                        proc.cpu_percent = ((delta_cpu_us / elapsed_us) * 100.0) as f32;
+                        // CPU% = (cpu_time_delta / wall_time_delta) * 100 / num_cpus
+                        // Normalized to 0-100% of total system capacity (like Task Manager)
+                        proc.cpu_percent = ((delta_cpu_us / elapsed_us) * 100.0
+                            / self.num_logical_cpus as f64)
+                            as f32;
                     }
+                } else {
+                    // First sample: normalize the lifetime-average from platform code
+                    proc.cpu_percent /= self.num_logical_cpus;
                 }
-                // else: first sample — keep the lifetime-average from platform code
                 new_cpu_times.insert(proc.pid, (proc.cpu_time_us, now));
             }
         }
@@ -1347,10 +1367,15 @@ impl ProcessMonitor {
 
 impl Default for ProcessMonitor {
     fn default() -> Self {
+        let num_logical_cpus = std::thread::available_parallelism()
+            .map(|n| n.get() as f32)
+            .unwrap_or(1.0);
+
         Self::new().unwrap_or_else(|_| Self {
             gpu_collection: None,
             last_update: std::time::Instant::now(),
             prev_cpu_times: HashMap::new(),
+            num_logical_cpus,
         })
     }
 }
@@ -1853,7 +1878,8 @@ mod windows_impl {
 
                             // Get current time as FILETIME for uptime calculation
                             let now_ft =
-                                windows::Win32::System::SystemInformation::GetSystemTimeAsFileTime();
+                                windows::Win32::System::SystemInformation::GetSystemTimeAsFileTime(
+                                );
                             let now_100ns = (now_ft.dwHighDateTime as u64) << 32
                                 | (now_ft.dwLowDateTime as u64);
                             let uptime_secs = if now_100ns > creation_100ns {

@@ -39,25 +39,89 @@ mod glances_colors {
     pub const WARNING: Color = Color::Yellow;
     /// CRITICAL status - urgent (90-100%)
     pub const CRITICAL: Color = Color::Red;
-    /// Title/header color
+    /// Title/header color (generic)
     pub const TITLE: Color = Color::Cyan;
     /// Separator/border color
     pub const SEPARATOR: Color = Color::DarkGray;
     /// Inactive/disabled color
     pub const INACTIVE: Color = Color::DarkGray;
+
+    // ── Device-class title colors (bright cyberpunk neon) ────────────────
+    /// CPU title color – neon cyan
+    pub const CPU_TITLE: Color = Color::Rgb(0, 255, 255);
+    /// Accelerator (GPU/NPU) title color – neon green
+    pub const ACCEL_TITLE: Color = Color::Rgb(57, 255, 20);
+    /// Memory title color – neon magenta
+    pub const MEMORY_TITLE: Color = Color::Rgb(255, 0, 255);
+    /// Disk title color – neon orange
+    pub const DISK_TITLE: Color = Color::Rgb(255, 165, 0);
+    /// Network title color – neon blue
+    pub const NETWORK_TITLE: Color = Color::Rgb(0, 150, 255);
 }
 
-/// Get color based on percentage threshold (Glances-style)
-/// - 0-50%: Green (OK)
-/// - 50-70%: Cyan (CAREFUL)
-/// - 70-90%: Yellow (WARNING)
-/// - 90-100%: Red (CRITICAL)
+/// Get color based on percentage threshold (Glances-style, generic fallback)
 fn threshold_color(percent: f32) -> Color {
     match percent {
         p if p >= 90.0 => glances_colors::CRITICAL,
         p if p >= 70.0 => glances_colors::WARNING,
         p if p >= 50.0 => glances_colors::CAREFUL,
         _ => glances_colors::OK,
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// DEVICE-CLASS COLOR PALETTES
+// Each device type has a unique color family so bars/sparklines are
+// instantly distinguishable at a glance.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// CPU color – Neon Cyan family
+fn cpu_color(percent: f32) -> Color {
+    match percent {
+        p if p >= 90.0 => Color::Rgb(255, 60, 60), // neon red
+        p if p >= 70.0 => Color::Rgb(255, 255, 0), // neon yellow
+        p if p >= 50.0 => Color::Rgb(0, 200, 200), // bright cyan
+        _ => Color::Rgb(0, 255, 255),              // neon cyan
+    }
+}
+
+/// GPU / Accelerator color – Neon Green family
+fn accel_color(percent: f32) -> Color {
+    match percent {
+        p if p >= 90.0 => Color::Rgb(255, 60, 60), // neon red
+        p if p >= 70.0 => Color::Rgb(255, 255, 0), // neon yellow
+        p if p >= 50.0 => Color::Rgb(80, 255, 80), // bright green
+        _ => Color::Rgb(57, 255, 20),              // neon green
+    }
+}
+
+/// Memory color – Neon Magenta family
+fn memory_color(percent: f32) -> Color {
+    match percent {
+        p if p >= 90.0 => Color::Rgb(255, 60, 60),   // neon red
+        p if p >= 70.0 => Color::Rgb(255, 255, 0),   // neon yellow
+        p if p >= 50.0 => Color::Rgb(255, 100, 255), // bright magenta
+        _ => Color::Rgb(255, 0, 255),                // neon magenta
+    }
+}
+
+/// Disk color – Neon Orange family
+fn disk_color(percent: f32) -> Color {
+    match percent {
+        p if p >= 90.0 => Color::Rgb(255, 60, 60),  // neon red
+        p if p >= 70.0 => Color::Rgb(255, 255, 0),  // neon yellow
+        p if p >= 50.0 => Color::Rgb(255, 200, 50), // bright amber
+        _ => Color::Rgb(255, 165, 0),               // neon orange
+    }
+}
+
+/// Network color – Neon Blue family
+fn network_color(percent: f32) -> Color {
+    match percent {
+        p if p >= 90.0 => Color::Rgb(255, 60, 60),  // neon red
+        p if p >= 70.0 => Color::Rgb(255, 255, 0),  // neon yellow
+        p if p >= 50.0 => Color::Rgb(80, 180, 255), // bright blue
+        _ => Color::Rgb(0, 150, 255),               // neon blue
     }
 }
 
@@ -236,7 +300,7 @@ fn draw_overview_sparklines(f: &mut Frame, app: &App, area: Rect) {
                     .title("CPU History (60s)"),
             )
             .data(&cpu_data)
-            .style(Style::default().fg(threshold_color(app.cpu_info.utilization)));
+            .style(Style::default().fg(cpu_color(app.cpu_info.utilization)));
         f.render_widget(sparkline, spark_chunks[0]);
     } else {
         let empty = Block::default()
@@ -260,7 +324,7 @@ fn draw_overview_sparklines(f: &mut Frame, app: &App, area: Rect) {
                     .title("Memory History (60s)"),
             )
             .data(&mem_data)
-            .style(Style::default().fg(threshold_color(mem_pct)));
+            .style(Style::default().fg(memory_color(mem_pct)));
         f.render_widget(sparkline, spark_chunks[1]);
     } else {
         let empty = Block::default()
@@ -293,7 +357,7 @@ fn draw_cpu_tab(f: &mut Frame, app: &App, area: Rect) {
 
     // Detailed CPU info with per-core bars
     let mut info_lines = vec![Line::from(vec![
-        Span::styled("Name: ", Style::default().fg(glances_colors::TITLE)),
+        Span::styled("Name: ", Style::default().fg(glances_colors::CPU_TITLE)),
         Span::raw(&app.cpu_info.name),
         Span::raw(format!(
             " │ {} cores/{} threads │ {} MHz │ {:.0}°C",
@@ -319,11 +383,11 @@ fn draw_cpu_tab(f: &mut Frame, app: &App, area: Rect) {
                     format!("Core {:>2}: ", i),
                     Style::default().fg(Color::White),
                 ),
-                Span::styled(bar, Style::default().fg(threshold_color(usage))),
+                Span::styled(bar, Style::default().fg(cpu_color(usage))),
                 Span::styled(
                     format!(" {:>5.1}%", usage),
                     Style::default()
-                        .fg(threshold_color(usage))
+                        .fg(cpu_color(usage))
                         .add_modifier(Modifier::BOLD),
                 ),
             ])
@@ -346,7 +410,7 @@ fn draw_cpu_tab(f: &mut Frame, app: &App, area: Rect) {
                     .title("CPU Utilization History (60s)"),
             )
             .data(&cpu_data)
-            .style(Style::default().fg(threshold_color(app.cpu_info.utilization)));
+            .style(Style::default().fg(cpu_color(app.cpu_info.utilization)));
         f.render_widget(sparkline, chunks[2]);
     }
 }
@@ -400,7 +464,7 @@ fn draw_accelerators_tab(f: &mut Frame, app: &App, area: Rect) {
                     let sparkline = Sparkline::default()
                         .block(Block::default().borders(Borders::ALL).title(title))
                         .data(&data)
-                        .style(Style::default().fg(threshold_color(accel.utilization)));
+                        .style(Style::default().fg(accel_color(accel.utilization)));
                     f.render_widget(sparkline, spark_chunks[idx]);
                 }
             }
@@ -451,17 +515,14 @@ fn draw_memory_tab(f: &mut Frame, app: &App, area: Rect) {
             Span::styled(
                 "RAM:  ",
                 Style::default()
-                    .fg(glances_colors::TITLE)
+                    .fg(glances_colors::MEMORY_TITLE)
                     .add_modifier(Modifier::BOLD),
             ),
-            Span::styled(
-                ram_bar,
-                Style::default().fg(threshold_color(mem_pct as f32)),
-            ),
+            Span::styled(ram_bar, Style::default().fg(memory_color(mem_pct as f32))),
             Span::styled(
                 format!(" {:.1}%", mem_pct),
                 Style::default()
-                    .fg(threshold_color(mem_pct as f32))
+                    .fg(memory_color(mem_pct as f32))
                     .add_modifier(Modifier::BOLD),
             ),
         ]),
@@ -474,17 +535,14 @@ fn draw_memory_tab(f: &mut Frame, app: &App, area: Rect) {
             Span::styled(
                 "SWAP: ",
                 Style::default()
-                    .fg(glances_colors::TITLE)
+                    .fg(glances_colors::MEMORY_TITLE)
                     .add_modifier(Modifier::BOLD),
             ),
-            Span::styled(
-                swap_bar,
-                Style::default().fg(threshold_color(swap_pct as f32)),
-            ),
+            Span::styled(swap_bar, Style::default().fg(memory_color(swap_pct as f32))),
             Span::styled(
                 format!(" {:.1}%", swap_pct),
                 Style::default()
-                    .fg(threshold_color(swap_pct as f32))
+                    .fg(memory_color(swap_pct as f32))
                     .add_modifier(Modifier::BOLD),
             ),
         ]),
@@ -515,7 +573,7 @@ fn draw_memory_tab(f: &mut Frame, app: &App, area: Rect) {
                     .title("Memory Usage History (60s)"),
             )
             .data(&mem_data)
-            .style(Style::default().fg(threshold_color(mem_pct as f32)));
+            .style(Style::default().fg(memory_color(mem_pct as f32)));
         f.render_widget(sparkline, chunks[2]);
     }
 }
@@ -606,11 +664,11 @@ fn draw_system_tab(f: &mut Frame, app: &App, area: Rect) {
             ListItem::new(Line::from(vec![
                 Span::styled(
                     format!("{}: ", disk.name),
-                    Style::default().fg(glances_colors::TITLE),
+                    Style::default().fg(glances_colors::DISK_TITLE),
                 ),
                 Span::styled(
                     format!("{:.1} GB / {:.1} GB ({:.0}%)", used_gb, total_gb, percent),
-                    Style::default().fg(threshold_color(percent as f32)),
+                    Style::default().fg(disk_color(percent as f32)),
                 ),
                 Span::raw(format!(
                     " │ {} │ {}{}",
@@ -642,7 +700,7 @@ fn draw_system_tab(f: &mut Frame, app: &App, area: Rect) {
             ListItem::new(Line::from(vec![
                 Span::styled(
                     format!("{}: ", iface.name),
-                    Style::default().fg(glances_colors::TITLE),
+                    Style::default().fg(glances_colors::NETWORK_TITLE),
                 ),
                 Span::styled(
                     status,
@@ -726,7 +784,7 @@ fn draw_single_accelerator(
             type_str, idx, accel.name, accel.vendor, pcie_str
         ),
         Style::default()
-            .fg(glances_colors::TITLE)
+            .fg(glances_colors::ACCEL_TITLE)
             .add_modifier(Modifier::BOLD),
     ));
 
@@ -776,14 +834,10 @@ fn draw_single_accelerator(
         enc_dec_str
     );
 
-    let accel_color = threshold_color(accel.utilization);
+    let accel_clr = accel_color(accel.utilization);
 
     let accel_gauge = Gauge::default()
-        .gauge_style(
-            Style::default()
-                .fg(accel_color)
-                .add_modifier(Modifier::BOLD),
-        )
+        .gauge_style(Style::default().fg(accel_clr).add_modifier(Modifier::BOLD))
         .percent(safe_percent(accel.utilization))
         .label(accel_util_label);
     f.render_widget(accel_gauge, inner);
@@ -822,7 +876,7 @@ fn draw_single_gpu(f: &mut Frame, gpu: &super::app::GpuInfo, idx: usize, area: R
     let block = Block::default().borders(Borders::ALL).title(Span::styled(
         format!("GPU {} │ {} ({})", idx, gpu.name, gpu.vendor),
         Style::default()
-            .fg(glances_colors::TITLE)
+            .fg(glances_colors::ACCEL_TITLE)
             .add_modifier(Modifier::BOLD),
     ));
 
@@ -850,10 +904,10 @@ fn draw_single_gpu(f: &mut Frame, gpu: &super::app::GpuInfo, idx: usize, area: R
         gpu.power_limit.unwrap_or(0.0)
     );
 
-    let gpu_color = threshold_color(gpu.utilization);
+    let gpu_clr = accel_color(gpu.utilization);
 
     let gpu_gauge = Gauge::default()
-        .gauge_style(Style::default().fg(gpu_color).add_modifier(Modifier::BOLD))
+        .gauge_style(Style::default().fg(gpu_clr).add_modifier(Modifier::BOLD))
         .percent(safe_percent(gpu.utilization))
         .label(gpu_util_label);
     f.render_widget(gpu_gauge, inner);
@@ -930,18 +984,18 @@ fn draw_cpu_bar(f: &mut Frame, app: &App, area: Rect) {
         per_core_display
     );
 
-    let cpu_color = threshold_color(app.cpu_info.utilization);
+    let cpu_clr = cpu_color(app.cpu_info.utilization);
 
     let cpu_gauge = Gauge::default()
         .block(
             Block::default().borders(Borders::ALL).title(Span::styled(
                 "CPU",
                 Style::default()
-                    .fg(glances_colors::TITLE)
+                    .fg(glances_colors::CPU_TITLE)
                     .add_modifier(Modifier::BOLD),
             )),
         )
-        .gauge_style(Style::default().fg(cpu_color).add_modifier(Modifier::BOLD))
+        .gauge_style(Style::default().fg(cpu_clr).add_modifier(Modifier::BOLD))
         .percent(safe_percent(app.cpu_info.utilization))
         .label(cpu_label);
 
@@ -971,18 +1025,18 @@ fn draw_memory_bar(f: &mut Frame, app: &App, area: Rect) {
         auto_unit(app.memory_info.swap_used)
     );
 
-    let mem_color = threshold_color(mem_percent as f32);
+    let mem_clr = memory_color(mem_percent as f32);
 
     let mem_gauge = Gauge::default()
         .block(
             Block::default().borders(Borders::ALL).title(Span::styled(
                 "Memory",
                 Style::default()
-                    .fg(glances_colors::TITLE)
+                    .fg(glances_colors::MEMORY_TITLE)
                     .add_modifier(Modifier::BOLD),
             )),
         )
-        .gauge_style(Style::default().fg(mem_color).add_modifier(Modifier::BOLD))
+        .gauge_style(Style::default().fg(mem_clr).add_modifier(Modifier::BOLD))
         .percent(safe_percent(mem_percent as f32))
         .label(mem_label);
 
@@ -1050,18 +1104,18 @@ fn draw_disk_bar(f: &mut Frame, app: &App, area: Rect) {
         )
     };
 
-    let disk_color = threshold_color(disk_percent as f32);
+    let disk_clr = disk_color(disk_percent as f32);
 
     let disk_gauge = Gauge::default()
         .block(
             Block::default().borders(Borders::ALL).title(Span::styled(
                 "Disk",
                 Style::default()
-                    .fg(glances_colors::TITLE)
+                    .fg(glances_colors::DISK_TITLE)
                     .add_modifier(Modifier::BOLD),
             )),
         )
-        .gauge_style(Style::default().fg(disk_color).add_modifier(Modifier::BOLD))
+        .gauge_style(Style::default().fg(disk_clr).add_modifier(Modifier::BOLD))
         .percent(safe_percent(disk_percent as f32))
         .label(disk_label);
 
@@ -1137,26 +1191,19 @@ fn draw_network_bar(f: &mut Frame, app: &App, area: Rect) {
     let max_rate = (net_info.total_rx_rate + net_info.total_tx_rate).max(1.0);
     let gauge_percent = ((max_rate.log10() + 3.0) * 10.0).clamp(0.0, 100.0) as u16;
 
-    // Color based on activity
-    let net_color =
-        if net_info.total_rx_rate > 10_000_000.0 || net_info.total_tx_rate > 10_000_000.0 {
-            glances_colors::WARNING // > 10 MB/s
-        } else if net_info.total_rx_rate > 1_000_000.0 || net_info.total_tx_rate > 1_000_000.0 {
-            glances_colors::CAREFUL // > 1 MB/s
-        } else {
-            glances_colors::OK
-        };
+    // Color based on activity (network-class colors: cyan/teal family)
+    let net_clr = network_color(gauge_percent as f32);
 
     let net_gauge = Gauge::default()
         .block(
             Block::default().borders(Borders::ALL).title(Span::styled(
                 "Network",
                 Style::default()
-                    .fg(glances_colors::TITLE)
+                    .fg(glances_colors::NETWORK_TITLE)
                     .add_modifier(Modifier::BOLD),
             )),
         )
-        .gauge_style(Style::default().fg(net_color).add_modifier(Modifier::BOLD))
+        .gauge_style(Style::default().fg(net_clr).add_modifier(Modifier::BOLD))
         .percent(gauge_percent)
         .label(net_label);
 
@@ -1513,10 +1560,10 @@ fn draw_nvtop_processes(f: &mut Frame, app: &App, area: Rect) {
                 .enumerate()
                 .map(|(display_idx, p)| {
                     let is_selected = selected_display_idx == Some(display_idx);
-                    // Use Glances threshold colors
-                    let cpu_color = threshold_color(p.cpu_percent);
-                    let gpu_color = threshold_color(p.gpu_usage_percent.unwrap_or(0.0));
-                    let enc_color = threshold_color(p.encoder_usage_percent.unwrap_or(0.0));
+                    // Use device-class colors for process metrics
+                    let cpu_clr = cpu_color(p.cpu_percent);
+                    let gpu_clr = accel_color(p.gpu_usage_percent.unwrap_or(0.0));
+                    let enc_clr = accel_color(p.encoder_usage_percent.unwrap_or(0.0));
 
                     // Calculate GPU memory percentage from total GPU memory
                     let gpu_mem_percent = if total_gpu_memory > 0 && p.total_gpu_memory_bytes > 0 {
@@ -1527,7 +1574,7 @@ fn draw_nvtop_processes(f: &mut Frame, app: &App, area: Rect) {
                     } else {
                         p.gpu_memory_percentage
                     };
-                    let gpu_mem_pct_color = threshold_color(gpu_mem_percent.unwrap_or(0.0));
+                    let gpu_mem_pct_clr = accel_color(gpu_mem_percent.unwrap_or(0.0));
 
                     // Color GPU mem based on usage
                     let gpu_mem_color = if p.total_gpu_memory_bytes > 1024 * 1024 * 1024 {
@@ -1604,7 +1651,7 @@ fn draw_nvtop_processes(f: &mut Frame, app: &App, area: Rect) {
                             ),
                             Span::styled(
                                 format!("{:>5.1}%", p.cpu_percent),
-                                Style::default().fg(cpu_color),
+                                Style::default().fg(cpu_clr),
                             ),
                             Span::styled(
                                 format!("{:>6}", auto_unit(p.memory_bytes)),
@@ -1622,7 +1669,7 @@ fn draw_nvtop_processes(f: &mut Frame, app: &App, area: Rect) {
                                 p.gpu_usage_percent
                                     .map(|u| format!("{:>4.0}%", u))
                                     .unwrap_or_else(|| "   -".to_string()),
-                                Style::default().fg(gpu_color),
+                                Style::default().fg(gpu_clr),
                             ),
                             Span::styled(
                                 if p.total_gpu_memory_bytes > 0 {
@@ -1636,7 +1683,7 @@ fn draw_nvtop_processes(f: &mut Frame, app: &App, area: Rect) {
                                 gpu_mem_percent
                                     .map(|u| format!("{:>4.1}%", u))
                                     .unwrap_or_else(|| "   -".to_string()),
-                                Style::default().fg(gpu_mem_pct_color),
+                                Style::default().fg(gpu_mem_pct_clr),
                             ),
                             Span::styled(
                                 enc_dec_str,
@@ -1644,7 +1691,7 @@ fn draw_nvtop_processes(f: &mut Frame, app: &App, area: Rect) {
                                     if p.encoder_usage_percent.is_some()
                                         || p.decoder_usage_percent.is_some()
                                     {
-                                        enc_color
+                                        enc_clr
                                     } else {
                                         Color::DarkGray
                                     },
@@ -1712,7 +1759,7 @@ fn draw_nvtop_processes(f: &mut Frame, app: &App, area: Rect) {
                             ),
                             Span::styled(
                                 format!("{:>5.1}%", p.cpu_percent),
-                                Style::default().fg(cpu_color),
+                                Style::default().fg(cpu_clr),
                             ),
                             Span::styled(
                                 format!("{:>6}", auto_unit(p.memory_bytes)),
@@ -1832,7 +1879,7 @@ fn draw_nvtop_processes(f: &mut Frame, app: &App, area: Rect) {
                         .unwrap_or_else(|| "  N/A".to_string());
 
                     // Use Glances threshold colors for GPU usage
-                    let gpu_color = threshold_color(p.gpu_usage_percent.unwrap_or(0.0));
+                    let gpu_clr = accel_color(p.gpu_usage_percent.unwrap_or(0.0));
 
                     let proc_type = format!("{:?}", p.gpu_process_type);
 
@@ -1851,8 +1898,8 @@ fn draw_nvtop_processes(f: &mut Frame, app: &App, area: Rect) {
                             Style::default().fg(Color::White),
                         ),
                         Span::styled(p.name.clone(), Style::default().fg(Color::White)),
-                        Span::styled(format!("{:>7}", gpu_mem), Style::default().fg(gpu_color)),
-                        Span::styled(gpu_usage, Style::default().fg(gpu_color)),
+                        Span::styled(format!("{:>7}", gpu_mem), Style::default().fg(gpu_clr)),
+                        Span::styled(gpu_usage, Style::default().fg(gpu_clr)),
                         Span::styled(proc_type, Style::default().fg(glances_colors::INACTIVE)),
                     ])
                     .style(if is_selected {
@@ -1939,7 +1986,7 @@ fn draw_nvtop_processes(f: &mut Frame, app: &App, area: Rect) {
                         .map(|u| format!("{:>5.1}%", u))
                         .unwrap_or_else(|| "  N/A".to_string());
 
-                    let accel_color = threshold_color(p.gpu_usage_percent.unwrap_or(0.0));
+                    let accel_clr = accel_color(p.gpu_usage_percent.unwrap_or(0.0));
 
                     let proc_type = format!("{:?}", p.gpu_process_type);
 
@@ -1958,11 +2005,8 @@ fn draw_nvtop_processes(f: &mut Frame, app: &App, area: Rect) {
                             Style::default().fg(Color::White),
                         ),
                         Span::styled(p.name.clone(), Style::default().fg(Color::White)),
-                        Span::styled(
-                            format!("{:>9}", accel_mem),
-                            Style::default().fg(accel_color),
-                        ),
-                        Span::styled(accel_usage, Style::default().fg(accel_color)),
+                        Span::styled(format!("{:>9}", accel_mem), Style::default().fg(accel_clr)),
+                        Span::styled(accel_usage, Style::default().fg(accel_clr)),
                         Span::styled(proc_type, Style::default().fg(glances_colors::INACTIVE)),
                     ])
                     .style(if is_selected {
@@ -2710,17 +2754,6 @@ fn draw_agent(f: &mut Frame, app: &App, area: Rect) {
             .style(Style::default().fg(Color::White));
 
         f.render_widget(history, chunks[1]);
-    }
-}
-
-#[allow(dead_code)]
-fn cpu_color(utilization: f32) -> Color {
-    if utilization < 40.0 {
-        Color::Green
-    } else if utilization < 70.0 {
-        Color::Yellow
-    } else {
-        Color::Red
     }
 }
 

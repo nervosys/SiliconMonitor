@@ -69,6 +69,71 @@ pub fn threshold_color(percent: f32) -> Color32 {
     }
 }
 
+// ── Device-class color palettes (matches TUI conventions) ────────────────────
+
+/// Device-class title colors (bright cyberpunk neon)
+pub struct DeviceTitleColors;
+
+impl DeviceTitleColors {
+    pub const CPU: Color32 = Color32::from_rgb(0, 255, 255); // Neon Cyan
+    pub const ACCEL: Color32 = Color32::from_rgb(57, 255, 20); // Neon Green
+    pub const MEMORY: Color32 = Color32::from_rgb(255, 0, 255); // Neon Magenta
+    pub const DISK: Color32 = Color32::from_rgb(255, 165, 0); // Neon Orange
+    pub const NETWORK: Color32 = Color32::from_rgb(0, 150, 255); // Neon Blue
+}
+
+/// CPU device-class color (Neon Cyan family)
+pub fn cpu_color(percent: f32) -> Color32 {
+    match percent {
+        p if p >= 90.0 => CyberColors::NEON_RED,
+        p if p >= 70.0 => CyberColors::NEON_YELLOW,
+        p if p >= 50.0 => Color32::from_rgb(0, 200, 200), // bright cyan
+        _ => Color32::from_rgb(0, 255, 255),              // neon cyan
+    }
+}
+
+/// Accelerator (GPU/NPU) device-class color (Neon Green family)
+pub fn accel_color(percent: f32) -> Color32 {
+    match percent {
+        p if p >= 90.0 => CyberColors::NEON_RED,
+        p if p >= 70.0 => CyberColors::NEON_YELLOW,
+        p if p >= 50.0 => Color32::from_rgb(80, 255, 80), // bright green
+        _ => Color32::from_rgb(57, 255, 20),              // neon green
+    }
+}
+
+/// Memory device-class color (Neon Magenta family)
+pub fn memory_color(percent: f32) -> Color32 {
+    match percent {
+        p if p >= 90.0 => CyberColors::NEON_RED,
+        p if p >= 70.0 => CyberColors::NEON_YELLOW,
+        p if p >= 50.0 => Color32::from_rgb(255, 100, 255), // bright magenta
+        _ => Color32::from_rgb(255, 0, 255),                // neon magenta
+    }
+}
+
+/// Disk device-class color (Neon Orange family)
+#[allow(dead_code)]
+pub fn disk_color(percent: f32) -> Color32 {
+    match percent {
+        p if p >= 90.0 => CyberColors::NEON_RED,
+        p if p >= 70.0 => CyberColors::NEON_YELLOW,
+        p if p >= 50.0 => Color32::from_rgb(255, 200, 50), // bright amber
+        _ => Color32::from_rgb(255, 165, 0),               // neon orange
+    }
+}
+
+/// Network device-class color (Neon Blue family)
+#[allow(dead_code)]
+pub fn network_color(percent: f32) -> Color32 {
+    match percent {
+        p if p >= 90.0 => CyberColors::NEON_RED,
+        p if p >= 70.0 => CyberColors::NEON_YELLOW,
+        p if p >= 50.0 => Color32::from_rgb(80, 180, 255), // bright blue
+        _ => Color32::from_rgb(0, 150, 255),               // neon blue
+    }
+}
+
 pub fn trend_indicator(current: f32, previous: f32) -> (&'static str, Color32) {
     let delta = current - previous;
     if delta.abs() < 0.5 {
@@ -197,6 +262,7 @@ pub fn temperature_color(temp: u32) -> Color32 {
     }
 }
 
+#[allow(dead_code)]
 pub fn neon_color_by_index(index: usize) -> Color32 {
     const COLORS: &[Color32] = &[
         CyberColors::CYAN,
@@ -234,8 +300,16 @@ pub fn apply_light_theme(ctx: &egui::Context) {
             "../../assets/fonts/NotoEmoji-VariableFont.ttf"
         ))),
     );
-    fonts.families.entry(FontFamily::Proportional).or_default().push("emoji".to_owned());
-    fonts.families.entry(FontFamily::Monospace).or_default().push("emoji".to_owned());
+    fonts
+        .families
+        .entry(FontFamily::Proportional)
+        .or_default()
+        .push("emoji".to_owned());
+    fonts
+        .families
+        .entry(FontFamily::Monospace)
+        .or_default()
+        .push("emoji".to_owned());
     ctx.set_fonts(fonts);
 
     let mut style = Style::default();
@@ -268,12 +342,25 @@ pub fn apply_light_theme(ctx: &egui::Context) {
     visuals.menu_rounding = egui::Rounding::same(6.0);
     style.visuals = visuals;
     style.text_styles = [
-        (TextStyle::Small, FontId::new(11.0, FontFamily::Proportional)),
+        (
+            TextStyle::Small,
+            FontId::new(11.0, FontFamily::Proportional),
+        ),
         (TextStyle::Body, FontId::new(13.0, FontFamily::Proportional)),
-        (TextStyle::Button, FontId::new(13.0, FontFamily::Proportional)),
-        (TextStyle::Heading, FontId::new(18.0, FontFamily::Proportional)),
-        (TextStyle::Monospace, FontId::new(12.0, FontFamily::Monospace)),
-    ].into();
+        (
+            TextStyle::Button,
+            FontId::new(13.0, FontFamily::Proportional),
+        ),
+        (
+            TextStyle::Heading,
+            FontId::new(18.0, FontFamily::Proportional),
+        ),
+        (
+            TextStyle::Monospace,
+            FontId::new(12.0, FontFamily::Monospace),
+        ),
+    ]
+    .into();
     style.spacing.item_spacing = egui::vec2(8.0, 6.0);
     style.spacing.window_margin = egui::Margin::same(12.0);
     style.spacing.button_padding = egui::vec2(10.0, 4.0);

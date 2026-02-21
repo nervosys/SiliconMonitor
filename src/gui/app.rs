@@ -6,7 +6,7 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::mpsc::{channel, Receiver};
 use std::time::{Duration, Instant};
 
-use super::theme::{self, threshold_color, trend_indicator, CyberColors};
+use super::theme::{self, threshold_color, trend_indicator, CyberColors, DeviceTitleColors};
 use super::widgets::{
     CyberProgressBar, MetricCard, QuickLookPanel, SectionHeader, SparklineChart, ThresholdLegend,
 };
@@ -27,13 +27,15 @@ use crate::system_stats::SystemStats;
 
 const HISTORY_SIZE: usize = 60;
 const UPDATE_INTERVAL: Duration = Duration::from_millis(100); // Fast UI updates (10 FPS minimum)
-const DATA_POLL_INTERVAL: Duration = Duration::from_millis(250); // Data polling rate
+const DATA_POLL_INTERVAL: Duration = Duration::from_millis(500); // Data polling rate
+const GPU_DETECT_INTERVAL: Duration = Duration::from_secs(10); // GPU re-detection rate
 const SLOW_UPDATE_INTERVAL: Duration = Duration::from_secs(2); // Slow updates for heavy ops
 
 /// Background data update result
 struct DataUpdateResult {
     cpu_stats: Option<CpuStats>,
     memory_stats: Option<MemoryStats>,
+    gpu_static_info: Vec<GpuStaticInfo>,
     gpu_dynamic_info: Vec<GpuDynamicInfo>,
     network_rx: u64,
     network_tx: u64,
@@ -154,6 +156,7 @@ pub struct SiliconMonitorApp {
     #[allow(dead_code)]
     ai_api_key_input: String,
     ai_selected_backend: AiBackendSelection,
+    ai_prev_backend: AiBackendSelection,
     ai_selected_model: String,
     ai_ollama_models: Vec<String>,
     #[allow(dead_code)]
@@ -169,6 +172,8 @@ pub struct SiliconMonitorApp {
     agent_receiver: Option<Receiver<Option<crate::agent::Agent>>>,
     agent_loading: bool,
     agent_loading_start: Instant,
+    ollama_models_receiver: Option<Receiver<Vec<String>>>,
+    ai_data_api_receiver: Option<Receiver<Option<AiDataApi>>>,
 
     // Cached disk data (refreshed periodically, not on every frame)
     cached_disk_data: Vec<CachedDiskData>,
@@ -178,6 +183,7 @@ pub struct SiliconMonitorApp {
     data_receiver: Option<Receiver<DataUpdateResult>>,
     data_poll_in_flight: bool,
     last_data_poll: Instant,
+    last_gpu_detect: Instant,
 
     // Settings
     show_settings: bool,
@@ -452,6 +458,20 @@ impl SiliconMonitorApp {
             let _ = agent_tx.send(agent);
         });
 
+        // Start background loading for Ollama models (avoid blocking on subprocess)
+        let (ollama_tx, ollama_rx) = channel();
+        std::thread::spawn(move || {
+            let models = SiliconMonitorApp::detect_ollama_models();
+            let _ = ollama_tx.send(models);
+        });
+
+        // Start background loading for AI Data API (avoid blocking on GPU/process init)
+        let (ai_api_tx, ai_api_rx) = channel();
+        std::thread::spawn(move || {
+            let api = AiDataApi::new().ok();
+            let _ = ai_api_tx.send(api);
+        });
+
         let mut app = Self {
             current_tab: Tab::Overview,
             cpu_stats: initial_cpu_stats,
@@ -525,7 +545,7 @@ impl SiliconMonitorApp {
             // AI Agent - loading in background
             agent: None, // Will be populated when background thread completes
             silicon_monitor: crate::SiliconMonitor::new().ok(),
-            ai_data_api: AiDataApi::new().ok(),
+            ai_data_api: None, // Loading in background
             agent_query: String::new(),
             agent_history: VecDeque::with_capacity(50),
             agent_is_processing: false,
@@ -534,11 +554,9 @@ impl SiliconMonitorApp {
             // AI configuration UI
             ai_api_key_input: String::new(),
             ai_selected_backend: AiBackendSelection::default(),
-            ai_selected_model: {
-                let models = Self::detect_ollama_models();
-                models.first().cloned().unwrap_or_default()
-            },
-            ai_ollama_models: Self::detect_ollama_models(),
+            ai_prev_backend: AiBackendSelection::default(),
+            ai_selected_model: String::new(), // Will be set when ollama models load
+            ai_ollama_models: Vec::new(), // Loading in background
             ai_ollama_starting: false,
             ai_status_message: None,
 
@@ -551,6 +569,8 @@ impl SiliconMonitorApp {
             agent_receiver: Some(agent_rx),
             agent_loading: true,
             agent_loading_start: Instant::now(),
+            ollama_models_receiver: Some(ollama_rx),
+            ai_data_api_receiver: Some(ai_api_rx),
 
             // Cached disk data (avoid per-frame I/O)
             cached_disk_data: Vec::new(),
@@ -560,6 +580,7 @@ impl SiliconMonitorApp {
             data_receiver: None,
             data_poll_in_flight: false,
             last_data_poll: Instant::now(),
+            last_gpu_detect: Instant::now() - GPU_DETECT_INTERVAL, // Force initial detection
 
             // Settings
             show_settings: false,
@@ -615,6 +636,13 @@ impl SiliconMonitorApp {
         self.data_poll_in_flight = true;
         self.last_data_poll = Instant::now();
 
+        // Only run expensive GPU detection periodically, not every poll
+        let should_detect_gpu = self.last_gpu_detect.elapsed() >= GPU_DETECT_INTERVAL
+            || self.gpu_static_info.is_empty();
+        if should_detect_gpu {
+            self.last_gpu_detect = Instant::now();
+        }
+
         let (tx, rx) = channel();
         self.data_receiver = Some(rx);
 
@@ -631,15 +659,36 @@ impl SiliconMonitorApp {
             #[cfg(not(target_os = "windows"))]
             let memory_stats = MemoryStats::new().ok();
 
-            // Collect GPU info - create fresh collection in background
-            let gpu_dynamic_info: Vec<GpuDynamicInfo> =
-                if let Ok(gpus) = GpuCollection::auto_detect() {
-                    gpus.gpus()
-                        .iter()
-                        .filter_map(|g| g.dynamic_info().ok())
-                        .collect()
+            // Collect GPU info - only run expensive auto_detect when needed
+            let (gpu_static_info, gpu_dynamic_info): (Vec<GpuStaticInfo>, Vec<GpuDynamicInfo>) =
+                if should_detect_gpu {
+                    if let Ok(gpus) = GpuCollection::auto_detect() {
+                        let statics: Vec<GpuStaticInfo> = gpus
+                            .gpus()
+                            .iter()
+                            .filter_map(|g| g.static_info().ok())
+                            .collect();
+                        let dynamics: Vec<GpuDynamicInfo> = gpus
+                            .gpus()
+                            .iter()
+                            .filter_map(|g| g.dynamic_info().ok())
+                            .collect();
+                        (statics, dynamics)
+                    } else {
+                        (vec![], vec![])
+                    }
                 } else {
-                    vec![]
+                    // Quick path: still need dynamic info for charts, but skip static re-detect
+                    if let Ok(gpus) = GpuCollection::auto_detect() {
+                        let dynamics: Vec<GpuDynamicInfo> = gpus
+                            .gpus()
+                            .iter()
+                            .filter_map(|g| g.dynamic_info().ok())
+                            .collect();
+                        (vec![], dynamics)
+                    } else {
+                        (vec![], vec![])
+                    }
                 };
 
             // Collect network stats (simplified - just totals)
@@ -656,6 +705,7 @@ impl SiliconMonitorApp {
             let _ = tx.send(DataUpdateResult {
                 cpu_stats,
                 memory_stats,
+                gpu_static_info,
                 gpu_dynamic_info,
                 network_rx,
                 network_tx,
@@ -691,7 +741,34 @@ impl SiliconMonitorApp {
             self.memory_stats = Some(stats);
         }
 
-        // Update GPU
+        // Update GPU - also update static info if we gained new GPUs
+        if !result.gpu_static_info.is_empty() {
+            // If static info was empty or GPU count changed, update and resize history
+            if self.gpu_static_info.len() != result.gpu_static_info.len() {
+                let new_count = result.gpu_static_info.len();
+                self.gpu_static_info = result.gpu_static_info;
+
+                // Resize history vectors to match new GPU count
+                self.gpu_history.resize_with(new_count, || {
+                    let mut v = VecDeque::with_capacity(HISTORY_SIZE);
+                    for _ in 0..HISTORY_SIZE { v.push_back(0.0); }
+                    v
+                });
+                self.gpu_memory_history.resize_with(new_count, || {
+                    let mut v = VecDeque::with_capacity(HISTORY_SIZE);
+                    for _ in 0..HISTORY_SIZE { v.push_back(0.0); }
+                    v
+                });
+                self.gpu_temp_history.resize_with(new_count, || {
+                    let mut v = VecDeque::with_capacity(HISTORY_SIZE);
+                    for _ in 0..HISTORY_SIZE { v.push_back(0.0); }
+                    v
+                });
+            } else {
+                self.gpu_static_info = result.gpu_static_info;
+            }
+        }
+
         self.gpu_dynamic_info = result.gpu_dynamic_info;
         for (i, info) in self.gpu_dynamic_info.iter().enumerate() {
             if i < self.gpu_history.len() {
@@ -862,6 +939,34 @@ impl SiliconMonitorApp {
         if self.disk_loaded && self.last_disk_data_refresh.elapsed() >= Duration::from_secs(2) {
             self.refresh_cached_disk_data();
             self.last_disk_data_refresh = Instant::now();
+        }
+
+        // Check Ollama models background loading
+        if let Some(ref receiver) = self.ollama_models_receiver {
+            if let Ok(models) = receiver.try_recv() {
+                let had_no_model = self.ai_selected_model.is_empty();
+                if had_no_model {
+                    self.ai_selected_model = models.first().cloned().unwrap_or_default();
+                }
+                self.ai_ollama_models = models;
+                self.ollama_models_receiver = None;
+                // Auto-retry agent connection once we know the correct model name
+                if had_no_model
+                    && self.agent.is_none()
+                    && !self.ai_selected_model.is_empty()
+                    && matches!(self.ai_selected_backend, AiBackendSelection::Ollama)
+                {
+                    self.retry_agent_connection();
+                }
+            }
+        }
+
+        // Check AI Data API background loading
+        if let Some(ref receiver) = self.ai_data_api_receiver {
+            if let Ok(api) = receiver.try_recv() {
+                self.ai_data_api = api;
+                self.ai_data_api_receiver = None;
+            }
         }
     }
 
@@ -1480,7 +1585,7 @@ impl SiliconMonitorApp {
                 ui.add(
                     MetricCard::new("CPU Usage", format!("{:.1}", cpu_usage))
                         .unit("%")
-                        .color(theme::utilization_color(cpu_usage)),
+                        .color(theme::cpu_color(cpu_usage)),
                 );
 
                 // Memory Card
@@ -1490,7 +1595,7 @@ impl SiliconMonitorApp {
                     ui.add(
                         MetricCard::new("Memory", format!("{:.1}", used_gb))
                             .unit("MB")
-                            .color(theme::utilization_color(usage)),
+                            .color(theme::memory_color(usage)),
                     );
                 }
 
@@ -1511,7 +1616,7 @@ impl SiliconMonitorApp {
                     ui.add(
                         MetricCard::new(&format!("{} {}", accel_type, i), dynamic_info.utilization)
                             .unit("%")
-                            .color(theme::neon_color_by_index(i)),
+                            .color(theme::accel_color(dynamic_info.utilization as f32)),
                     );
 
                     if let Some(temp) = dynamic_info.thermal.temperature {
@@ -1537,7 +1642,7 @@ impl SiliconMonitorApp {
                     ui.add(
                         MetricCard::new(&format!("GPU{} Mem", i), format!("{:.0}", mem_pct))
                             .unit("%")
-                            .color(theme::utilization_color(mem_pct)),
+                            .color(theme::memory_color(mem_pct)),
                     );
                 }
             });
@@ -1549,7 +1654,7 @@ impl SiliconMonitorApp {
                 // CPU Chart
                 columns[0].add(
                     SparklineChart::new(self.cpu_history.iter().cloned().collect())
-                        .color(CyberColors::CYAN)
+                        .color(DeviceTitleColors::CPU)
                         .height(100.0)
                         .title("CPU Usage")
                         .unit("%")
@@ -1561,7 +1666,7 @@ impl SiliconMonitorApp {
                 // Memory Chart
                 columns[1].add(
                     SparklineChart::new(self.memory_history.iter().cloned().collect())
-                        .color(CyberColors::MAGENTA)
+                        .color(DeviceTitleColors::MEMORY)
                         .height(100.0)
                         .title("Memory Usage")
                         .unit("%")
@@ -1582,7 +1687,7 @@ impl SiliconMonitorApp {
                         if i < columns.len() {
                             columns[i].add(
                                 SparklineChart::new(hist.iter().cloned().collect())
-                                    .color(theme::neon_color_by_index(i))
+                                    .color(DeviceTitleColors::ACCEL)
                                     .height(80.0)
                                     .title(&format!("GPU {}", i))
                                     .unit("%")
@@ -1804,7 +1909,7 @@ impl SiliconMonitorApp {
             ui.columns(2, |columns| {
                 columns[0].add(
                     SparklineChart::new(self.network_rx_history.iter().cloned().collect())
-                        .color(CyberColors::NEON_GREEN)
+                        .color(DeviceTitleColors::NETWORK)
                         .height(70.0)
                         .title("Download")
                         .unit("KB/s")
@@ -1813,7 +1918,7 @@ impl SiliconMonitorApp {
 
                 columns[1].add(
                     SparklineChart::new(self.network_tx_history.iter().cloned().collect())
-                        .color(CyberColors::NEON_ORANGE)
+                        .color(DeviceTitleColors::NETWORK)
                         .height(70.0)
                         .title("Upload")
                         .unit("KB/s")
@@ -1853,7 +1958,7 @@ impl SiliconMonitorApp {
                 // CPU History
                 ui.add(
                     SparklineChart::new(self.cpu_history.iter().cloned().collect())
-                        .color(CyberColors::CYAN)
+                        .color(DeviceTitleColors::CPU)
                         .height(120.0)
                         .title("CPU History")
                         .unit("%")
@@ -1875,9 +1980,10 @@ impl SiliconMonitorApp {
                         for (i, hist) in self.per_core_history.iter().enumerate() {
                             let col = i % num_cols;
                             if col < columns.len() {
+                                let core_usage = hist.back().copied().unwrap_or(0.0);
                                 columns[col].add(
                                     SparklineChart::new(hist.iter().cloned().collect())
-                                        .color(theme::neon_color_by_index(i))
+                                        .color(theme::cpu_color(core_usage))
                                         .height(60.0)
                                         .title(&format!("Core {}", i))
                                         .unit("%")
@@ -1900,14 +2006,14 @@ impl SiliconMonitorApp {
                     .show(ui, |ui| {
                         ui.label(RichText::new("Cores:").color(CyberColors::TEXT_SECONDARY));
                         ui.label(
-                            RichText::new(format!("{}", cores.len())).color(CyberColors::CYAN),
+                            RichText::new(format!("{}", cores.len())).color(DeviceTitleColors::CPU),
                         );
                         ui.end_row();
 
                         ui.label(RichText::new("Online:").color(CyberColors::TEXT_SECONDARY));
                         ui.label(
                             RichText::new(format!("{}", cpu.online_count()))
-                                .color(CyberColors::CYAN),
+                                .color(DeviceTitleColors::CPU),
                         );
                         ui.end_row();
 
@@ -1918,7 +2024,7 @@ impl SiliconMonitorApp {
                                 );
                                 ui.label(
                                     RichText::new(format!("{} MHz", freq.current))
-                                        .color(CyberColors::CYAN),
+                                        .color(DeviceTitleColors::CPU),
                                 );
                                 ui.end_row();
                             }
@@ -1927,7 +2033,7 @@ impl SiliconMonitorApp {
                                 ui.label(
                                     RichText::new("Model:").color(CyberColors::TEXT_SECONDARY),
                                 );
-                                ui.label(RichText::new(&core.model).color(CyberColors::CYAN));
+                                ui.label(RichText::new(&core.model).color(DeviceTitleColors::CPU));
                                 ui.end_row();
                             }
                         }
@@ -1972,7 +2078,7 @@ impl SiliconMonitorApp {
                 .zip(self.gpu_dynamic_info.iter())
                 .enumerate()
             {
-                let accel_color = theme::neon_color_by_index(i);
+                let accel_color = DeviceTitleColors::ACCEL;
                 
                 // Device pane frame - compact
                 let frame = egui::Frame::none()
@@ -2044,7 +2150,7 @@ impl SiliconMonitorApp {
                             ui.label(RichText::new(format!("VRAM {}/{}MB", mem_used_mb, mem_total_mb)).color(CyberColors::TEXT_SECONDARY).size(13.0));
                             ui.add(
                                 CyberProgressBar::new(dynamic_info.memory.utilization as f32 / 100.0)
-                                    .color(CyberColors::MAGENTA)
+                                    .color(DeviceTitleColors::MEMORY)
                                     .height(bar_height),
                             );
                             
@@ -2149,7 +2255,7 @@ impl SiliconMonitorApp {
                     ui.add(
                         MetricCard::new("Total", format!("{:.0}", total_mb))
                             .unit("MB")
-                            .color(CyberColors::CYAN),
+                            .color(DeviceTitleColors::MEMORY),
                     );
                     ui.add(
                         MetricCard::new("Used", format!("{:.0}", used_mb))
@@ -2243,7 +2349,7 @@ impl SiliconMonitorApp {
                 // Memory history
                 ui.add(
                     SparklineChart::new(self.memory_history.iter().cloned().collect())
-                        .color(CyberColors::MAGENTA)
+                        .color(DeviceTitleColors::MEMORY)
                         .height(150.0)
                         .title("Memory Usage History")
                         .unit("%")
@@ -2278,7 +2384,7 @@ impl SiliconMonitorApp {
                         ui.add(
                             MetricCard::new("Swap Total", format!("{:.0}", swap_total_mb))
                                 .unit("MB")
-                                .color(CyberColors::CYAN),
+                                .color(DeviceTitleColors::MEMORY),
                         );
                         ui.add(
                             MetricCard::new("Swap Used", format!("{:.0}", swap_used_mb))
@@ -2585,12 +2691,12 @@ impl SiliconMonitorApp {
                 ui.label(RichText::new("Total Bandwidth:").color(CyberColors::TEXT_MUTED));
                 ui.label(
                     RichText::new(format!("↓ {}/s", format_bytes(total_rx_rate)))
-                        .color(CyberColors::NEON_GREEN)
+                        .color(DeviceTitleColors::NETWORK)
                         .strong(),
                 );
                 ui.label(
                     RichText::new(format!("↑ {}/s", format_bytes(total_tx_rate)))
-                        .color(CyberColors::NEON_ORANGE)
+                        .color(DeviceTitleColors::NETWORK)
                         .strong(),
                 );
             });
@@ -2599,7 +2705,7 @@ impl SiliconMonitorApp {
             // Network charts - stacked vertically, left-aligned
             ui.add(
                 SparklineChart::new(self.network_rx_history.iter().cloned().collect())
-                    .color(CyberColors::NEON_GREEN)
+                    .color(DeviceTitleColors::NETWORK)
                     .height(80.0)
                     .title("Download (Total MB)")
                     .unit("MB")
@@ -2611,7 +2717,7 @@ impl SiliconMonitorApp {
 
             ui.add(
                 SparklineChart::new(self.network_tx_history.iter().cloned().collect())
-                    .color(CyberColors::NEON_ORANGE)
+                    .color(DeviceTitleColors::NETWORK)
                     .height(80.0)
                     .title("Upload (Total MB)")
                     .unit("MB")
@@ -2867,8 +2973,8 @@ impl SiliconMonitorApp {
             });
     }
 
-    fn draw_disk_row_cached(ui: &mut egui::Ui, disk: &Box<dyn DiskDevice>, index: usize, cached: &CachedDiskData) {
-        let disk_color = theme::neon_color_by_index(index);
+    fn draw_disk_row_cached(ui: &mut egui::Ui, disk: &Box<dyn DiskDevice>, _index: usize, cached: &CachedDiskData) {
+        let disk_color = DeviceTitleColors::DISK;
         let disk_name = disk.name().to_string();
         let disk_type = disk.disk_type();
 
@@ -4833,9 +4939,12 @@ impl SiliconMonitorApp {
                         // Models based on selected backend
                         match self.ai_selected_backend {
                             AiBackendSelection::Ollama => {
-                                // Use actually detected Ollama models
-                                for model in &self.ai_ollama_models {
-                                    ui.selectable_value(&mut self.ai_selected_model, model.clone(), model);
+                                if self.ai_ollama_models.is_empty() {
+                                    ui.label(RichText::new("No models found. Run: ollama pull llama3.2").color(CyberColors::TEXT_MUTED));
+                                } else {
+                                    for model in &self.ai_ollama_models {
+                                        ui.selectable_value(&mut self.ai_selected_model, model.clone(), model);
+                                    }
                                 }
                             }
                             AiBackendSelection::OpenAi => {
@@ -4888,13 +4997,31 @@ impl SiliconMonitorApp {
 
         // Handle deferred refresh after the UI block
         if refresh_ollama {
-            self.refresh_ollama_models();
+            self.refresh_ollama_models_async();
+        }
+
+        // Detect backend change and reset model selection to match new provider
+        if self.ai_selected_backend != self.ai_prev_backend {
+            self.ai_prev_backend = self.ai_selected_backend;
+            self.ai_selected_model = match self.ai_selected_backend {
+                AiBackendSelection::Ollama => {
+                    self.ai_ollama_models.first().cloned().unwrap_or_else(|| "llama3.2:latest".to_string())
+                }
+                AiBackendSelection::OpenAi => "gpt-4o".to_string(),
+                AiBackendSelection::Anthropic => "claude-3-5-sonnet-latest".to_string(),
+                AiBackendSelection::GitHub => "gpt-4o".to_string(),
+                AiBackendSelection::LmStudio => "local-model".to_string(),
+            };
+            // Reconnect agent with new backend/model selection
+            self.retry_agent_connection();
         }
 
         ui.add_space(8.0);
 
         // Show connection warning if agent not available
         if !agent_available {
+            let is_ollama = matches!(self.ai_selected_backend, AiBackendSelection::Ollama);
+            let no_models = is_ollama && self.ai_ollama_models.is_empty();
             egui::Frame::none()
                 .fill(CyberColors::SURFACE)
                 .stroke(egui::Stroke::new(1.0, CyberColors::NEON_YELLOW))
@@ -4903,8 +5030,13 @@ impl SiliconMonitorApp {
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
                         ui.label(RichText::new("⚠").color(CyberColors::NEON_YELLOW).size(16.0));
-                        ui.label(RichText::new("AI backend not connected.").color(CyberColors::NEON_YELLOW));
+                        if no_models {
+                            ui.label(RichText::new("No Ollama models installed. Run: ollama pull llama3.2").color(CyberColors::NEON_YELLOW));
+                        } else {
+                            ui.label(RichText::new("AI backend not connected.").color(CyberColors::NEON_YELLOW));
+                        }
                         if ui.button(RichText::new("🔄 Retry").color(CyberColors::CYAN)).clicked() {
+                            self.refresh_ollama_models_async();
                             self.retry_agent_connection();
                         }
                         if ui.button(RichText::new("⚙ Setup").color(CyberColors::TEXT_SECONDARY)).clicked() {
@@ -5122,64 +5254,51 @@ impl SiliconMonitorApp {
         self.agent_query.clear();
         self.agent_is_processing = true;
 
-        // Get tool context from AI Data API (runs on UI thread to avoid Send issues)
-        let tool_context = if let Some(ref mut api) = self.ai_data_api {
-            api.auto_query(&query)
-        } else {
-            String::new()
-        };
+        // Build config from current GUI selections (not from stored agent which may be stale)
+        let backend_config = self.build_backend_config();
+        let config = crate::agent::AgentConfig::with_backend(backend_config);
 
-        // Get the agent config and monitor for background thread
-        // We need to create fresh instances in the background thread since Agent uses &mut self
-        let config = self.agent.as_ref().map(|a| a.config().clone());
-        
-        if let Some(config) = config {
-            let (tx, rx) = channel();
-            self.agent_response_receiver = Some(rx);
+        let (tx, rx) = channel();
+        self.agent_response_receiver = Some(rx);
 
-            // Spawn background thread for agent query
-            std::thread::spawn(move || {
-                let result = (|| -> Result<AgentResponse, String> {
-                    // Create fresh agent and monitor in background thread
-                    let mut agent = crate::agent::Agent::new(config)
-                        .map_err(|e| format!("Failed to create agent: {}", e))?;
-                    let monitor = crate::SiliconMonitor::new()
-                        .map_err(|e| format!("Failed to create monitor: {}", e))?;
-                    
-                    // Enhance the query with tool context if available
-                    let enhanced_query = if !tool_context.is_empty() {
-                        format!(
-                            "{}\n\n---\n\n## User Question\n{}", 
-                            tool_context,
-                            query
-                        )
-                    } else {
-                        query
-                    };
-                    
-                    let response = agent.ask(&enhanced_query, &monitor)
-                        .map_err(|e| format!("{}", e))?;
-                    
-                    Ok(AgentResponse {
-                        response: response.response,
-                        inference_time_ms: response.inference_time_ms,
-                        from_cache: response.from_cache,
-                    })
-                })();
+        // Spawn background thread for agent query (all heavy work off UI thread)
+        std::thread::spawn(move || {
+            let result = (|| -> Result<AgentResponse, String> {
+                // Create fresh agent and monitor in background thread
+                let mut agent = crate::agent::Agent::new(config)
+                    .map_err(|e| format!("Failed to create agent: {}", e))?;
+                let monitor = crate::SiliconMonitor::new()
+                    .map_err(|e| format!("Failed to create monitor: {}", e))?;
+
+                // Get tool context in background thread (avoids blocking UI)
+                let tool_context = AiDataApi::new()
+                    .ok()
+                    .map(|mut api| api.auto_query(&query))
+                    .unwrap_or_default();
                 
-                let _ = tx.send(result);
-            });
-        } else {
-            // No agent available
-            self.agent_history.push_back(AgentChatEntry {
-                role: ChatRole::Assistant,
-                content: "Error: AI Agent not available".to_string(),
-                timestamp: std::time::Instant::now(),
-                inference_time_ms: None,
-                from_cache: false,
-            });
-            self.agent_is_processing = false;
-        }
+                // Enhance the query with tool context if available
+                let enhanced_query = if !tool_context.is_empty() {
+                    format!(
+                        "{}\n\n---\n\n## User Question\n{}", 
+                        tool_context,
+                        query
+                    )
+                } else {
+                    query
+                };
+                
+                let response = agent.ask(&enhanced_query, &monitor)
+                    .map_err(|e| format!("{}", e))?;
+                
+                Ok(AgentResponse {
+                    response: response.response,
+                    inference_time_ms: response.inference_time_ms,
+                    from_cache: response.from_cache,
+                })
+            })();
+            
+            let _ = tx.send(result);
+        });
     }
 
     /// Draw the AI setup panel when no backend is available
@@ -5417,18 +5536,49 @@ impl SiliconMonitorApp {
         self.retry_agent_connection();
     }
 
+    /// Build a BackendConfig from the current GUI backend/model selection
+    fn build_backend_config(&self) -> crate::agent::BackendConfig {
+        let model = if self.ai_selected_model.is_empty() {
+            match self.ai_selected_backend {
+                AiBackendSelection::Ollama => {
+                    // Use first detected model, fall back to llama3.2:latest
+                    self.ai_ollama_models.first().cloned()
+                        .unwrap_or_else(|| "llama3.2:latest".to_string())
+                }
+                AiBackendSelection::OpenAi => "gpt-4o-mini".to_string(),
+                AiBackendSelection::Anthropic => "claude-3-5-sonnet-latest".to_string(),
+                AiBackendSelection::GitHub => "gpt-4o".to_string(),
+                AiBackendSelection::LmStudio => "local-model".to_string(),
+            }
+        } else {
+            self.ai_selected_model.clone()
+        };
+        let api_key = if self.ai_api_key_input.trim().is_empty() {
+            None
+        } else {
+            Some(self.ai_api_key_input.trim().to_string())
+        };
+        match self.ai_selected_backend {
+            AiBackendSelection::Ollama => crate::agent::BackendConfig::ollama(&model),
+            AiBackendSelection::OpenAi => crate::agent::BackendConfig::openai(&model, api_key),
+            AiBackendSelection::Anthropic => crate::agent::BackendConfig::anthropic(&model, api_key),
+            AiBackendSelection::GitHub => crate::agent::BackendConfig::github_models(&model, api_key),
+            AiBackendSelection::LmStudio => crate::agent::BackendConfig::lm_studio(&model),
+        }
+    }
+
     /// Retry agent connection with current configuration
     fn retry_agent_connection(&mut self) {
         self.agent_loading = true;
         self.ai_status_message = None;
         
+        let backend_config = self.build_backend_config();
         let (tx, rx) = channel();
         self.agent_receiver = Some(rx);
         
         std::thread::spawn(move || {
-            let agent = crate::agent::AgentConfig::auto_detect()
-                .ok()
-                .and_then(|config| crate::agent::Agent::new(config).ok());
+            let config = crate::agent::AgentConfig::with_backend(backend_config);
+            let agent = crate::agent::Agent::new(config).ok();
             let _ = tx.send(agent);
         });
     }
@@ -5594,28 +5744,27 @@ impl SiliconMonitorApp {
                 }
                 
                 if models.is_empty() {
-                    // Fallback if parsing failed
-                    vec!["llama3.2".to_string()]
+                    // No models installed - return empty so UI can prompt user
+                    vec![]
                 } else {
                     models
                 }
             }
             _ => {
-                // Ollama not installed or not running - use defaults
-                vec!["llama3.2".to_string(), "llama3.1".to_string(), "mistral".to_string()]
+                // Ollama not installed or not running - return empty
+                vec![]
             }
         }
     }
 
-    /// Refresh the list of Ollama models (can be called when user switches to Ollama)
-    fn refresh_ollama_models(&mut self) {
-        self.ai_ollama_models = Self::detect_ollama_models();
-        // Select first model if current selection is not in the list
-        if !self.ai_ollama_models.contains(&self.ai_selected_model) {
-            if let Some(first) = self.ai_ollama_models.first() {
-                self.ai_selected_model = first.clone();
-            }
-        }
+    /// Refresh the list of Ollama models asynchronously (non-blocking)
+    fn refresh_ollama_models_async(&mut self) {
+        let (tx, rx) = channel();
+        self.ollama_models_receiver = Some(rx);
+        std::thread::spawn(move || {
+            let models = SiliconMonitorApp::detect_ollama_models();
+            let _ = tx.send(models);
+        });
     }
 }
 
