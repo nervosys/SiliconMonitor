@@ -551,7 +551,7 @@ pub struct App {
     /// Cached sorted/filtered process indices for fast rendering
     cached_process_order: Vec<usize>,
     /// Cached filtered process count for scroll bounds
-    filtered_process_count: usize,
+    pub filtered_process_count: usize,
     /// Background initialization state
     init_state: InitState,
     /// Receiver for background-initialized GPU devices
@@ -564,6 +564,8 @@ pub struct App {
     pub view_mode: ViewMode,
     /// Currently selected process index in the visible list
     pub selected_process_idx: usize,
+    /// PID of the currently selected process (survives re-sorts)
+    selected_process_pid: Option<u32>,
     /// Current color theme
     pub color_theme: ColorTheme,
     /// Selected theme index in theme picker
@@ -842,11 +844,12 @@ impl App {
             selected_tab: 0,
             tabs: vec![
                 "Overview",
+                "Processes",
                 "CPU",
                 "Accelerators",
                 "Memory",
-                "Peripherals",
                 "System",
+                "Peripherals",
                 "Agent",
             ],
             cpu_history: VecDeque::with_capacity(MAX_HISTORY),
@@ -885,6 +888,7 @@ impl App {
             process_init_rx: Some(proc_rx),
             view_mode: ViewMode::default(),
             selected_process_idx: 0,
+            selected_process_pid: None,
             color_theme: ColorTheme::default(),
             selected_theme_idx: 0,
             peripheral_cache: PeripheralCache::default(),
@@ -1380,7 +1384,8 @@ impl App {
 
         // Append NPU accelerators from platform-specific silicon monitor
         if let Ok(npus) = Self::query_npus() {
-            self.accelerators.extend(npus.iter().map(AcceleratorInfo::from));
+            self.accelerators
+                .extend(npus.iter().map(AcceleratorInfo::from));
         }
 
         // Update accelerator histories
@@ -1750,11 +1755,39 @@ impl App {
         self.cached_process_order = indexed.into_iter().map(|(i, _)| i).collect();
         self.filtered_process_count = self.cached_process_order.len();
 
-        // Clamp selected index and scroll position to valid range
+        // Restore selection to the same PID after re-sort to prevent jitter
         if self.filtered_process_count > 0 {
-            self.selected_process_idx = self
-                .selected_process_idx
-                .min(self.filtered_process_count - 1);
+            if let Some(pid) = self.selected_process_pid {
+                // Find where the previously selected PID ended up in the new order
+                if let Some(new_idx) = self
+                    .cached_process_order
+                    .iter()
+                    .position(|&i| self.processes.get(i).map(|p| p.pid) == Some(pid))
+                {
+                    self.selected_process_idx = new_idx;
+                } else {
+                    // PID disappeared (process exited), clamp to valid range
+                    self.selected_process_idx = self
+                        .selected_process_idx
+                        .min(self.filtered_process_count - 1);
+                    // Update tracked PID to whatever is now at this index
+                    self.selected_process_pid = self
+                        .cached_process_order
+                        .get(self.selected_process_idx)
+                        .and_then(|&i| self.processes.get(i))
+                        .map(|p| p.pid);
+                }
+            } else {
+                self.selected_process_idx = self
+                    .selected_process_idx
+                    .min(self.filtered_process_count - 1);
+                self.selected_process_pid = self
+                    .cached_process_order
+                    .get(self.selected_process_idx)
+                    .and_then(|&i| self.processes.get(i))
+                    .map(|p| p.pid);
+            }
+
             // Ensure scroll position keeps selected item visible
             let visible_rows = 25;
             if self.selected_process_idx < self.scroll_position {
@@ -1767,6 +1800,7 @@ impl App {
             self.scroll_position = self.scroll_position.min(max_scroll);
         } else {
             self.selected_process_idx = 0;
+            self.selected_process_pid = None;
             self.scroll_position = 0;
         }
     }
@@ -1961,6 +1995,12 @@ impl App {
             if self.selected_process_idx < self.scroll_position {
                 self.scroll_position = self.selected_process_idx;
             }
+            // Track selected PID for stability across re-sorts
+            self.selected_process_pid = self
+                .cached_process_order
+                .get(self.selected_process_idx)
+                .and_then(|&i| self.processes.get(i))
+                .map(|p| p.pid);
         }
     }
 
@@ -1973,6 +2013,12 @@ impl App {
             if self.selected_process_idx >= self.scroll_position + visible_rows {
                 self.scroll_position = self.selected_process_idx.saturating_sub(visible_rows - 1);
             }
+            // Track selected PID for stability across re-sorts
+            self.selected_process_pid = self
+                .cached_process_order
+                .get(self.selected_process_idx)
+                .and_then(|&i| self.processes.get(i))
+                .map(|p| p.pid);
         }
     }
 

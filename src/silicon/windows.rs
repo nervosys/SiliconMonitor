@@ -441,7 +441,6 @@ impl SiliconMonitor for WindowsSiliconMonitor {
 
             if let Ok(com) = wmi::COMLibrary::new() {
                 if let Ok(wmi_conn) = wmi::WMIConnection::new(com) {
-                    // Query PnP devices for NPU class (Processing Accelerators)
                     #[derive(serde::Deserialize, Debug)]
                     #[serde(rename_all = "PascalCase")]
                     struct PnpDevice {
@@ -449,22 +448,41 @@ impl SiliconMonitor for WindowsSiliconMonitor {
                         manufacturer: Option<String>,
                         #[allow(dead_code)]
                         status: Option<String>,
+                        #[serde(rename = "PNPClass")]
+                        pnp_class: Option<String>,
                     }
 
-                    // PNPClass "System" devices with NPU/AI/Neural in name
+                    // Query specifically for NPU device classes:
+                    //   - "Processing accelerators" is the correct Windows class for NPUs (Win11+)
+                    //   - Fall back to "System" class devices with NPU-related names
+                    // This excludes USB, HID, Bluetooth, and other unrelated device classes.
                     if let Ok(devices) = wmi_conn.raw_query::<PnpDevice>(
-                        "SELECT Name, Manufacturer, Status FROM Win32_PnPEntity WHERE Name LIKE '%NPU%' OR Name LIKE '%Neural%' OR Name LIKE '%AI Boost%' OR Name LIKE '%AI Accelerator%'",
+                        "SELECT Name, Manufacturer, Status, PNPClass FROM Win32_PnPEntity WHERE \
+                         PNPClass = 'Processing accelerators' OR \
+                         (PNPClass = 'System' AND \
+                          (Name LIKE '%NPU%' OR Name LIKE '%Neural%' OR \
+                           Name LIKE '%AI Boost%' OR Name LIKE '%AI Accelerator%'))",
                     ) {
                         for device in devices {
                             if let Some(name) = device.name {
                                 let vendor = device.manufacturer.unwrap_or_else(|| {
-                                    if name.to_lowercase().contains("intel") { "Intel".to_string() }
-                                    else if name.to_lowercase().contains("qualcomm") { "Qualcomm".to_string() }
-                                    else { "Unknown".to_string() }
+                                    if name.to_lowercase().contains("intel") {
+                                        "Intel".to_string()
+                                    } else if name.to_lowercase().contains("qualcomm") {
+                                        "Qualcomm".to_string()
+                                    } else {
+                                        "Unknown".to_string()
+                                    }
                                 });
-                                let cores = if vendor == "Intel" { Some(16) } // Intel NPU ~16 compute units
-                                    else if vendor == "Qualcomm" { Some(8) }
-                                    else { None };
+                                let cores = if vendor == "Intel" {
+                                    Some(16)
+                                }
+                                // Intel NPU ~16 compute units
+                                else if vendor == "Qualcomm" {
+                                    Some(8)
+                                } else {
+                                    None
+                                };
                                 npus.push(NpuInfo {
                                     name,
                                     vendor,
