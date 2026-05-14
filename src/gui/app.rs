@@ -195,6 +195,11 @@ pub struct SiliconMonitorApp {
     // Historical data for AI queries
     historical_data: Vec<HistoricalDataPoint>,
     last_historical_save: std::time::Instant,
+
+    // Hardware profile inspector (NVPI / XTU / Ryzen Master / nvme-cli style)
+    pub(super) profile_snapshot: Option<crate::profile::ProfileSnapshot>,
+    pub(super) profile_filter: String,
+    pub(super) profile_subsystem_filter: Option<crate::profile::Subsystem>,
 }
 
 /// Result from background system info loading
@@ -238,6 +243,7 @@ enum Tab {
     Connections,
     SystemInfo,
     Peripherals,
+    Profiles,
     AIAssistant,
 }
 
@@ -592,6 +598,11 @@ impl SiliconMonitorApp {
             // Historical data for AI queries
             historical_data: Vec::new(),
             last_historical_save: std::time::Instant::now(),
+
+            // Profile inspector
+            profile_snapshot: None,
+            profile_filter: String::new(),
+            profile_subsystem_filter: None,
         };
 
         // Initialize history with zeros
@@ -1247,6 +1258,11 @@ impl eframe::App for SiliconMonitorApp {
                 );
                 ui.selectable_value(
                     &mut self.current_tab,
+                    Tab::Profiles,
+                    RichText::new("🛠 Profiles").color(tab_color(Tab::Profiles)),
+                );
+                ui.selectable_value(
+                    &mut self.current_tab,
                     Tab::AIAssistant,
                     RichText::new("🤖 AI").color(tab_color(Tab::AIAssistant)),
                 );
@@ -1345,6 +1361,7 @@ impl eframe::App for SiliconMonitorApp {
             Tab::Connections => self.draw_connections_tab(ui),
             Tab::SystemInfo => self.draw_system_info_tab(ui),
             Tab::Peripherals => self.draw_peripherals_tab(ui),
+            Tab::Profiles => self.draw_profiles_tab(ui),
             Tab::AIAssistant => self.draw_ai_assistant_tab(ui),
         });
 

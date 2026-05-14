@@ -1,0 +1,110 @@
+//! Display profile provider — per-display refresh/HDR/color/scale.
+//!
+//! Builds on the existing [`crate::display::DisplayMonitor`]. Each connected
+//! display is exposed as its own profile group with the actively-applied
+//! mode + HDR/scale settings.
+
+use super::{ProfileGroup, ProfileProvider, Setting, SettingRisk, SettingValue, Subsystem};
+
+pub struct DisplayProfileProvider {
+    _private: (),
+}
+
+impl DisplayProfileProvider {
+    pub fn new() -> Self {
+        Self { _private: () }
+    }
+}
+
+impl Default for DisplayProfileProvider {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ProfileProvider for DisplayProfileProvider {
+    fn subsystem(&self) -> Subsystem {
+        Subsystem::Display
+    }
+
+    fn snapshot(&mut self) -> Vec<ProfileGroup> {
+        let mut groups = super::edid::scan_edid_groups();
+        let monitor = match crate::display::DisplayMonitor::new() {
+            Ok(m) => m,
+            Err(_) => return groups,
+        };
+        for d in monitor.displays() {
+            let label = d.name.clone().unwrap_or_else(|| d.id.clone());
+            let mut g = ProfileGroup::new(
+                Subsystem::Display,
+                &label,
+                if d.is_primary { "Primary display" } else { "Display" },
+                "DisplayMonitor",
+            );
+            if let Some(mfg) = &d.manufacturer {
+                g.push(Setting::info(
+                    "manufacturer",
+                    "Manufacturer",
+                    SettingValue::Text(mfg.clone()),
+                ));
+            }
+            g.push(Setting::info(
+                "connection",
+                "Connection",
+                SettingValue::Text(format!("{:?}", d.connection)),
+            ));
+            g.push(Setting::info(
+                "resolution",
+                "Resolution",
+                SettingValue::Text(format!("{}x{}", d.width, d.height)),
+            ));
+            g.push(Setting::info("aspect_ratio", "Aspect Ratio", SettingValue::Text(d.aspect_ratio())));
+            g.push(
+                Setting::info("refresh_rate_hz", "Refresh Rate", SettingValue::Float(d.refresh_rate as f64))
+                    .with_unit("Hz")
+                    .with_risk(SettingRisk::Safe)
+                    .with_source("DisplayMonitor"),
+            );
+            g.push(
+                Setting::info("hdr_mode", "HDR Mode", SettingValue::Text(format!("{:?}", d.hdr)))
+                    .with_risk(SettingRisk::Safe),
+            );
+            if let Some(b) = d.brightness {
+                g.push(
+                    Setting::info("brightness", "Brightness", SettingValue::Float(b as f64))
+                        .with_unit("%")
+                        .with_risk(SettingRisk::Safe),
+                );
+            }
+            if let Some(s) = d.scale_factor {
+                g.push(
+                    Setting::info("scale_factor", "DPI Scale", SettingValue::Float(s))
+                        .with_risk(SettingRisk::Safe),
+                );
+            }
+            if let Some(bpp) = d.bits_per_pixel {
+                g.push(Setting::info("bpp", "Bits Per Pixel", SettingValue::Uint(bpp as u64)));
+            }
+            if let (Some(w), Some(h)) = (d.physical_width_mm, d.physical_height_mm) {
+                g.push(Setting::info(
+                    "physical_mm",
+                    "Physical Size",
+                    SettingValue::Text(format!("{}×{} mm", w, h)),
+                ));
+            }
+            g.push(Setting::info("is_primary", "Primary", SettingValue::Bool(d.is_primary)));
+            groups.push(g);
+        }
+        groups
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn smoke() {
+        let mut p = DisplayProfileProvider::new();
+        let _ = p.snapshot();
+    }
+}

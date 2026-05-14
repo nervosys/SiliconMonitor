@@ -333,6 +333,17 @@ impl AiDataApi {
             "get_usb_devices" => self.tool_get_usb_devices(params),
             "get_usb_device_details" => self.tool_get_usb_device_details(params),
 
+            // Profile inspector tools
+            "list_profile_subsystems" => self.tool_list_profile_subsystems(params),
+            "get_profile_settings" => self.tool_get_profile_settings(params),
+            "search_profile_settings" => self.tool_search_profile_settings(params),
+            "get_active_app_profiles" => self.tool_get_active_app_profiles(params),
+            "get_profile_deviations" => self.tool_get_profile_deviations(params),
+            "explain_profile_setting" => self.tool_explain_profile_setting(params),
+            "benchmark_profile_providers" => self.tool_benchmark_profile_providers(params),
+            "list_writable_profile_settings" => self.tool_list_writable_profile_settings(params),
+            "apply_profile_setting" => self.tool_apply_profile_setting(params),
+
             _ => Err(SimonError::NotImplemented(format!(
                 "Unknown tool: {}",
                 name

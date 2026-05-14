@@ -35,6 +35,7 @@ Silicon Monitor is a powerful, cross-platform hardware monitoring utility design
 
 Silicon Monitor provides comprehensive hardware monitoring:
 
+- **🛠 Hardware Profile Inspector**: NVIDIA Profile Inspector / Intel XTU / AMD Ryzen Master / nvme-cli equivalents — read & (selectively) write driver profiles, per-app NVIDIA DRS data, CPU power limits, NVMe Get-Features, EDID/XMP/EXPO, with audit-logged apply layer. See [`simon profile --help`](#hardware-profile-inspector).
 - **🎮 GPU Monitoring**: NVIDIA, AMD, and Intel GPUs with utilization, memory, temperature, power, and process tracking
 - **💻 CPU Monitoring**: Per-core metrics, frequencies, temperatures, and hybrid architecture support
 - **🧠 Memory Monitoring**: RAM, swap, bandwidth, and latency tracking
@@ -761,6 +762,47 @@ simon gui
 |       Main dashboard with system stats        |     Detailed GPU metrics panel      |          Available color themes           |
 
 </details>
+
+## Hardware Profile Inspector
+
+Silicon Monitor v1.4 ships a unified inspector for vendor driver settings,
+application profiles, and tunable hardware parameters — the same surface
+exposed by NVIDIA Profile Inspector, Intel XTU, AMD Ryzen Master, and
+`nvme-cli`, but with one cross-platform CLI / GUI / TUI / MCP interface.
+
+```bash
+simon profile list                          # summary across 5 subsystems
+simon profile show gpu                      # all GPU driver settings
+simon profile search xmp                    # is XMP/EXPO active?
+simon profile active --matched              # running PIDs with NVIDIA profiles
+simon profile deviations                    # changed from declared default
+simon profile explain power_limit_mw        # full metadata for one setting
+simon profile diff baseline.json            # drift report vs saved snapshot
+simon profile watch -i 5                    # continuous change detector
+simon profile bench                         # per-provider snapshot timing
+simon profile schemes                       # list Windows power schemes
+simon profile writable                      # registered apply handlers
+simon profile set scaling_governor performance --confirm
+simon profile audit -l 20                   # tail the apply audit log
+```
+
+**Subsystems covered**: GPU (NVML, NVIDIA DRS scan, AMD sysfs, Intel i915/xe,
+Windows driver-class registry), CPU (cpufreq, intel_pstate, MSR PL1/PL2,
+Windows power schemes), NVMe (sysfs + NVMe Get-Features ioctl), Display
+(refresh / HDR / EDID), Memory (SMBIOS Type 17 + XMP 2.0/3.0 + AMD EXPO).
+
+**Apply layer**: opt-in write handlers behind `--confirm`. Every attempt is
+JSON-line audited. MCP agents additionally require `SIMON_ALLOW_AGENT_WRITES=1`.
+Current handlers: NVIDIA persistence mode (Linux), Linux cpufreq governor,
+AMD `power_dpm_force_performance_level`, Intel `gt_max_freq_mhz`, Windows
+active power scheme.
+
+**Prometheus metrics**: `simon_profile_deviations_count{risk}`,
+`simon_profile_settings_total{subsystem}`, `simon_profile_cache_hits_total`,
+and friends — wired into the existing exporter.
+
+See [`examples/profile_inspector.rs`](examples/profile_inspector.rs) and
+[`examples/active_profiles.rs`](examples/active_profiles.rs) for usage.
 
 ## Examples
 

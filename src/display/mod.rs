@@ -45,6 +45,9 @@ pub struct DisplayInfo {
 
 impl DisplayInfo {
     pub fn aspect_ratio(&self) -> String {
+        if self.width == 0 || self.height == 0 {
+            return "unknown".to_string();
+        }
         fn gcd(a: u32, b: u32) -> u32 {
             if b == 0 {
                 a
@@ -53,6 +56,9 @@ impl DisplayInfo {
             }
         }
         let g = gcd(self.width, self.height);
+        if g == 0 {
+            return "unknown".to_string();
+        }
         format!("{}:{}", self.width / g, self.height / g)
     }
 }

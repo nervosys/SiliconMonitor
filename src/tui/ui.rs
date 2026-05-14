@@ -187,7 +187,8 @@ pub fn draw(f: &mut Frame, app: &App) {
         4 => draw_memory_tab(f, app, chunks[1]),
         5 => draw_system_tab(f, app, chunks[1]),
         6 => draw_peripherals(f, app, chunks[1]),
-        7 => draw_agent(f, app, chunks[1]),
+        7 => draw_profiles_tab(f, app, chunks[1]),
+        8 => draw_agent(f, app, chunks[1]),
         _ => {}
     }
 
@@ -2982,4 +2983,285 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
             Constraint::Percentage((100 - percent_x) / 2),
         ])
         .split(popup_layout[1])[1]
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PROFILES TAB — NVIDIA Profile Inspector / XTU / Ryzen Master style
+// ═══════════════════════════════════════════════════════════════════════════════
+
+fn draw_profiles_tab(f: &mut Frame, app: &App, area: Rect) {
+    use crate::profile::Subsystem;
+
+    if app.profile_show_deviations {
+        draw_profile_deviations_overlay(f, app, area);
+        return;
+    }
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(3), Constraint::Min(0)])
+        .split(area);
+
+    // Subsystem selector strip
+    let titles: Vec<&str> = Subsystem::ALL.iter().map(|s| s.as_str()).collect();
+    let sub_tabs = Tabs::new(titles)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Profile Inspector — [1-5] subsystem · [r] refresh · [d] deviations · [↑↓ PgUp/PgDn] scroll "),
+        )
+        .select(app.profile_subsystem_idx)
+        .highlight_style(
+            Style::default()
+                .fg(glances_colors::TITLE)
+                .add_modifier(Modifier::BOLD),
+        );
+    f.render_widget(sub_tabs, chunks[0]);
+
+    // Snapshot may be None on first display.
+    let Some(snapshot) = app.profile_snapshot.as_ref() else {
+        let msg = Paragraph::new(vec![
+            Line::from(Span::styled(
+                "Loading hardware profile snapshot…",
+                Style::default().fg(glances_colors::TITLE),
+            )),
+            Line::from(""),
+            Line::from("Press 'r' to fetch — initial NVML/registry/SMBIOS reads take a moment."),
+        ])
+        .block(Block::default().borders(Borders::ALL));
+        f.render_widget(msg, chunks[1]);
+        return;
+    };
+
+    let sub = Subsystem::ALL
+        .get(app.profile_subsystem_idx)
+        .copied()
+        .unwrap_or(Subsystem::Gpu);
+    let groups = snapshot.providers.get(&sub).cloned().unwrap_or_default();
+
+    let mut lines: Vec<Line> = Vec::new();
+    lines.push(Line::from(Span::styled(
+        format!(
+            "{} group(s) · {} setting(s) · captured @ ts={}",
+            groups.len(),
+            groups.iter().map(|g| g.settings.len()).sum::<usize>(),
+            snapshot.timestamp
+        ),
+        Style::default().fg(glances_colors::CAREFUL),
+    )));
+    lines.push(Line::from(""));
+
+    for group in &groups {
+        lines.push(Line::from(vec![
+            Span::styled(
+                "▸ ",
+                Style::default()
+                    .fg(glances_colors::TITLE)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                group.device.clone(),
+                Style::default().add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("  "),
+            Span::styled(
+                group.display_name.clone(),
+                Style::default().fg(glances_colors::CAREFUL),
+            ),
+        ]));
+        lines.push(Line::from(vec![
+            Span::styled("  source: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                group.source.clone(),
+                Style::default()
+                    .fg(Color::DarkGray)
+                    .add_modifier(Modifier::ITALIC),
+            ),
+        ]));
+        for s in &group.settings {
+            let risk_color = match s.risk {
+                crate::profile::SettingRisk::Informational => Color::Reset,
+                crate::profile::SettingRisk::Safe => glances_colors::OK,
+                crate::profile::SettingRisk::Moderate => glances_colors::WARNING,
+                crate::profile::SettingRisk::Dangerous => glances_colors::CRITICAL,
+            };
+            let unit = s
+                .unit
+                .as_deref()
+                .map(|u| format!(" {}", u))
+                .unwrap_or_default();
+            let value_str = format!("{}{}", s.value, unit);
+            lines.push(Line::from(vec![
+                Span::raw("    "),
+                Span::styled(
+                    format!("{:<28}", trunc(&s.display_name, 28)),
+                    Style::default().fg(risk_color),
+                ),
+                Span::raw(" = "),
+                Span::styled(
+                    value_str,
+                    Style::default().add_modifier(Modifier::BOLD),
+                ),
+            ]));
+        }
+        for n in &group.notes {
+            lines.push(Line::from(vec![
+                Span::raw("    "),
+                Span::styled("• ", Style::default().fg(Color::DarkGray)),
+                Span::styled(n.clone(), Style::default().fg(Color::DarkGray)),
+            ]));
+        }
+        lines.push(Line::from(""));
+    }
+    if groups.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "(no profile data for this subsystem on this platform)",
+            Style::default().fg(Color::DarkGray),
+        )));
+    }
+
+    let paragraph = Paragraph::new(lines)
+        .block(Block::default().borders(Borders::ALL).title(format!(
+            " {} — Hardware Profile Inspector ",
+            sub.as_str().to_uppercase()
+        )))
+        .scroll((app.profile_scroll, 0));
+    f.render_widget(paragraph, chunks[1]);
+}
+
+fn trunc(s: &str, n: usize) -> String {
+    if s.chars().count() <= n {
+        s.to_string()
+    } else {
+        let mut out: String = s.chars().take(n.saturating_sub(1)).collect();
+        out.push('…');
+        out
+    }
+}
+
+fn draw_profile_deviations_overlay(f: &mut Frame, app: &App, area: Rect) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
+        .split(area);
+
+    let mut dev_lines: Vec<Line> = Vec::new();
+    dev_lines.push(Line::from(Span::styled(
+        "press [d] to return to profile view",
+        Style::default().fg(Color::DarkGray),
+    )));
+    dev_lines.push(Line::from(""));
+    if let Some(snapshot) = app.profile_snapshot.as_ref() {
+        let devs = crate::profile::deviation::deviations_from_default(snapshot);
+        if devs.is_empty() {
+            dev_lines.push(Line::from(Span::styled(
+                "All settings with a declared default are at their default value.",
+                Style::default().fg(glances_colors::OK),
+            )));
+        } else {
+            dev_lines.push(Line::from(Span::styled(
+                format!("{} deviation(s):", devs.len()),
+                Style::default()
+                    .fg(glances_colors::WARNING)
+                    .add_modifier(Modifier::BOLD),
+            )));
+            dev_lines.push(Line::from(""));
+            for d in devs {
+                let risk_color = match d.risk {
+                    crate::profile::SettingRisk::Dangerous => glances_colors::CRITICAL,
+                    crate::profile::SettingRisk::Moderate => glances_colors::WARNING,
+                    crate::profile::SettingRisk::Safe => glances_colors::OK,
+                    crate::profile::SettingRisk::Informational => Color::DarkGray,
+                };
+                dev_lines.push(Line::from(vec![
+                    Span::styled(
+                        format!("  [{:?}] ", d.risk),
+                        Style::default().fg(risk_color),
+                    ),
+                    Span::styled(
+                        format!("[{}] ", d.subsystem.as_str()),
+                        Style::default().fg(glances_colors::TITLE),
+                    ),
+                    Span::raw(format!("{} :: ", d.device)),
+                    Span::styled(d.display_name.clone(), Style::default().add_modifier(Modifier::BOLD)),
+                ]));
+                dev_lines.push(Line::from(vec![
+                    Span::raw("      default: "),
+                    Span::styled(d.default.to_string(), Style::default().fg(Color::DarkGray)),
+                    Span::raw("   current: "),
+                    Span::styled(
+                        d.current.to_string(),
+                        Style::default().fg(risk_color).add_modifier(Modifier::BOLD),
+                    ),
+                ]));
+            }
+        }
+    } else {
+        dev_lines.push(Line::from(Span::styled(
+            "(no snapshot — return to profile view and press [r] to refresh)",
+            Style::default().fg(Color::DarkGray),
+        )));
+    }
+    let dev_para = Paragraph::new(dev_lines).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(" Deviations from default "),
+    );
+    f.render_widget(dev_para, chunks[0]);
+
+    // Audit log tail
+    let audit_path = crate::profile::apply::audit_log_path();
+    let content = std::fs::read_to_string(&audit_path).unwrap_or_default();
+    let all_lines: Vec<&str> = content.lines().collect();
+    let tail_n = 8usize.min(all_lines.len());
+    let tail = if all_lines.len() > tail_n {
+        &all_lines[all_lines.len() - tail_n..]
+    } else {
+        &all_lines[..]
+    };
+    let mut audit_lines: Vec<Line> = Vec::new();
+    audit_lines.push(Line::from(Span::styled(
+        format!("source: {}", audit_path.display()),
+        Style::default().fg(Color::DarkGray),
+    )));
+    audit_lines.push(Line::from(""));
+    if tail.is_empty() {
+        audit_lines.push(Line::from(Span::styled(
+            "(no audit entries)",
+            Style::default().fg(Color::DarkGray),
+        )));
+    } else {
+        for line in tail {
+            if let Ok(o) =
+                serde_json::from_str::<crate::profile::apply::ApplyOutcome>(line)
+            {
+                let (status_str, status_color) = match o.status {
+                    crate::profile::apply::ApplyStatus::Applied => ("applied", glances_colors::OK),
+                    crate::profile::apply::ApplyStatus::Refused => ("refused", glances_colors::CRITICAL),
+                    crate::profile::apply::ApplyStatus::Failed => ("failed", glances_colors::CRITICAL),
+                    crate::profile::apply::ApplyStatus::NotWritable => ("not-writable", glances_colors::WARNING),
+                    crate::profile::apply::ApplyStatus::NeedsConfirm => ("needs-confirm", glances_colors::WARNING),
+                };
+                audit_lines.push(Line::from(vec![
+                    Span::styled(
+                        format!("  [{}] ", o.timestamp),
+                        Style::default().fg(Color::DarkGray),
+                    ),
+                    Span::styled(
+                        format!("{:<13}", status_str),
+                        Style::default().fg(status_color),
+                    ),
+                    Span::raw(" "),
+                    Span::styled(o.setting_id, Style::default().add_modifier(Modifier::BOLD)),
+                    Span::raw(format!(" = {}", o.requested)),
+                ]));
+            }
+        }
+    }
+    let audit_para = Paragraph::new(audit_lines).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(" Apply audit log (tail) "),
+    );
+    f.render_widget(audit_para, chunks[1]);
 }

@@ -143,12 +143,25 @@ fn run_app<B: Backend>(
                                     KeyCode::Char('6') => app.set_tab(5),
                                     KeyCode::Char('7') => app.set_tab(6),
                                     KeyCode::Char('8') => app.set_tab(7),
+                                    KeyCode::Char('9') => app.set_tab(8),
                                     KeyCode::Left => app.previous_tab(),
                                     KeyCode::Right => app.next_tab(),
                                     KeyCode::Up => app.select_process_up(),
                                     KeyCode::Down => app.select_process_down(),
-                                    KeyCode::PageUp => app.scroll_page_up(),
-                                    KeyCode::PageDown => app.scroll_page_down(),
+                                    KeyCode::PageUp => {
+                                        if app.selected_tab == 7 {
+                                            app.profile_scroll = app.profile_scroll.saturating_sub(10);
+                                        } else {
+                                            app.scroll_page_up();
+                                        }
+                                    }
+                                    KeyCode::PageDown => {
+                                        if app.selected_tab == 7 {
+                                            app.profile_scroll = app.profile_scroll.saturating_add(10);
+                                        } else {
+                                            app.scroll_page_down();
+                                        }
+                                    }
                                     KeyCode::Home => app.scroll_to_top(),
                                     KeyCode::End => app.scroll_to_bottom(),
                                     KeyCode::Enter => app.open_process_detail(),
@@ -162,12 +175,33 @@ fn run_app<B: Backend>(
                                     KeyCode::Char('t') | KeyCode::Char('T') => {
                                         app.open_theme_picker()
                                     }
-                                    KeyCode::Char('r') => app.reset_stats(),
+                                    KeyCode::Char('r') => {
+                                        if app.selected_tab == 7 {
+                                            app.refresh_profile_snapshot();
+                                        } else {
+                                            app.reset_stats();
+                                        }
+                                    }
+                                    KeyCode::Char('[') => {
+                                        if app.selected_tab == 7 {
+                                            app.profile_prev_subsystem();
+                                        }
+                                    }
+                                    KeyCode::Char(']') => {
+                                        if app.selected_tab == 7 {
+                                            app.profile_next_subsystem();
+                                        }
+                                    }
+                                    KeyCode::Char('d') | KeyCode::Char('D') => {
+                                        if app.selected_tab == 7 {
+                                            app.profile_show_deviations = !app.profile_show_deviations;
+                                        }
+                                    }
                                     KeyCode::Char('a') | KeyCode::Char('A') => {
                                         app.toggle_agent_input()
                                     }
                                     KeyCode::Char('c') | KeyCode::Char('C') => {
-                                        if app.selected_tab == 7 {
+                                        if app.selected_tab == 8 {
                                             app.clear_agent_history();
                                         }
                                     }

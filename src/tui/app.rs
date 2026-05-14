@@ -574,6 +574,14 @@ pub struct App {
     pub peripheral_cache: PeripheralCache,
     /// Last time peripheral cache was refreshed
     peripheral_cache_last_refresh: Instant,
+    /// Cached hardware profile snapshot (lazy on first view, refreshed on demand)
+    pub profile_snapshot: Option<crate::profile::ProfileSnapshot>,
+    /// Scroll position in the profiles tab
+    pub profile_scroll: u16,
+    /// Currently selected subsystem index in the profiles tab (0..5)
+    pub profile_subsystem_idx: usize,
+    /// Whether the deviation + audit overlay is showing
+    pub profile_show_deviations: bool,
 }
 
 /// Background initialization state
@@ -850,6 +858,7 @@ impl App {
                 "Memory",
                 "System",
                 "Peripherals",
+                "Profiles",
                 "Agent",
             ],
             cpu_history: VecDeque::with_capacity(MAX_HISTORY),
@@ -893,6 +902,10 @@ impl App {
             selected_theme_idx: 0,
             peripheral_cache: PeripheralCache::default(),
             peripheral_cache_last_refresh: Instant::now() - Duration::from_secs(60), // force initial refresh
+            profile_snapshot: None,
+            profile_scroll: 0,
+            profile_subsystem_idx: 0,
+            profile_show_deviations: false,
         };
 
         // Do initial fast update for immediate data (CPU, Memory are fast)
@@ -1930,12 +1943,18 @@ impl App {
         if index < self.tabs.len() {
             self.selected_tab = index;
             self.scroll_position = 0;
+            if self.selected_tab == 7 {
+                self.ensure_profile_snapshot();
+            }
         }
     }
 
     pub fn next_tab(&mut self) {
         self.selected_tab = (self.selected_tab + 1) % self.tabs.len();
         self.scroll_position = 0;
+        if self.selected_tab == 7 {
+            self.ensure_profile_snapshot();
+        }
     }
 
     pub fn previous_tab(&mut self) {
@@ -1945,6 +1964,35 @@ impl App {
             self.selected_tab = self.tabs.len() - 1;
         }
         self.scroll_position = 0;
+        if self.selected_tab == 7 {
+            self.ensure_profile_snapshot();
+        }
+    }
+
+    /// Refresh the cached hardware profile snapshot (lazy on first profiles tab view).
+    pub fn refresh_profile_snapshot(&mut self) {
+        let mut inspector = crate::profile::ProfileInspector::new();
+        self.profile_snapshot = Some(inspector.snapshot_all());
+        self.profile_scroll = 0;
+    }
+
+    /// Ensure a profile snapshot has been taken at least once.
+    pub fn ensure_profile_snapshot(&mut self) {
+        if self.profile_snapshot.is_none() {
+            self.refresh_profile_snapshot();
+        }
+    }
+
+    pub fn profile_next_subsystem(&mut self) {
+        let n = crate::profile::Subsystem::ALL.len();
+        self.profile_subsystem_idx = (self.profile_subsystem_idx + 1) % n;
+        self.profile_scroll = 0;
+    }
+
+    pub fn profile_prev_subsystem(&mut self) {
+        let n = crate::profile::Subsystem::ALL.len();
+        self.profile_subsystem_idx = (self.profile_subsystem_idx + n - 1) % n;
+        self.profile_scroll = 0;
     }
 
     pub fn scroll_up(&mut self) {

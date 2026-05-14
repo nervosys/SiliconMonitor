@@ -7,6 +7,7 @@
 use eframe::egui;
 
 mod app;
+mod profile_tab;
 mod theme;
 mod widgets;
 

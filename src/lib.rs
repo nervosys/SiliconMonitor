@@ -176,6 +176,7 @@ pub mod network_tools; // Network diagnostic tools (ping, traceroute, port scan)
 pub mod observability; // Full system observability API with MCP-like permissions for external AI access
 pub mod platform;
 pub mod power_supply; // Battery and power supply monitoring
+pub mod profile; // Hardware profile inspector (NVPI / XTU / Ryzen Master / nvme-cli style)
 pub mod process_monitor; // Unified process monitoring with GPU attribution
 pub mod process_tree; // Process tree visualization with container/cgroup awareness
 pub mod sandbox; // Sandbox and VM detection for ethical data collection
@@ -417,6 +418,18 @@ pub use network_tools::{
     ServiceInfo,
     TracerouteHop,
     TracerouteResult,
+};
+
+// Re-export profile inspector
+pub use profile::{
+    active::{active_profiles_for_processes, matched_active_profiles, ActiveAppProfile},
+    apply::{apply_setting, writable_setting_ids, ApplyOutcome, ApplyStatus},
+    cache::{CachedProfileInspector, CACHE_STATS as PROFILE_CACHE_STATS},
+    deviation::{deviations_from_default, Deviation},
+    diff::{diff_snapshots, DiffChange, DiffEntry, DiffGroup, ProfileDiff},
+    explain::{candidates as explain_candidates, explain, SettingExplanation},
+    ProfileGroup, ProfileInspector, ProfileProvider, ProfileSnapshot, Setting, SettingRisk,
+    SettingValue, Subsystem as ProfileSubsystem,
 };
 
 // Re-export power supply / battery monitoring

@@ -198,6 +198,101 @@ impl PrometheusExporter {
         self.collect_gpu_metrics();
         self.collect_disk_metrics();
         self.collect_network_metrics();
+        self.collect_profile_metrics();
+    }
+
+    /// Collect profile-inspector metrics — total/writable settings, deviations
+    /// by risk, cache effectiveness. Useful for fleet drift tracking.
+    pub fn collect_profile_metrics(&mut self) {
+        let mut inspector = crate::profile::cache::CachedProfileInspector::new();
+        let snapshot = inspector.snapshot_all();
+
+        // Per-subsystem group + setting counts.
+        let mut group_family = MetricFamily {
+            name: self.prefixed("profile_groups_total"),
+            help: "Number of profile groups per hardware subsystem".into(),
+            metric_type: MetricType::Gauge,
+            samples: Vec::new(),
+        };
+        let mut setting_family = MetricFamily {
+            name: self.prefixed("profile_settings_total"),
+            help: "Number of profile settings per hardware subsystem".into(),
+            metric_type: MetricType::Gauge,
+            samples: Vec::new(),
+        };
+        for (sub, groups) in &snapshot.providers {
+            let mut labels = BTreeMap::new();
+            labels.insert("subsystem".into(), sub.as_str().to_string());
+            group_family.samples.push(MetricSample {
+                suffix: String::new(),
+                labels: labels.clone(),
+                value: groups.len() as f64,
+            });
+            let settings: usize = groups.iter().map(|g| g.settings.len()).sum();
+            setting_family.samples.push(MetricSample {
+                suffix: String::new(),
+                labels,
+                value: settings as f64,
+            });
+        }
+        if !group_family.samples.is_empty() {
+            self.add(group_family);
+        }
+        if !setting_family.samples.is_empty() {
+            self.add(setting_family);
+        }
+
+        // Deviations by risk.
+        let deviations = crate::profile::deviation::deviations_from_default(&snapshot);
+        let mut by_risk: BTreeMap<&'static str, u64> = BTreeMap::new();
+        by_risk.insert("dangerous", 0);
+        by_risk.insert("moderate", 0);
+        by_risk.insert("safe", 0);
+        by_risk.insert("informational", 0);
+        for d in &deviations {
+            let key = match d.risk {
+                crate::profile::SettingRisk::Dangerous => "dangerous",
+                crate::profile::SettingRisk::Moderate => "moderate",
+                crate::profile::SettingRisk::Safe => "safe",
+                crate::profile::SettingRisk::Informational => "informational",
+            };
+            *by_risk.entry(key).or_insert(0) += 1;
+        }
+        let mut dev_family = MetricFamily {
+            name: self.prefixed("profile_deviations_count"),
+            help: "Settings whose current value differs from declared default, by risk band".into(),
+            metric_type: MetricType::Gauge,
+            samples: Vec::new(),
+        };
+        for (risk, count) in by_risk {
+            let mut labels = BTreeMap::new();
+            labels.insert("risk".into(), risk.into());
+            dev_family.samples.push(MetricSample {
+                suffix: String::new(),
+                labels,
+                value: count as f64,
+            });
+        }
+        self.add(dev_family);
+
+        // Writable settings count.
+        self.add(MetricFamily::gauge(
+            &self.prefixed("profile_writable_handlers_total"),
+            "Number of registered apply handlers (writable setting ids) on this build",
+            crate::profile::apply::writable_setting_ids().len() as f64,
+        ));
+
+        // Cache effectiveness.
+        self.add(MetricFamily::counter(
+            &self.prefixed("profile_cache_hits_total"),
+            "ProfileInspector cache hits (process-global)",
+            crate::profile::cache::CACHE_STATS.hits() as f64,
+        ));
+        self.add(MetricFamily::counter(
+            &self.prefixed("profile_cache_misses_total"),
+            "ProfileInspector cache misses (process-global)",
+            crate::profile::cache::CACHE_STATS.misses() as f64,
+        ));
     }
 
     fn prefixed(&self, name: &str) -> String {

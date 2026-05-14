@@ -648,6 +648,113 @@ pub fn get_all_tool_definitions() -> Vec<ToolDefinition> {
         example: Some("compare_metrics({\"minutes_ago\": 10})".to_string()),
     });
 
+    // Profile inspector tools (NVPI / XTU / Ryzen Master / nvme-cli style)
+    tools.push(ToolDefinition {
+        name: "list_profile_subsystems".to_string(),
+        description: "List hardware subsystems with readable driver/firmware profile data (gpu, cpu, nvme, display, memory). Use this to discover what tunable settings can be inspected on this machine.".to_string(),
+        parameters: json!({"type": "object", "properties": {}, "required": []}),
+        category: ToolCategory::Hardware,
+        example: Some("list_profile_subsystems()".to_string()),
+    });
+    tools.push(ToolDefinition {
+        name: "get_profile_settings".to_string(),
+        description: "Get all profile groups and settings for one subsystem. Each group is a device (GPU/DIMM/NVMe/display) with its current driver settings. Read-only; mirrors the data shown by NVIDIA Profile Inspector, Intel XTU, AMD Ryzen Master, and nvme-cli.".to_string(),
+        parameters: json!({
+            "type": "object",
+            "properties": {
+                "subsystem": {
+                    "type": "string",
+                    "enum": ["gpu", "cpu", "nvme", "display", "memory"],
+                    "description": "Subsystem to inspect"
+                }
+            },
+            "required": ["subsystem"]
+        }),
+        category: ToolCategory::Hardware,
+        example: Some(r#"get_profile_settings({"subsystem": "gpu"})"#.to_string()),
+    });
+    tools.push(ToolDefinition {
+        name: "get_profile_deviations".to_string(),
+        description: "List every hardware setting whose current value differs from its declared default — the 'what's been changed from stock' report. Sorted with dangerous risk first. Use this to audit a system after a BIOS update, driver reinstall, or to verify a clean baseline.".to_string(),
+        parameters: json!({"type": "object", "properties": {}, "required": []}),
+        category: ToolCategory::Hardware,
+        example: Some("get_profile_deviations()".to_string()),
+    });
+    tools.push(ToolDefinition {
+        name: "benchmark_profile_providers".to_string(),
+        description: "Benchmark each profile subsystem provider: wall-clock ms, group/setting counts, throughput. Use this to decide whether to call get_profile_settings(subsystem) selectively when a full snapshot is too slow.".to_string(),
+        parameters: json!({"type": "object", "properties": {}, "required": []}),
+        category: ToolCategory::Hardware,
+        example: Some("benchmark_profile_providers()".to_string()),
+    });
+    tools.push(ToolDefinition {
+        name: "list_writable_profile_settings".to_string(),
+        description: "Return the list of profile setting ids that this build can actually write to. Use this before suggesting any apply operation — only ids in this list have a real backing ApplyHandler.".to_string(),
+        parameters: json!({"type": "object", "properties": {}, "required": []}),
+        category: ToolCategory::Hardware,
+        example: Some("list_writable_profile_settings()".to_string()),
+    });
+    tools.push(ToolDefinition {
+        name: "apply_profile_setting".to_string(),
+        description: "Write a profile setting (e.g. enable NVIDIA persistence mode). REQUIRES BOTH (a) confirm=true and (b) the environment variable SIMON_ALLOW_AGENT_WRITES=1 to actually attempt the write. Without those, the call returns a planned-but-not-applied outcome. Every attempt is JSON-logged to the audit log regardless.".to_string(),
+        parameters: json!({
+            "type": "object",
+            "properties": {
+                "setting_id": {"type": "string", "description": "Exact setting id; must be in list_writable_profile_settings()."},
+                "value": {"description": "New value. Booleans use true/false; ints/floats are numeric; otherwise a string."},
+                "confirm": {"type": "boolean", "description": "Must be true to attempt the write."}
+            },
+            "required": ["setting_id", "value"]
+        }),
+        category: ToolCategory::Hardware,
+        example: Some(r#"apply_profile_setting({"setting_id": "scaling_governor", "value": "performance", "confirm": true})"#.to_string()),
+    });
+    tools.push(ToolDefinition {
+        name: "explain_profile_setting".to_string(),
+        description: "Return full metadata for a single profile setting by exact id: description, default, range, choices, risk, source, and related settings in the same group. Use this when a user asks 'what does setting X mean'.".to_string(),
+        parameters: json!({
+            "type": "object",
+            "properties": {
+                "setting_id": {
+                    "type": "string",
+                    "description": "Exact setting id (e.g. 'power_limit_mw', 'pl1_w', 'feat.write_cache.enabled')."
+                }
+            },
+            "required": ["setting_id"]
+        }),
+        category: ToolCategory::Hardware,
+        example: Some(r#"explain_profile_setting({"setting_id": "pl1_w"})"#.to_string()),
+    });
+    tools.push(ToolDefinition {
+        name: "get_active_app_profiles".to_string(),
+        description: "List running processes alongside whether each has a known per-application driver profile (NVIDIA DRS database). Use this to identify apps that could benefit from a tuned profile (DLSS, V-Sync, framerate cap) or to confirm an existing profile applies to the current run.".to_string(),
+        parameters: json!({
+            "type": "object",
+            "properties": {
+                "matched_only": {
+                    "type": "boolean",
+                    "description": "If true, return only processes with a known driver profile."
+                }
+            },
+            "required": []
+        }),
+        category: ToolCategory::Hardware,
+        example: Some(r#"get_active_app_profiles({"matched_only": true})"#.to_string()),
+    });
+    tools.push(ToolDefinition {
+        name: "search_profile_settings".to_string(),
+        description: "Search all hardware profile settings by case-insensitive substring (matches setting id, display name, description, or value). Useful for questions like 'is XMP enabled', 'what's my CPU power limit', or 'find DLSS setting'.".to_string(),
+        parameters: json!({
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Search term"}
+            },
+            "required": ["query"]
+        }),
+        category: ToolCategory::Hardware,
+        example: Some(r#"search_profile_settings({"query": "xmp"})"#.to_string()),
+    });
+
     tools
 }
 
@@ -2394,5 +2501,204 @@ impl AiDataApi {
         Ok(
             json!({"bus": device.bus_number, "port": device.port_number, "vendor_id": format!("{:04x}", device.vendor_id), "product_id": format!("{:04x}", device.product_id), "vendor_name": device.manufacturer, "product_name": device.product, "class": format!("{:?}", device.class), "speed": format!("{:?}", device.speed)}),
         )
+    }
+
+    // ============== Profile Inspector Tools ==============
+    pub(crate) fn tool_list_profile_subsystems(
+        &mut self,
+        _params: serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        use crate::profile::{ProfileInspector, Subsystem};
+        let mut inspector = ProfileInspector::new();
+        let snapshot = inspector.snapshot_all();
+        let subsystems: Vec<_> = Subsystem::ALL
+            .iter()
+            .map(|s| {
+                let groups = snapshot.providers.get(s);
+                let (group_count, setting_count) = match groups {
+                    Some(g) => (g.len(), g.iter().map(|x| x.settings.len()).sum::<usize>()),
+                    None => (0, 0),
+                };
+                json!({
+                    "subsystem": s.as_str(),
+                    "groups": group_count,
+                    "settings": setting_count,
+                })
+            })
+            .collect();
+        Ok(json!({"timestamp": snapshot.timestamp, "subsystems": subsystems}))
+    }
+
+    pub(crate) fn tool_get_profile_settings(
+        &mut self,
+        params: serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        use crate::profile::{ProfileInspector, Subsystem};
+        let name = params
+            .get("subsystem")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| SimonError::InvalidArgument("subsystem required".into()))?;
+        let sub = Subsystem::parse(name)
+            .ok_or_else(|| SimonError::InvalidArgument(format!("unknown subsystem: {}", name)))?;
+        let mut inspector = ProfileInspector::new();
+        let groups = inspector.snapshot(sub);
+        Ok(serde_json::to_value(groups)?)
+    }
+
+    pub(crate) fn tool_get_profile_deviations(
+        &mut self,
+        _params: serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        use crate::profile::{deviation::deviations_from_default, ProfileInspector};
+        let mut inspector = ProfileInspector::new();
+        let snapshot = inspector.snapshot_all();
+        let devs = deviations_from_default(&snapshot);
+        Ok(json!({"count": devs.len(), "deviations": devs}))
+    }
+
+    pub(crate) fn tool_benchmark_profile_providers(
+        &mut self,
+        _params: serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        let report = crate::profile::bench::run_bench();
+        Ok(serde_json::to_value(report)?)
+    }
+
+    pub(crate) fn tool_list_writable_profile_settings(
+        &mut self,
+        _params: serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        let ids = crate::profile::apply::writable_setting_ids();
+        Ok(json!({"count": ids.len(), "ids": ids}))
+    }
+
+    pub(crate) fn tool_apply_profile_setting(
+        &mut self,
+        params: serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        let id = params
+            .get("setting_id")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| SimonError::InvalidArgument("setting_id required".into()))?
+            .to_string();
+        let confirm = params
+            .get("confirm")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let value: crate::profile::SettingValue = match params.get("value") {
+            Some(serde_json::Value::Bool(b)) => crate::profile::SettingValue::Bool(*b),
+            Some(serde_json::Value::Number(n)) => {
+                if let Some(i) = n.as_i64() {
+                    crate::profile::SettingValue::Int(i)
+                } else if let Some(u) = n.as_u64() {
+                    crate::profile::SettingValue::Uint(u)
+                } else if let Some(f) = n.as_f64() {
+                    crate::profile::SettingValue::Float(f)
+                } else {
+                    return Err(SimonError::InvalidArgument("unsupported numeric value".into()));
+                }
+            }
+            Some(serde_json::Value::String(s)) => crate::profile::SettingValue::Text(s.clone()),
+            Some(other) => {
+                return Err(SimonError::InvalidArgument(format!(
+                    "unsupported value type: {}",
+                    other
+                )))
+            }
+            None => {
+                return Err(SimonError::InvalidArgument("value required".into()));
+            }
+        };
+
+        // Belt-and-suspenders: AI agent writes also require the env-var gate
+        // in addition to confirm. Operators must opt-in deliberately.
+        let agent_allowed = std::env::var("SIMON_ALLOW_AGENT_WRITES")
+            .map(|v| v == "1")
+            .unwrap_or(false);
+        let effective_confirm = confirm && agent_allowed;
+
+        let outcome = crate::profile::apply::apply_setting(&id, value, effective_confirm);
+        let mut response = serde_json::to_value(&outcome)?;
+        if confirm && !agent_allowed {
+            if let Some(obj) = response.as_object_mut() {
+                obj.insert(
+                    "agent_write_blocked".to_string(),
+                    json!(true),
+                );
+                obj.insert(
+                    "agent_write_message".to_string(),
+                    json!("Agent write was suppressed because SIMON_ALLOW_AGENT_WRITES is not set to 1. Operator must enable this env-var to allow MCP tools to mutate hardware state."),
+                );
+            }
+        }
+        Ok(response)
+    }
+
+    pub(crate) fn tool_explain_profile_setting(
+        &mut self,
+        params: serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        use crate::profile::{explain, explain::candidates, ProfileInspector};
+        let id = params
+            .get("setting_id")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| SimonError::InvalidArgument("setting_id required".into()))?;
+        let mut inspector = ProfileInspector::new();
+        let snapshot = inspector.snapshot_all();
+        match explain::explain(&snapshot, id) {
+            Some(exp) => Ok(serde_json::to_value(exp)?),
+            None => Ok(json!({
+                "found": false,
+                "candidates": candidates(&snapshot, id),
+            })),
+        }
+    }
+
+    pub(crate) fn tool_get_active_app_profiles(
+        &mut self,
+        params: serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        let matched_only = params
+            .get("matched_only")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let entries = if matched_only {
+            crate::profile::active::matched_active_profiles()
+        } else {
+            crate::profile::active::active_profiles_for_processes()
+        };
+        let total = entries.len();
+        let matched = entries.iter().filter(|e| e.has_any_profile()).count();
+        Ok(json!({
+            "total_processes": total,
+            "matched_count": matched,
+            "entries": entries,
+        }))
+    }
+
+    pub(crate) fn tool_search_profile_settings(
+        &mut self,
+        params: serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        use crate::profile::ProfileInspector;
+        let query = params
+            .get("query")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| SimonError::InvalidArgument("query required".into()))?;
+        let mut inspector = ProfileInspector::new();
+        let snapshot = inspector.snapshot_all();
+        let hits: Vec<_> = snapshot
+            .search(query)
+            .into_iter()
+            .map(|(sub, group, setting)| {
+                json!({
+                    "subsystem": sub.as_str(),
+                    "device": &group.device,
+                    "profile": &group.display_name,
+                    "setting": setting,
+                })
+            })
+            .collect();
+        Ok(json!({"query": query, "match_count": hits.len(), "matches": hits}))
     }
 }

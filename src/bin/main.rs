@@ -65,6 +65,134 @@ enum Commands {
         #[command(subcommand)]
         action: PrivacySubcommand,
     },
+    /// Inspect hardware profiles and tunable driver settings (NVPI/XTU/Ryzen Master/nvme-cli style)
+    Profile {
+        #[command(subcommand)]
+        action: ProfileSubcommand,
+    },
+}
+
+/// Profile subcommands for hardware setting inspection
+#[cfg(feature = "cli")]
+#[derive(Subcommand)]
+enum ProfileSubcommand {
+    /// List subsystems with profile data
+    List {
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show all settings for a subsystem (gpu, cpu, nvme, display, memory)
+    Show {
+        /// Subsystem name
+        subsystem: String,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Search settings across all subsystems
+    Search {
+        /// Case-insensitive search term
+        query: String,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Dump the complete profile snapshot
+    Dump {
+        /// Output as JSON (default: text)
+        #[arg(long)]
+        json: bool,
+        /// Write to file instead of stdout
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
+    /// Write a setting value (requires --confirm). Only ids with a registered handler are writable.
+    Set {
+        /// Exact setting id (e.g. "persistence_mode", "scaling_governor")
+        setting_id: String,
+        /// New value. Bool: true/false/on/off; numbers parsed as int/float; otherwise treated as text.
+        value: String,
+        /// Required to actually perform the write.
+        #[arg(long)]
+        confirm: bool,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// List available Windows power schemes (GUID + friendly name)
+    Schemes {
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// List all writable setting ids on this build
+    Writable {
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Benchmark each provider — wall-clock time and throughput
+    Bench {
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Watch for changes: snapshot at --interval and print added/removed/changed entries
+    Watch {
+        /// Refresh interval in seconds
+        #[arg(short, long, default_value = "5")]
+        interval: f64,
+        /// Maximum number of ticks before exit (0 = run until Ctrl-C)
+        #[arg(short, long, default_value = "0")]
+        ticks: u32,
+        /// Restrict watching to one subsystem (gpu, cpu, nvme, display, memory)
+        #[arg(short, long)]
+        subsystem: Option<String>,
+    },
+    /// Tail the apply audit log
+    Audit {
+        /// Number of trailing lines to show
+        #[arg(short, long, default_value = "20")]
+        lines: usize,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// List settings whose current value differs from their declared default
+    Deviations {
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show full metadata for a single setting by id
+    Explain {
+        /// Exact setting id (e.g. "power_limit_mw", "pl1_w", "feat.write_cache.enabled")
+        setting_id: String,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// List running processes and whether each has a known driver profile
+    Active {
+        /// Show only processes with a known profile
+        #[arg(short, long)]
+        matched: bool,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Compare a saved JSON snapshot against the current state
+    Diff {
+        /// Path to baseline snapshot JSON (created via `simon profile dump --json -o file.json`)
+        baseline: PathBuf,
+        /// Compare against another saved snapshot instead of current state
+        #[arg(short, long)]
+        against: Option<PathBuf>,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 
@@ -395,6 +523,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Privacy command - manage data collection consent
         Some(Commands::Privacy { action }) => {
             handle_privacy_command(action)?;
+        }
+
+        // Profile command - hardware profile inspector
+        Some(Commands::Profile { action }) => {
+            handle_profile_command(action)?;
         }
 
         // Default: launch GUI if available, otherwise TUI
@@ -2684,6 +2817,712 @@ fn format_duration(secs: u64) -> String {
     } else {
         format!("{}h {}m", secs / 3600, (secs % 3600) / 60)
     }
+}
+
+/// Handle `simon profile ...` — hardware profile inspector
+#[cfg(feature = "cli")]
+fn handle_profile_command(action: &ProfileSubcommand) -> Result<(), Box<dyn std::error::Error>> {
+    use simonlib::profile::{ProfileInspector, Subsystem};
+    let mut inspector = ProfileInspector::new();
+
+    match action {
+        ProfileSubcommand::List { json } => {
+            let snapshot = inspector.snapshot_all();
+            if *json {
+                let summary: Vec<_> = Subsystem::ALL
+                    .iter()
+                    .map(|s| {
+                        let groups = snapshot.providers.get(s).cloned().unwrap_or_default();
+                        serde_json::json!({
+                            "subsystem": s.as_str(),
+                            "group_count": groups.len(),
+                            "setting_count": groups.iter().map(|g| g.settings.len()).sum::<usize>(),
+                        })
+                    })
+                    .collect();
+                println!("{}", serde_json::to_string_pretty(&summary)?);
+            } else {
+                println!("{}", "Hardware Profile Inspector".bold().cyan());
+                println!("Subsystems with readable profile data:\n");
+                for sub in Subsystem::ALL {
+                    let groups = snapshot.providers.get(sub);
+                    let (group_count, setting_count) = match groups {
+                        Some(g) => (g.len(), g.iter().map(|x| x.settings.len()).sum::<usize>()),
+                        None => (0, 0),
+                    };
+                    println!(
+                        "  {:<10} {} groups, {} settings",
+                        sub.as_str().bold(),
+                        group_count,
+                        setting_count
+                    );
+                }
+                println!();
+                println!("Use {} for details.", "simon profile show <subsystem>".italic());
+            }
+        }
+        ProfileSubcommand::Show { subsystem, json } => {
+            let sub = Subsystem::parse(subsystem).ok_or_else(|| {
+                format!(
+                    "Unknown subsystem: {} (valid: gpu, cpu, nvme, display, memory)",
+                    subsystem
+                )
+            })?;
+            let groups = inspector.snapshot(sub);
+            if *json {
+                println!("{}", serde_json::to_string_pretty(&groups)?);
+            } else {
+                print_profile_groups(sub, &groups);
+            }
+        }
+        ProfileSubcommand::Search { query, json } => {
+            let snapshot = inspector.snapshot_all();
+            let hits = snapshot.search(query);
+            if *json {
+                let out: Vec<_> = hits
+                    .iter()
+                    .map(|(sub, group, setting)| {
+                        serde_json::json!({
+                            "subsystem": sub.as_str(),
+                            "device": &group.device,
+                            "profile": &group.display_name,
+                            "setting": setting,
+                        })
+                    })
+                    .collect();
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else {
+                println!(
+                    "{} matches for {:?}:\n",
+                    hits.len().to_string().bold(),
+                    query
+                );
+                for (sub, group, setting) in hits {
+                    println!(
+                        "  [{}] {} / {}",
+                        sub.as_str().cyan(),
+                        group.device,
+                        group.display_name.dimmed()
+                    );
+                    println!(
+                        "      {} = {}{}",
+                        setting.display_name.bold(),
+                        setting.value,
+                        setting
+                            .unit
+                            .as_deref()
+                            .map(|u| format!(" {}", u))
+                            .unwrap_or_default()
+                    );
+                }
+            }
+        }
+        ProfileSubcommand::Set { setting_id, value, confirm, json } => {
+            let parsed = parse_setting_value(value);
+            let outcome = simonlib::profile::apply::apply_setting(setting_id, parsed, *confirm);
+            if *json {
+                println!("{}", serde_json::to_string_pretty(&outcome)?);
+            } else {
+                let status_color = match outcome.status {
+                    simonlib::profile::apply::ApplyStatus::Applied => "applied".green(),
+                    simonlib::profile::apply::ApplyStatus::Refused => "refused".red(),
+                    simonlib::profile::apply::ApplyStatus::Failed => "failed".red(),
+                    simonlib::profile::apply::ApplyStatus::NotWritable => "not writable".yellow(),
+                    simonlib::profile::apply::ApplyStatus::NeedsConfirm => "needs --confirm".yellow(),
+                };
+                println!("status:    {}", status_color);
+                println!("setting:   {}", outcome.setting_id.bold());
+                println!("requested: {}", outcome.requested);
+                println!("message:   {}", outcome.message);
+                println!(
+                    "audit log: {}",
+                    simonlib::profile::apply::audit_log_path().display()
+                );
+            }
+            // Non-zero exit on non-success so scripts can detect failure.
+            if !matches!(outcome.status, simonlib::profile::apply::ApplyStatus::Applied) {
+                std::process::exit(1);
+            }
+        }
+        ProfileSubcommand::Schemes { json } => {
+            #[cfg(windows)]
+            {
+                let schemes = simonlib::profile::cpu::enumerate_power_schemes();
+                if *json {
+                    let arr: Vec<_> = schemes
+                        .iter()
+                        .map(|(g, n)| serde_json::json!({"guid": g, "name": n}))
+                        .collect();
+                    println!("{}", serde_json::to_string_pretty(&arr)?);
+                } else if schemes.is_empty() {
+                    println!("(no power schemes enumerable)");
+                } else {
+                    println!(
+                        "{} available Windows power scheme(s):\n",
+                        schemes.len().to_string().bold()
+                    );
+                    for (guid, name) in schemes {
+                        println!("  {}  {}", guid.cyan(), name.bold());
+                    }
+                    println!(
+                        "\nApply with: {} {} <guid> --confirm",
+                        "simon profile set".italic(),
+                        "active_scheme_guid".italic()
+                    );
+                }
+            }
+            #[cfg(not(windows))]
+            {
+                let _ = json;
+                eprintln!("Power scheme enumeration is only available on Windows.");
+                std::process::exit(2);
+            }
+        }
+        ProfileSubcommand::Writable { json } => {
+            let ids = simonlib::profile::apply::writable_setting_ids();
+            if *json {
+                println!("{}", serde_json::to_string_pretty(&ids)?);
+            } else if ids.is_empty() {
+                println!("(no writable handlers registered for this build)");
+            } else {
+                println!("{} writable setting id(s):", ids.len().to_string().bold());
+                for id in ids {
+                    println!("  · {}", id);
+                }
+                println!(
+                    "\nUse: {} {} <value> --confirm",
+                    "simon profile set".italic(),
+                    "<id>".italic()
+                );
+            }
+        }
+        ProfileSubcommand::Bench { json } => {
+            let report = simonlib::profile::bench::run_bench();
+            if *json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!(
+                    "Provider benchmark — total {:.1} ms, {} group(s), {} setting(s)\n",
+                    report.total_elapsed_ms, report.total_groups, report.total_settings
+                );
+                println!(
+                    "  {:<10} {:>10} {:>8} {:>10} {:>14}",
+                    "subsystem".bold(),
+                    "elapsed".bold(),
+                    "groups".bold(),
+                    "settings".bold(),
+                    "settings/ms".bold()
+                );
+                let mut providers = report.providers.clone();
+                providers.sort_by(|a, b| b.elapsed_ms.partial_cmp(&a.elapsed_ms).unwrap_or(std::cmp::Ordering::Equal));
+                for p in providers {
+                    println!(
+                        "  {:<10} {:>8.2} ms {:>8} {:>10} {:>14.2}",
+                        p.subsystem.as_str(),
+                        p.elapsed_ms,
+                        p.group_count,
+                        p.setting_count,
+                        p.settings_per_ms
+                    );
+                }
+            }
+        }
+        ProfileSubcommand::Watch { interval, ticks, subsystem } => {
+            use simonlib::profile::diff::diff_snapshots;
+            use simonlib::profile::{ProfileSnapshot, Subsystem};
+            use std::sync::atomic::{AtomicBool, Ordering};
+            use std::sync::Arc;
+
+            let interval_ms = (interval * 1000.0).max(100.0) as u64;
+            let running = Arc::new(AtomicBool::new(true));
+            let r2 = running.clone();
+            let _ = ctrlc::set_handler(move || {
+                r2.store(false, Ordering::SeqCst);
+            });
+
+            let filter_sub: Option<Subsystem> = match subsystem {
+                Some(s) => match Subsystem::parse(s) {
+                    Some(parsed) => Some(parsed),
+                    None => {
+                        eprintln!(
+                            "Unknown subsystem {:?}. Valid: gpu, cpu, nvme, display, memory",
+                            s
+                        );
+                        std::process::exit(2);
+                    }
+                },
+                None => None,
+            };
+
+            println!(
+                "Watching {} subsystem(s) every {}s. Press Ctrl-C to stop.",
+                filter_sub
+                    .map(|s| s.as_str().to_string())
+                    .unwrap_or_else(|| "all".into()),
+                interval
+            );
+
+            let snapshot = |inspector: &mut simonlib::profile::ProfileInspector| -> ProfileSnapshot {
+                match filter_sub {
+                    Some(sub) => {
+                        let groups = inspector.snapshot(sub);
+                        let mut providers = std::collections::BTreeMap::new();
+                        providers.insert(sub, groups);
+                        ProfileSnapshot {
+                            timestamp: 0,
+                            providers,
+                            errors: Default::default(),
+                        }
+                    }
+                    None => inspector.snapshot_all(),
+                }
+            };
+
+            let mut prev = snapshot(&mut inspector);
+            let mut tick = 0u32;
+            while running.load(Ordering::SeqCst) {
+                std::thread::sleep(std::time::Duration::from_millis(interval_ms));
+                if !running.load(Ordering::SeqCst) {
+                    break;
+                }
+                let cur = snapshot(&mut inspector);
+                let d = diff_snapshots(&prev, &cur);
+                if !d.is_empty() {
+                    let when = chrono::Local::now().format("%H:%M:%S");
+                    println!(
+                        "\n[{}] {} change(s):",
+                        when.to_string().dimmed(),
+                        d.total_changes().to_string().bold()
+                    );
+                    for c in &d.changed {
+                        println!(
+                            "  ~ [{}] {} :: {}: {} → {}",
+                            c.subsystem.as_str().cyan(),
+                            c.device,
+                            c.display_name,
+                            c.before.to_string().red(),
+                            c.after.to_string().green()
+                        );
+                    }
+                    for a in &d.added {
+                        println!(
+                            "  + [{}] {} :: {} = {}",
+                            a.subsystem.as_str().cyan(),
+                            a.device,
+                            a.display_name,
+                            a.value.to_string().green()
+                        );
+                    }
+                    for r in &d.removed {
+                        println!(
+                            "  - [{}] {} :: {} (was {})",
+                            r.subsystem.as_str().cyan(),
+                            r.device,
+                            r.display_name,
+                            r.value.to_string().red()
+                        );
+                    }
+                }
+                prev = cur;
+                tick = tick.saturating_add(1);
+                if *ticks > 0 && tick >= *ticks {
+                    break;
+                }
+            }
+            println!("\nStopped after {} tick(s).", tick);
+        }
+        ProfileSubcommand::Audit { lines, json } => {
+            let path = simonlib::profile::apply::audit_log_path();
+            let content = std::fs::read_to_string(&path).unwrap_or_default();
+            let all: Vec<&str> = content.lines().collect();
+            let tail = if all.len() > *lines {
+                &all[all.len() - lines..]
+            } else {
+                &all[..]
+            };
+            if *json {
+                let parsed: Vec<serde_json::Value> = tail
+                    .iter()
+                    .filter_map(|l| serde_json::from_str(l).ok())
+                    .collect();
+                println!("{}", serde_json::to_string_pretty(&parsed)?);
+            } else {
+                println!("Audit log: {}", path.display().to_string().italic());
+                if tail.is_empty() {
+                    println!("(no entries)");
+                }
+                for line in tail {
+                    if let Ok(v) = serde_json::from_str::<simonlib::profile::apply::ApplyOutcome>(line) {
+                        let st = match v.status {
+                            simonlib::profile::apply::ApplyStatus::Applied => "applied".green(),
+                            simonlib::profile::apply::ApplyStatus::Refused => "refused".red(),
+                            simonlib::profile::apply::ApplyStatus::Failed => "failed".red(),
+                            simonlib::profile::apply::ApplyStatus::NotWritable => "not writable".yellow(),
+                            simonlib::profile::apply::ApplyStatus::NeedsConfirm => "needs confirm".yellow(),
+                        };
+                        println!(
+                            "  [{}] {:>12}  {} = {}",
+                            v.timestamp.to_string().dimmed(),
+                            st,
+                            v.setting_id.bold(),
+                            v.requested
+                        );
+                    } else {
+                        println!("  {}", line);
+                    }
+                }
+            }
+        }
+        ProfileSubcommand::Deviations { json } => {
+            let snapshot = inspector.snapshot_all();
+            let devs = simonlib::profile::deviation::deviations_from_default(&snapshot);
+            if *json {
+                println!("{}", serde_json::to_string_pretty(&devs)?);
+            } else if devs.is_empty() {
+                println!("{}", "No settings deviate from their declared defaults.".green());
+            } else {
+                println!(
+                    "{} setting(s) deviate from declared defaults:\n",
+                    devs.len().to_string().bold()
+                );
+                for d in devs {
+                    let risk = match d.risk {
+                        simonlib::profile::SettingRisk::Dangerous => "[dangerous]".red(),
+                        simonlib::profile::SettingRisk::Moderate => "[moderate]".yellow(),
+                        simonlib::profile::SettingRisk::Safe => "[safe]".green(),
+                        simonlib::profile::SettingRisk::Informational => "[info]".dimmed(),
+                    };
+                    println!(
+                        "  {} [{}] {} :: {}",
+                        risk,
+                        d.subsystem.as_str().cyan(),
+                        d.device,
+                        d.display_name.bold()
+                    );
+                    println!(
+                        "      default: {}   current: {}",
+                        d.default.to_string().dimmed(),
+                        d.current.to_string().yellow()
+                    );
+                }
+            }
+        }
+        ProfileSubcommand::Explain { setting_id, json } => {
+            let snapshot = inspector.snapshot_all();
+            match simonlib::profile::explain::explain(&snapshot, setting_id) {
+                Some(exp) => {
+                    if *json {
+                        println!("{}", serde_json::to_string_pretty(&exp)?);
+                    } else {
+                        println!("{}", exp.setting.display_name.bold().cyan());
+                        println!(
+                            "  id:        {}",
+                            exp.setting.id.italic()
+                        );
+                        println!(
+                            "  scope:     [{}] {} / {}",
+                            exp.subsystem.as_str(),
+                            exp.device,
+                            exp.profile.dimmed()
+                        );
+                        println!(
+                            "  value:     {}{}",
+                            exp.setting.value.to_string().bold(),
+                            exp.setting
+                                .unit
+                                .as_deref()
+                                .map(|u| format!(" {}", u))
+                                .unwrap_or_default()
+                        );
+                        if let Some(default) = &exp.setting.default {
+                            println!("  default:   {}", default);
+                        }
+                        if let Some((min, max)) = &exp.setting.range {
+                            println!("  range:     [{}, {}]", min, max);
+                        }
+                        if let Some(choices) = &exp.setting.choices {
+                            let names: Vec<String> = choices.iter().map(|(n, _)| n.clone()).collect();
+                            println!("  choices:   {}", names.join(", "));
+                        }
+                        let risk = match exp.setting.risk {
+                            simonlib::profile::SettingRisk::Dangerous => "dangerous".red(),
+                            simonlib::profile::SettingRisk::Moderate => "moderate".yellow(),
+                            simonlib::profile::SettingRisk::Safe => "safe".green(),
+                            simonlib::profile::SettingRisk::Informational => "info".dimmed(),
+                        };
+                        println!("  risk:      {}", risk);
+                        println!("  source:    {}", exp.setting.source.italic());
+                        if let Some(desc) = &exp.setting.description {
+                            println!("\n  {}", desc);
+                        }
+                        if !exp.related.is_empty() {
+                            println!("\n  {}", "Related settings:".bold());
+                            for r in &exp.related {
+                                println!(
+                                    "    · {:<32} = {}",
+                                    r.id,
+                                    r.value.to_string().bold()
+                                );
+                            }
+                        }
+                    }
+                }
+                None => {
+                    let cands = simonlib::profile::explain::candidates(&snapshot, setting_id);
+                    if cands.is_empty() {
+                        eprintln!("No setting matches id {:?}", setting_id);
+                        std::process::exit(1);
+                    } else {
+                        eprintln!("No exact match for {:?}. Did you mean:", setting_id);
+                        for c in cands {
+                            eprintln!("  · {}", c);
+                        }
+                        std::process::exit(1);
+                    }
+                }
+            }
+        }
+        ProfileSubcommand::Active { matched, json } => {
+            let entries = if *matched {
+                simonlib::profile::active::matched_active_profiles()
+            } else {
+                simonlib::profile::active::active_profiles_for_processes()
+            };
+            if *json {
+                println!("{}", serde_json::to_string_pretty(&entries)?);
+            } else {
+                let total = entries.len();
+                let matched_count = entries.iter().filter(|e| e.has_any_profile()).count();
+                println!(
+                    "{} of {} processes have a known NVIDIA driver profile\n",
+                    matched_count.to_string().bold(),
+                    total.to_string().bold()
+                );
+                for e in entries {
+                    let marker = if e.has_nvidia_drs_profile {
+                        "✓".green().to_string()
+                    } else {
+                        "·".dimmed().to_string()
+                    };
+                    println!(
+                        "  {} {:>6}  {}",
+                        marker,
+                        e.pid.to_string().dimmed(),
+                        if e.has_nvidia_drs_profile {
+                            e.name.bold().to_string()
+                        } else {
+                            e.name.dimmed().to_string()
+                        }
+                    );
+                }
+            }
+        }
+        ProfileSubcommand::Diff { baseline, against, json } => {
+            use simonlib::profile::diff::diff_snapshots;
+            use simonlib::profile::ProfileSnapshot;
+            let baseline_str = std::fs::read_to_string(baseline)?;
+            let baseline_snap: ProfileSnapshot = serde_json::from_str(&baseline_str)?;
+            let current_snap = if let Some(path) = against {
+                let s = std::fs::read_to_string(path)?;
+                serde_json::from_str::<ProfileSnapshot>(&s)?
+            } else {
+                inspector.snapshot_all()
+            };
+            let d = diff_snapshots(&baseline_snap, &current_snap);
+            if *json {
+                println!("{}", serde_json::to_string_pretty(&d)?);
+            } else if d.is_empty() {
+                println!("{}", "No changes between snapshots.".green());
+            } else {
+                println!(
+                    "{} change(s) detected\n",
+                    d.total_changes().to_string().bold()
+                );
+                if !d.added_groups.is_empty() {
+                    println!("{}", "Added groups:".green().bold());
+                    for g in &d.added_groups {
+                        println!(
+                            "  + [{}] {} / {} ({} settings)",
+                            g.subsystem.as_str().cyan(),
+                            g.device,
+                            g.profile.dimmed(),
+                            g.setting_count
+                        );
+                    }
+                    println!();
+                }
+                if !d.removed_groups.is_empty() {
+                    println!("{}", "Removed groups:".red().bold());
+                    for g in &d.removed_groups {
+                        println!(
+                            "  - [{}] {} / {} ({} settings)",
+                            g.subsystem.as_str().cyan(),
+                            g.device,
+                            g.profile.dimmed(),
+                            g.setting_count
+                        );
+                    }
+                    println!();
+                }
+                if !d.changed.is_empty() {
+                    println!("{}", "Changed:".yellow().bold());
+                    for c in &d.changed {
+                        println!(
+                            "  ~ [{}] {} / {} :: {}",
+                            c.subsystem.as_str().cyan(),
+                            c.device,
+                            c.profile.dimmed(),
+                            c.display_name.bold()
+                        );
+                        println!("      {} → {}", c.before.to_string().red(), c.after.to_string().green());
+                    }
+                    println!();
+                }
+                if !d.added.is_empty() {
+                    println!("{}", "Added settings:".green().bold());
+                    for a in &d.added {
+                        println!(
+                            "  + [{}] {} / {} :: {} = {}",
+                            a.subsystem.as_str().cyan(),
+                            a.device,
+                            a.profile.dimmed(),
+                            a.display_name,
+                            a.value.to_string().bold()
+                        );
+                    }
+                    println!();
+                }
+                if !d.removed.is_empty() {
+                    println!("{}", "Removed settings:".red().bold());
+                    for r in &d.removed {
+                        println!(
+                            "  - [{}] {} / {} :: {} (was {})",
+                            r.subsystem.as_str().cyan(),
+                            r.device,
+                            r.profile.dimmed(),
+                            r.display_name,
+                            r.value
+                        );
+                    }
+                }
+            }
+        }
+        ProfileSubcommand::Dump { json, output } => {
+            let snapshot = inspector.snapshot_all();
+            if *json {
+                let serialized = serde_json::to_string_pretty(&snapshot)?;
+                if let Some(path) = output {
+                    std::fs::write(path, serialized)?;
+                    println!("Wrote profile snapshot to {}", path.display());
+                } else {
+                    println!("{}", serialized);
+                }
+            } else {
+                let mut sink = String::new();
+                use std::fmt::Write;
+                writeln!(
+                    sink,
+                    "Hardware Profile Snapshot ({} groups, {} settings)\n",
+                    snapshot.total_groups(),
+                    snapshot.total_settings()
+                )?;
+                for (sub, groups) in &snapshot.providers {
+                    writeln!(sink, "=== {} ===", sub.as_str().to_uppercase())?;
+                    for group in groups {
+                        writeln!(sink, "\n[{}] {}", group.device, group.display_name)?;
+                        writeln!(sink, "  source: {}", group.source)?;
+                        for s in &group.settings {
+                            writeln!(
+                                sink,
+                                "  {:<32} = {}{}",
+                                s.id,
+                                s.value,
+                                s.unit.as_deref().map(|u| format!(" {}", u)).unwrap_or_default()
+                            )?;
+                        }
+                        for n in &group.notes {
+                            writeln!(sink, "  note: {}", n)?;
+                        }
+                    }
+                    writeln!(sink)?;
+                }
+                if let Some(path) = output {
+                    std::fs::write(path, &sink)?;
+                    println!("Wrote profile snapshot to {}", path.display());
+                } else {
+                    print!("{}", sink);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Pretty-print profile groups for a subsystem.
+#[cfg(feature = "cli")]
+fn print_profile_groups(sub: simonlib::profile::Subsystem, groups: &[simonlib::profile::ProfileGroup]) {
+    if groups.is_empty() {
+        println!("(no profile data for {})", sub);
+        return;
+    }
+    println!("{}", format!("== {} ==", sub).bold().cyan());
+    for group in groups {
+        println!();
+        println!(
+            "{} {}",
+            "▸".cyan(),
+            group.device.bold(),
+        );
+        println!(
+            "  {} {}   {} {}",
+            "profile:".dimmed(),
+            group.display_name,
+            "source:".dimmed(),
+            group.source.italic()
+        );
+        for s in &group.settings {
+            let unit = s.unit.as_deref().map(|u| format!(" {}", u)).unwrap_or_default();
+            let risk = match s.risk {
+                simonlib::profile::SettingRisk::Informational => String::new(),
+                simonlib::profile::SettingRisk::Safe => " [safe]".green().to_string(),
+                simonlib::profile::SettingRisk::Moderate => " [moderate]".yellow().to_string(),
+                simonlib::profile::SettingRisk::Dangerous => " [dangerous]".red().to_string(),
+            };
+            println!(
+                "    {:<28} = {}{}{}",
+                s.display_name,
+                s.value.to_string().bold(),
+                unit,
+                risk,
+            );
+        }
+        for n in &group.notes {
+            println!("    {} {}", "•".dimmed(), n.dimmed());
+        }
+    }
+}
+
+/// Parse a CLI string into a [`SettingValue`]. Recognizes bool literals,
+/// integers, and floats; otherwise falls back to [`SettingValue::Text`].
+#[cfg(feature = "cli")]
+fn parse_setting_value(raw: &str) -> simonlib::profile::SettingValue {
+    use simonlib::profile::SettingValue;
+    let lower = raw.trim().to_ascii_lowercase();
+    match lower.as_str() {
+        "true" | "yes" | "on" | "enabled" | "enable" => return SettingValue::Bool(true),
+        "false" | "no" | "off" | "disabled" | "disable" => return SettingValue::Bool(false),
+        _ => {}
+    }
+    if let Ok(i) = raw.parse::<i64>() {
+        return SettingValue::Int(i);
+    }
+    if let Ok(u) = raw.parse::<u64>() {
+        return SettingValue::Uint(u);
+    }
+    if let Ok(f) = raw.parse::<f64>() {
+        return SettingValue::Float(f);
+    }
+    SettingValue::Text(raw.to_string())
 }
 
 #[cfg(not(feature = "cli"))]

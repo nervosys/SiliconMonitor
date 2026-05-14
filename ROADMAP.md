@@ -88,6 +88,20 @@ Silicon Monitor is the world's first agentic system monitoring utility and API. 
 - [x] **Prometheus Metrics Exporter** — Proper exposition format with HELP/TYPE annotations, per-GPU/per-core/per-disk labels
 - [x] **Predictive Maintenance** — Linear regression trend analysis, GPU thermal/clock degradation, disk SMART failure, fan bearing wear, memory error predictions
 
+### v1.4.0 — Hardware Profile Inspector
+- [x] **Profile Inspector** — NVPI / XTU / Ryzen Master / nvme-cli style read-write surface
+- [x] Five subsystem providers (GPU, CPU, NVMe, Display, Memory) with platform-specific reads
+- [x] **NVIDIA DRS binary scan** — ~12k per-application driver profiles surfaced from `nvdrsdb*.bin`
+- [x] **EDID block decoder** — manufacturer PNP, monitor name, preferred timing, DPMS, gamma
+- [x] **XMP/EXPO SPD decoder** — DDR4 XMP 2.0, DDR5 XMP 3.0, AMD EXPO on Linux
+- [x] **NVMe Get-Features ioctl** — typed decode of Power Management, VWC, Queues, AEC, APST
+- [x] **Apply layer** with audit log — 5 concrete handlers across Linux + Windows, `--confirm` gate
+- [x] **Diff / deviations / explain / active / watch / bench / schemes** CLI subcommands (16 total)
+- [x] **GUI + TUI** profile panels with deviation overlay
+- [x] **Prometheus exporter** wired with `profile_deviations_count{risk}` and friends
+- [x] **MCP tools** — 12 profile-related agent tools
+- [x] **CachedProfileInspector** — per-subsystem TTL cache addressing 3.7s cold snapshot
+
 ### v1.1.0 — Datacenter, Virtualization, Fleet Monitoring
 - [x] **Datacenter Monitoring** — IPMI/BMC sensor reading (ipmitool + sysfs backends), power draw, SEL events
 - [x] **Chassis Detection** — SMBIOS/DMI chassis type identification (36 standard types), form factor inference
