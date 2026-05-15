@@ -135,6 +135,17 @@ fn run_app<B: Backend>(
                                         }
                                     }
                                     KeyCode::BackTab => app.previous_tab(),
+                                    // On the Profiles tab, 1–5 selects a subsystem
+                                    // instead of switching tabs (matches the on-screen
+                                    // "[1-5] subsystem" hint). Everywhere else, the
+                                    // number row switches tabs.
+                                    KeyCode::Char(c @ '1'..='5') if app.selected_tab == 7 => {
+                                        let idx = (c as u8 - b'1') as usize;
+                                        if idx < crate::profile::Subsystem::ALL.len() {
+                                            app.profile_subsystem_idx = idx;
+                                            app.profile_scroll = 0;
+                                        }
+                                    }
                                     KeyCode::Char('1') => app.set_tab(0),
                                     KeyCode::Char('2') => app.set_tab(1),
                                     KeyCode::Char('3') => app.set_tab(2),

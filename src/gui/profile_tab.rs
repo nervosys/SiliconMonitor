@@ -6,9 +6,12 @@ use egui::RichText;
 use super::app::SiliconMonitorApp;
 use super::theme::CyberColors;
 
+const AUDIT_TAIL_REFRESH_MS: u64 = 1000;
+const AUDIT_TAIL_LINES: usize = 12;
+
 impl SiliconMonitorApp {
     pub(super) fn draw_profiles_tab(&mut self, ui: &mut egui::Ui) {
-        use crate::profile::{cache::CachedProfileInspector, SettingRisk, Subsystem};
+        use crate::profile::{SettingRisk, Subsystem};
 
         ui.horizontal(|ui| {
             ui.heading(RichText::new("🛠 Hardware Profile Inspector").color(CyberColors::CYAN));
@@ -21,17 +24,12 @@ impl SiliconMonitorApp {
             );
         });
 
+        // ── Toolbar (mutable borrows confined here) ───────────────────────
+        let mut refresh_clicked = false;
         ui.horizontal(|ui| {
-            let refresh_clicked = ui
+            refresh_clicked = ui
                 .button(RichText::new("🔄 Refresh").color(CyberColors::CYAN))
                 .clicked();
-            if refresh_clicked || self.profile_snapshot.is_none() {
-                let mut inspector = CachedProfileInspector::new();
-                if refresh_clicked {
-                    inspector.invalidate(None);
-                }
-                self.profile_snapshot = Some(inspector.snapshot_all());
-            }
             ui.separator();
             ui.label("Filter:");
             ui.text_edit_singleline(&mut self.profile_filter);
@@ -45,6 +43,15 @@ impl SiliconMonitorApp {
                 .small()
                 .color(CyberColors::TEXT_SECONDARY),
             );
+            if self.profile_snapshot_loading {
+                ui.separator();
+                ui.spinner();
+                ui.label(
+                    RichText::new("Loading…")
+                        .small()
+                        .color(CyberColors::TEXT_SECONDARY),
+                );
+            }
         });
 
         ui.horizontal(|ui| {
@@ -65,18 +72,68 @@ impl SiliconMonitorApp {
 
         ui.separator();
 
-        let Some(snapshot) = self.profile_snapshot.clone() else {
-            ui.label("Loading profile snapshot…");
+        // ── Trigger background load on first visit / refresh ─────────────
+        if refresh_clicked {
+            self.start_profile_load(true);
+        } else {
+            self.start_profile_load(false);
+        }
+
+        // Synchronous fallback (runs at most once per refresh generation):
+        // if no snapshot exists, no load is in flight, AND the background
+        // load already returned nothing (e.g. it panicked or its providers
+        // misbehaved off the main thread), do a one-shot blocking load on
+        // the main thread so the tab always shows real data.
+        if !refresh_clicked
+            && self.profile_snapshot.is_none()
+            && !self.profile_snapshot_loading
+            && self.profile_snapshot_receiver.is_none()
+            && !self.profile_sync_attempted
+        {
+            self.profile_sync_attempted = true;
+            self.load_profile_snapshot_sync(false);
+        }
+
+        // ── Lazily refresh derived caches ────────────────────────────────
+        if self.profile_deviations_cache.is_none() {
+            if let Some(snapshot) = self.profile_snapshot.as_ref() {
+                self.profile_deviations_cache =
+                    Some(crate::profile::deviation::deviations_from_default(snapshot));
+            }
+        }
+        let need_audit_refresh = self
+            .profile_audit_last_read
+            .map(|t| t.elapsed() >= std::time::Duration::from_millis(AUDIT_TAIL_REFRESH_MS))
+            .unwrap_or(true);
+        if need_audit_refresh {
+            let audit_path = crate::profile::apply::audit_log_path();
+            let audit_text = std::fs::read_to_string(&audit_path).unwrap_or_default();
+            let lines: Vec<&str> = audit_text.lines().collect();
+            let start = lines.len().saturating_sub(AUDIT_TAIL_LINES);
+            self.profile_audit_tail_cache = lines[start..].iter().map(|s| s.to_string()).collect();
+            self.profile_audit_last_read = Some(std::time::Instant::now());
+        }
+
+        // ── Borrow snapshot (and cached derivatives) immutably ───────────
+        let Some(snapshot) = self.profile_snapshot.as_ref() else {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label("Loading profile snapshot…");
+            });
             return;
         };
+        let deviations: &[crate::profile::deviation::Deviation] = self
+            .profile_deviations_cache
+            .as_deref()
+            .unwrap_or(&[]);
+        let audit_tail: &[String] = self.profile_audit_tail_cache.as_slice();
+        let filter_lc = self.profile_filter.to_ascii_lowercase();
+        let subsystem_filter = self.profile_subsystem_filter;
 
         // ── Deviations panel ──────────────────────────────────────────────
-        let deviations = crate::profile::deviation::deviations_from_default(&snapshot);
         let heading = if deviations.is_empty() {
-            RichText::new(format!(
-                "▾ Deviations from default · 0 — at stock"
-            ))
-            .color(egui::Color32::from_rgb(100, 220, 100))
+            RichText::new("▾ Deviations from default · 0 — at stock".to_string())
+                .color(egui::Color32::from_rgb(100, 220, 100))
         } else {
             RichText::new(format!(
                 "▾ Deviations from default · {}",
@@ -91,8 +148,10 @@ impl SiliconMonitorApp {
             .show(ui, |ui| {
                 if deviations.is_empty() {
                     ui.label(
-                        RichText::new("All settings with a declared default are at their default value.")
-                            .color(CyberColors::TEXT_SECONDARY),
+                        RichText::new(
+                            "All settings with a declared default are at their default value.",
+                        )
+                        .color(CyberColors::TEXT_SECONDARY),
                     );
                 } else {
                     egui::Grid::new("profile_deviations_grid")
@@ -104,7 +163,7 @@ impl SiliconMonitorApp {
                             ui.label(RichText::new("default").strong());
                             ui.label(RichText::new("current").strong());
                             ui.end_row();
-                            for d in &deviations {
+                            for d in deviations {
                                 let risk_color = match d.risk {
                                     crate::profile::SettingRisk::Dangerous => {
                                         egui::Color32::from_rgb(255, 90, 90)
@@ -124,14 +183,12 @@ impl SiliconMonitorApp {
                                         .color(risk_color)
                                         .small(),
                                 );
-                                ui.label(
-                                    RichText::new(format!(
-                                        "[{}] {} :: {}",
-                                        d.subsystem.as_str(),
-                                        d.device,
-                                        d.display_name
-                                    )),
-                                );
+                                ui.label(RichText::new(format!(
+                                    "[{}] {} :: {}",
+                                    d.subsystem.as_str(),
+                                    d.device,
+                                    d.display_name
+                                )));
                                 ui.label(
                                     RichText::new(d.default.to_string())
                                         .color(CyberColors::TEXT_SECONDARY),
@@ -149,18 +206,10 @@ impl SiliconMonitorApp {
 
         // ── Audit log tail panel ─────────────────────────────────────────
         let audit_path = crate::profile::apply::audit_log_path();
-        let audit_text = std::fs::read_to_string(&audit_path).unwrap_or_default();
-        let audit_lines: Vec<&str> = audit_text.lines().collect();
-        let tail_n = 12usize.min(audit_lines.len());
-        let tail = if audit_lines.len() > tail_n {
-            &audit_lines[audit_lines.len() - tail_n..]
-        } else {
-            &audit_lines[..]
-        };
         let audit_heading = RichText::new(format!(
             "▾ Apply audit log · last {} entr{}",
-            tail.len(),
-            if tail.len() == 1 { "y" } else { "ies" }
+            audit_tail.len(),
+            if audit_tail.len() == 1 { "y" } else { "ies" }
         ))
         .color(CyberColors::CYAN);
         egui::CollapsingHeader::new(audit_heading)
@@ -173,7 +222,7 @@ impl SiliconMonitorApp {
                         .italics()
                         .small(),
                 );
-                if tail.is_empty() {
+                if audit_tail.is_empty() {
                     ui.label(
                         RichText::new("(no entries — no apply attempts have been made)")
                             .color(CyberColors::TEXT_SECONDARY),
@@ -188,7 +237,7 @@ impl SiliconMonitorApp {
                             ui.label(RichText::new("setting").strong());
                             ui.label(RichText::new("requested").strong());
                             ui.end_row();
-                            for line in tail {
+                            for line in audit_tail {
                                 if let Ok(o) = serde_json::from_str::<
                                     crate::profile::apply::ApplyOutcome,
                                 >(line)
@@ -232,8 +281,6 @@ impl SiliconMonitorApp {
 
         ui.separator();
 
-        let filter_lc = self.profile_filter.to_ascii_lowercase();
-        let subsystem_filter = self.profile_subsystem_filter;
         let mut total_groups = 0usize;
         let mut total_settings = 0usize;
 
@@ -257,29 +304,30 @@ impl SiliconMonitorApp {
                         .id_salt(format!("profile_sub_{}", sub.as_str()))
                         .show(ui, |ui| {
                             for group in groups {
-                                let visible_settings: Vec<_> = group
-                                    .settings
-                                    .iter()
-                                    .filter(|s| {
-                                        if filter_lc.is_empty() {
-                                            return true;
-                                        }
-                                        let hay = format!(
-                                            "{} {} {} {}",
-                                            s.id,
-                                            s.display_name,
-                                            s.description.as_deref().unwrap_or(""),
-                                            s.value
-                                        )
-                                        .to_ascii_lowercase();
-                                        hay.contains(&filter_lc)
-                                    })
-                                    .collect();
-                                if visible_settings.is_empty() && !filter_lc.is_empty() {
-                                    continue;
+                                // Cheap header pass: count only when no filter is
+                                // active; otherwise the contents-collapsed body
+                                // does the work lazily when expanded.
+                                if filter_lc.is_empty() {
+                                    total_groups += 1;
+                                    total_settings += group.settings.len();
+                                } else {
+                                    // With a filter, do a single fast scan that
+                                    // doesn't allocate a Vec or format strings —
+                                    // just count matches. The detailed filtered
+                                    // list is built lazily inside the expanded
+                                    // body.
+                                    let matched: usize = group
+                                        .settings
+                                        .iter()
+                                        .filter(|s| setting_matches(s, &filter_lc))
+                                        .count();
+                                    if matched == 0 {
+                                        continue;
+                                    }
+                                    total_groups += 1;
+                                    total_settings += matched;
                                 }
-                                total_groups += 1;
-                                total_settings += visible_settings.len();
+
                                 let group_heading = RichText::new(format!(
                                     "  ▸ {}  —  {}",
                                     group.device, group.display_name
@@ -307,7 +355,10 @@ impl SiliconMonitorApp {
                                             .striped(true)
                                             .num_columns(3)
                                             .show(ui, |ui| {
-                                                for s in visible_settings {
+                                                for s in group.settings.iter().filter(|s| {
+                                                    filter_lc.is_empty()
+                                                        || setting_matches(s, &filter_lc)
+                                                }) {
                                                     let risk_color = match s.risk {
                                                         SettingRisk::Informational => {
                                                             CyberColors::TEXT_SECONDARY
@@ -368,4 +419,49 @@ impl SiliconMonitorApp {
                 );
             });
     }
+}
+
+/// Cheap, allocation-free substring match across the fields a user would
+/// search by. `filter_lc` MUST already be lowercased by the caller.
+fn setting_matches(s: &crate::profile::Setting, filter_lc: &str) -> bool {
+    if filter_lc.is_empty() {
+        return true;
+    }
+    fn contains_ci(hay: &str, needle_lc: &str) -> bool {
+        // Cheap path for ASCII haystacks: scan byte-by-byte against the
+        // already-lowercased needle without allocating a new String.
+        if hay.is_ascii() {
+            let hay = hay.as_bytes();
+            let needle = needle_lc.as_bytes();
+            if needle.is_empty() || hay.len() < needle.len() {
+                return needle.is_empty();
+            }
+            'outer: for i in 0..=hay.len() - needle.len() {
+                for j in 0..needle.len() {
+                    let hc = hay[i + j];
+                    let hc_lc = if hc.is_ascii_uppercase() { hc + 32 } else { hc };
+                    if hc_lc != needle[j] {
+                        continue 'outer;
+                    }
+                }
+                return true;
+            }
+            false
+        } else {
+            // Rare unicode path: fall back to allocating lowercase.
+            hay.to_ascii_lowercase().contains(needle_lc)
+        }
+    }
+    if contains_ci(&s.id, filter_lc) || contains_ci(&s.display_name, filter_lc) {
+        return true;
+    }
+    if let Some(desc) = s.description.as_deref() {
+        if contains_ci(desc, filter_lc) {
+            return true;
+        }
+    }
+    // value: stringify only when nothing else hit. SettingValue's Display impl
+    // is cheap (no nested allocations beyond a small format buffer).
+    let value_str = s.value.to_string();
+    contains_ci(&value_str, filter_lc)
 }

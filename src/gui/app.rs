@@ -200,6 +200,28 @@ pub struct SiliconMonitorApp {
     pub(super) profile_snapshot: Option<crate::profile::ProfileSnapshot>,
     pub(super) profile_filter: String,
     pub(super) profile_subsystem_filter: Option<crate::profile::Subsystem>,
+    pub(super) profile_snapshot_receiver: Option<Receiver<crate::profile::ProfileSnapshot>>,
+    pub(super) profile_snapshot_loading: bool,
+    pub(super) profile_deviations_cache: Option<Vec<crate::profile::deviation::Deviation>>,
+    pub(super) profile_audit_tail_cache: Vec<String>,
+    pub(super) profile_audit_last_read: Option<std::time::Instant>,
+    /// True once any profile load (bg or sync) has been attempted. Stops
+    /// per-frame respawn after a panicked bg thread; cleared by Refresh.
+    pub(super) profile_load_attempted: bool,
+    /// True once a sync fallback load has been attempted this generation.
+    pub(super) profile_sync_attempted: bool,
+
+    // Theme is expensive to apply (rebuilds font atlas via ctx.set_fonts).
+    // Track what we last applied so update() can skip the call when nothing
+    // has changed since last frame.
+    applied_color_theme: Option<ColorTheme>,
+
+    // Cache for the Processes tab — avoid cloning + sorting the whole
+    // process_list on every paint (10 FPS × hundreds of processes is enough
+    // to feel laggy).
+    process_list_version: u64,
+    processes_view_cache: Vec<ProcessMonitorInfo>,
+    processes_view_key: Option<(String, ProcessSortColumn, bool, u64)>,
 }
 
 /// Result from background system info loading
@@ -603,6 +625,17 @@ impl SiliconMonitorApp {
             profile_snapshot: None,
             profile_filter: String::new(),
             profile_subsystem_filter: None,
+            profile_snapshot_receiver: None,
+            profile_snapshot_loading: false,
+            profile_deviations_cache: None,
+            profile_audit_tail_cache: Vec::new(),
+            profile_audit_last_read: None,
+            profile_load_attempted: false,
+            profile_sync_attempted: false,
+            applied_color_theme: None,
+            process_list_version: 0,
+            processes_view_cache: Vec::new(),
+            processes_view_key: None,
         };
 
         // Initialize history with zeros
@@ -634,6 +667,14 @@ impl SiliconMonitorApp {
                 app.prev_interrupts = vm.interrupts;
             }
         }
+
+        // Preload heavy per-tab data in background threads so the first click
+        // on any tab does not pay a synchronous enumeration cost. Each spawn
+        // is fire-and-forget; results land via the receivers drained by
+        // check_background_loaders().
+        app.start_disk_loading();
+        app.start_system_info_loading();
+        app.start_profile_load(false);
 
         app
     }
@@ -830,6 +871,7 @@ impl SiliconMonitorApp {
             if let Some(ref mut monitor) = self.process_monitor {
                 if let Ok(processes) = monitor.processes() {
                     self.process_list = processes;
+                    self.process_list_version = self.process_list_version.wrapping_add(1);
                 }
             }
         }
@@ -874,6 +916,29 @@ impl SiliconMonitorApp {
                 self.apply_data_update(result);
                 self.data_poll_in_flight = false;
                 self.data_receiver = None;
+            }
+        }
+
+        // Check profile snapshot background loading. Handle both the
+        // "still loading" (Empty) and "thread died without sending"
+        // (Disconnected) cases so the tab never gets stuck on the spinner.
+        if let Some(receiver) = self.profile_snapshot_receiver.take() {
+            match receiver.try_recv() {
+                Ok(snapshot) => {
+                    self.profile_snapshot = Some(snapshot);
+                    self.profile_snapshot_loading = false;
+                    self.profile_deviations_cache = None;
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {
+                    // Still loading; keep the receiver for the next frame.
+                    self.profile_snapshot_receiver = Some(receiver);
+                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    // Background thread exited without sending — most likely
+                    // panicked. Clear loading flags so the next visit can
+                    // retry (sync fallback) instead of spinning forever.
+                    self.profile_snapshot_loading = false;
+                }
             }
         }
 
@@ -1022,6 +1087,61 @@ impl SiliconMonitorApp {
         });
     }
 
+    /// Start background loading of the hardware profile snapshot.
+    /// `force` invalidates the cache (used by the Refresh button); idle calls
+    /// short-circuit if a snapshot is already loaded or a load is in flight.
+    pub(super) fn start_profile_load(&mut self, force: bool) {
+        if self.profile_snapshot_loading || self.profile_snapshot_receiver.is_some() {
+            return;
+        }
+        if !force && self.profile_snapshot.is_some() {
+            return;
+        }
+        // If a previous attempt finished (success or panic) and produced no
+        // recoverable result, do not respawn on every frame. The user can
+        // force a retry via the Refresh button.
+        if !force && self.profile_load_attempted {
+            return;
+        }
+        if force {
+            self.profile_sync_attempted = false;
+        }
+        self.profile_load_attempted = true;
+        let (tx, rx) = channel();
+        self.profile_snapshot_receiver = Some(rx);
+        self.profile_snapshot_loading = true;
+        // catch_unwind: a panic in any provider must not leave the loader
+        // stuck — drop the sender so the receiver sees Disconnected and the
+        // UI can offer a retry.
+        std::thread::spawn(move || {
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let mut inspector = crate::profile::cache::CachedProfileInspector::new();
+                if force {
+                    inspector.invalidate(None);
+                }
+                inspector.snapshot_all()
+            }));
+            if let Ok(snapshot) = result {
+                let _ = tx.send(snapshot);
+            }
+            // On panic, tx is dropped → receiver gets Disconnected.
+        });
+    }
+
+    /// Synchronous profile load fallback. Called from the Profiles tab when
+    /// no snapshot is available and no background load is in flight (e.g.
+    /// the background thread panicked, or returned an empty snapshot). This
+    /// blocks the UI for the duration of the scan but guarantees data
+    /// appears instead of a blank tab.
+    pub(super) fn load_profile_snapshot_sync(&mut self, force: bool) {
+        let mut inspector = crate::profile::cache::CachedProfileInspector::new();
+        if force {
+            inspector.invalidate(None);
+        }
+        self.profile_snapshot = Some(inspector.snapshot_all());
+        self.profile_deviations_cache = None;
+    }
+
     /// Start lazy loading of system info
     fn start_system_info_loading(&mut self) {
         if self.system_info_tried || self.system_info_loading {
@@ -1149,10 +1269,16 @@ impl SiliconMonitorApp {
 
 impl eframe::App for SiliconMonitorApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // Apply theme based on settings
-        match self.settings.color_theme {
-            ColorTheme::Light => theme::apply_light_theme(ctx),
-            _ => theme::apply_cyber_theme(ctx),
+        // Apply theme only when it actually changes. `apply_*_theme` calls
+        // `ctx.set_fonts()` which rebuilds the font atlas — doing that every
+        // frame causes ~100ms paint stalls and ruins tab-switch latency.
+        let want = self.settings.color_theme;
+        if self.applied_color_theme != Some(want) {
+            match want {
+                ColorTheme::Light => theme::apply_light_theme(ctx),
+                _ => theme::apply_cyber_theme(ctx),
+            }
+            self.applied_color_theme = Some(want);
         }
 
         // Check alerts if enabled
@@ -2544,52 +2670,63 @@ impl SiliconMonitorApp {
 
         ui.add_space(8.0);
 
-        // Process table
-        ScrollArea::vertical().show(ui, |ui| {
-            let mut processes = self.process_list.clone();
-
-            // Filter
+        // Rebuild the sorted/filtered view only when something that affects
+        // it has actually changed. Per-frame the cached view is reused.
+        let want_key = (
+            self.process_filter.clone(),
+            self.process_sort_column,
+            self.process_sort_ascending,
+            self.process_list_version,
+        );
+        if self.processes_view_key.as_ref() != Some(&want_key) {
+            let mut view = self.process_list.clone();
             if !self.process_filter.is_empty() {
                 let filter = self.process_filter.to_lowercase();
-                processes.retain(|p| p.name.to_lowercase().contains(&filter));
+                view.retain(|p| p.name.to_lowercase().contains(&filter));
             }
-
-            // Sort
+            let ascending = self.process_sort_ascending;
             match self.process_sort_column {
-                ProcessSortColumn::Name => processes.sort_by(|a, b| {
-                    if self.process_sort_ascending {
+                ProcessSortColumn::Name => view.sort_by(|a, b| {
+                    if ascending {
                         a.name.cmp(&b.name)
                     } else {
                         b.name.cmp(&a.name)
                     }
                 }),
-                ProcessSortColumn::Pid => processes.sort_by(|a, b| {
-                    if self.process_sort_ascending {
+                ProcessSortColumn::Pid => view.sort_by(|a, b| {
+                    if ascending {
                         a.pid.cmp(&b.pid)
                     } else {
                         b.pid.cmp(&a.pid)
                     }
                 }),
-                ProcessSortColumn::Cpu => processes.sort_by(|a, b| {
+                ProcessSortColumn::Cpu => view.sort_by(|a, b| {
                     let cmp = a
                         .cpu_percent
                         .partial_cmp(&b.cpu_percent)
                         .unwrap_or(std::cmp::Ordering::Equal);
-                    if self.process_sort_ascending {
+                    if ascending {
                         cmp
                     } else {
                         cmp.reverse()
                     }
                 }),
-                ProcessSortColumn::Memory => processes.sort_by(|a, b| {
+                ProcessSortColumn::Memory => view.sort_by(|a, b| {
                     let cmp = a.memory_bytes.cmp(&b.memory_bytes);
-                    if self.process_sort_ascending {
+                    if ascending {
                         cmp
                     } else {
                         cmp.reverse()
                     }
                 }),
             }
+            self.processes_view_cache = view;
+            self.processes_view_key = Some(want_key);
+        }
+
+        // Process table
+        ScrollArea::vertical().show(ui, |ui| {
+            let processes = &self.processes_view_cache;
 
             // Table header (htop-style)
             ui.horizontal(|ui| {

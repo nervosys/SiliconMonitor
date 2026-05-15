@@ -371,6 +371,7 @@ impl AgentResponse {
 }
 
 /// Lightweight AI agent for system analysis
+#[derive(Clone)]
 pub struct Agent {
     config: AgentConfig,
     engine: Arc<Mutex<Option<InferenceEngine>>>,

@@ -14,6 +14,75 @@ const MAX_HISTORY: usize = 60;
 /// Maximum number of agent responses to keep
 const MAX_AGENT_HISTORY: usize = 10;
 
+/// Build the agent the TUI should use.
+///
+/// Priority:
+/// 1. Local Ollama at http://localhost:11434 (use first installed model from
+///    `/api/tags`, with a sensible default if the list is empty).
+/// 2. Whatever `AgentConfig::auto_detect` picks (OpenAI / Anthropic / GitHub
+///    Models / LM Studio / etc.).
+fn build_preferred_agent() -> Option<Agent> {
+    let config = build_ollama_config()
+        .or_else(|| AgentConfig::auto_detect().ok())
+        .map(|c| {
+            c.with_caching(true)
+                .with_cache_size(50)
+                .with_timeout(Duration::from_secs(60))
+        })?;
+    Agent::new(config).ok()
+}
+
+#[cfg(feature = "remote-backends")]
+fn build_ollama_config() -> Option<AgentConfig> {
+    use crate::agent::backend::BackendConfig;
+
+    let client = reqwest::blocking::Client::builder()
+        .connect_timeout(Duration::from_secs(1))
+        .timeout(Duration::from_secs(2))
+        .build()
+        .ok()?;
+
+    let resp = client
+        .get("http://localhost:11434/api/tags")
+        .send()
+        .ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    let json: serde_json::Value = resp.json().ok()?;
+    let models = json.get("models")?.as_array()?;
+
+    // Prefer a small/fast model if one is installed; otherwise take the first.
+    const PREFERRED: &[&str] = &[
+        "llama3.2:3b",
+        "llama3.2",
+        "llama3.1:8b",
+        "qwen2.5:3b",
+        "qwen2.5:7b",
+        "mistral:7b",
+        "phi3:mini",
+    ];
+    let installed: Vec<String> = models
+        .iter()
+        .filter_map(|m| m.get("name").and_then(|n| n.as_str()).map(String::from))
+        .collect();
+    if installed.is_empty() {
+        return None;
+    }
+    let chosen = PREFERRED
+        .iter()
+        .find(|name| installed.iter().any(|i| i == *name))
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| installed[0].clone());
+
+    Some(AgentConfig::with_backend(BackendConfig::ollama(&chosen)))
+}
+
+#[cfg(not(feature = "remote-backends"))]
+fn build_ollama_config() -> Option<AgentConfig> {
+    None
+}
+
 /// Type of accelerator device
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AcceleratorType {
@@ -540,8 +609,16 @@ pub struct App {
     pub agent_input: String,
     /// Agent response history
     pub agent_history: VecDeque<AgentResponse>,
-    /// Agent loading state
+    /// Agent loading state (true while a query is in flight on the worker)
     pub agent_loading: bool,
+    /// Outbound queries to the agent worker thread. `None` until the worker
+    /// has been spawned (after agent_init completes).
+    agent_query_tx: Option<std::sync::mpsc::Sender<String>>,
+    /// Inbound responses from the agent worker thread.
+    agent_response_rx: Option<std::sync::mpsc::Receiver<Result<AgentResponse, String>>>,
+    /// Monotonic counter incremented every time `agent_history` mutates.
+    /// Used by the UI to invalidate its render cache.
+    pub agent_history_version: u64,
     /// Process display mode - which device's processes to show
     pub process_display_mode: ProcessDisplayMode,
     /// Process monitor for tracking system and GPU processes
@@ -582,6 +659,14 @@ pub struct App {
     pub profile_subsystem_idx: usize,
     /// Whether the deviation + audit overlay is showing
     pub profile_show_deviations: bool,
+    /// Background channel for the profile snapshot preload. Drained by
+    /// [`Self::check_background_init`].
+    profile_init_rx: Option<std::sync::mpsc::Receiver<crate::profile::ProfileSnapshot>>,
+    /// True once *any* load (bg or sync) has been attempted, to prevent
+    /// per-frame respawn if the bg thread panicked. Cleared by `r` (refresh).
+    profile_load_attempted: bool,
+    /// True once a sync fallback has been tried this generation.
+    profile_sync_attempted: bool,
 }
 
 /// Background initialization state
@@ -827,18 +912,14 @@ impl App {
             let _ = gpu_tx.send(gpu_devices);
         });
 
-        // Spawn background thread for agent detection (potentially slow - network checks)
+        // Spawn background thread for agent detection (potentially slow - network checks).
+        // Strategy: prefer a local Ollama server at http://localhost:11434
+        // — query /api/tags for an installed model and use it directly.
+        // If Ollama isn't reachable, fall back to the generic auto_detect
+        // path (OpenAI / Anthropic / GitHub / LM Studio / etc.).
         let (agent_tx, agent_rx) = mpsc::channel();
         std::thread::spawn(move || {
-            let agent = AgentConfig::auto_detect()
-                .ok()
-                .map(|config| {
-                    config
-                        .with_caching(true)
-                        .with_cache_size(50)
-                        .with_timeout(Duration::from_secs(5))
-                })
-                .and_then(|config| Agent::new(config).ok());
+            let agent = build_preferred_agent();
             let _ = agent_tx.send(agent);
         });
 
@@ -846,6 +927,23 @@ impl App {
         let (proc_tx, proc_rx) = mpsc::channel();
         std::thread::spawn(move || {
             let _ = proc_tx.send(ProcessMonitor::new().ok());
+        });
+
+        // Spawn background thread for hardware profile snapshot. This is the
+        // slowest single subsystem on Windows (NVMe ioctls + DRS binary scan
+        // can take several seconds), so we want it warming up before the
+        // user ever opens the Profiles tab.
+        let (profile_tx, profile_rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            // catch_unwind: if any provider panics, drop the sender so the
+            // receiver sees Disconnected and the UI can fall back to sync.
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let mut inspector = crate::profile::cache::CachedProfileInspector::new();
+                inspector.snapshot_all()
+            }));
+            if let Ok(snapshot) = result {
+                let _ = profile_tx.send(snapshot);
+            }
         });
 
         let mut app = Self {
@@ -885,6 +983,9 @@ impl App {
             agent_input_mode: false,
             agent_input: String::new(),
             agent_history: VecDeque::with_capacity(MAX_AGENT_HISTORY),
+            agent_query_tx: None,
+            agent_response_rx: None,
+            agent_history_version: 0,
             agent_loading: false,
             process_display_mode: ProcessDisplayMode::default(),
             process_monitor: None, // Will be populated from background thread
@@ -906,6 +1007,9 @@ impl App {
             profile_scroll: 0,
             profile_subsystem_idx: 0,
             profile_show_deviations: false,
+            profile_init_rx: Some(profile_rx),
+            profile_load_attempted: true, // bg load started above
+            profile_sync_attempted: false,
         };
 
         // Do initial fast update for immediate data (CPU, Memory are fast)
@@ -940,11 +1044,17 @@ impl App {
             }
         }
 
-        // Check agent init
+        // Check agent init. When agent arrives, hand it to a dedicated
+        // worker thread that owns the agent + its own monitor and processes
+        // queries off the UI thread — agent.ask() can block for tens of
+        // seconds on a remote LLM, which used to freeze the TUI.
         if let Some(ref rx) = self.agent_init_rx {
             match rx.try_recv() {
-                Ok(agent) => {
-                    self.agent = agent;
+                Ok(Some(agent)) => {
+                    self.agent_init_rx = None;
+                    self.spawn_agent_worker(agent);
+                }
+                Ok(None) => {
                     self.agent_init_rx = None;
                 }
                 Err(std::sync::mpsc::TryRecvError::Empty) => {
@@ -952,6 +1062,37 @@ impl App {
                 }
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                     self.agent_init_rx = None;
+                }
+            }
+        }
+
+        // Drain agent responses produced by the worker. Collect first to
+        // drop the immutable borrow of self.agent_response_rx before
+        // mutating other fields (status messages, history).
+        let drained: Vec<Result<AgentResponse, String>> = self
+            .agent_response_rx
+            .as_ref()
+            .map(|rx| {
+                let mut out = Vec::new();
+                while let Ok(r) = rx.try_recv() {
+                    out.push(r);
+                }
+                out
+            })
+            .unwrap_or_default();
+        for result in drained {
+            self.agent_loading = false;
+            match result {
+                Ok(response) => {
+                    self.agent_history.push_back(response);
+                    if self.agent_history.len() > MAX_AGENT_HISTORY {
+                        self.agent_history.pop_front();
+                    }
+                    self.agent_history_version =
+                        self.agent_history_version.wrapping_add(1);
+                }
+                Err(e) => {
+                    self.set_status_message(format!("Agent error: {}", e));
                 }
             }
         }
@@ -970,6 +1111,25 @@ impl App {
                 }
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                     self.process_init_rx = None;
+                }
+            }
+        }
+
+        // Drain profile snapshot bg load. Do NOT gate `Ready` on this — the
+        // Profiles tab is opt-in (the user has to switch to it), and the
+        // load can take several seconds. Letting the rest of the UI come up
+        // immediately is the whole point.
+        if let Some(rx) = self.profile_init_rx.take() {
+            match rx.try_recv() {
+                Ok(snapshot) => {
+                    self.profile_snapshot = Some(snapshot);
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {
+                    self.profile_init_rx = Some(rx);
+                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    // Background thread panicked / dropped sender. Leave
+                    // snapshot=None so a later sync fallback can fire.
                 }
             }
         }
@@ -1969,18 +2129,48 @@ impl App {
         }
     }
 
-    /// Refresh the cached hardware profile snapshot (lazy on first profiles tab view).
+    /// Force-refresh the cached profile snapshot. Spawns a background
+    /// thread (bound to `r`). Drops any in-flight bg load.
     pub fn refresh_profile_snapshot(&mut self) {
-        let mut inspector = crate::profile::ProfileInspector::new();
-        self.profile_snapshot = Some(inspector.snapshot_all());
+        use std::sync::mpsc;
+        let (tx, rx) = mpsc::channel();
+        self.profile_init_rx = Some(rx);
+        self.profile_load_attempted = true;
+        self.profile_sync_attempted = false;
+        std::thread::spawn(move || {
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let mut inspector = crate::profile::cache::CachedProfileInspector::new();
+                inspector.invalidate(None);
+                inspector.snapshot_all()
+            }));
+            if let Ok(snapshot) = result {
+                let _ = tx.send(snapshot);
+            }
+        });
         self.profile_scroll = 0;
     }
 
-    /// Ensure a profile snapshot has been taken at least once.
+    /// Called when the user opens the Profiles tab. If the bg preload is
+    /// still in flight, do nothing — the UI will show "Loading…" until it
+    /// arrives. If the bg load already finished, the snapshot is present.
+    /// Only fall back to a synchronous load when (a) no snapshot exists,
+    /// (b) no bg load is in flight, and (c) we haven't already tried sync
+    /// for this generation — this guarantees we never block the UI more
+    /// than once per refresh.
     pub fn ensure_profile_snapshot(&mut self) {
-        if self.profile_snapshot.is_none() {
-            self.refresh_profile_snapshot();
+        if self.profile_snapshot.is_some() {
+            return;
         }
+        if self.profile_init_rx.is_some() {
+            return; // bg load still in flight
+        }
+        if self.profile_sync_attempted {
+            return; // already tried sync this generation
+        }
+        self.profile_sync_attempted = true;
+        let mut inspector = crate::profile::cache::CachedProfileInspector::new();
+        self.profile_snapshot = Some(inspector.snapshot_all());
+        self.profile_scroll = 0;
     }
 
     pub fn profile_next_subsystem(&mut self) {
@@ -2322,41 +2512,80 @@ impl App {
     }
 
     /// Submit agent query
-    pub fn submit_agent_query(&mut self, monitor: &SiliconMonitor) {
+    /// Spawn the long-lived agent worker thread. It owns the agent plus a
+    /// fresh `SiliconMonitor` (the UI thread keeps its own), reads queries
+    /// off a channel, and sends results back. Called once when agent_init
+    /// finishes.
+    fn spawn_agent_worker(&mut self, agent: Agent) {
+        use std::sync::mpsc;
+        let (query_tx, query_rx) = mpsc::channel::<String>();
+        let (response_tx, response_rx) = mpsc::channel::<Result<AgentResponse, String>>();
+        // Worker owns one Agent handle; the UI keeps a separate clone so
+        // `app.agent.is_some()` (used by the UI to gate the input bar) keeps
+        // working.
+        let ui_agent = agent.clone();
+        let mut worker_agent = agent;
+        std::thread::spawn(move || {
+            // The worker owns its own monitor to avoid sharing state with
+            // the UI thread. agent.ask() reads from this monitor at call
+            // time, so values reflect the moment the query runs.
+            let monitor = match SiliconMonitor::new() {
+                Ok(m) => m,
+                Err(e) => {
+                    let _ = response_tx
+                        .send(Err(format!("worker monitor init failed: {}", e)));
+                    return;
+                }
+            };
+            // Receive queries until the UI side hangs up.
+            while let Ok(query) = query_rx.recv() {
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    worker_agent.ask(&query, &monitor)
+                }));
+                let outcome = match result {
+                    Ok(Ok(r)) => Ok(r),
+                    Ok(Err(e)) => Err(e.to_string()),
+                    Err(_) => Err("agent panicked while processing query".to_string()),
+                };
+                if response_tx.send(outcome).is_err() {
+                    return; // UI dropped the receiver — shut down.
+                }
+            }
+        });
+        self.agent_query_tx = Some(query_tx);
+        self.agent_response_rx = Some(response_rx);
+        self.agent = Some(ui_agent);
+    }
+
+    pub fn submit_agent_query(&mut self, _monitor: &SiliconMonitor) {
         if self.agent_input.is_empty() {
             return;
         }
-
         let query = self.agent_input.clone();
         self.agent_input.clear();
         self.agent_input_mode = false;
 
-        // Check if agent is available
-        if let Some(ref mut agent) = self.agent {
-            self.agent_loading = true;
-
-            // Execute query
-            match agent.ask(&query, monitor) {
-                Ok(response) => {
-                    self.agent_history.push_back(response);
-                    if self.agent_history.len() > MAX_AGENT_HISTORY {
-                        self.agent_history.pop_front();
-                    }
-                }
-                Err(e) => {
-                    self.set_status_message(format!("Agent error: {}", e));
-                }
-            }
-
-            self.agent_loading = false;
-        } else {
-            self.set_status_message("Agent not available");
+        if self.agent_loading {
+            self.set_status_message("Agent is still answering the previous query");
+            return;
         }
+        let Some(ref tx) = self.agent_query_tx else {
+            self.set_status_message("Agent not available");
+            return;
+        };
+        if tx.send(query).is_err() {
+            self.set_status_message("Agent worker disconnected");
+            self.agent_query_tx = None;
+            self.agent_response_rx = None;
+            return;
+        }
+        self.agent_loading = true;
     }
 
     /// Clear agent history
     pub fn clear_agent_history(&mut self) {
         self.agent_history.clear();
+        self.agent_history_version = self.agent_history_version.wrapping_add(1);
         self.set_status_message("Agent history cleared");
     }
 

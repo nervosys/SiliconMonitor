@@ -2706,56 +2706,88 @@ fn draw_agent(f: &mut Frame, app: &App, area: Rect) {
 
         f.render_widget(help, chunks[1]);
     } else {
-        // Show conversation history (most recent first)
-        let history_items: Vec<ListItem> = app
-            .agent_history
-            .iter()
-            .rev() // Show newest first
-            .enumerate()
-            .flat_map(|(i, response)| {
-                let time_str = format!(
-                    "[{}ms{}]",
-                    response.inference_time_ms,
-                    if response.from_cache { ", cached" } else { "" }
-                );
+        // Show conversation history (most recent first). Use Paragraph
+        // rather than List so long responses wrap to the panel width.
+        // Build the Lines vec lazily — the conversation only changes when
+        // the agent worker delivers a new response or the user clears
+        // history, so we cache by `agent_history_version` and skip the
+        // per-frame rebuild during typing / sparkline animation.
+        thread_local! {
+            static CACHE: std::cell::RefCell<(u64, Vec<Line<'static>>)> =
+                std::cell::RefCell::new((u64::MAX, Vec::new()));
+        }
+        let history_paragraph = CACHE.with(|cell| {
+            let mut c = cell.borrow_mut();
+            if c.0 != app.agent_history_version {
+                c.1 = build_agent_history_lines(app);
+                c.0 = app.agent_history_version;
+            }
+            // Clone the cached Vec<Line<'static>> for this frame's Paragraph.
+            // Cloning Line<'static> is cheap (it just clones the inner Cow's).
+            c.1.clone()
+        });
 
-                vec![
-                    ListItem::new(Line::from(vec![
-                        Span::styled(
-                            format!("Q{}: ", app.agent_history.len() - i),
-                            Style::default()
-                                .fg(Color::Yellow)
-                                .add_modifier(Modifier::BOLD),
-                        ),
-                        Span::raw(&response.query),
-                        Span::styled(
-                            format!(" {}", time_str),
-                            Style::default().fg(Color::DarkGray),
-                        ),
-                    ])),
-                    ListItem::new(Line::from(vec![
-                        Span::styled(
-                            "A:  ",
-                            Style::default()
-                                .fg(Color::Cyan)
-                                .add_modifier(Modifier::BOLD),
-                        ),
-                        Span::styled(&response.response, Style::default().fg(Color::White)),
-                    ])),
-                    ListItem::new(Line::from("")), // Spacer
-                ]
-            })
-            .collect();
-
-        let history = List::new(history_items)
+        let history = Paragraph::new(history_paragraph)
             .block(Block::default().borders(Borders::ALL).title(format!(
                 "Conversation History ({} queries)",
                 app.agent_history.len()
             )))
-            .style(Style::default().fg(Color::White));
+            .wrap(ratatui::widgets::Wrap { trim: false });
 
         f.render_widget(history, chunks[1]);
+        return;
     }
+}
+
+/// Build the cached `Vec<Line>` for the agent conversation history.
+/// Called only when `agent_history_version` changes.
+fn build_agent_history_lines(app: &App) -> Vec<Line<'static>> {
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    let total = app.agent_history.len();
+    for (i, response) in app.agent_history.iter().rev().enumerate() {
+        let time_str = format!(
+            "[{}ms{}]",
+            response.inference_time_ms,
+            if response.from_cache { ", cached" } else { "" }
+        );
+        lines.push(Line::from(vec![
+            Span::styled(
+                format!("Q{}: ", total - i),
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(response.query.clone()),
+            Span::styled(
+                format!(" {}", time_str),
+                Style::default().fg(Color::DarkGray),
+            ),
+        ]));
+        // Preserve existing newlines in the body; Paragraph's wrap handles
+        // the rest at render time.
+        let mut first = true;
+        for body_line in response.response.split('\n') {
+            if first {
+                lines.push(Line::from(vec![
+                    Span::styled(
+                        "A:  ",
+                        Style::default()
+                            .fg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(body_line.to_string(), Style::default().fg(Color::White)),
+                ]));
+                first = false;
+            } else {
+                lines.push(Line::from(vec![
+                    Span::raw("    "),
+                    Span::styled(body_line.to_string(), Style::default().fg(Color::White)),
+                ]));
+            }
+        }
+        lines.push(Line::from(""));
+    }
+    lines
 }
 
 /// Get color based on usage percentage (Glances-style thresholds)
