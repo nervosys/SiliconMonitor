@@ -23,6 +23,7 @@
 //! }
 //! ```
 
+use crate::observability::permissions::ApiKey;
 use crate::observability::{
     ApiConfig, HttpRequest as ObsRequest, MetricCollector, ObservabilityApi, RequestHandler,
     ServerConfig,
@@ -89,18 +90,37 @@ impl HttpServer {
             max_body_size: config.max_body_size,
             request_timeout_secs: config.request_timeout_secs,
             request_logging: config.request_logging,
+            // Anonymous reads only when no key was configured; supplying a key means
+            // the caller wants requests authenticated.
+            allow_anonymous: config.api_key.is_none(),
             ..Default::default()
         };
 
-        let api_config = if let Some(ref key) = config.api_key {
-            let mut cfg = ApiConfig::default();
-            cfg.require_auth = true;
-            // Create API key via config
-            let _ = key; // The actual key setup would be done through the permission system
-            cfg
-        } else {
-            ApiConfig::default()
-        };
+        // Authentication.
+        //
+        // This previously accepted `config.api_key` and threw it away (`let _ = key`)
+        // while still setting `require_auth`, and the no-key branch used
+        // `ApiConfig::default()`, which also requires auth. The result was a server
+        // that answered every request with 401 in every configuration — including the
+        // Prometheus scrape the bundled Grafana dashboards depend on.
+        let mut api_config = ApiConfig::default();
+        match config.api_key {
+            Some(ref key) => {
+                api_config.require_auth = true;
+                api_config.allow_anonymous_read = false;
+                api_config
+                    .keys
+                    .push(ApiKey::read_only("simon-http-server", key.clone()));
+            }
+            None => {
+                // No key configured. Permit unauthenticated reads, which is only
+                // sound because binding defaults to loopback — a local user can read
+                // this telemetry by running simon directly anyway. Callers exposing
+                // the server on a routable address are expected to supply a key.
+                api_config.require_auth = false;
+                api_config.allow_anonymous_read = true;
+            }
+        }
 
         let api = ObservabilityApi::new(api_config);
         let event_manager = crate::observability::EventManager::new(1000);
@@ -302,45 +322,102 @@ impl HttpServer {
     }
 
     #[cfg(feature = "cli")]
+    /// Publish metrics under the names the bundled Grafana dashboards query.
+    ///
+    /// Three things were wrong here before:
+    ///
+    /// 1. **CPU and memory always read zero.** This called `CpuStats::new()` and
+    ///    `MemoryStats::new()`, the generic constructors, rather than the platform
+    ///    collectors — so on Windows the endpoint served `cpu_usage_percent 0` and
+    ///    `memory_total_bytes 0` on a 93 GB machine, while GPU values were real.
+    /// 2. **The names had no `simon_` prefix**, but every dashboard in `grafana/`
+    ///    queries `simon_cpu_usage_percent`, `simon_gpu_temperature_celsius` and so
+    ///    on. All three dashboards therefore rendered empty against a live server.
+    /// 3. **`GpuCollection::auto_detect()` ran every interval**, re-initializing the
+    ///    vendor drivers on each pass rather than once.
+    ///
+    /// It now reads the snapshot pipeline, which collects concurrently on its own
+    /// thread and holds its handles open.
     async fn metric_collection_loop(collector: Arc<MetricCollector>, interval_secs: u64) {
+        use crate::pipeline::{Collector, CollectorConfig};
+
+        let pipeline = Collector::spawn(CollectorConfig {
+            interval: std::time::Duration::from_secs(interval_secs.max(1)),
+            ..Default::default()
+        });
+        let snapshots = pipeline.handle();
+
         loop {
-            // Collect CPU stats
-            if let Ok(cpu) = crate::CpuStats::new() {
-                collector.record("cpu_usage_percent", 100.0 - cpu.total.idle as f64);
+            let snap = snapshots.latest();
+
+            if let Some(ref cpu) = snap.cpu {
+                collector.record("simon_cpu_usage_percent", (100.0 - cpu.total.idle) as f64);
+                if let Some(freq) = cpu.cores.first().and_then(|c| c.frequency.as_ref()) {
+                    collector.record("simon_cpu_frequency_mhz", freq.current as f64);
+                }
             }
-            // Collect memory
-            if let Ok(mem) = crate::MemoryStats::new() {
-                collector.record("memory_used_bytes", mem.ram.used as f64);
-                collector.record("memory_total_bytes", mem.ram.total as f64);
-                if mem.ram.total > 0 {
+
+            if let Some(ref mem) = snap.memory {
+                // Platform collectors report kilobytes; the dashboards plot bytes.
+                let used = mem.ram.used as f64 * 1024.0;
+                let total = mem.ram.total as f64 * 1024.0;
+                collector.record("simon_memory_used_bytes", used);
+                collector.record("simon_memory_total_bytes", total);
+                collector.record("simon_swap_used_bytes", mem.swap.used as f64 * 1024.0);
+                if total > 0.0 {
+                    collector.record("simon_memory_usage_percent", (used / total) * 100.0);
+                }
+            }
+
+            for (i, gpu) in snap.gpu_dynamic.iter().enumerate() {
+                // A device whose query failed this tick publishes nothing rather than
+                // a zero, so the dashboard shows a gap instead of a false reading.
+                let Some(gpu) = gpu.as_ref() else { continue };
+                let g = |name: &str| format!("simon_gpu_{i}_{name}");
+
+                collector.record(&g("utilization_percent"), gpu.utilization as f64);
+                collector.record(&g("memory_used_bytes"), gpu.memory.used as f64);
+                collector.record(&g("memory_total_bytes"), gpu.memory.total as f64);
+
+                if let Some(temp) = gpu.thermal.temperature {
+                    collector.record(&g("temperature_celsius"), temp as f64);
+                }
+                if let Some(power) = gpu.power.draw {
+                    collector.record(&g("power_watts"), power as f64 / 1000.0);
+                }
+                if let Some(fan) = gpu.thermal.fan_speed {
+                    collector.record(&g("fan_speed_percent"), fan as f64);
+                }
+                if let Some(clock) = gpu.clocks.graphics {
+                    collector.record(&g("clock_graphics_mhz"), clock as f64);
+                }
+                if let Some(clock) = gpu.clocks.memory {
+                    collector.record(&g("clock_memory_mhz"), clock as f64);
+                }
+            }
+
+            for (i, disk) in snap.disks.iter().enumerate() {
+                collector.record(&format!("simon_disk_{i}_read_bytes_total"), disk.read_rate);
+                collector.record(
+                    &format!("simon_disk_{i}_write_bytes_total"),
+                    disk.write_rate,
+                );
+                if disk.total > 0 {
                     collector.record(
-                        "memory_usage_percent",
-                        (mem.ram.used as f64 / mem.ram.total as f64) * 100.0,
+                        &format!("simon_disk_{i}_usage_percent"),
+                        (disk.used as f64 / disk.total as f64) * 100.0,
                     );
                 }
             }
-            // Collect GPU
-            if let Ok(gpus) = crate::GpuCollection::auto_detect() {
-                if let Ok(snapshots) = gpus.snapshot_all() {
-                    for (i, info) in snapshots.iter().enumerate() {
-                        let prefix = format!("gpu_{}", i);
-                        collector.record(
-                            &format!("{}_utilization_percent", prefix),
-                            info.dynamic_info.utilization as f64,
-                        );
-                        if let Some(temp) = info.dynamic_info.thermal.temperature {
-                            collector
-                                .record(&format!("{}_temperature_celsius", prefix), temp as f64);
-                        }
-                        if let Some(power) = info.dynamic_info.power.draw {
-                            collector
-                                .record(&format!("{}_power_watts", prefix), power as f64 / 1000.0);
-                        }
-                        collector.record(
-                            &format!("{}_memory_used_bytes", prefix),
-                            info.dynamic_info.memory.used as f64,
-                        );
-                    }
+
+            collector.record("simon_network_rx_bytes_total", snap.total_rx_rate());
+            collector.record("simon_network_tx_bytes_total", snap.total_tx_rate());
+            collector.record("simon_process_count", snap.processes.len() as f64);
+
+            if let Some(ref stats) = snap.system_stats {
+                if let Some(ref load) = stats.load_average {
+                    collector.record("simon_load_average_1m", load.one as f64);
+                    collector.record("simon_load_average_5m", load.five as f64);
                 }
             }
 

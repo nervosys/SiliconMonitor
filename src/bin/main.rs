@@ -70,6 +70,22 @@ enum Commands {
         #[command(subcommand)]
         action: ProfileSubcommand,
     },
+    /// Serve the REST API and Prometheus metrics over HTTP
+    ///
+    /// Prometheus metrics are at /metrics/prometheus (not /metrics — that route
+    /// returns JSON). The bundled Grafana dashboards in grafana/ consume this.
+    Serve {
+        /// Port to listen on
+        #[arg(short, long, default_value_t = 9100)]
+        port: u16,
+        /// Address to bind. Defaults to loopback; set 0.0.0.0 to expose on the
+        /// network, which also exposes full hardware telemetry to it.
+        #[arg(long, default_value = "127.0.0.1")]
+        bind: String,
+        /// Log each request to stderr
+        #[arg(long)]
+        log_requests: bool,
+    },
 }
 
 /// Profile subcommands for hardware setting inspection
@@ -526,6 +542,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Profile command - hardware profile inspector
         Some(Commands::Profile { action }) => {
             handle_profile_command(action)?;
+        }
+        Some(Commands::Serve {
+            port,
+            bind,
+            log_requests,
+        }) => {
+            handle_serve_command(*port, bind, *log_requests)?;
         }
 
         // Default: launch GUI if available, otherwise TUI
@@ -2176,6 +2199,70 @@ fn handle_ai_query(query: Option<&str>) -> Result<(), Box<dyn std::error::Error>
             }
         }
     }
+
+    Ok(())
+}
+
+/// Start the HTTP API and Prometheus metrics server.
+///
+/// `src/http_server.rs`, `src/observability/server.rs` and `src/prometheus.rs` —
+/// about 1300 lines — shipped with no entry point in any binary or example, so the
+/// REST API and Prometheus exporter could not be started at all. `grafana/README.md`
+/// documented `simon --serve --port 9100` and `simon daemon --config simon.toml`;
+/// neither command existed, so anyone following it got "unrecognized subcommand".
+#[cfg(feature = "cli")]
+fn handle_serve_command(
+    port: u16,
+    bind: &str,
+    log_requests: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use simonlib::http_server::{HttpServer, HttpServerConfig};
+
+    let config = HttpServerConfig {
+        bind_address: bind.to_string(),
+        port,
+        request_logging: log_requests,
+        ..Default::default()
+    };
+
+    let server = HttpServer::new(config)?;
+
+    println!("{}", "═══ Simon HTTP Server ═══".cyan().bold());
+    println!("  {} http://{}:{}", "Listening:".white().bold(), bind, port);
+    println!(
+        "  {} http://{}:{}/api/v1/metrics/prometheus",
+        "Prometheus:".white().bold(),
+        bind,
+        port
+    );
+    println!(
+        "  {} http://{}:{}/api/v1/context",
+        "Context:".white().bold(),
+        bind,
+        port
+    );
+    println!(
+        "  {} http://{}:{}/health",
+        "Health:".white().bold(),
+        bind,
+        port
+    );
+
+    if bind == "0.0.0.0" {
+        println!(
+            "  {} bound to all interfaces — full hardware telemetry is reachable \
+             from the network",
+            "Warning:".yellow().bold()
+        );
+    }
+
+    println!();
+    println!("{}", "Press Ctrl+C to stop.".yellow().italic());
+
+    // `HttpServer::run` is async; main is not, so drive it on a runtime here rather
+    // than making every command pay for one.
+    let runtime = tokio::runtime::Runtime::new()?;
+    runtime.block_on(async { server.run().await })?;
 
     Ok(())
 }

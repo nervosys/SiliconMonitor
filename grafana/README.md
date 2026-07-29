@@ -9,23 +9,27 @@ Pre-built Grafana dashboards for Silicon Monitor (simon) metrics.
 Start simon with the HTTP server and Prometheus exporter:
 
 ```bash
-simon --serve --port 9100
+simon serve --port 9100
 ```
 
-Or use the daemon mode:
+By default this binds to loopback and serves read-only endpoints without
+authentication. To expose it on the network, bind explicitly — note that this
+makes full hardware telemetry readable by anything that can reach the port:
 
 ```bash
-simon daemon --config simon.toml
+simon serve --port 9100 --bind 0.0.0.0
 ```
 
 ### 2. Configure Prometheus
 
-Add to `prometheus.yml`:
+Metrics are served at `/api/v1/metrics/prometheus`, not at Prometheus's default
+`/metrics`, so `metrics_path` must be set explicitly:
 
 ```yaml
 scrape_configs:
   - job_name: 'simon'
     scrape_interval: 5s
+    metrics_path: /api/v1/metrics/prometheus
     static_configs:
       - targets: ['localhost:9100']
         labels:

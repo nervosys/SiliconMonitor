@@ -55,6 +55,17 @@ pub struct ServerConfig {
     pub max_body_size: usize,
     /// Request timeout (seconds)
     pub request_timeout_secs: u64,
+    /// Serve read-only endpoints without an API key.
+    ///
+    /// The request gate rejects any keyless request outright, and it cannot see
+    /// [`crate::observability::permissions::ApiConfig`] — `ObservabilityApi::new`
+    /// keeps only `config.keys` and drops `require_auth` / `allow_anonymous_read`.
+    /// So the flag has to live here to reach the gate at all.
+    ///
+    /// Intended for a loopback bind, where a local user could read the same
+    /// telemetry by running simon directly. Leave it false when binding to a
+    /// routable address.
+    pub allow_anonymous: bool,
     /// Enable WebSocket
     pub websocket_enabled: bool,
     /// Max WebSocket connections
@@ -74,6 +85,10 @@ impl Default for ServerConfig {
             request_logging: true,
             max_body_size: 1024 * 1024, // 1MB
             request_timeout_secs: 30,
+            // Default to requiring a key: a caller constructing ServerConfig directly
+            // has not told us the bind is loopback, and the safe assumption is that
+            // it is not.
+            allow_anonymous: false,
             websocket_enabled: true,
             max_websocket_connections: 100,
         }
@@ -457,10 +472,17 @@ impl RequestHandler {
     pub fn handle(&self, request: HttpRequest) -> HttpResponse {
         let start = Instant::now();
 
-        // Extract API key
+        // Extract API key.
+        //
+        // Keyless requests were rejected unconditionally, with only /health exempt,
+        // which made the entire REST API and the Prometheus endpoint unreachable
+        // unless the caller happened to send a Bearer token — and no configuration
+        // path registered one. `allow_anonymous` restores a usable loopback default
+        // without weakening a server that was deliberately given keys.
         let api_key = match request.api_key() {
             Some(key) => key.to_string(),
             None if request.path == routes::HEALTH => String::new(),
+            None if self.config.allow_anonymous => String::new(),
             None => return HttpResponse::unauthorized("Missing API key"),
         };
 
