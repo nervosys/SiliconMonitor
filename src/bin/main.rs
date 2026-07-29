@@ -1317,12 +1317,20 @@ fn print_gpu_info_backend(backend: &simonlib::backend::MonitoringBackend) {
             mem_total_mb
         );
 
-        // Temperature
+        // Temperature.
+        //
+        // `GpuThermal::temperature` is degrees Celsius, not millidegrees. This
+        // previously divided by 1000 and compared against 85000/70000, so an
+        // RTX 3090 Ti at 80C rendered as "0.1°C" in green and the thermal warning
+        // thresholds could never fire at any temperature.
+        //
+        // The neighbouring power field *is* milliwatts, which is what made the
+        // mistake plausible.
         if let Some(temp) = di.thermal.temperature {
-            let temp_str = format!("{:.1}°C", temp as f32 / 1000.0);
-            let temp_colored = if temp > 85000 {
+            let temp_str = format!("{:.1}°C", temp as f32);
+            let temp_colored = if temp > 85 {
                 temp_str.red().bold()
-            } else if temp > 70000 {
+            } else if temp > 70 {
                 temp_str.yellow()
             } else {
                 temp_str.green()

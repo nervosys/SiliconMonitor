@@ -271,14 +271,32 @@ fn get_system_cpu_utilization() -> Result<(f32, f32, f32)> {
     let system_delta = kernel_delta.saturating_sub(idle_delta);
     let total = idle_delta + system_delta + user_delta;
 
-    if total == 0 || prev_idle == 0 {
-        // First call or no change - return reasonable defaults
+    // On the first call there is no previous sample to difference against, so fall
+    // back to the totals accumulated since boot. That is a real measurement — the
+    // machine's average over its uptime — rather than a guess.
+    //
+    // This previously returned a hardcoded (0.0, 0.0, 100.0), asserting the system
+    // was completely idle. Every one-shot invocation is a first call, so
+    // `simon cli cpu` always reported 0% usage regardless of actual load, printed
+    // directly above per-core figures that contradicted it.
+    let (idle_basis, system_basis, user_basis, total_basis) = if prev_idle == 0 || total == 0 {
+        let system_since_boot = kernel.saturating_sub(idle);
+        let total_since_boot = idle + system_since_boot + user;
+        (idle, system_since_boot, user, total_since_boot)
+    } else {
+        (idle_delta, system_delta, user_delta, total)
+    };
+
+    if total_basis == 0 {
+        // Genuinely no elapsed CPU time to apportion. Only reachable if the kernel
+        // reports all-zero counters.
         return Ok((0.0, 0.0, 100.0));
     }
 
-    let idle_percent = (idle_delta as f64 / total as f64 * 100.0) as f32;
-    let system_percent = (system_delta as f64 / total as f64 * 100.0) as f32;
-    let user_percent = (user_delta as f64 / total as f64 * 100.0) as f32;
+    let basis = total_basis as f64;
+    let idle_percent = (idle_basis as f64 / basis * 100.0) as f32;
+    let system_percent = (system_basis as f64 / basis * 100.0) as f32;
+    let user_percent = (user_basis as f64 / basis * 100.0) as f32;
 
     Ok((user_percent, system_percent, idle_percent))
 }
@@ -936,6 +954,44 @@ mod tests {
     /// This is the regression that motivated the NtQuerySystemInformation path:
     /// `GetSystemTimes` is system-wide, so every core previously reported the same
     /// value and a 24-core box drew 24 identical bars that looked measured.
+    /// The aggregate figure must not contradict the per-core breakdown.
+    ///
+    /// `get_system_cpu_utilization` used to return a hardcoded (0, 0, 100) on its
+    /// first call, so any one-shot invocation reported the machine as completely idle
+    /// while the per-core rows directly beneath it showed real load. Both now fall
+    /// back to since-boot totals when there is no previous sample, so they agree.
+    #[test]
+    fn aggregate_cpu_agrees_with_per_core() {
+        let stats = read_cpu_stats().expect("cpu stats");
+        assert!(!stats.cores.is_empty(), "no cores reported");
+
+        let aggregate_busy = 100.0 - stats.total.idle;
+
+        let per_core: Vec<f32> = stats
+            .cores
+            .iter()
+            .filter_map(|c| c.idle.map(|idle| 100.0 - idle))
+            .collect();
+
+        // Cores may report None if the per-processor query failed; nothing to compare
+        // against in that case.
+        if per_core.is_empty() {
+            eprintln!("skipping: per-core data unavailable");
+            return;
+        }
+
+        let mean_busy = per_core.iter().sum::<f32>() / per_core.len() as f32;
+        eprintln!("aggregate busy {aggregate_busy:.1}%, per-core mean {mean_busy:.1}%");
+
+        // The two use different sampling bases, so they will not match exactly. What
+        // must not happen is one claiming idle while the other reports load.
+        assert!(
+            !(aggregate_busy < 1.0 && mean_busy > 10.0),
+            "aggregate reports {aggregate_busy:.1}% busy while cores average \
+             {mean_busy:.1}% — the aggregate is a placeholder, not a measurement"
+        );
+    }
+
     #[test]
     fn per_core_utilization_is_not_the_system_average() {
         let cpu_count = num_cpus::get();
