@@ -167,7 +167,7 @@ Performance maximization tool.
 #### Enable (Maximize Performance)
 
 ```bash
-sudo simon jetson-clocks enable
+sudo simon cli jetson clocks enable
 ```
 
 Sets all frequencies to maximum:
@@ -179,7 +179,7 @@ Sets all frequencies to maximum:
 #### Disable (Restore Settings)
 
 ```bash
-sudo simon jetson-clocks disable
+sudo simon cli jetson clocks disable
 ```
 
 Restores saved configuration or default settings.
@@ -187,7 +187,7 @@ Restores saved configuration or default settings.
 #### Status
 
 ```bash
-simon jetson-clocks status
+simon cli jetson clocks status
 ```
 
 Shows:
@@ -198,7 +198,7 @@ Shows:
 #### Store Configuration
 
 ```bash
-sudo simon jetson-clocks store
+sudo simon cli jetson clocks store
 ```
 
 Saves current configuration for later restoration.
@@ -210,7 +210,7 @@ Power mode management.
 #### Show Current Mode
 
 ```bash
-simon nvpmodel show
+simon cli jetson powermode show
 ```
 
 Displays:
@@ -220,7 +220,7 @@ Displays:
 #### List All Modes
 
 ```bash
-simon nvpmodel list
+simon cli jetson powermode list
 ```
 
 Shows:
@@ -232,8 +232,8 @@ Shows:
 #### Set Mode by ID
 
 ```bash
-sudo simon nvpmodel set <MODE_ID>
-sudo simon nvpmodel set <MODE_ID> --force
+sudo simon cli jetson powermode set <MODE_ID>
+sudo simon cli jetson powermode set <MODE_ID> --force
 ```
 
 Changes power mode by ID (0, 1, 2, etc.).
@@ -244,8 +244,8 @@ Options:
 #### Set Mode by Name
 
 ```bash
-sudo simon nvpmodel set-name <MODE_NAME>
-sudo simon nvpmodel set-name <MODE_NAME> --force
+sudo simon cli jetson powermode set-name <MODE_NAME>
+sudo simon cli jetson powermode set-name <MODE_NAME> --force
 ```
 
 Changes power mode by name (MAXN, MODE_15W, MODE_10W, etc.).
@@ -260,7 +260,7 @@ Swap file creation and management.
 #### Status
 
 ```bash
-simon swap status
+simon cli jetson swap status
 ```
 
 Shows active swap files:
@@ -273,8 +273,8 @@ Shows active swap files:
 #### Create Swap
 
 ```bash
-sudo simon swap create
-sudo simon swap create --path <PATH> --size <GB> --auto
+sudo simon cli jetson swap create
+sudo simon cli jetson swap create --path <PATH> --size <GB> --auto
 ```
 
 Creates a new swap file.
@@ -287,19 +287,19 @@ Options:
 Examples:
 ```bash
 # Create 8GB swap at /swapfile
-sudo simon swap create
+sudo simon cli jetson swap create
 
 # Create 16GB swap with custom path
-sudo simon swap create --path /mnt/swap16g --size 16
+sudo simon cli jetson swap create --path /mnt/swap16g --size 16
 
 # Create and enable on boot
-sudo simon swap create --size 12 --auto
+sudo simon cli jetson swap create --size 12 --auto
 ```
 
 #### Enable Swap
 
 ```bash
-sudo simon swap enable <PATH>
+sudo simon cli jetson swap enable <PATH>
 ```
 
 Activates an existing swap file.
@@ -307,7 +307,7 @@ Activates an existing swap file.
 #### Disable Swap
 
 ```bash
-sudo simon swap disable <PATH>
+sudo simon cli jetson swap disable <PATH>
 ```
 
 Temporarily deactivates swap file.
@@ -315,7 +315,7 @@ Temporarily deactivates swap file.
 #### Remove Swap
 
 ```bash
-sudo simon swap remove <PATH>
+sudo simon cli jetson swap remove <PATH>
 ```
 
 Disables and deletes swap file.
@@ -344,35 +344,35 @@ simon cpu
 simon memory
 
 # Enable maximum performance
-sudo simon nvpmodel set-name MAXN --force
-sudo simon jetson-clocks enable
+sudo simon cli jetson powermode set-name MAXN --force
+sudo simon cli jetson clocks enable
 
 # Verify
-simon jetson-clocks status
-simon nvpmodel show
+simon cli jetson clocks status
+simon cli jetson powermode show
 ```
 
 ### Power Management
 
 ```bash
 # List available modes
-simon nvpmodel list
+simon cli jetson powermode list
 
 # Switch to 15W mode
-sudo simon nvpmodel set 1
+sudo simon cli jetson powermode set 1
 
 # Disable jetson_clocks
-sudo simon jetson-clocks disable
+sudo simon cli jetson clocks disable
 ```
 
 ### Memory Management
 
 ```bash
 # Check swap status
-simon swap status
+simon cli jetson swap status
 
 # Create swap if needed
-sudo simon swap create --size 8 --auto
+sudo simon cli jetson swap create --size 8 --auto
 
 # Check memory after
 simon memory
@@ -392,8 +392,8 @@ watch -n 1 'simon processes'
 
 ```bash
 # First-time setup
-sudo simon swap create --size 8 --auto
-sudo simon nvpmodel set-name MAXN
+sudo simon cli jetson swap create --size 8 --auto
+sudo simon cli jetson powermode set-name MAXN
 simon board
 
 # Start monitoring
@@ -450,9 +450,9 @@ simon gpu --format json
   - `simon board`, `simon gpu`, `simon cpu`, etc.
   
 - **Write Operations**: Require `sudo`
-  - `sudo simon jetson-clocks enable`
-  - `sudo simon nvpmodel set <ID>`
-  - `sudo simon swap create`
+  - `sudo simon cli jetson clocks enable`
+  - `sudo simon cli jetson powermode set <ID>`
+  - `sudo simon cli jetson swap create`
 
 ## Platform Availability
 

@@ -25,7 +25,7 @@ Silicon Monitor provides comprehensive hardware monitoring capabilities that AI 
 
 Export the function calling schema:
 ```bash
-simon ai-manifest --format openai -o openai_tools.json
+simon ai manifest --format openai -o openai_tools.json
 ```
 
 Use in your API calls:
@@ -45,7 +45,7 @@ response = client.chat.completions.create(
 
 Export the tool use schema:
 ```bash
-simon ai-manifest --format anthropic -o claude_tools.json
+simon ai manifest --format anthropic -o claude_tools.json
 ```
 
 Use with the Anthropic API:
@@ -69,7 +69,7 @@ Add to your Claude Desktop configuration (`claude_desktop_config.json`):
   "mcpServers": {
     "silicon-monitor": {
       "command": "simon",
-      "args": ["mcp-server"]
+      "args": ["ai", "server"]
     }
   }
 }
@@ -81,7 +81,7 @@ Then restart Claude Desktop. Silicon Monitor tools will be available automatical
 
 Export the function declarations:
 ```bash
-simon ai-manifest --format gemini -o gemini_tools.json
+simon ai manifest --format gemini -o gemini_tools.json
 ```
 
 ```python
@@ -99,7 +99,7 @@ model = genai.GenerativeModel(
 ### For xAI Grok
 
 ```bash
-simon ai-manifest --format grok -o grok_tools.json
+simon ai manifest --format grok -o grok_tools.json
 ```
 
 ```python
@@ -126,7 +126,7 @@ response = client.chat.completions.create(
 Use with OpenAI-compatible providers (Together, Fireworks, Groq):
 
 ```bash
-simon ai-manifest --format llama -o llama_tools.json
+simon ai manifest --format llama -o llama_tools.json
 ```
 
 ```python
@@ -152,7 +152,7 @@ response = client.chat.completions.create(
 ### For Mistral
 
 ```bash
-simon ai-manifest --format mistral -o mistral_tools.json
+simon ai manifest --format mistral -o mistral_tools.json
 ```
 
 ```python
@@ -174,7 +174,7 @@ response = client.chat.complete(
 ### For DeepSeek
 
 ```bash
-simon ai-manifest --format deepseek -o deepseek_tools.json
+simon ai manifest --format deepseek -o deepseek_tools.json
 ```
 
 ```python
@@ -247,10 +247,11 @@ The MCP server allows Claude and other MCP-compatible agents to directly invoke 
 
 Start the server:
 ```bash
-simon mcp-server
+simon ai server   # or: amon server
 ```
 
-The server communicates via JSON-RPC over stdio. It supports:
+The server communicates via newline-delimited JSON-RPC over stdio. Status output
+goes to stderr, so stdout carries only protocol traffic. It supports:
 - `initialize` - Protocol handshake
 - `tools/list` - List available tools
 - `tools/call` - Execute a tool
@@ -276,7 +277,7 @@ The server communicates via JSON-RPC over stdio. It supports:
 Silicon Monitor provides a structured ontology that describes hardware concepts:
 
 ```bash
-simon ai-manifest --format json | jq .ontology
+simon ai manifest --format json | jq .ontology
 ```
 
 The ontology includes:

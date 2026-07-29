@@ -18,7 +18,7 @@ Jetson Clocks is a performance maximization utility that sets all frequencies (C
 
 ```bash
 # Maximize all frequencies
-sudo simon jetson-clocks enable
+sudo simon cli jetson clocks enable
 ```
 
 This will:
@@ -32,14 +32,14 @@ This will:
 
 ```bash
 # Restore original settings
-sudo simon jetson-clocks disable
+sudo simon cli jetson clocks disable
 ```
 
 #### Check Status
 
 ```bash
 # Show jetson_clocks status
-simon jetson-clocks status
+simon cli jetson clocks status
 ```
 
 Output:
@@ -59,7 +59,7 @@ Configured Engines:
 
 ```bash
 # Save current configuration
-sudo simon jetson-clocks store
+sudo simon cli jetson clocks store
 ```
 
 ### Use Cases
@@ -78,7 +78,7 @@ NVPModel controls power modes on Jetson devices. Each mode represents a differen
 
 ```bash
 # Display current power mode
-simon nvpmodel show
+simon cli jetson powermode show
 ```
 
 Output:
@@ -92,7 +92,7 @@ Name: MAXN
 
 ```bash
 # List all available power modes
-simon nvpmodel list
+simon cli jetson powermode list
 ```
 
 Output:
@@ -115,20 +115,20 @@ Default Mode:
 
 ```bash
 # Set power mode by ID
-sudo simon nvpmodel set 1
+sudo simon cli jetson powermode set 1
 
 # Force mode change (skip confirmation)
-sudo simon nvpmodel set 1 --force
+sudo simon cli jetson powermode set 1 --force
 ```
 
 #### Set Mode by Name
 
 ```bash
 # Set power mode by name
-sudo simon nvpmodel set-name MODE_15W
+sudo simon cli jetson powermode set-name MODE_15W
 
 # Force mode change
-sudo simon nvpmodel set-name MODE_15W --force
+sudo simon cli jetson powermode set-name MODE_15W --force
 ```
 
 ### Power Modes
@@ -157,7 +157,7 @@ Create and manage swap files to extend available memory on Jetson devices.
 
 ```bash
 # Show current swap status
-simon swap status
+simon cli jetson swap status
 ```
 
 Output:
@@ -171,13 +171,13 @@ NAME                           TYPE       SIZE       USED       PRIO
 
 ```bash
 # Create an 8GB swap file (default)
-sudo simon swap create
+sudo simon cli jetson swap create
 
 # Create with custom path and size
-sudo simon swap create --path /mnt/swapfile --size 16
+sudo simon cli jetson swap create --path /mnt/swapfile --size 16
 
 # Create and enable on boot
-sudo simon swap create --auto
+sudo simon cli jetson swap create --auto
 ```
 
 Parameters:
@@ -189,21 +189,21 @@ Parameters:
 
 ```bash
 # Enable an existing swap file
-sudo simon swap enable /swapfile
+sudo simon cli jetson swap enable /swapfile
 ```
 
 #### Disable Swap
 
 ```bash
 # Temporarily disable swap
-sudo simon swap disable /swapfile
+sudo simon cli jetson swap disable /swapfile
 ```
 
 #### Remove Swap
 
 ```bash
 # Disable and remove swap file
-sudo simon swap remove /swapfile
+sudo simon cli jetson swap remove /swapfile
 ```
 
 This will:
@@ -231,35 +231,35 @@ This will:
 
 ```bash
 # Set to MAXN mode
-sudo simon nvpmodel set-name MAXN --force
+sudo simon cli jetson powermode set-name MAXN --force
 
 # Enable jetson_clocks
-sudo simon jetson-clocks enable
+sudo simon cli jetson clocks enable
 
 # Verify
-simon nvpmodel show
-simon jetson-clocks status
+simon cli jetson powermode show
+simon cli jetson clocks status
 ```
 
 ### Power-Efficient Setup
 
 ```bash
 # Set to 10W mode
-sudo simon nvpmodel set-name MODE_10W --force
+sudo simon cli jetson powermode set-name MODE_10W --force
 
 # Disable jetson_clocks
-sudo simon jetson-clocks disable
+sudo simon cli jetson clocks disable
 
 # Verify
-simon nvpmodel show
-simon jetson-clocks status
+simon cli jetson powermode show
+simon cli jetson clocks status
 ```
 
 ### First-Time Setup
 
 ```bash
 # Create swap
-sudo simon swap create --size 8 --auto
+sudo simon cli jetson swap create --size 8 --auto
 
 # Check system status
 simon all
@@ -302,7 +302,7 @@ Error: Permission denied
 
 **Solution**: Use `sudo` for operations that modify system settings:
 ```bash
-sudo simon jetson-clocks enable
+sudo simon cli jetson clocks enable
 ```
 
 ### Swap creation failed
@@ -313,6 +313,6 @@ Error: Swap file already exists
 
 **Solution**: Remove the existing swap file first:
 ```bash
-sudo simon swap remove /swapfile
+sudo simon cli jetson swap remove /swapfile
 ```
 
