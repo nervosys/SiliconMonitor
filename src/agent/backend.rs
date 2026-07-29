@@ -27,13 +27,28 @@ pub enum BackendType {
     /// Note that only some of these infer locally — see [`CliProvider::runs_on_host`].
     Cli(CliProvider),
 
-    /// Local GGML/llama.cpp inference
+    /// Local GGML/llama.cpp inference, via the `llama-cli` executable.
+    ///
+    /// Implemented (see [`crate::agent::local::llamacpp`]) and auto-detected on
+    /// `PATH`, but never auto-selected: it needs a GGUF model path that cannot be
+    /// guessed, so it must be configured explicitly.
     LocalGGML,
 
-    /// Local ONNX Runtime inference
+    /// Local ONNX Runtime inference.
+    ///
+    /// **Not implemented.** No client exists and discovery always reports it
+    /// unavailable, so this variant is currently unreachable. Retained only because
+    /// removing a public enum variant would be a breaking change; do not read its
+    /// presence as support.
     LocalONNX,
 
-    /// Local Candle (Rust) inference
+    /// Local Candle (Rust) inference.
+    ///
+    /// **Not implemented.** As with [`BackendType::LocalONNX`], no client exists and
+    /// discovery always reports it unavailable. An in-process candle backend was
+    /// evaluated and rejected: `candle-core` depends unconditionally on `tokenizers`,
+    /// which pulls in the `onig` C library and `esaxx-rs` C++, so it does not deliver
+    /// the pure-Rust build it appears to promise. IronWorks fills this role instead.
     LocalCandle,
 
     /// Remote OpenAI API
@@ -541,14 +556,18 @@ impl BackendDiscovery {
     }
 
     /// Check if ONNX Runtime is available
+    /// Always false: there is no ONNX client to route to.
+    ///
+    /// Reporting availability for an unimplemented backend would let `recommended()`
+    /// select it and then fail at construction.
     fn check_onnx_available() -> bool {
-        // Check for ONNX Runtime library
         false
     }
 
     /// Check if Candle is available
+    /// Always false: there is no candle client to route to. See
+    /// [`BackendType::LocalCandle`] for why one was not added.
     fn check_candle_available() -> bool {
-        // Candle is a Rust library, check if models are available
         false
     }
 
