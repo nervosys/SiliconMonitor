@@ -70,6 +70,18 @@ enum Commands {
         #[command(subcommand)]
         action: ProfileSubcommand,
     },
+    /// Run as a headless daemon configured from a TOML file
+    ///
+    /// Like `serve`, but reads host/port/interval from config and writes a PID
+    /// file. Refuses to bind a routable address without an api_key.
+    Daemon {
+        /// Path to the TOML configuration file
+        #[arg(short, long)]
+        config: Option<String>,
+        /// Print a sample configuration file and exit
+        #[arg(long)]
+        sample_config: bool,
+    },
     /// Serve the REST API and Prometheus metrics over HTTP
     ///
     /// Prometheus metrics are at /metrics/prometheus (not /metrics — that route
@@ -542,6 +554,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Profile command - hardware profile inspector
         Some(Commands::Profile { action }) => {
             handle_profile_command(action)?;
+        }
+        Some(Commands::Daemon {
+            config,
+            sample_config,
+        }) => {
+            handle_daemon_command(config.as_deref(), *sample_config)?;
         }
         Some(Commands::Serve {
             port,
@@ -2199,6 +2217,61 @@ fn handle_ai_query(query: Option<&str>) -> Result<(), Box<dyn std::error::Error>
             }
         }
     }
+
+    Ok(())
+}
+
+/// Run the monitoring daemon from a TOML configuration file.
+#[cfg(feature = "cli")]
+fn handle_daemon_command(
+    config_path: Option<&str>,
+    sample_config: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use simonlib::daemon::{DaemonConfig, MonitoringDaemon};
+
+    if sample_config {
+        print!("{}", DaemonConfig::sample_toml());
+        return Ok(());
+    }
+
+    let daemon = match config_path {
+        Some(path) => MonitoringDaemon::from_config_file(path)?,
+        None => MonitoringDaemon::new(DaemonConfig::default()),
+    };
+
+    // Fail before announcing settings we are about to reject.
+    daemon.validate()?;
+
+    let config = daemon.config();
+
+    println!("{}", "═══ Simon Monitoring Daemon ═══".cyan().bold());
+    println!(
+        "  {} {}",
+        "Listening:".white().bold(),
+        daemon.listen_address().cyan()
+    );
+    println!(
+        "  {} {}s",
+        "Poll interval:".white().bold(),
+        config.poll_interval_secs
+    );
+    println!(
+        "  {} {}",
+        "Authentication:".white().bold(),
+        if config.api_key.is_some() {
+            "api key required".green()
+        } else {
+            "anonymous (loopback only)".yellow()
+        }
+    );
+    if let Some(ref pid) = config.pid_file {
+        println!("  {} {}", "PID file:".white().bold(), pid);
+    }
+    println!();
+    println!("{}", "Press Ctrl+C to stop.".yellow().italic());
+
+    let runtime = tokio::runtime::Runtime::new()?;
+    runtime.block_on(async { daemon.run().await })?;
 
     Ok(())
 }

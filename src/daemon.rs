@@ -55,6 +55,14 @@ pub struct DaemonConfig {
     pub log_level: LogLevel,
     pub enable_prometheus: bool,
     pub enable_rest_api: bool,
+    /// API key required for requests.
+    ///
+    /// Required whenever `host` is not a loopback address: the default bind is
+    /// `0.0.0.0`, and serving hardware telemetry unauthenticated to every host that
+    /// can reach the port is not a reasonable default. [`MonitoringDaemon::run`]
+    /// refuses to start in that combination.
+    #[serde(default)]
+    pub api_key: Option<String>,
     pub fleet: Option<FleetPushConfig>,
 }
 
@@ -68,6 +76,7 @@ impl Default for DaemonConfig {
             log_level: LogLevel::Info,
             enable_prometheus: true,
             enable_rest_api: true,
+            api_key: None,
             fleet: None,
         }
     }
@@ -97,7 +106,14 @@ log_level = "Info"
 enable_prometheus = true
 enable_rest_api = true
 
+# Required unless `host` is a loopback address. The daemon refuses to start
+# bound to a routable address without one, because doing so would serve full
+# hardware telemetry to anything that can reach the port.
+# api_key = "change-me"
+
 # Optional: Fleet push reporting
+# NOTE: not implemented. These keys parse, but nothing pushes to a fleet
+# endpoint yet; the daemon warns at startup if `enabled` is true.
 # [fleet]
 # enabled = true
 # endpoint = "http://fleet-server:9200/api/v1/metrics"
@@ -178,6 +194,80 @@ impl MonitoringDaemon {
             .as_ref()
             .map(|f| f.enabled)
             .unwrap_or(false)
+    }
+
+    /// Whether `host` refers to this machine only.
+    fn binds_loopback(&self) -> bool {
+        matches!(self.config.host.as_str(), "127.0.0.1" | "::1" | "localhost")
+    }
+
+    /// Run the daemon until the process is terminated.
+    ///
+    /// Until this existed, `MonitoringDaemon` was configuration plumbing with no way
+    /// to run anything: it parsed TOML, wrote a PID file and exposed getters, but
+    /// never started a server or collected a sample. `grafana/README.md` nonetheless
+    /// documented `simon daemon --config simon.toml` as a way to serve metrics.
+    ///
+    /// Refuses to start when bound to a routable address without an API key. The
+    /// default host is `0.0.0.0`, so without that check the common path would serve
+    /// unauthenticated hardware telemetry to the whole network.
+    /// Check the configuration is safe and coherent before anything starts.
+    ///
+    /// Separate from [`MonitoringDaemon::run`] so a caller can fail fast — and print
+    /// an accurate startup banner — rather than announcing settings it is about to
+    /// reject.
+    pub fn validate(&self) -> Result<(), DaemonError> {
+        if !self.binds_loopback() && self.config.api_key.is_none() {
+            return Err(DaemonError::Config(format!(
+                "host is {} but no api_key is set. Serving hardware telemetry \
+                 unauthenticated on a routable address is refused; set api_key, or \
+                 bind 127.0.0.1 for local-only access.",
+                self.config.host
+            )));
+        }
+
+        if !self.config.enable_rest_api && !self.config.enable_prometheus {
+            return Err(DaemonError::Config(
+                "both enable_rest_api and enable_prometheus are false, so the daemon \
+                 would serve nothing"
+                    .to_string(),
+            ));
+        }
+
+        Ok(())
+    }
+
+    #[cfg(feature = "cli")]
+    pub async fn run(&self) -> Result<(), DaemonError> {
+        use crate::http_server::{HttpServer, HttpServerConfig};
+
+        self.validate()?;
+
+        if self.fleet_push_enabled() {
+            // Say so rather than silently ignoring a configured feature.
+            eprintln!(
+                "[simon] warning: fleet push is configured but not implemented; \
+                 no metrics will be pushed to the fleet endpoint"
+            );
+        }
+
+        self.write_pid_file()?;
+
+        let server = HttpServer::new(HttpServerConfig {
+            bind_address: self.config.host.clone(),
+            port: self.config.port,
+            metric_interval_secs: self.config.poll_interval_secs.max(1),
+            api_key: self.config.api_key.clone(),
+            request_logging: matches!(self.config.log_level, LogLevel::Debug | LogLevel::Trace),
+            ..Default::default()
+        })
+        .map_err(|e| DaemonError::Config(format!("failed to create HTTP server: {e}")))?;
+
+        // The PID file is removed by `Drop`, so an error here still cleans up.
+        server
+            .run()
+            .await
+            .map_err(|e| DaemonError::Config(format!("server error: {e}")))
     }
 }
 
