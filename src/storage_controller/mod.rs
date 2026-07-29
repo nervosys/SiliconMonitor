@@ -451,37 +451,77 @@ impl StorageControllerMonitor {
 
     // ── Windows implementation ──
 
+    /// Query WMI directly rather than shelling out to PowerShell.
+    ///
+    /// This collector used to spawn three separate `powershell.exe` processes. Each
+    /// costs roughly 1.3s in interpreter startup alone, so enumeration took about
+    /// four seconds and dominated `simon profile` — 4000ms of its 4900ms total, for
+    /// twelve settings. The queries themselves are trivial.
+    ///
+    /// `wmi` is already a dependency and is used this way elsewhere in the crate.
+    #[cfg(target_os = "windows")]
+    fn query_wmi_json(namespace: &str, query: &str) -> Option<String> {
+        use std::collections::HashMap;
+        use wmi::{COMLibrary, Variant, WMIConnection};
+
+        // COM may already be initialized on this thread (the collector thread holds a
+        // guard); `COMLibrary::new` handles that case.
+        let com = COMLibrary::new().ok()?;
+        let conn = WMIConnection::with_namespace_path(namespace, com).ok()?;
+        let rows: Vec<HashMap<String, Variant>> = conn.raw_query(query).ok()?;
+
+        // Re-serialize to the JSON shape the existing parsers expect, so the parsing
+        // logic below is unchanged.
+        let json_rows: Vec<serde_json::Value> = rows
+            .into_iter()
+            .map(|row| {
+                let obj: serde_json::Map<String, serde_json::Value> = row
+                    .into_iter()
+                    .map(|(k, v)| {
+                        let value = match v {
+                            Variant::String(s) => serde_json::Value::String(s),
+                            Variant::I2(i) => serde_json::Value::from(i),
+                            Variant::I4(i) => serde_json::Value::from(i),
+                            Variant::UI4(i) => serde_json::Value::from(i),
+                            Variant::Bool(b) => serde_json::Value::Bool(b),
+                            _ => serde_json::Value::Null,
+                        };
+                        (k, value)
+                    })
+                    .collect();
+                serde_json::Value::Object(obj)
+            })
+            .collect();
+
+        serde_json::to_string(&json_rows).ok()
+    }
+
     #[cfg(target_os = "windows")]
     fn refresh_windows(&mut self) {
         // SCSI controllers
-        if let Ok(output) = std::process::Command::new("powershell")
-            .args(["-NoProfile", "-Command",
-                "Get-CimInstance Win32_SCSIController | Select-Object Name, Manufacturer, DriverName, DeviceID, Status | ConvertTo-Json -Compress"])
-            .output()
-        {
-            if let Ok(text) = String::from_utf8(output.stdout) {
-                self.parse_windows_controllers(&text, StorageInterface::SCSI);
-            }
+        if let Some(text) = Self::query_wmi_json(
+            "root\\CIMV2",
+            "SELECT Name, Manufacturer, DriverName, DeviceID, Status FROM Win32_SCSIController",
+        ) {
+            self.parse_windows_controllers(&text, StorageInterface::SCSI);
         }
 
         // IDE controllers
-        if let Ok(output) = std::process::Command::new("powershell")
-            .args(["-NoProfile", "-Command",
-                "Get-CimInstance Win32_IDEController | Select-Object Name, Manufacturer, DriverName, DeviceID, Status | ConvertTo-Json -Compress"])
-            .output()
-        {
-            if let Ok(text) = String::from_utf8(output.stdout) {
-                self.parse_windows_controllers(&text, StorageInterface::AHCI);
-            }
+        if let Some(text) = Self::query_wmi_json(
+            "root\\CIMV2",
+            "SELECT Name, Manufacturer, DriverName, DeviceID, Status FROM Win32_IDEController",
+        ) {
+            self.parse_windows_controllers(&text, StorageInterface::AHCI);
         }
 
-        // NVMe detection via Get-PhysicalDisk
-        if let Ok(output) = std::process::Command::new("powershell")
-            .args(["-NoProfile", "-Command",
-                "Get-PhysicalDisk | Where-Object BusType -eq 'NVMe' | Select-Object FriendlyName, Manufacturer, Model, SerialNumber, FirmwareVersion | ConvertTo-Json -Compress"])
-            .output()
-        {
-            if let Ok(text) = String::from_utf8(output.stdout) {
+        // NVMe detection. MSFT_PhysicalDisk is what Get-PhysicalDisk wraps; BusType 17
+        // is NVMe.
+        if let Some(text) = Self::query_wmi_json(
+            "root\\Microsoft\\Windows\\Storage",
+            "SELECT FriendlyName, Manufacturer, Model, SerialNumber, FirmwareVersion \
+             FROM MSFT_PhysicalDisk WHERE BusType = 17",
+        ) {
+            {
                 if let Ok(val) = serde_json::from_str::<serde_json::Value>(&text) {
                     let items = match &val {
                         serde_json::Value::Array(arr) => arr.clone(),
@@ -490,13 +530,25 @@ impl StorageControllerMonitor {
                     };
                     for (i, item) in items.iter().enumerate() {
                         let model = item["Model"].as_str().unwrap_or("").trim().to_string();
-                        let serial = item["SerialNumber"].as_str().unwrap_or("").trim().to_string();
-                        let firmware = item["FirmwareVersion"].as_str().unwrap_or("").trim().to_string();
+                        let serial = item["SerialNumber"]
+                            .as_str()
+                            .unwrap_or("")
+                            .trim()
+                            .to_string();
+                        let firmware = item["FirmwareVersion"]
+                            .as_str()
+                            .unwrap_or("")
+                            .trim()
+                            .to_string();
                         let friendly = item["FriendlyName"].as_str().unwrap_or(&model).to_string();
 
                         self.controllers.push(StorageControllerInfo {
                             name: format!("nvme{}", i),
-                            vendor: item["Manufacturer"].as_str().unwrap_or("").trim().to_string(),
+                            vendor: item["Manufacturer"]
+                                .as_str()
+                                .unwrap_or("")
+                                .trim()
+                                .to_string(),
                             model: friendly,
                             driver: "nvme".to_string(),
                             interface: StorageInterface::NVMe,

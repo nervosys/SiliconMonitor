@@ -235,7 +235,9 @@ enum CliSubcommand {
     Temperature,
     /// Monitor processes with smart categorization
     Processes,
-    /// Monitor engines (GPU compute/video engines)
+    /// Monitor Tegra/Jetson engine clocks (APE, DLA, NVENC). Linux only —
+    /// reads /sys/kernel/debug/clk, which does not exist on other platforms.
+    /// For desktop GPU encoder/decoder utilization, use `gpu`.
     Engines,
     /// Monitor audio devices
     Audio,
