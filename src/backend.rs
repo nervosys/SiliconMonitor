@@ -1004,8 +1004,12 @@ impl MonitoringBackend {
 
     // === Disks ===
 
+    /// Intentionally does nothing.
+    ///
+    /// Disk topology changes rarely and enumeration is comparatively expensive, so it
+    /// is not part of the per-tick update. Call [`MonitoringBackend::refresh_disks`]
+    /// when a refresh is actually wanted.
     fn update_disks(&mut self) -> Result<()> {
-        // Disk info is mostly static, updated less frequently
         Ok(())
     }
 
@@ -1020,7 +1024,15 @@ impl MonitoringBackend {
     // === System Stats ===
 
     fn update_system_stats(&mut self) -> Result<()> {
-        // System stats are refreshed during read operations
+        // This previously did nothing, on the claim that stats were "refreshed during
+        // read operations". They are not — `system_stats()` returns a cached value,
+        // so the figures stayed frozen at whatever construction captured.
+        //
+        // The collection is cheap (measured well under a millisecond), so there is no
+        // reason to skip it.
+        if let Ok(stats) = SystemStats::new() {
+            self.system_stats = Some(stats);
+        }
         Ok(())
     }
 

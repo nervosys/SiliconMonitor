@@ -1,7 +1,6 @@
 //! Application state management
 
 use crate::agent::{Agent, AgentConfig, AgentResponse};
-use crate::gpu::traits::Device;
 use crate::silicon::NpuInfo;
 use crate::{ProcessMonitor, ProcessMonitorInfo, SiliconMonitor};
 use std::collections::VecDeque;
@@ -590,7 +589,6 @@ pub struct App {
     /// Scroll position for lists
     pub scroll_position: usize,
     /// GPU devices for monitoring
-    gpu_devices: Vec<Box<dyn Device>>,
     /// Application configuration
     pub config: crate::config::Config,
     /// Status message to display (cleared after timeout)
@@ -626,7 +624,6 @@ pub struct App {
     /// Background initialization state
     init_state: InitState,
     /// Receiver for background-initialized GPU devices
-    gpu_init_rx: Option<std::sync::mpsc::Receiver<Vec<Box<dyn Device + Send>>>>,
     /// Receiver for background-initialized agent
     agent_init_rx: Option<std::sync::mpsc::Receiver<Option<Agent>>>,
     /// Receiver for background-initialized process monitor
@@ -886,40 +883,10 @@ impl App {
         // Network is collected by the snapshot pipeline; the App no longer owns a
         // NetworkMonitor of its own.
 
-        // Spawn background thread for GPU enumeration (slow - NVML init, device enumeration)
-        let (gpu_tx, gpu_rx) = mpsc::channel();
-        std::thread::spawn(move || {
-            let mut gpu_devices: Vec<Box<dyn Device + Send>> = Vec::new();
-
-            #[cfg(feature = "nvidia")]
-            {
-                if let Ok(nvidia_devices) = crate::gpu::nvidia_new::enumerate() {
-                    for device in nvidia_devices {
-                        gpu_devices.push(Box::new(device));
-                    }
-                }
-            }
-
-            #[cfg(feature = "amd")]
-            {
-                if let Ok(mut amd_devices) = crate::gpu::amd_rocm::enumerate() {
-                    for device in amd_devices.drain(..) {
-                        gpu_devices.push(device);
-                    }
-                }
-            }
-
-            #[cfg(feature = "intel")]
-            {
-                if let Ok(mut intel_devices) = crate::gpu::intel_levelzero::enumerate() {
-                    for device in intel_devices.drain(..) {
-                        gpu_devices.push(device);
-                    }
-                }
-            }
-
-            let _ = gpu_tx.send(gpu_devices);
-        });
+        // GPUs are enumerated once by the snapshot pipeline's collector thread. The
+        // TUI used to spawn its own enumeration here and keep a parallel
+        // Vec<Box<dyn Device>>, so every vendor driver was initialized and queried
+        // twice per refresh for the same numbers.
 
         // Spawn background thread for agent detection (potentially slow - network checks).
         // Strategy: prefer a local Ollama server at http://localhost:11434
@@ -984,7 +951,6 @@ impl App {
             update_interval,
             last_update: Instant::now(),
             scroll_position: 0,
-            gpu_devices: Vec::new(), // Will be populated from background thread
             config,
             status_message: Some(("Loading...".to_string(), Instant::now())),
             agent: None, // Will be populated from background thread
@@ -1001,7 +967,6 @@ impl App {
             cached_process_order: Vec::new(),
             filtered_process_count: 0,
             init_state: InitState::Loading,
-            gpu_init_rx: Some(gpu_rx),
             agent_init_rx: Some(agent_rx),
             process_init_rx: Some(proc_rx),
             view_mode: ViewMode::default(),
@@ -1084,24 +1049,8 @@ impl App {
     pub fn check_background_init(&mut self) {
         let mut all_done = true;
 
-        // Check GPU init
-        if let Some(ref rx) = self.gpu_init_rx {
-            match rx.try_recv() {
-                Ok(devices) => {
-                    // Convert Vec<Box<dyn Device + Send>> to Vec<Box<dyn Device>>
-                    self.gpu_devices = devices.into_iter().map(|d| d as Box<dyn Device>).collect();
-                    self.gpu_init_rx = None;
-                    // Trigger GPU update now that devices are available
-                    let _ = self.update_gpu();
-                }
-                Err(std::sync::mpsc::TryRecvError::Empty) => {
-                    all_done = false;
-                }
-                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                    self.gpu_init_rx = None;
-                }
-            }
-        }
+        // GPU data arrives with the collector snapshot; there is no separate
+        // initialization to wait on.
 
         // Check agent init. When agent arrives, hand it to a dedicated
         // worker thread that owns the agent + its own monitor and processes
@@ -1193,11 +1142,7 @@ impl App {
         }
 
         // Update state when all done
-        if all_done
-            && self.gpu_init_rx.is_none()
-            && self.agent_init_rx.is_none()
-            && self.process_init_rx.is_none()
-        {
+        if all_done && self.agent_init_rx.is_none() && self.process_init_rx.is_none() {
             if self.init_state != InitState::Ready {
                 self.init_state = InitState::Ready;
                 self.status_message = None; // Clear "Loading..." message
@@ -1363,121 +1308,74 @@ impl App {
     }
 
     fn update_gpu(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        use crate::gpu::traits::FanSpeed;
+        // Sourced from the collector snapshot.
+        //
+        // The TUI previously kept its own `Vec<Box<dyn Device>>` and queried every
+        // vendor driver again here, so each refresh cycle paid for GPU enumeration
+        // twice — once on the collector thread and once on the render thread. The
+        // snapshot already carries everything this panel displays.
+        let snapshot = std::sync::Arc::clone(&self.snapshot);
+        if snapshot.gpu_static.is_empty() {
+            return Ok(());
+        }
 
-        // Get real GPU data from devices
-        self.gpu_info.clear();
+        // Retain the previous frame so encoder/decoder activity timestamps survive an
+        // idle tick. The old code read `gpu_info.get(gpu_info.len())`, which indexes
+        // one past the end and is therefore always `None` — so a timestamp was never
+        // actually preserved and the "recently active" indicator reset instantly.
+        let previous = std::mem::take(&mut self.gpu_info);
+        let now = Instant::now();
 
-        for device in &self.gpu_devices {
-            let name = device.name().unwrap_or_else(|_| "Unknown GPU".to_string());
-            let vendor_str = format!("{}", device.vendor());
+        for (idx, static_info) in snapshot.gpu_static.iter().enumerate() {
+            let prev = previous.get(idx);
+            let dynamic = snapshot.gpu_dynamic.get(idx).and_then(|d| d.as_ref());
 
-            // Get memory info
-            let (memory_total, memory_used) = if let Ok(mem) = device.memory() {
-                (mem.total, mem.used)
-            } else {
-                (0, 0)
-            };
-
-            // Get clocks
-            let (clock_graphics, clock_memory) = if let Ok(clocks) = device.clocks() {
-                (Some(clocks.graphics), Some(clocks.memory))
-            } else {
-                (None, None)
-            };
-
-            // Get utilization (single call — reuse for encoder/decoder)
-            let util_result = device.utilization();
-            let utilization = if let Ok(ref util) = util_result {
-                util.gpu
-            } else {
-                0.0
-            };
-
-            // Get temperature
-            let temperature = if let Ok(temp) = device.temperature() {
-                temp.primary()
-            } else {
-                None
-            };
-
-            // Get power
-            let (power, power_limit) = if let Ok(pwr) = device.power() {
-                (
-                    if pwr.current > 0.0 {
-                        Some(pwr.current)
-                    } else {
-                        None
-                    },
-                    if pwr.limit > 0.0 {
-                        Some(pwr.limit)
-                    } else {
-                        None
-                    },
-                )
-            } else {
-                (None, None)
-            };
-
-            // Get fan speed
-            let (fan_speed_rpm, fan_speed_percent) = if let Ok(Some(fan)) = device.fan_speed() {
-                match fan {
-                    FanSpeed::Rpm(rpm) => (Some(rpm), None),
-                    FanSpeed::Percent(pct) => (None, Some(pct as f32)),
+            let Some(dynamic) = dynamic else {
+                // This device failed its query this tick. Keep the previous reading
+                // rather than dropping the GPU out of the list, which would renumber
+                // every panel after it.
+                if let Some(prev) = prev {
+                    self.gpu_info.push(prev.clone());
                 }
-            } else {
-                (None, None)
+                continue;
             };
 
-            // Get PCIe info
-            let (pcie_gen, pcie_width) = if let Ok(pci_info) = device.pci_info() {
-                (pci_info.pcie_generation, pci_info.pcie_link_width)
-            } else {
-                (None, None)
-            };
+            let encoder_util = dynamic.engines.encoder.map(|e| e as f32);
+            let decoder_util = dynamic.engines.decoder.map(|d| d as f32);
 
-            // Get encoder/decoder utilization (reuse the result from above)
-            let (encoder_util, decoder_util) = if let Ok(ref util) = util_result {
-                (util.encoder, util.decoder)
-            } else {
-                (None, None)
+            let encoder_last_active = match encoder_util {
+                Some(util) if util > 0.0 => Some(now),
+                _ => prev.and_then(|p| p.encoder_last_active),
             };
-
-            // Determine if encoder/decoder were active (update timestamp)
-            let now = Instant::now();
-            let encoder_last_active = if encoder_util.is_some() && encoder_util.unwrap() > 0.0 {
-                Some(now)
-            } else {
-                // Preserve previous timestamp if available
-                self.gpu_info
-                    .get(self.gpu_info.len())
-                    .and_then(|prev| prev.encoder_last_active)
-            };
-
-            let decoder_last_active = if decoder_util.is_some() && decoder_util.unwrap() > 0.0 {
-                Some(now)
-            } else {
-                // Preserve previous timestamp if available
-                self.gpu_info
-                    .get(self.gpu_info.len())
-                    .and_then(|prev| prev.decoder_last_active)
+            let decoder_last_active = match decoder_util {
+                Some(util) if util > 0.0 => Some(now),
+                _ => prev.and_then(|p| p.decoder_last_active),
             };
 
             self.gpu_info.push(GpuInfo {
-                name,
-                vendor: vendor_str,
-                utilization,
-                temperature,
-                power,
-                power_limit,
-                memory_total,
-                memory_used,
-                clock_graphics,
-                clock_memory,
-                fan_speed_rpm,
-                fan_speed_percent,
-                pcie_gen,
-                pcie_width,
+                name: static_info.name.clone(),
+                vendor: format!("{}", static_info.vendor),
+                utilization: dynamic.utilization as f32,
+                temperature: dynamic.thermal.temperature.map(|t| t as f32),
+                // Power is reported in milliwatts; the panel displays watts.
+                power: dynamic
+                    .power
+                    .draw
+                    .filter(|d| *d > 0)
+                    .map(|d| d as f32 / 1000.0),
+                power_limit: dynamic
+                    .power
+                    .limit
+                    .filter(|l| *l > 0)
+                    .map(|l| l as f32 / 1000.0),
+                memory_total: dynamic.memory.total,
+                memory_used: dynamic.memory.used,
+                clock_graphics: dynamic.clocks.graphics,
+                clock_memory: dynamic.clocks.memory,
+                fan_speed_rpm: dynamic.thermal.fan_rpm,
+                fan_speed_percent: dynamic.thermal.fan_speed.map(|f| f as f32),
+                pcie_gen: dynamic.pcie.current_gen.map(|g| g as u32),
+                pcie_width: dynamic.pcie.current_width.map(|w| w as u32),
                 encoder_util,
                 decoder_util,
                 encoder_last_active,
