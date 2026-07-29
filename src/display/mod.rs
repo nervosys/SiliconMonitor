@@ -238,25 +238,13 @@ impl DisplayMonitor {
             }
         }
 
-        // Fallback if WMI returned nothing
-        if self.displays.is_empty() {
-            self.displays.push(DisplayInfo {
-                id: "display0".to_string(),
-                name: Some("Primary Display".to_string()),
-                manufacturer: None,
-                connection: DisplayConnection::Unknown,
-                is_primary: true,
-                width: 0,
-                height: 0,
-                refresh_rate: 0.0,
-                brightness: None,
-                hdr: HdrMode::Off,
-                scale_factor: None,
-                physical_width_mm: None,
-                physical_height_mm: None,
-                bits_per_pixel: None,
-            });
-        }
+        // No synthetic fallback: if WMI returned nothing, no display was detected and
+        // the list stays empty.
+        //
+        // This previously invented a "Primary Display" with zero dimensions,
+        // `is_primary: true` and `hdr: Off` — definite claims about hardware nothing
+        // had observed. `count()` then reported 1 display on a machine where
+        // detection had failed entirely, which is worse than reporting none.
     }
 
     #[cfg(target_os = "linux")]
@@ -431,24 +419,8 @@ impl DisplayMonitor {
             }
         }
 
-        if self.displays.is_empty() {
-            self.displays.push(DisplayInfo {
-                id: "display0".to_string(),
-                name: Some("Unknown Display".to_string()),
-                manufacturer: None,
-                connection: DisplayConnection::Unknown,
-                is_primary: true,
-                width: 0,
-                height: 0,
-                refresh_rate: 0.0,
-                brightness: None,
-                hdr: HdrMode::Off,
-                scale_factor: None,
-                physical_width_mm: None,
-                physical_height_mm: None,
-                bits_per_pixel: None,
-            });
-        }
+        // No synthetic fallback — see the Windows collector. DRM and xrandr have both
+        // been tried at this point; an empty list means no display was detected.
     }
 
     #[cfg(target_os = "macos")]
@@ -549,24 +521,9 @@ impl DisplayMonitor {
             }
         }
 
-        if self.displays.is_empty() {
-            self.displays.push(DisplayInfo {
-                id: "display0".to_string(),
-                name: Some("Display".to_string()),
-                manufacturer: None,
-                connection: DisplayConnection::Internal,
-                is_primary: true,
-                width: 0,
-                height: 0,
-                refresh_rate: 0.0,
-                brightness: None,
-                hdr: HdrMode::Off,
-                scale_factor: None,
-                physical_width_mm: None,
-                physical_height_mm: None,
-                bits_per_pixel: None,
-            });
-        }
+        // No synthetic fallback — see the Windows collector. This one additionally
+        // asserted `DisplayConnection::Internal`, claiming a built-in panel on
+        // hardware that may well be a Mac mini or Mac Pro.
     }
 }
 
@@ -671,10 +628,23 @@ mod tests {
         assert!(monitor.is_ok());
     }
 
+    /// Whatever displays are reported must be real ones.
+    ///
+    /// This previously asserted `count() >= 1`, which only held because every
+    /// platform collector pushed a synthetic "Primary Display" when detection found
+    /// nothing — so the test was codifying the fabrication rather than checking
+    /// anything. A headless machine legitimately has zero displays.
     #[test]
     fn test_display_monitor_count() {
         let monitor = DisplayMonitor::new().unwrap();
-        assert!(monitor.count() >= 1); // Placeholder always adds one
+        assert_eq!(
+            monitor.count(),
+            monitor.displays().len(),
+            "count() must agree with the reported list"
+        );
+        for display in monitor.displays() {
+            assert!(!display.id.is_empty(), "a reported display has no id");
+        }
     }
 
     #[test]
