@@ -79,8 +79,13 @@ pub struct GpuState {
     /// Memory total (MB)
     pub memory_total_mb: u64,
 
-    /// GPU temperature (Celsius)
-    pub temperature_c: u32,
+    /// GPU temperature (Celsius), or `None` when the device exposes no sensor.
+    ///
+    /// This was a bare `u32` with `None` mapped to `0`, so a card without a readable
+    /// sensor was described to the model as being at 0 °C. The model then reported
+    /// that to the user as fact and reasoned from it — asked about thermals, it would
+    /// draw conclusions from a temperature that was never measured.
+    pub temperature_c: Option<u32>,
 
     /// Power usage (Watts)
     pub power_w: f32,
@@ -284,7 +289,7 @@ impl SystemState {
             utilization: info.dynamic_info.utilization as u32,
             memory_used_mb: info.dynamic_info.memory.used / 1024 / 1024,
             memory_total_mb: info.dynamic_info.memory.total / 1024 / 1024,
-            temperature_c: info.dynamic_info.thermal.temperature.unwrap_or(0) as u32,
+            temperature_c: info.dynamic_info.thermal.temperature.map(|t| t as u32),
             power_w: info.dynamic_info.power.draw.unwrap_or(0) as f32 / 1000.0,
             power_limit_w: info.dynamic_info.power.limit.map(|l| l as f32 / 1000.0),
             clock_mhz: info.dynamic_info.clocks.graphics,
@@ -343,7 +348,13 @@ impl SystemState {
                 gpu.memory_total_mb,
                 (gpu.memory_used_mb as f32 / gpu.memory_total_mb as f32) * 100.0
             ));
-            context.push_str(&format!("  Temperature: {}°C\n", gpu.temperature_c));
+            // Say "unavailable" rather than omitting the line entirely: a model shown
+            // no temperature may assume one it was not given, whereas an explicit
+            // "unavailable" tells it not to reason about this device's thermals.
+            match gpu.temperature_c {
+                Some(temp) => context.push_str(&format!("  Temperature: {temp}°C\n")),
+                None => context.push_str("  Temperature: unavailable (no sensor)\n"),
+            }
             context.push_str(&format!("  Power: {:.1}W", gpu.power_w));
             if let Some(limit) = gpu.power_limit_w {
                 context.push_str(&format!(" / {:.1}W", limit));
@@ -388,18 +399,28 @@ impl SystemState {
         sum as f32 / self.gpus.len() as f32
     }
 
-    /// Get average GPU temperature
-    pub fn avg_temperature(&self) -> f32 {
-        if self.gpus.is_empty() {
-            return 0.0;
+    /// Average temperature across GPUs that report one.
+    ///
+    /// Returns `None` when no device has a readable sensor. Devices without one are
+    /// excluded rather than counted as zero — previously a machine reading 50°C,
+    /// 36°C and "unknown" averaged to 28.7°C, which is colder than any card present.
+    pub fn avg_temperature(&self) -> Option<f32> {
+        let known: Vec<u32> = self.gpus.iter().filter_map(|g| g.temperature_c).collect();
+        if known.is_empty() {
+            return None;
         }
-        let sum: u32 = self.gpus.iter().map(|g| g.temperature_c).sum();
-        sum as f32 / self.gpus.len() as f32
+        Some(known.iter().sum::<u32>() as f32 / known.len() as f32)
     }
 
-    /// Get hottest GPU
+    /// Hottest GPU among those reporting a temperature.
+    ///
+    /// Devices without a sensor are excluded, so an unreadable card is never named
+    /// the hottest merely because its unknown reading sorted as zero.
     pub fn hottest_gpu(&self) -> Option<&GpuState> {
-        self.gpus.iter().max_by_key(|g| g.temperature_c)
+        self.gpus
+            .iter()
+            .filter(|g| g.temperature_c.is_some())
+            .max_by_key(|g| g.temperature_c)
     }
 
     /// Get most utilized GPU
@@ -423,14 +444,22 @@ impl GpuState {
             .map(|limit| (self.power_w / limit) * 100.0)
     }
 
-    /// Check if GPU is thermally throttling (above 80°C)
+    /// Whether the GPU is running hot (at or above 80°C).
+    ///
+    /// A device with no readable sensor is not reported as hot: claiming a thermal
+    /// condition that was never measured is the failure this type now avoids. Note
+    /// the converse also holds — `false` means "not known to be hot", not "known to
+    /// be cool". Use [`GpuState::temperature_c`] directly when that distinction
+    /// matters.
     pub fn is_hot(&self) -> bool {
-        self.temperature_c >= 80
+        self.temperature_c.is_some_and(|t| t >= 80)
     }
 
-    /// Check if GPU is critically hot (above 90°C)
+    /// Whether the GPU is critically hot (at or above 90°C).
+    ///
+    /// Same caveat as [`GpuState::is_hot`]: an unreadable sensor is not critical.
     pub fn is_critical(&self) -> bool {
-        self.temperature_c >= 90
+        self.temperature_c.is_some_and(|t| t >= 90)
     }
 
     /// Check if GPU is heavily utilized (above 80%)
@@ -474,7 +503,7 @@ mod tests {
             utilization: 75,
             memory_used_mb: 8000,
             memory_total_mb: 16000,
-            temperature_c: 65,
+            temperature_c: Some(65),
             power_w: 150.0,
             power_limit_w: Some(200.0),
             clock_mhz: Some(1500),
@@ -489,6 +518,64 @@ mod tests {
         assert!(!gpu.is_idle());
         assert!(!gpu.is_busy());
         assert_eq!(gpu.health_status(), "HEALTHY: Normal operation");
+    }
+
+    /// A GPU with no temperature sensor must be excluded from thermal aggregates,
+    /// not counted as 0°C.
+    ///
+    /// This is the exact configuration that produced the bug: two NVIDIA cards with
+    /// readable sensors alongside an AMD integrated GPU without one. The agent
+    /// described the AMD device to the model as "0°C", the model relayed that to the
+    /// user as measured fact, and the average of 50/36/unknown came out at 28.7°C —
+    /// colder than any card in the machine.
+    #[test]
+    fn sensorless_gpu_is_excluded_from_thermal_aggregates() {
+        fn gpu(index: usize, temperature_c: Option<u32>) -> GpuState {
+            GpuState {
+                index,
+                name: format!("GPU {index}"),
+                vendor: "Test".to_string(),
+                utilization: 0,
+                memory_used_mb: 0,
+                memory_total_mb: 1024,
+                temperature_c,
+                power_w: 0.0,
+                power_limit_w: None,
+                clock_mhz: None,
+                memory_clock_mhz: None,
+                fan_speed_percent: None,
+                process_count: 0,
+            }
+        }
+
+        let state = SystemState {
+            cpu: None,
+            memory: None,
+            gpus: vec![gpu(0, Some(50)), gpu(1, Some(36)), gpu(2, None)],
+            timestamp: 0,
+        };
+
+        // 50 and 36 average to 43. Including the sensorless card as zero would give
+        // 28.7, which is colder than every device present.
+        assert_eq!(state.avg_temperature(), Some(43.0));
+
+        // The sensorless card must never be named hottest.
+        assert_eq!(state.hottest_gpu().map(|g| g.index), Some(0));
+
+        // A thermal condition must not be asserted for an unmeasured device.
+        assert!(!state.gpus[2].is_hot());
+        assert!(!state.gpus[2].is_critical());
+
+        // The model-facing context must say so explicitly rather than imply a value.
+        let context = state.to_context_string();
+        assert!(
+            context.contains("unavailable"),
+            "context must state the temperature is unavailable, got:\n{context}"
+        );
+        assert!(
+            !context.contains("Temperature: 0°C"),
+            "context reports an unmeasured device as 0°C:\n{context}"
+        );
     }
 
     #[test]
@@ -517,7 +604,7 @@ mod tests {
                     utilization: 50,
                     memory_used_mb: 4000,
                     memory_total_mb: 8000,
-                    temperature_c: 60,
+                    temperature_c: Some(60),
                     power_w: 100.0,
                     power_limit_w: Some(150.0),
                     clock_mhz: None,
@@ -532,7 +619,7 @@ mod tests {
                     utilization: 80,
                     memory_used_mb: 6000,
                     memory_total_mb: 8000,
-                    temperature_c: 75,
+                    temperature_c: Some(75),
                     power_w: 120.0,
                     power_limit_w: Some(180.0),
                     clock_mhz: None,
@@ -546,7 +633,7 @@ mod tests {
 
         assert_eq!(state.total_power_w(), 220.0);
         assert_eq!(state.avg_utilization(), 65.0);
-        assert_eq!(state.avg_temperature(), 67.5);
+        assert_eq!(state.avg_temperature(), Some(67.5));
         assert_eq!(state.hottest_gpu().unwrap().index, 1);
         assert_eq!(state.most_utilized_gpu().unwrap().index, 1);
 
