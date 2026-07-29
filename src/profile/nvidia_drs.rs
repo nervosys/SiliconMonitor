@@ -37,15 +37,21 @@ const MIN_STRING_LEN: usize = 4;
 pub fn drs_exe_set() -> std::collections::BTreeSet<String> {
     let mut set = std::collections::BTreeSet::new();
     let Some(dir) = drs_dir() else { return set };
-    let Ok(entries) = std::fs::read_dir(&dir) else { return set };
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return set;
+    };
     for entry in entries.flatten() {
         let path = entry.path();
-        let Some(stem) = path.file_name().and_then(|n| n.to_str()) else { continue };
+        let Some(stem) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
         if !stem.starts_with("nvdrsdb") || path.extension().and_then(|e| e.to_str()) != Some("bin")
         {
             continue;
         }
-        let Ok(bytes) = std::fs::read(&path) else { continue };
+        let Ok(bytes) = std::fs::read(&path) else {
+            continue;
+        };
         for s in extract_utf16_strings(&bytes) {
             let lower = s.trim().to_ascii_lowercase();
             if lower.ends_with(".exe") && lower.len() > 4 {
@@ -61,10 +67,14 @@ pub fn drs_exe_set() -> std::collections::BTreeSet<String> {
 pub fn scan_drs_groups() -> Vec<ProfileGroup> {
     let mut groups = Vec::new();
     let Some(dir) = drs_dir() else { return groups };
-    let Ok(entries) = std::fs::read_dir(&dir) else { return groups };
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return groups;
+    };
     for entry in entries.flatten() {
         let path = entry.path();
-        let Some(stem) = path.file_name().and_then(|n| n.to_str()) else { continue };
+        let Some(stem) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
         if !stem.starts_with("nvdrsdb") || path.extension().and_then(|e| e.to_str()) != Some("bin")
         {
             continue;

@@ -10,8 +10,8 @@
 //! - **Windows**: `wmic memorychip` for ECC support detection
 //! - **macOS**: Not typically available
 
-use serde::{Deserialize, Serialize};
 use crate::error::SimonError;
+use serde::{Deserialize, Serialize};
 
 /// EDAC memory type (from EDAC subsystem).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -193,7 +193,8 @@ impl EdacMonitor {
                 continue;
             }
 
-            let mc_name = Self::read_sysfs(&mc_path.join("mc_name")).unwrap_or_else(|| format!("mc{}", i));
+            let mc_name =
+                Self::read_sysfs(&mc_path.join("mc_name")).unwrap_or_else(|| format!("mc{}", i));
             let ce_count = Self::read_sysfs_u64(&mc_path.join("ce_count")).unwrap_or(0);
             let ue_count = Self::read_sysfs_u64(&mc_path.join("ue_count")).unwrap_or(0);
             let ce_noinfo = Self::read_sysfs_u64(&mc_path.join("ce_noinfo_count")).unwrap_or(0);
@@ -213,7 +214,8 @@ impl EdacMonitor {
                     .or_else(|| Self::read_sysfs(&csrow_path.join("dimm_label")))
                     .unwrap_or_else(|| format!("csrow{}", j));
 
-                let mem_type_str = Self::read_sysfs(&csrow_path.join("mem_type")).unwrap_or_default();
+                let mem_type_str =
+                    Self::read_sysfs(&csrow_path.join("mem_type")).unwrap_or_default();
                 let mem_type = Self::parse_mem_type(&mem_type_str);
 
                 let size_mb = Self::read_sysfs_u64(&csrow_path.join("size_mb")).unwrap_or(0);
@@ -245,14 +247,16 @@ impl EdacMonitor {
                 let label = Self::read_sysfs(&dimm_path.join("dimm_label"))
                     .unwrap_or_else(|| format!("dimm{}", j));
 
-                let mem_type_str = Self::read_sysfs(&dimm_path.join("dimm_mem_type")).unwrap_or_default();
+                let mem_type_str =
+                    Self::read_sysfs(&dimm_path.join("dimm_mem_type")).unwrap_or_default();
                 let mem_type = Self::parse_mem_type(&mem_type_str);
 
                 let size_mb = Self::read_sysfs_u64(&dimm_path.join("size")).unwrap_or(0);
                 let cs_ce = Self::read_sysfs_u64(&dimm_path.join("dimm_ce_count")).unwrap_or(0);
                 let cs_ue = Self::read_sysfs_u64(&dimm_path.join("dimm_ue_count")).unwrap_or(0);
 
-                let location = Self::read_sysfs(&dimm_path.join("dimm_location")).unwrap_or_default();
+                let location =
+                    Self::read_sysfs(&dimm_path.join("dimm_location")).unwrap_or_default();
 
                 csrows.push(EdacCsRow {
                     index: j,
@@ -285,13 +289,21 @@ impl EdacMonitor {
 
         let mut recs = Vec::new();
         if total_ue > 0 {
-            recs.push(format!("CRITICAL: {} uncorrectable ECC error(s) detected — replace affected DIMM(s)", total_ue));
+            recs.push(format!(
+                "CRITICAL: {} uncorrectable ECC error(s) detected — replace affected DIMM(s)",
+                total_ue
+            ));
         }
         if total_ce > 100 {
-            recs.push(format!("WARNING: {} correctable ECC errors — monitor for increasing rate", total_ce));
+            recs.push(format!(
+                "WARNING: {} correctable ECC errors — monitor for increasing rate",
+                total_ce
+            ));
         }
         if !ecc_active {
-            recs.push("No EDAC memory controllers found — ECC may be disabled or not supported".into());
+            recs.push(
+                "No EDAC memory controllers found — ECC may be disabled or not supported".into(),
+            );
         }
 
         Ok(EdacOverview {
@@ -323,7 +335,9 @@ impl EdacMonitor {
 
     #[cfg(target_os = "linux")]
     fn read_sysfs(path: &std::path::Path) -> Option<String> {
-        std::fs::read_to_string(path).ok().map(|s| s.trim().to_string())
+        std::fs::read_to_string(path)
+            .ok()
+            .map(|s| s.trim().to_string())
     }
 
     #[cfg(target_os = "linux")]
@@ -387,8 +401,26 @@ mod tests {
                 ce_noinfo_count: 0,
                 ue_noinfo_count: 0,
                 csrows: vec![
-                    EdacCsRow { index: 0, label: "DIMM_A1".into(), mem_type: EdacMemType::Ddr4, size_mb: 16384, ce_count: 5, ue_count: 0, location: "ch0/slot0".into(), grain: 8 },
-                    EdacCsRow { index: 1, label: "DIMM_A2".into(), mem_type: EdacMemType::Ddr4, size_mb: 16384, ce_count: 0, ue_count: 0, location: "ch0/slot1".into(), grain: 8 },
+                    EdacCsRow {
+                        index: 0,
+                        label: "DIMM_A1".into(),
+                        mem_type: EdacMemType::Ddr4,
+                        size_mb: 16384,
+                        ce_count: 5,
+                        ue_count: 0,
+                        location: "ch0/slot0".into(),
+                        grain: 8,
+                    },
+                    EdacCsRow {
+                        index: 1,
+                        label: "DIMM_A2".into(),
+                        mem_type: EdacMemType::Ddr4,
+                        size_mb: 16384,
+                        ce_count: 0,
+                        ue_count: 0,
+                        location: "ch0/slot1".into(),
+                        grain: 8,
+                    },
                 ],
                 seconds_since_reset: 86400,
             }],

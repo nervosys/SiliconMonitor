@@ -81,9 +81,13 @@ pub struct OrchestratorInfo {
 /// Detect if running inside a container
 pub fn detect_container() -> Option<ContainerInfo> {
     #[cfg(target_os = "linux")]
-    { detect_linux_container() }
+    {
+        detect_linux_container()
+    }
     #[cfg(not(target_os = "linux"))]
-    { None }
+    {
+        None
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -116,8 +120,11 @@ fn detect_linux_container() -> Option<ContainerInfo> {
 fn is_in_cgroup_container() -> bool {
     std::fs::read_to_string("/proc/1/cgroup")
         .map(|c| {
-            c.contains("docker") || c.contains("containerd") || c.contains("lxc")
-                || c.contains("kubepods") || c.contains("crio")
+            c.contains("docker")
+                || c.contains("containerd")
+                || c.contains("lxc")
+                || c.contains("kubepods")
+                || c.contains("crio")
         })
         .unwrap_or(false)
 }
@@ -191,11 +198,13 @@ fn detect_cgroupv2() -> Option<ContainerResources> {
     let base = "/sys/fs/cgroup";
     let read_i64 = |name: &str| -> Option<i64> {
         fs::read_to_string(format!("{}/{}", base, name))
-            .ok().and_then(|v| v.trim().parse().ok())
+            .ok()
+            .and_then(|v| v.trim().parse().ok())
     };
     let read_u64 = |name: &str| -> Option<u64> {
         fs::read_to_string(format!("{}/{}", base, name))
-            .ok().and_then(|v| v.trim().parse().ok())
+            .ok()
+            .and_then(|v| v.trim().parse().ok())
     };
 
     let (cpu_quota, cpu_period) = fs::read_to_string(format!("{}/cpu.max", base))
@@ -228,10 +237,14 @@ fn detect_cgroupv2() -> Option<ContainerResources> {
 fn detect_cgroupv1() -> Option<ContainerResources> {
     use std::fs;
     let read_i64 = |path: &str| -> Option<i64> {
-        fs::read_to_string(path).ok().and_then(|v| v.trim().parse().ok())
+        fs::read_to_string(path)
+            .ok()
+            .and_then(|v| v.trim().parse().ok())
     };
     let read_u64 = |path: &str| -> Option<u64> {
-        fs::read_to_string(path).ok().and_then(|v| v.trim().parse().ok())
+        fs::read_to_string(path)
+            .ok()
+            .and_then(|v| v.trim().parse().ok())
     };
 
     Some(ContainerResources {
@@ -251,15 +264,17 @@ pub fn detect_orchestrator() -> Option<OrchestratorInfo> {
     // Check Kubernetes
     if std::env::var("KUBERNETES_SERVICE_HOST").is_ok() {
         let pod_info = K8sPodInfo {
-            pod_name: std::env::var("HOSTNAME").ok()
+            pod_name: std::env::var("HOSTNAME")
+                .ok()
                 .or_else(|| std::env::var("POD_NAME").ok()),
             pod_namespace: std::env::var("POD_NAMESPACE").ok(),
             pod_uid: std::env::var("POD_UID").ok(),
             node_name: std::env::var("NODE_NAME").ok(),
             service_account: std::env::var("SERVICE_ACCOUNT").ok(),
             has_service_account_token: std::path::Path::new(
-                "/var/run/secrets/kubernetes.io/serviceaccount/token"
-            ).exists(),
+                "/var/run/secrets/kubernetes.io/serviceaccount/token",
+            )
+            .exists(),
         };
         return Some(OrchestratorInfo {
             orchestrator: OrchestratorType::Kubernetes,

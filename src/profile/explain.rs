@@ -124,10 +124,26 @@ mod tests {
     #[test]
     fn related_shares_primary_segment() {
         let mut g = ProfileGroup::new(Subsystem::Nvme, "nvme0", "Features", "test");
-        g.push(Setting::info("feat.write_cache.enabled", "WC", SettingValue::Bool(true)));
-        g.push(Setting::info("feat.write_cache.raw", "WC raw", SettingValue::Uint(1)));
-        g.push(Setting::info("feat.apst.enabled", "APST", SettingValue::Bool(true)));
-        g.push(Setting::info("vbios_version", "vbios", SettingValue::Text("x".into())));
+        g.push(Setting::info(
+            "feat.write_cache.enabled",
+            "WC",
+            SettingValue::Bool(true),
+        ));
+        g.push(Setting::info(
+            "feat.write_cache.raw",
+            "WC raw",
+            SettingValue::Uint(1),
+        ));
+        g.push(Setting::info(
+            "feat.apst.enabled",
+            "APST",
+            SettingValue::Bool(true),
+        ));
+        g.push(Setting::info(
+            "vbios_version",
+            "vbios",
+            SettingValue::Text("x".into()),
+        ));
         let snap = snap_with(g);
         let exp = explain(&snap, "feat.write_cache.enabled").unwrap();
         // Should include feat.write_cache.raw (shares feat.write_cache) but
@@ -140,8 +156,16 @@ mod tests {
     #[test]
     fn candidates_match_substring() {
         let mut g = ProfileGroup::new(Subsystem::Gpu, "GPU0", "Global", "test");
-        g.push(Setting::info("power_limit_mw", "PL", SettingValue::Uint(450_000)));
-        g.push(Setting::info("max_gfx_clock_mhz", "Clk", SettingValue::Uint(2100)));
+        g.push(Setting::info(
+            "power_limit_mw",
+            "PL",
+            SettingValue::Uint(450_000),
+        ));
+        g.push(Setting::info(
+            "max_gfx_clock_mhz",
+            "Clk",
+            SettingValue::Uint(2100),
+        ));
         g.push(Setting::info("ecc_mode", "ECC", SettingValue::Bool(false)));
         let snap = snap_with(g);
         let cands = candidates(&snap, "power");

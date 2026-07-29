@@ -1,6 +1,6 @@
 //! Security utilities for privilege escalation and validation
 
-use crate::error::{SimonError, Result};
+use crate::error::{Result, SimonError};
 use std::process::Command;
 use std::time::Duration;
 

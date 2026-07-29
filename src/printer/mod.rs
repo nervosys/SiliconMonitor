@@ -176,11 +176,7 @@ impl PrinterMonitor {
             .output()
             .ok()
             .and_then(|o| String::from_utf8(o.stdout).ok())
-            .and_then(|s| {
-                s.split(':')
-                    .nth(1)
-                    .map(|n| n.trim().to_string())
-            })
+            .and_then(|s| s.split(':').nth(1).map(|n| n.trim().to_string()))
             .unwrap_or_default();
 
         // List printers with lpstat -p -l
@@ -436,7 +432,10 @@ impl PrinterMonitor {
             || combined.contains("envy")
         {
             PrinterType::Inkjet
-        } else if combined.contains("thermal") || combined.contains("receipt") || combined.contains("label") {
+        } else if combined.contains("thermal")
+            || combined.contains("receipt")
+            || combined.contains("label")
+        {
             PrinterType::Thermal
         } else if combined.contains("plotter") || combined.contains("designjet") {
             PrinterType::Plotter

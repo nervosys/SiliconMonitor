@@ -88,13 +88,21 @@ pub struct ChassisInfo {
 impl ChassisInfo {
     pub fn detect() -> Result<Self, super::DatacenterError> {
         #[cfg(target_os = "linux")]
-        { Self::detect_linux() }
+        {
+            Self::detect_linux()
+        }
         #[cfg(target_os = "windows")]
-        { Self::detect_windows() }
+        {
+            Self::detect_windows()
+        }
         #[cfg(target_os = "macos")]
-        { Self::detect_macos() }
+        {
+            Self::detect_macos()
+        }
         #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
-        { Err(super::DatacenterError::Other("Unsupported platform".into())) }
+        {
+            Err(super::DatacenterError::Other("Unsupported platform".into()))
+        }
     }
 
     #[cfg(target_os = "linux")]
@@ -102,15 +110,24 @@ impl ChassisInfo {
         let dmi = "/sys/class/dmi/id";
         let read = |name: &str| -> String {
             fs::read_to_string(format!("{}/{}", dmi, name))
-                .unwrap_or_default().trim().to_string()
+                .unwrap_or_default()
+                .trim()
+                .to_string()
         };
         let read_opt = |name: &str| -> Option<String> {
             let v = read(name);
-            if v.is_empty() || v == "Not Specified" || v == "Default string" { None } else { Some(v) }
+            if v.is_empty() || v == "Not Specified" || v == "Default string" {
+                None
+            } else {
+                Some(v)
+            }
         };
 
         let chassis_type_byte: u8 = fs::read_to_string(format!("{}/chassis_type", dmi))
-            .unwrap_or_default().trim().parse().unwrap_or(2);
+            .unwrap_or_default()
+            .trim()
+            .parse()
+            .unwrap_or(2);
 
         let chassis_type = Self::from_smbios_byte(chassis_type_byte);
         let form_factor = Self::infer_form_factor(chassis_type, &read("product_name"));
@@ -126,7 +143,9 @@ impl ChassisInfo {
             sku: read_opt("product_sku"),
             location: ServerLocation {
                 rack_id: std::env::var("SIMON_RACK_ID").ok(),
-                rack_unit: std::env::var("SIMON_RACK_UNIT").ok().and_then(|v| v.parse().ok()),
+                rack_unit: std::env::var("SIMON_RACK_UNIT")
+                    .ok()
+                    .and_then(|v| v.parse().ok()),
                 datacenter: std::env::var("SIMON_DATACENTER").ok(),
                 room: std::env::var("SIMON_ROOM").ok(),
             },
@@ -138,9 +157,14 @@ impl ChassisInfo {
         let wmic = |class: &str, prop: &str| -> String {
             std::process::Command::new("wmic")
                 .args([class, "get", prop, "/value"])
-                .output().ok()
+                .output()
+                .ok()
                 .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
-                .and_then(|s| s.lines().find(|l| l.contains('=')).map(|l| l.split('=').nth(1).unwrap_or("").trim().to_string()))
+                .and_then(|s| {
+                    s.lines()
+                        .find(|l| l.contains('='))
+                        .map(|l| l.split('=').nth(1).unwrap_or("").trim().to_string())
+                })
                 .unwrap_or_default()
         };
 
@@ -153,7 +177,12 @@ impl ChassisInfo {
             asset_tag: None,
             version: None,
             sku: None,
-            location: ServerLocation { rack_id: None, rack_unit: None, datacenter: None, room: None },
+            location: ServerLocation {
+                rack_id: None,
+                rack_unit: None,
+                datacenter: None,
+                room: None,
+            },
         })
     }
 
@@ -161,12 +190,17 @@ impl ChassisInfo {
     fn detect_macos() -> Result<Self, super::DatacenterError> {
         let sp = std::process::Command::new("system_profiler")
             .args(["SPHardwareDataType", "-detailLevel", "mini"])
-            .output().map_err(|e| super::DatacenterError::Other(e.to_string()))?;
+            .output()
+            .map_err(|e| super::DatacenterError::Other(e.to_string()))?;
         let stdout = String::from_utf8_lossy(&sp.stdout);
         let get = |key: &str| -> String {
-            stdout.lines().find(|l| l.contains(key))
+            stdout
+                .lines()
+                .find(|l| l.contains(key))
                 .and_then(|l| l.split(':').nth(1))
-                .unwrap_or("").trim().to_string()
+                .unwrap_or("")
+                .trim()
+                .to_string()
         };
 
         Ok(ChassisInfo {
@@ -178,7 +212,12 @@ impl ChassisInfo {
             asset_tag: None,
             version: None,
             sku: Some(get("Model Identifier")).filter(|s| !s.is_empty()),
-            location: ServerLocation { rack_id: None, rack_unit: None, datacenter: None, room: None },
+            location: ServerLocation {
+                rack_id: None,
+                rack_unit: None,
+                datacenter: None,
+                room: None,
+            },
         })
     }
 
@@ -222,16 +261,27 @@ impl ChassisInfo {
             ChassisType::RackMount | ChassisType::MainServer => FormFactor::RackMount,
             ChassisType::Tower | ChassisType::MiniTower => FormFactor::Tower,
             ChassisType::Blade | ChassisType::BladeEnclosure => FormFactor::Blade,
-            ChassisType::Laptop | ChassisType::Notebook | ChassisType::SubNotebook => FormFactor::Laptop,
-            ChassisType::Tablet | ChassisType::Convertible | ChassisType::Detachable => FormFactor::Tablet,
+            ChassisType::Laptop | ChassisType::Notebook | ChassisType::SubNotebook => {
+                FormFactor::Laptop
+            }
+            ChassisType::Tablet | ChassisType::Convertible | ChassisType::Detachable => {
+                FormFactor::Tablet
+            }
             ChassisType::MiniPc | ChassisType::StickPc => FormFactor::MiniPc,
             ChassisType::EmbeddedPc | ChassisType::IoTGateway => FormFactor::Embedded,
-            ChassisType::Desktop | ChassisType::LowProfileDesktop | ChassisType::AllInOne => FormFactor::Desktop,
+            ChassisType::Desktop | ChassisType::LowProfileDesktop | ChassisType::AllInOne => {
+                FormFactor::Desktop
+            }
             _ => {
-                if p.contains("rack") || p.contains("server") { FormFactor::RackMount }
-                else if p.contains("blade") { FormFactor::Blade }
-                else if p.contains("nuc") || p.contains("mini") { FormFactor::MiniPc }
-                else { FormFactor::Unknown }
+                if p.contains("rack") || p.contains("server") {
+                    FormFactor::RackMount
+                } else if p.contains("blade") {
+                    FormFactor::Blade
+                } else if p.contains("nuc") || p.contains("mini") {
+                    FormFactor::MiniPc
+                } else {
+                    FormFactor::Unknown
+                }
             }
         }
     }

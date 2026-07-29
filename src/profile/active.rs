@@ -73,9 +73,11 @@ pub fn active_profiles_for_processes() -> Vec<ActiveAppProfile> {
         });
     }
     out.sort_by(|a, b| {
-        b.has_any_profile()
-            .cmp(&a.has_any_profile())
-            .then_with(|| a.name.to_ascii_lowercase().cmp(&b.name.to_ascii_lowercase()))
+        b.has_any_profile().cmp(&a.has_any_profile()).then_with(|| {
+            a.name
+                .to_ascii_lowercase()
+                .cmp(&b.name.to_ascii_lowercase())
+        })
     });
     out
 }

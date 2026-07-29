@@ -24,8 +24,8 @@
 //! }
 //! ```
 
-use serde::{Deserialize, Serialize};
 use crate::error::SimonError;
+use serde::{Deserialize, Serialize};
 
 /// A single NUMA node and its resources.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -144,33 +144,47 @@ impl NumaMonitor {
         let total_cpus: usize = self.nodes.iter().map(|n| n.cpus.len()).sum();
         let total_memory: u64 = self.nodes.iter().map(|n| n.memory_total_bytes).sum();
 
-        let is_numa = self.nodes.len() > 1
-            || self.distance_matrix.as_ref().map_or(false, |d| d.is_numa());
+        let is_numa =
+            self.nodes.len() > 1 || self.distance_matrix.as_ref().map_or(false, |d| d.is_numa());
 
-        let max_distance = self.distance_matrix.as_ref()
+        let max_distance = self
+            .distance_matrix
+            .as_ref()
             .map(|d| d.distances.iter().copied().max().unwrap_or(10))
             .unwrap_or(10);
 
-        let mem_vals: Vec<u64> = self.nodes.iter()
+        let mem_vals: Vec<u64> = self
+            .nodes
+            .iter()
             .map(|n| n.memory_total_bytes)
             .filter(|&m| m > 0)
             .collect();
         let memory_imbalance = if mem_vals.len() >= 2 {
             let max = *mem_vals.iter().max().unwrap() as f64;
             let min = *mem_vals.iter().min().unwrap() as f64;
-            if min > 0.0 { max / min } else { 1.0 }
+            if min > 0.0 {
+                max / min
+            } else {
+                1.0
+            }
         } else {
             1.0
         };
 
-        let cpu_vals: Vec<usize> = self.nodes.iter()
+        let cpu_vals: Vec<usize> = self
+            .nodes
+            .iter()
             .map(|n| n.cpus.len())
             .filter(|&c| c > 0)
             .collect();
         let cpu_imbalance = if cpu_vals.len() >= 2 {
             let max = *cpu_vals.iter().max().unwrap() as f64;
             let min = *cpu_vals.iter().min().unwrap() as f64;
-            if min > 0.0 { max / min } else { 1.0 }
+            if min > 0.0 {
+                max / min
+            } else {
+                1.0
+            }
         } else {
             1.0
         };
@@ -188,7 +202,8 @@ impl NumaMonitor {
 
     /// Which NUMA node owns a given CPU.
     pub fn cpu_to_node(&self, cpu_id: u32) -> Option<u32> {
-        self.nodes.iter()
+        self.nodes
+            .iter()
             .find(|n| n.cpus.contains(&cpu_id))
             .map(|n| n.id)
     }
@@ -234,12 +249,11 @@ impl NumaMonitor {
                 .unwrap_or((0, 0, 0));
 
             // Hugepages
-            let hp_total = std::fs::read_to_string(
-                node_path.join("hugepages/hugepages-2048kB/nr_hugepages"),
-            )
-            .ok()
-            .and_then(|s| s.trim().parse().ok())
-            .unwrap_or(0);
+            let hp_total =
+                std::fs::read_to_string(node_path.join("hugepages/hugepages-2048kB/nr_hugepages"))
+                    .ok()
+                    .and_then(|s| s.trim().parse().ok())
+                    .unwrap_or(0);
 
             let hp_free = std::fs::read_to_string(
                 node_path.join("hugepages/hugepages-2048kB/free_hugepages"),
@@ -256,9 +270,7 @@ impl NumaMonitor {
                     if let Ok(node_str) = std::fs::read_to_string(&numa_node_path) {
                         if let Ok(nid) = node_str.trim().parse::<i32>() {
                             if nid == *id as i32 {
-                                pci_devs.push(
-                                    entry.file_name().to_string_lossy().to_string(),
-                                );
+                                pci_devs.push(entry.file_name().to_string_lossy().to_string());
                             }
                         }
                     }
@@ -375,8 +387,11 @@ impl NumaMonitor {
         // Get memory per node (approximation: divide total evenly)
         if !self.nodes.is_empty() {
             if let Ok(output) = std::process::Command::new("powershell")
-                .args(["-NoProfile", "-Command",
-                    "(Get-CimInstance Win32_OperatingSystem).TotalVisibleMemorySize"])
+                .args([
+                    "-NoProfile",
+                    "-Command",
+                    "(Get-CimInstance Win32_OperatingSystem).TotalVisibleMemorySize",
+                ])
                 .output()
             {
                 let text = String::from_utf8(output.stdout).unwrap_or_default();

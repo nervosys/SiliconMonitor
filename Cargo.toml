@@ -1,6 +1,6 @@
 [package]
 name = "silicon-monitor"
-version = "1.4.0"
+version = "1.5.0"
 edition = "2021"
 rust-version = "1.70"
 default-run = "simon"
@@ -55,6 +55,7 @@ bincode = "1.3"                                    # For TSDB binary serializati
 toml = "0.8"
 log = "0.4"
 lru = "0.12"                                       # For agent response caching
+arc-swap = "1.9.2"
 
 # Platform-specific dependencies
 [target.'cfg(unix)'.dependencies]
@@ -193,7 +194,13 @@ gui = [
 remote-backends = ["reqwest"]
 # Local AI backends
 local-ollama = ["remote-backends"]   # Ollama local inference server
-local-llamacpp = []                  # llama.cpp direct model loading (TODO: needs llama-cpp-rs)
+# llama.cpp via the `llama-cli` executable (subprocess, no bindings or C++ build).
+#
+# In-process llama-cpp-rs FFI bindings were considered and deliberately not adopted:
+# they would add a C++ toolchain to every build and complicate the 3-OS CI matrix,
+# for lower per-call overhead that does not matter at simon's one-query-at-a-time
+# usage. The subprocess path has no such cost and is discovered automatically.
+local-llamacpp = []
 local-vllm = ["remote-backends"]     # vLLM high-performance server
 local-tensorrt = ["remote-backends"] # TensorRT-LLM optimized inference
 # Full feature set with all silicon monitoring

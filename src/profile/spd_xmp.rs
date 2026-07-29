@@ -34,7 +34,9 @@ enum DramType {
 pub fn scan_xmp_groups() -> Vec<ProfileGroup> {
     use std::fs;
     let base = std::path::Path::new("/sys/bus/i2c/devices");
-    let Ok(rd) = fs::read_dir(base) else { return Vec::new() };
+    let Ok(rd) = fs::read_dir(base) else {
+        return Vec::new();
+    };
     let mut groups = Vec::new();
     for entry in rd.flatten() {
         let path = entry.path();
@@ -42,7 +44,9 @@ pub fn scan_xmp_groups() -> Vec<ProfileGroup> {
         if !eeprom.exists() {
             continue;
         }
-        let Ok(bytes) = fs::read(&eeprom) else { continue };
+        let Ok(bytes) = fs::read(&eeprom) else {
+            continue;
+        };
         if bytes.len() < 384 {
             continue;
         }
@@ -96,9 +100,7 @@ fn decode_blob(bytes: &[u8], source: &str, locator: String) -> Option<ProfileGro
         decode_xmp(&mut group, bytes, dram);
     }
     // EXPO magic at byte 768: "EXPO"
-    if bytes.len() >= 772
-        && &bytes[768..772] == b"EXPO"
-    {
+    if bytes.len() >= 772 && &bytes[768..772] == b"EXPO" {
         any_profile = true;
         decode_expo(&mut group, bytes);
     }
@@ -259,7 +261,7 @@ mod tests {
         b[384] = 0x0C; // XMP magic
         b[385] = 0x4A;
         b[386] = 0b0000_0011; // two profiles enabled
-        // slot 0 at 393: vdd raw=0x28 → 1.0 + 40*0.005 = 1.2V
+                              // slot 0 at 393: vdd raw=0x28 → 1.0 + 40*0.005 = 1.2V
         b[393] = 0x28;
         b[394] = 0x07; // mtb lo (DDR4-3200: cycle = 625 ps → mtb = 5)
         b[395] = 0x00;

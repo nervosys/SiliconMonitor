@@ -18,7 +18,7 @@
 //! # Example
 //!
 //! ```no_run
-//! use simon::agent::local::{VllmClient, InferenceRequest};
+//! use simonlib::agent::local::{VllmClient, InferenceRequest};
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! let client = VllmClient::new("http://localhost:8000")?;
@@ -36,7 +36,7 @@
 //! ```
 
 use super::{InferenceRequest, InferenceResponse, LocalInferenceClient, ModelInfo};
-use crate::error::{SimonError, Result};
+use crate::error::{Result, SimonError};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::time::Instant;

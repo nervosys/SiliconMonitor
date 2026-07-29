@@ -11,7 +11,7 @@
 //! # Example
 //!
 //! ```no_run
-//! use simon::cpufreq::{CpuFreqMonitor, Governor};
+//! use simonlib::cpufreq::{CpuFreqMonitor, Governor};
 //!
 //! let mut monitor = CpuFreqMonitor::new().unwrap();
 //!

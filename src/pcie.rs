@@ -7,7 +7,7 @@
 //! # Examples
 //!
 //! ```no_run
-//! use simon::pcie::{PcieMonitor, PcieDevice};
+//! use simonlib::pcie::{PcieMonitor, PcieDevice};
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! let devices = PcieMonitor::enumerate()?;

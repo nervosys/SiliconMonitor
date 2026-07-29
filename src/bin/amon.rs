@@ -1,4 +1,4 @@
-﻿//! AI Monitor (amon) - Syntactic sugar for `simon ai`
+//! AI Monitor (amon) - Syntactic sugar for `simon ai`
 //!
 //! This binary provides a simpler interface for AI-related commands.
 //!
@@ -51,8 +51,6 @@ enum AmonCommand {
 #[cfg(feature = "cli")]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     use simonlib::agent::AgentConfig;
-    
-    
 
     env_logger::init();
 

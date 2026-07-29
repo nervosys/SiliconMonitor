@@ -9,8 +9,8 @@
 //! - **Linux**: `/sys/class/regulator/`
 //! - **Windows / macOS**: Not available (no comparable subsystem)
 
-use serde::{Deserialize, Serialize};
 use crate::error::SimonError;
+use serde::{Deserialize, Serialize};
 
 /// Regulator state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -254,7 +254,10 @@ impl VoltageRegulatorMonitor {
         regulators.sort_by(|a, b| a.id.cmp(&b.id));
 
         let total = regulators.len() as u32;
-        let enabled = regulators.iter().filter(|r| r.state == RegulatorState::Enabled).count() as u32;
+        let enabled = regulators
+            .iter()
+            .filter(|r| r.state == RegulatorState::Enabled)
+            .count() as u32;
         let out_of_range = regulators
             .iter()
             .filter(|r| r.voltage_in_range() == Some(false))
@@ -263,7 +266,10 @@ impl VoltageRegulatorMonitor {
 
         let mut recommendations = Vec::new();
         if out_of_range > 0 {
-            recommendations.push(format!("{} regulator(s) have voltage outside specified range", out_of_range));
+            recommendations.push(format!(
+                "{} regulator(s) have voltage outside specified range",
+                out_of_range
+            ));
         }
 
         Ok(VoltageRegulatorOverview {
@@ -278,7 +284,9 @@ impl VoltageRegulatorMonitor {
 
     #[cfg(target_os = "linux")]
     fn read_sysfs_string(path: &std::path::Path) -> Option<String> {
-        std::fs::read_to_string(path).ok().map(|s| s.trim().to_string())
+        std::fs::read_to_string(path)
+            .ok()
+            .map(|s| s.trim().to_string())
     }
 
     #[cfg(target_os = "linux")]

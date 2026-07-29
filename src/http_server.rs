@@ -7,7 +7,7 @@
 //! # Examples
 //!
 //! ```no_run
-//! use simon::http_server::{HttpServer, HttpServerConfig};
+//! use simonlib::http_server::{HttpServer, HttpServerConfig};
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {

@@ -85,20 +85,20 @@ pub mod standard {
     pub const CPU_USAGE_PERCENT: &str = "cpu_usage_percent";
     pub const CPU_TEMPERATURE_CELSIUS: &str = "cpu_temperature_celsius";
     pub const CPU_FREQUENCY_MHZ: &str = "cpu_frequency_mhz";
-    
+
     pub const MEMORY_USED_BYTES: &str = "memory_used_bytes";
     pub const MEMORY_FREE_BYTES: &str = "memory_free_bytes";
     pub const MEMORY_USAGE_PERCENT: &str = "memory_usage_percent";
     pub const SWAP_USED_BYTES: &str = "swap_used_bytes";
     pub const SWAP_USAGE_PERCENT: &str = "swap_usage_percent";
-    
+
     pub const GPU_USAGE_PERCENT: &str = "gpu_usage_percent";
     pub const GPU_MEMORY_USED_BYTES: &str = "gpu_memory_used_bytes";
     pub const GPU_MEMORY_USAGE_PERCENT: &str = "gpu_memory_usage_percent";
     pub const GPU_TEMPERATURE_CELSIUS: &str = "gpu_temperature_celsius";
     pub const GPU_POWER_WATTS: &str = "gpu_power_watts";
     pub const GPU_FAN_SPEED_PERCENT: &str = "gpu_fan_speed_percent";
-    
+
     pub const DISK_USED_BYTES: &str = "disk_used_bytes";
     pub const DISK_FREE_BYTES: &str = "disk_free_bytes";
     pub const DISK_USAGE_PERCENT: &str = "disk_usage_percent";
@@ -106,26 +106,26 @@ pub mod standard {
     pub const DISK_WRITE_BYTES_TOTAL: &str = "disk_write_bytes_total";
     pub const DISK_READ_BPS: &str = "disk_read_bps";
     pub const DISK_WRITE_BPS: &str = "disk_write_bps";
-    
+
     pub const NETWORK_RX_BYTES_TOTAL: &str = "network_rx_bytes_total";
     pub const NETWORK_TX_BYTES_TOTAL: &str = "network_tx_bytes_total";
     pub const NETWORK_RX_BPS: &str = "network_rx_bps";
     pub const NETWORK_TX_BPS: &str = "network_tx_bps";
     pub const NETWORK_ERRORS_TOTAL: &str = "network_errors_total";
     pub const NETWORK_DROPPED_TOTAL: &str = "network_dropped_total";
-    
+
     pub const PROCESS_COUNT: &str = "process_count";
     pub const PROCESS_CPU_PERCENT: &str = "process_cpu_percent";
     pub const PROCESS_MEMORY_BYTES: &str = "process_memory_bytes";
-    
+
     pub const SYSTEM_LOAD_1: &str = "system_load_1";
     pub const SYSTEM_LOAD_5: &str = "system_load_5";
     pub const SYSTEM_LOAD_15: &str = "system_load_15";
     pub const SYSTEM_UPTIME_SECONDS: &str = "system_uptime_seconds";
-    
+
     pub const BATTERY_PERCENT: &str = "battery_percent";
     pub const POWER_DRAW_WATTS: &str = "power_draw_watts";
-    
+
     pub const FAN_SPEED_RPM: &str = "fan_speed_rpm";
     pub const FAN_SPEED_PERCENT: &str = "fan_speed_percent";
 }
@@ -244,7 +244,10 @@ impl MetricTimeSeries {
 
     /// Get all data points
     pub fn get_all(&self) -> Vec<TimeSeriesPoint> {
-        self.data.read().map(|d| d.iter().cloned().collect()).unwrap_or_default()
+        self.data
+            .read()
+            .map(|d| d.iter().cloned().collect())
+            .unwrap_or_default()
     }
 
     /// Get data points in a time range
@@ -306,7 +309,7 @@ impl MetricCollector {
         Self {
             metrics: RwLock::new(HashMap::new()),
             default_retention: Duration::from_secs(3600), // 1 hour
-            default_max_points: 3600, // 1 sample per second for 1 hour
+            default_max_points: 3600,                     // 1 sample per second for 1 hour
         }
     }
 

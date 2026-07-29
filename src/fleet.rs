@@ -164,7 +164,11 @@ impl FleetManager {
     }
 
     /// Register a host
-    pub fn register_host(&mut self, host_id: impl Into<String>, hostname: impl Into<String>) -> &mut HostInfo {
+    pub fn register_host(
+        &mut self,
+        host_id: impl Into<String>,
+        hostname: impl Into<String>,
+    ) -> &mut HostInfo {
         let id = host_id.into();
         let now = now_secs();
         self.hosts.entry(id.clone()).or_insert_with(|| HostInfo {
@@ -190,7 +194,12 @@ impl FleetManager {
         }
     }
 
-    fn check_thresholds(alerts: &mut Vec<FleetAlert>, thresholds: &FleetThresholds, host_id: &str, m: &HostMetrics) {
+    fn check_thresholds(
+        alerts: &mut Vec<FleetAlert>,
+        thresholds: &FleetThresholds,
+        host_id: &str,
+        m: &HostMetrics,
+    ) {
         let t = thresholds;
 
         if m.cpu_usage_percent >= t.cpu_critical {
@@ -261,22 +270,38 @@ impl FleetManager {
             HostStatus::Offline => 0.0,
             HostStatus::Unknown => 50.0,
             _ => {
-                let Some(m) = &host.latest_metrics else { return 50.0 };
+                let Some(m) = &host.latest_metrics else {
+                    return 50.0;
+                };
                 let cpu_score = 100.0 - m.cpu_usage_percent;
                 let mem_score = 100.0 - m.memory_usage_percent;
                 let disk_score = 100.0 - m.disk_usage_percent;
-                let gpu_score = m.gpu_temperature_max
-                    .map(|t| if t < 80.0 { 100.0 } else { 100.0 - (t - 80.0) * 5.0 })
+                let gpu_score = m
+                    .gpu_temperature_max
+                    .map(|t| {
+                        if t < 80.0 {
+                            100.0
+                        } else {
+                            100.0 - (t - 80.0) * 5.0
+                        }
+                    })
                     .unwrap_or(100.0);
-                (cpu_score * 0.3 + mem_score * 0.3 + disk_score * 0.2 + gpu_score * 0.2).clamp(0.0, 100.0)
+                (cpu_score * 0.3 + mem_score * 0.3 + disk_score * 0.2 + gpu_score * 0.2)
+                    .clamp(0.0, 100.0)
             }
         }
     }
 
     /// Fleet-level health score
     pub fn fleet_health(&self) -> f64 {
-        if self.hosts.is_empty() { return 100.0; }
-        let sum: f64 = self.hosts.values().map(|h| Self::host_health_score(h)).sum();
+        if self.hosts.is_empty() {
+            return 100.0;
+        }
+        let sum: f64 = self
+            .hosts
+            .values()
+            .map(|h| Self::host_health_score(h))
+            .sum();
         sum / self.hosts.len() as f64
     }
 
@@ -289,50 +314,78 @@ impl FleetManager {
             }
         }
 
-        groups.into_iter().map(|(val, hosts)| {
-            let count = hosts.len();
-            let avg_cpu = hosts.iter()
-                .filter_map(|h| h.latest_metrics.as_ref().map(|m| m.cpu_usage_percent))
-                .sum::<f64>() / count.max(1) as f64;
-            let avg_mem = hosts.iter()
-                .filter_map(|h| h.latest_metrics.as_ref().map(|m| m.memory_usage_percent))
-                .sum::<f64>() / count.max(1) as f64;
-            let gpu_temps: Vec<f64> = hosts.iter()
-                .filter_map(|h| h.latest_metrics.as_ref().and_then(|m| m.gpu_temperature_max))
-                .collect();
-            let avg_gpu = if gpu_temps.is_empty() { None }
-                else { Some(gpu_temps.iter().sum::<f64>() / gpu_temps.len() as f64) };
-            let alert_count = self.alerts.iter()
-                .filter(|a| hosts.iter().any(|h| h.host_id == a.host_id))
-                .count();
+        groups
+            .into_iter()
+            .map(|(val, hosts)| {
+                let count = hosts.len();
+                let avg_cpu = hosts
+                    .iter()
+                    .filter_map(|h| h.latest_metrics.as_ref().map(|m| m.cpu_usage_percent))
+                    .sum::<f64>()
+                    / count.max(1) as f64;
+                let avg_mem = hosts
+                    .iter()
+                    .filter_map(|h| h.latest_metrics.as_ref().map(|m| m.memory_usage_percent))
+                    .sum::<f64>()
+                    / count.max(1) as f64;
+                let gpu_temps: Vec<f64> = hosts
+                    .iter()
+                    .filter_map(|h| {
+                        h.latest_metrics
+                            .as_ref()
+                            .and_then(|m| m.gpu_temperature_max)
+                    })
+                    .collect();
+                let avg_gpu = if gpu_temps.is_empty() {
+                    None
+                } else {
+                    Some(gpu_temps.iter().sum::<f64>() / gpu_temps.len() as f64)
+                };
+                let alert_count = self
+                    .alerts
+                    .iter()
+                    .filter(|a| hosts.iter().any(|h| h.host_id == a.host_id))
+                    .count();
 
-            TagGroupMetrics {
-                tag_key: tag_key.into(),
-                tag_value: val,
-                host_count: count,
-                avg_cpu,
-                avg_memory: avg_mem,
-                avg_gpu_temp: avg_gpu,
-                total_alerts: alert_count,
-            }
-        }).collect()
+                TagGroupMetrics {
+                    tag_key: tag_key.into(),
+                    tag_value: val,
+                    host_count: count,
+                    avg_cpu,
+                    avg_memory: avg_mem,
+                    avg_gpu_temp: avg_gpu,
+                    total_alerts: alert_count,
+                }
+            })
+            .collect()
     }
 
     /// Full fleet snapshot
     pub fn snapshot(&self) -> FleetSnapshot {
         let now = now_secs();
-        let hosts: Vec<HostSummary> = self.hosts.values().map(|h| {
-            let alerts = self.alerts.iter().filter(|a| a.host_id == h.host_id).count();
-            HostSummary {
-                host_id: h.host_id.clone(),
-                hostname: h.hostname.clone(),
-                status: h.status,
-                health_score: Self::host_health_score(h),
-                alert_count: alerts,
-            }
-        }).collect();
+        let hosts: Vec<HostSummary> = self
+            .hosts
+            .values()
+            .map(|h| {
+                let alerts = self
+                    .alerts
+                    .iter()
+                    .filter(|a| a.host_id == h.host_id)
+                    .count();
+                HostSummary {
+                    host_id: h.host_id.clone(),
+                    hostname: h.hostname.clone(),
+                    status: h.status,
+                    health_score: Self::host_health_score(h),
+                    alert_count: alerts,
+                }
+            })
+            .collect();
 
-        let online = hosts.iter().filter(|h| h.status == HostStatus::Online).count();
+        let online = hosts
+            .iter()
+            .filter(|h| h.status == HostStatus::Online)
+            .count();
 
         FleetSnapshot {
             fleet_name: self.config.fleet_name.clone(),

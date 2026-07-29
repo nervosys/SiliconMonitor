@@ -26,7 +26,11 @@ fn main() {
     );
     println!();
     for e in entries {
-        let marker = if e.has_nvidia_drs_profile { "✓" } else { "·" };
+        let marker = if e.has_nvidia_drs_profile {
+            "✓"
+        } else {
+            "·"
+        };
         println!("  {} {:>6}  {}", marker, e.pid, e.name);
     }
 }

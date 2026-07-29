@@ -7,7 +7,7 @@
 //! # Examples
 //!
 //! ```no_run
-//! use simon::anomaly::{AnomalyDetector, AnomalyConfig};
+//! use simonlib::anomaly::{AnomalyDetector, AnomalyConfig};
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! let mut detector = AnomalyDetector::new(AnomalyConfig::default());
@@ -191,7 +191,11 @@ impl MetricWindow {
         if sd < 1e-10 {
             // When std_dev is ~0 (constant series), a deviation is highly anomalous
             let diff = (value - self.mean()).abs();
-            if diff < 1e-10 { 0.0 } else { diff.signum() * 100.0 }
+            if diff < 1e-10 {
+                0.0
+            } else {
+                diff.signum() * 100.0
+            }
         } else {
             (value - self.mean()) / sd
         }

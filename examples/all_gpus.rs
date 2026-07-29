@@ -92,7 +92,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
-    println!("[INFO] Summary: {} total GPU(s) detected", all_devices.len());
+    println!(
+        "[INFO] Summary: {} total GPU(s) detected",
+        all_devices.len()
+    );
     for (vendor, count) in &vendor_counts {
         if *count > 0 {
             println!("   {} {} GPU(s)", count, vendor_name(*vendor));

@@ -2,7 +2,6 @@
 
 use crate::agent::{Agent, AgentConfig, AgentResponse};
 use crate::gpu::traits::Device;
-use crate::network_monitor::NetworkMonitor;
 use crate::silicon::NpuInfo;
 use crate::{ProcessMonitor, ProcessMonitorInfo, SiliconMonitor};
 use std::collections::VecDeque;
@@ -42,10 +41,7 @@ fn build_ollama_config() -> Option<AgentConfig> {
         .build()
         .ok()?;
 
-    let resp = client
-        .get("http://localhost:11434/api/tags")
-        .send()
-        .ok()?;
+    let resp = client.get("http://localhost:11434/api/tags").send().ok()?;
     if !resp.status().is_success() {
         return None;
     }
@@ -595,8 +591,6 @@ pub struct App {
     pub scroll_position: usize,
     /// GPU devices for monitoring
     gpu_devices: Vec<Box<dyn Device>>,
-    /// Network monitor
-    network_monitor: Option<NetworkMonitor>,
     /// Application configuration
     pub config: crate::config::Config,
     /// Status message to display (cleared after timeout)
@@ -667,6 +661,21 @@ pub struct App {
     profile_load_attempted: bool,
     /// True once a sync fallback has been tried this generation.
     profile_sync_attempted: bool,
+
+    // === Snapshot pipeline ===
+    /// Background collector. Owns every hardware handle; dropping this stops and
+    /// joins the thread. Held so the collector lives exactly as long as the App.
+    collector: Option<crate::pipeline::Collector>,
+    /// Newest snapshot published by the collector. Refreshed by
+    /// [`Self::sync_snapshot`]; all `update_*` methods read from this rather than
+    /// calling blocking hardware APIs on the render thread.
+    snapshot: std::sync::Arc<crate::pipeline::Snapshot>,
+    /// Generation of the snapshot already folded into the display fields. Used to
+    /// skip redundant re-mapping and redundant redraws.
+    applied_generation: u64,
+    /// Generation most recently drawn to the terminal, so repeated ticks with no new
+    /// data do not trigger identical repaints.
+    rendered_generation: u64,
 }
 
 /// Background initialization state
@@ -874,8 +883,8 @@ impl App {
         let config = crate::config::Config::load().unwrap_or_default();
         let update_interval = Duration::from_millis(config.general.update_interval_ms as u64);
 
-        // Initialize network monitor synchronously (usually fast)
-        let network_monitor = NetworkMonitor::new().ok();
+        // Network is collected by the snapshot pipeline; the App no longer owns a
+        // NetworkMonitor of its own.
 
         // Spawn background thread for GPU enumeration (slow - NVML init, device enumeration)
         let (gpu_tx, gpu_rx) = mpsc::channel();
@@ -976,7 +985,6 @@ impl App {
             last_update: Instant::now(),
             scroll_position: 0,
             gpu_devices: Vec::new(), // Will be populated from background thread
-            network_monitor,
             config,
             status_message: Some(("Loading...".to_string(), Instant::now())),
             agent: None, // Will be populated from background thread
@@ -1010,15 +1018,66 @@ impl App {
             profile_init_rx: Some(profile_rx),
             profile_load_attempted: true, // bg load started above
             profile_sync_attempted: false,
+            collector: Some(crate::pipeline::Collector::spawn(
+                crate::pipeline::CollectorConfig {
+                    interval: update_interval,
+                    history_size: MAX_HISTORY,
+                    ..Default::default()
+                },
+            )),
+            snapshot: std::sync::Arc::new(crate::pipeline::Snapshot::default()),
+            applied_generation: 0,
+            rendered_generation: 0,
         };
 
-        // Do initial fast update for immediate data (CPU, Memory are fast)
-        let _ = app.update_cpu();
-        let _ = app.update_memory();
-        let _ = app.update_network();
+        // System info is static and not part of the per-tick snapshot.
         let _ = app.update_system();
 
         Ok(app)
+    }
+
+    /// Whether new collector data has arrived since the last frame was drawn.
+    ///
+    /// Consuming: calling this marks the current generation as rendered. The render
+    /// loop uses it to avoid repainting identical frames.
+    pub fn snapshot_changed_since_render(&mut self) -> bool {
+        if self.applied_generation != self.rendered_generation {
+            self.rendered_generation = self.applied_generation;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Pull the newest snapshot and fold it into the display fields.
+    ///
+    /// Returns `true` when a *new* generation was applied. The render loop uses this
+    /// to skip redraws entirely when the collector has not published since the last
+    /// frame — previously every tick forced a redraw whether or not anything changed.
+    ///
+    /// This never blocks: it is an atomic load plus a pure in-memory mapping. All
+    /// hardware access happens on the collector thread.
+    pub fn sync_snapshot(&mut self) -> bool {
+        let Some(ref collector) = self.collector else {
+            return false;
+        };
+        let handle = collector.handle();
+
+        // Generation 0 is the not-ready placeholder published before the first tick.
+        let generation = handle.generation();
+        if generation == 0 || generation == self.applied_generation {
+            return false;
+        }
+
+        self.snapshot = handle.latest();
+        self.applied_generation = self.snapshot.generation;
+
+        let _ = self.update_cpu();
+        let _ = self.update_memory();
+        let _ = self.update_network();
+        let _ = self.update_disks();
+
+        true
     }
 
     /// Check and apply background initialization results
@@ -1088,8 +1147,7 @@ impl App {
                     if self.agent_history.len() > MAX_AGENT_HISTORY {
                         self.agent_history.pop_front();
                     }
-                    self.agent_history_version =
-                        self.agent_history_version.wrapping_add(1);
+                    self.agent_history_version = self.agent_history_version.wrapping_add(1);
                 }
                 Err(e) => {
                     self.set_status_message(format!("Agent error: {}", e));
@@ -1194,20 +1252,23 @@ impl App {
         Ok(())
     }
 
-    /// Fast updates - CPU, GPU, Memory, Network (called every 500ms)
+    /// Fast updates - CPU, GPU, Memory, Network, Disks.
+    ///
+    /// Performs no hardware I/O: this is an atomic snapshot load plus an in-memory
+    /// mapping, so it cannot stall a frame regardless of how slow a driver is.
     pub fn update_fast(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        self.update_cpu()?;
-        self.update_memory()?;
+        self.sync_snapshot();
         self.update_gpu()?;
-        self.update_network()?;
         self.last_update = Instant::now();
         Ok(())
     }
 
-    /// Slow updates - System, Disks, Processes (called every 2s)
+    /// Slow updates - system info and peripherals.
+    ///
+    /// These are not part of the per-tick snapshot: system info is effectively static,
+    /// and the peripheral cache has its own background refresh.
     pub fn update_slow(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         self.update_system()?;
-        self.update_disks()?;
         self.update_processes()?;
         // Refresh peripherals every 10 seconds (they're expensive due to subprocess calls)
         if self.peripheral_cache_last_refresh.elapsed() >= Duration::from_secs(10) {
@@ -1228,92 +1289,37 @@ impl App {
     }
 
     fn update_cpu(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        // Try to get real CPU stats from platform module
-        #[cfg(target_os = "windows")]
-        {
-            if let Ok(stats) = crate::platform::windows::read_cpu_stats() {
-                let utilization = 100.0 - stats.total.idle;
-                let num_cpus = stats.cores.len();
+        // Sourced from the collector thread's snapshot rather than a blocking
+        // platform call on the render thread. The three per-platform branches that
+        // used to live here collapsed into one mapping, because the snapshot
+        // already carries a platform-normalized `CpuStats`.
+        let Some(stats) = self.snapshot.cpu.as_ref() else {
+            // No sample yet (before the first tick). Leave the previous frame's
+            // values in place rather than flashing a synthetic zero.
+            return Ok(());
+        };
 
-                self.cpu_info = CpuInfo {
-                    name: stats
-                        .cores
-                        .first()
-                        .map(|c| c.model.clone())
-                        .unwrap_or_else(|| "CPU".to_string()),
-                    cores: num_cpus,
-                    threads: num_cpus,
-                    utilization,
-                    temperature: None, // Requires admin for WMI thermal zone access
-                    frequency: stats
-                        .cores
-                        .first()
-                        .and_then(|c| c.frequency.as_ref().map(|f| f.current as u64)),
-                    per_core_usage: stats
-                        .cores
-                        .iter()
-                        .map(|c| 100.0 - c.idle.unwrap_or(100.0))
-                        .collect(),
-                };
-
-                // Add to history
-                self.cpu_history.push_back(self.cpu_info.utilization as u64);
-                if self.cpu_history.len() > MAX_HISTORY {
-                    self.cpu_history.pop_front();
-                }
-
-                return Ok(());
-            }
-        }
-
-        #[cfg(target_os = "linux")]
-        {
-            if let Ok(stats) = crate::platform::linux::read_cpu_stats() {
-                let utilization = 100.0 - stats.total.idle;
-                let num_cpus = stats.cores.len();
-
-                self.cpu_info = CpuInfo {
-                    name: stats
-                        .cores
-                        .first()
-                        .map(|c| c.model.clone())
-                        .unwrap_or_else(|| "CPU".to_string()),
-                    cores: num_cpus,
-                    threads: num_cpus,
-                    utilization,
-                    temperature: None,
-                    frequency: stats
-                        .cores
-                        .first()
-                        .and_then(|c| c.frequency.as_ref().map(|f| f.current as u64)),
-                    per_core_usage: stats
-                        .cores
-                        .iter()
-                        .map(|c| 100.0 - c.idle.unwrap_or(100.0))
-                        .collect(),
-                };
-
-                self.cpu_history.push_back(self.cpu_info.utilization as u64);
-                if self.cpu_history.len() > MAX_HISTORY {
-                    self.cpu_history.pop_front();
-                }
-
-                return Ok(());
-            }
-        }
-
-        // Fallback: use num_cpus for basic info
-        let num_cpus = num_cpus::get();
-        let utilization = Self::get_cpu_utilization();
+        let num_cpus = stats.cores.len();
 
         self.cpu_info = CpuInfo {
-            name: "CPU".to_string(),
+            name: stats
+                .cores
+                .first()
+                .map(|c| c.model.clone())
+                .unwrap_or_else(|| "CPU".to_string()),
             cores: num_cpus,
             threads: num_cpus,
-            utilization,
-            temperature: None,
-            frequency: None,
-            per_core_usage: vec![utilization; num_cpus.min(8)],
+            utilization: 100.0 - stats.total.idle,
+            temperature: None, // Requires admin for WMI thermal zone access
+            frequency: stats
+                .cores
+                .first()
+                .and_then(|c| c.frequency.as_ref().map(|f| f.current as u64)),
+            per_core_usage: stats
+                .cores
+                .iter()
+                .map(|c| 100.0 - c.idle.unwrap_or(100.0))
+                .collect(),
         };
 
         self.cpu_history.push_back(self.cpu_info.utilization as u64);
@@ -1324,83 +1330,23 @@ impl App {
         Ok(())
     }
 
-    fn get_cpu_utilization() -> f32 {
-        // Cross-platform fallback using num_cpus and /proc/loadavg (Linux/macOS)
-        // or returning 0.0 when platform stats are unavailable
-        #[cfg(any(target_os = "linux", target_os = "macos"))]
-        {
-            if let Ok(contents) = std::fs::read_to_string("/proc/loadavg") {
-                if let Some(load_str) = contents.split_whitespace().next() {
-                    if let Ok(load) = load_str.parse::<f32>() {
-                        let ncpu = num_cpus::get() as f32;
-                        return (load / ncpu * 100.0).clamp(0.0, 100.0);
-                    }
-                }
-            }
-        }
-        0.0
-    }
-
     fn update_memory(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        // Try to get real memory stats from platform module
-        #[cfg(target_os = "windows")]
-        {
-            if let Ok(stats) = crate::platform::windows::read_memory_stats() {
-                // Convert from KB to bytes for consistency
-                self.memory_info = MemoryInfo {
-                    total: stats.ram.total * 1024,
-                    used: stats.ram.used * 1024,
-                    available: stats.ram.free * 1024,
-                    swap_total: stats.swap.total * 1024,
-                    swap_used: stats.swap.used * 1024,
-                };
+        // Sourced from the collector snapshot. The previous fallback branch
+        // fabricated a plausible-looking 32 GB/16 GB reading on platforms without a
+        // memory collector, which is worse than showing nothing: invented values are
+        // indistinguishable from measured ones on screen. An unavailable sample now
+        // leaves the panel empty instead.
+        let Some(stats) = self.snapshot.memory.as_ref() else {
+            return Ok(());
+        };
 
-                let used_percent = if self.memory_info.total > 0 {
-                    (self.memory_info.used * 100) / self.memory_info.total
-                } else {
-                    0
-                };
-                self.memory_history.push_back(used_percent);
-                if self.memory_history.len() > MAX_HISTORY {
-                    self.memory_history.pop_front();
-                }
-
-                return Ok(());
-            }
-        }
-
-        #[cfg(target_os = "linux")]
-        {
-            if let Ok(stats) = crate::platform::linux::read_memory_stats() {
-                self.memory_info = MemoryInfo {
-                    total: stats.ram.total * 1024,
-                    used: stats.ram.used * 1024,
-                    available: stats.ram.free * 1024,
-                    swap_total: stats.swap.total * 1024,
-                    swap_used: stats.swap.used * 1024,
-                };
-
-                let used_percent = if self.memory_info.total > 0 {
-                    (self.memory_info.used * 100) / self.memory_info.total
-                } else {
-                    0
-                };
-                self.memory_history.push_back(used_percent);
-                if self.memory_history.len() > MAX_HISTORY {
-                    self.memory_history.pop_front();
-                }
-
-                return Ok(());
-            }
-        }
-
-        // Fallback: placeholder data
+        // Platform collectors report KB; the display layer works in bytes.
         self.memory_info = MemoryInfo {
-            total: 32 * 1024 * 1024 * 1024,     // 32 GB
-            used: 16 * 1024 * 1024 * 1024,      // 16 GB
-            available: 16 * 1024 * 1024 * 1024, // 16 GB
-            swap_total: 8 * 1024 * 1024 * 1024, // 8 GB
-            swap_used: 1 * 1024 * 1024 * 1024,  // 1 GB
+            total: stats.ram.total * 1024,
+            used: stats.ram.used * 1024,
+            available: stats.ram.free * 1024,
+            swap_total: stats.swap.total * 1024,
+            swap_used: stats.swap.used * 1024,
         };
 
         let used_percent = if self.memory_info.total > 0 {
@@ -1646,72 +1592,29 @@ impl App {
     }
 
     fn update_disks(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        // Sourced from the collector snapshot, which re-enumerates on a slow cadence
+        // (disk topology rarely changes) and, on Windows, uses the GetLogicalDrives
+        // bitmask rather than probing all 26 letters with `fs::metadata` — the old
+        // path blocked on disconnected network drives.
+        //
+        // Hold the previous rows until the first enumeration lands, so the panel does
+        // not flash "No disks detected" during startup.
+        if self.snapshot.disks.is_empty() && !self.disk_info.is_empty() {
+            return Ok(());
+        }
+
         self.disk_info.clear();
+        self.disk_info
+            .extend(self.snapshot.disks.iter().map(|d| DiskInfo {
+                name: d.name.clone(),
+                mount_point: d.mount_point.clone(),
+                total: d.total,
+                used: d.used,
+                filesystem: d.filesystem.clone(),
+                read_rate: d.read_rate,
+                write_rate: d.write_rate,
+            }));
 
-        // On Windows, always use Windows API directly (most reliable)
-        #[cfg(target_os = "windows")]
-        {
-            if let Ok(drives) = Self::get_windows_drives() {
-                for (drive, total, used, fs_type) in drives {
-                    self.disk_info.push(DiskInfo {
-                        name: drive.clone(),
-                        mount_point: drive,
-                        total,
-                        used,
-                        filesystem: fs_type,
-                        read_rate: 0.0,
-                        write_rate: 0.0,
-                    });
-                }
-            }
-        }
-
-        // On non-Windows, use enumerate_disks
-        #[cfg(not(target_os = "windows"))]
-        {
-            if let Ok(disks) = crate::disk::enumerate_disks() {
-                for disk in disks {
-                    if let Ok(info) = disk.info() {
-                        let (mount_point, filesystem, used, total) =
-                            if let Ok(fs_infos) = disk.filesystem_info() {
-                                if let Some(fs) = fs_infos.first() {
-                                    (
-                                        fs.mount_point.to_string_lossy().to_string(),
-                                        fs.fs_type.clone(),
-                                        fs.used_size,
-                                        fs.total_size,
-                                    )
-                                } else {
-                                    ("N/A".to_string(), "N/A".to_string(), 0, info.capacity)
-                                }
-                            } else {
-                                ("N/A".to_string(), "N/A".to_string(), 0, info.capacity)
-                            };
-
-                        let (read_rate, write_rate) = if let Ok(io_stats) = disk.io_stats() {
-                            (
-                                io_stats.read_throughput.unwrap_or(0) as f64,
-                                io_stats.write_throughput.unwrap_or(0) as f64,
-                            )
-                        } else {
-                            (0.0, 0.0)
-                        };
-
-                        self.disk_info.push(DiskInfo {
-                            name: info.model,
-                            mount_point,
-                            total,
-                            used,
-                            filesystem,
-                            read_rate,
-                            write_rate,
-                        });
-                    }
-                }
-            }
-        }
-
-        // Fallback if still empty
         if self.disk_info.is_empty() {
             self.disk_info.push(DiskInfo {
                 name: "No disks detected".to_string(),
@@ -1727,150 +1630,63 @@ impl App {
         Ok(())
     }
 
-    #[cfg(target_os = "windows")]
-    fn get_windows_drives() -> Result<Vec<(String, u64, u64, String)>, Box<dyn std::error::Error>> {
-        use std::ffi::OsStr;
-        use std::os::windows::ffi::OsStrExt;
-
-        let mut drives = Vec::new();
-
-        // Check common drive letters
-        for letter in 'A'..='Z' {
-            let drive_path = format!("{}:\\", letter);
-
-            // Check if drive exists and get space info
-            if let Ok(metadata) = std::fs::metadata(&drive_path) {
-                if metadata.is_dir() {
-                    // Use GetDiskFreeSpaceEx to get actual disk space
-                    let path_wide: Vec<u16> = OsStr::new(&drive_path)
-                        .encode_wide()
-                        .chain(std::iter::once(0))
-                        .collect();
-
-                    let mut free_bytes: u64 = 0;
-                    let mut total_bytes: u64 = 0;
-                    let mut total_free_bytes: u64 = 0;
-
-                    unsafe {
-                        use windows::core::PCWSTR;
-                        use windows::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
-
-                        if GetDiskFreeSpaceExW(
-                            PCWSTR(path_wide.as_ptr()),
-                            Some(&mut free_bytes),
-                            Some(&mut total_bytes),
-                            Some(&mut total_free_bytes),
-                        )
-                        .is_ok()
-                        {
-                            let used_bytes = total_bytes.saturating_sub(total_free_bytes);
-                            drives.push((drive_path, total_bytes, used_bytes, "NTFS".to_string()));
-                        }
-                    }
-                }
-            }
-        }
-
-        Ok(drives)
-    }
-
     fn update_network(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        if let Some(ref mut monitor) = self.network_monitor {
-            if let Ok(interfaces) = monitor.interfaces() {
-                let mut net_interfaces = Vec::new();
-                let mut total_rx_rate = 0.0;
-                let mut total_tx_rate = 0.0;
-                let mut total_rx_bytes = 0;
-                let mut total_tx_bytes = 0;
-
-                for iface in &interfaces {
-                    // Skip loopback and virtual interfaces
-                    if iface.name.starts_with("lo")
-                        || iface.name.contains("Loopback")
-                        || iface.name.starts_with("vEthernet")
-                        || iface.name.starts_with("Local Area Connection*")
-                        || iface.name.starts_with("VMware")
-                        || iface.name.starts_with("VirtualBox")
-                        || !iface.is_active()
-                    {
-                        continue;
-                    }
-
-                    let (rx_rate, tx_rate) = monitor.bandwidth_rate(&iface.name, iface);
-
-                    total_rx_rate += rx_rate;
-                    total_tx_rate += tx_rate;
-                    total_rx_bytes += iface.rx_bytes;
-                    total_tx_bytes += iface.tx_bytes;
-
-                    net_interfaces.push(NetworkInterfaceInfo {
-                        name: iface.name.clone(),
-                        is_up: iface.is_up,
-                        rx_bytes: iface.rx_bytes,
-                        tx_bytes: iface.tx_bytes,
-                        rx_rate,
-                        tx_rate,
-                        speed_mbps: iface.speed_mbps,
-                    });
-                }
-
-                // If no real interfaces found, include all non-loopback active interfaces
-                if net_interfaces.is_empty() {
-                    for iface in &interfaces {
-                        if !iface.name.starts_with("lo")
-                            && !iface.name.contains("Loopback")
-                            && iface.is_active()
-                        {
-                            let (rx_rate, tx_rate) = monitor.bandwidth_rate(&iface.name, iface);
-                            total_rx_rate += rx_rate;
-                            total_tx_rate += tx_rate;
-                            total_rx_bytes += iface.rx_bytes;
-                            total_tx_bytes += iface.tx_bytes;
-
-                            net_interfaces.push(NetworkInterfaceInfo {
-                                name: iface.name.clone(),
-                                is_up: iface.is_up,
-                                rx_bytes: iface.rx_bytes,
-                                tx_bytes: iface.tx_bytes,
-                                rx_rate,
-                                tx_rate,
-                                speed_mbps: iface.speed_mbps,
-                            });
-                        }
-                    }
-                }
-
-                self.network_info = NetworkInfo {
-                    interfaces: net_interfaces,
-                    total_rx_rate,
-                    total_tx_rate,
-                    total_rx_bytes,
-                    total_tx_bytes,
-                };
-
-                // Add to history (convert to KB/s for reasonable scale)
-                self.network_rx_history
-                    .push_back((total_rx_rate / 1024.0) as u64);
-                self.network_tx_history
-                    .push_back((total_tx_rate / 1024.0) as u64);
-                if self.network_rx_history.len() > MAX_HISTORY {
-                    self.network_rx_history.pop_front();
-                }
-                if self.network_tx_history.len() > MAX_HISTORY {
-                    self.network_tx_history.pop_front();
-                }
-            }
+        // Sourced from the collector snapshot; interface filtering and rate
+        // computation happen on the collector thread.
+        if self.snapshot.network.is_empty() && !self.network_info.interfaces.is_empty() {
+            return Ok(());
         }
+
+        let interfaces: Vec<NetworkInterfaceInfo> = self
+            .snapshot
+            .network
+            .iter()
+            .map(|n| NetworkInterfaceInfo {
+                name: n.name.clone(),
+                is_up: n.is_up,
+                rx_bytes: n.rx_bytes,
+                tx_bytes: n.tx_bytes,
+                rx_rate: n.rx_rate,
+                tx_rate: n.tx_rate,
+                speed_mbps: n.speed_mbps,
+            })
+            .collect();
+
+        let total_rx_rate = self.snapshot.total_rx_rate();
+        let total_tx_rate = self.snapshot.total_tx_rate();
+
+        self.network_info = NetworkInfo {
+            total_rx_bytes: interfaces.iter().map(|i| i.rx_bytes).sum(),
+            total_tx_bytes: interfaces.iter().map(|i| i.tx_bytes).sum(),
+            interfaces,
+            total_rx_rate,
+            total_tx_rate,
+        };
+
+        // History is stored in KB/s for a readable vertical scale.
+        self.network_rx_history
+            .push_back((total_rx_rate / 1024.0) as u64);
+        self.network_tx_history
+            .push_back((total_tx_rate / 1024.0) as u64);
+        if self.network_rx_history.len() > MAX_HISTORY {
+            self.network_rx_history.pop_front();
+        }
+        if self.network_tx_history.len() > MAX_HISTORY {
+            self.network_tx_history.pop_front();
+        }
+
         Ok(())
     }
 
     fn update_processes(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        // Get processes from process monitor
-        if let Some(ref mut monitor) = self.process_monitor {
-            self.processes = monitor.processes().unwrap_or_default();
-            // Rebuild cached process order for efficient scrolling
-            self.rebuild_cached_process_order();
+        // Sourced from the collector snapshot. Process enumeration is the most
+        // expensive collector on Windows, so it must never run on the render thread.
+        if self.snapshot.processes.is_empty() && !self.processes.is_empty() {
+            return Ok(());
         }
+
+        self.processes = self.snapshot.processes.clone();
+        self.rebuild_cached_process_order();
         Ok(())
     }
 
@@ -2532,8 +2348,7 @@ impl App {
             let monitor = match SiliconMonitor::new() {
                 Ok(m) => m,
                 Err(e) => {
-                    let _ = response_tx
-                        .send(Err(format!("worker monitor init failed: {}", e)));
+                    let _ = response_tx.send(Err(format!("worker monitor init failed: {}", e)));
                     return;
                 }
             };
@@ -2600,6 +2415,74 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// End-to-end check of the snapshot wiring: the collector thread must publish
+    /// real hardware data, and `sync_snapshot` must fold it into the display fields.
+    ///
+    /// This covers the refactor that moved every `update_*` method off blocking
+    /// platform calls and onto the published snapshot. A regression here means the
+    /// TUI renders stale or empty panels.
+    #[test]
+    fn sync_snapshot_populates_display_state_from_collector() {
+        let mut app = match App::new() {
+            Ok(app) => app,
+            // Constructing the App loads config and spawns collectors; if that is not
+            // possible in this environment there is nothing meaningful to assert.
+            Err(e) => {
+                eprintln!("skipping: App::new failed: {e}");
+                return;
+            }
+        };
+
+        // Cold start is dominated by GPU enumeration, so allow generous headroom.
+        let deadline = Instant::now() + Duration::from_secs(45);
+        let mut applied = false;
+        while Instant::now() < deadline {
+            if app.sync_snapshot() {
+                applied = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+
+        assert!(
+            applied,
+            "collector published no snapshot within 45s; the pipeline is not running"
+        );
+
+        assert!(
+            app.cpu_info.cores > 0,
+            "CPU core count did not reach the display state"
+        );
+        assert!(
+            !app.cpu_info.per_core_usage.is_empty(),
+            "per-core usage did not reach the display state"
+        );
+        assert!(
+            app.memory_info.total > 0,
+            "memory total did not reach the display state"
+        );
+        assert!(
+            app.memory_info.used <= app.memory_info.total,
+            "memory used {} exceeds total {}",
+            app.memory_info.used,
+            app.memory_info.total
+        );
+
+        // The generation guard must make a second immediate sync a no-op, otherwise
+        // the render loop would repaint identical frames.
+        assert!(
+            !app.sync_snapshot(),
+            "sync_snapshot re-applied the same generation"
+        );
+
+        // First call reports the new generation, second reports nothing new.
+        assert!(app.snapshot_changed_since_render());
+        assert!(
+            !app.snapshot_changed_since_render(),
+            "render guard did not consume the generation"
+        );
+    }
 
     #[test]
     fn test_color_theme_all_count() {

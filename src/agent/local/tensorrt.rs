@@ -21,7 +21,7 @@
 //! # Example
 //!
 //! ```no_run
-//! use simon::agent::local::{TensorRtClient, InferenceRequest};
+//! use simonlib::agent::local::{TensorRtClient, InferenceRequest};
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! let client = TensorRtClient::new("localhost:8001")?;
@@ -39,7 +39,7 @@
 //! ```
 
 use super::{InferenceRequest, InferenceResponse, LocalInferenceClient, ModelInfo};
-use crate::error::{SimonError, Result};
+use crate::error::{Result, SimonError};
 use async_trait::async_trait;
 #[cfg(feature = "remote-backends")]
 use serde::{Deserialize, Serialize};
@@ -131,17 +131,24 @@ impl LocalInferenceClient for TensorRtClient {
             }
 
             // Parse Triton model repository response
-            let text = response.text().await.map_err(|e| SimonError::Agent(e.to_string()))?;
+            let text = response
+                .text()
+                .await
+                .map_err(|e| SimonError::Agent(e.to_string()))?;
             if let Ok(repo) = serde_json::from_str::<TritonModelRepository>(&text) {
-                return Ok(repo.models.into_iter().map(|m| ModelInfo {
-                    name: m.name,
-                    size: None,
-                    family: Some("TensorRT-LLM".to_string()),
-                    parameter_count: None,
-                    quantization: None,
-                }).collect());
+                return Ok(repo
+                    .models
+                    .into_iter()
+                    .map(|m| ModelInfo {
+                        name: m.name,
+                        size: None,
+                        family: Some("TensorRT-LLM".to_string()),
+                        parameter_count: None,
+                        quantization: None,
+                    })
+                    .collect());
             }
-            
+
             Ok(vec![])
         }
 
@@ -174,12 +181,15 @@ impl LocalInferenceClient for TensorRtClient {
                         data: vec![request.max_tokens.unwrap_or(256).to_string()],
                     },
                 ],
-                outputs: vec![
-                    TritonOutput { name: "text_output".to_string() },
-                ],
+                outputs: vec![TritonOutput {
+                    name: "text_output".to_string(),
+                }],
             };
 
-            let url = format!("http://{}/v2/models/{}/infer", self.triton_url, request.model);
+            let url = format!(
+                "http://{}/v2/models/{}/infer",
+                self.triton_url, request.model
+            );
             let response = self
                 .client
                 .post(&url)
@@ -197,10 +207,9 @@ impl LocalInferenceClient for TensorRtClient {
                 )));
             }
 
-            let triton_response: TritonInferResponse = response
-                .json()
-                .await
-                .map_err(|e| SimonError::Agent(format!("Failed to parse Triton response: {}", e)))?;
+            let triton_response: TritonInferResponse = response.json().await.map_err(|e| {
+                SimonError::Agent(format!("Failed to parse Triton response: {}", e))
+            })?;
 
             // Extract text from response
             let text = triton_response

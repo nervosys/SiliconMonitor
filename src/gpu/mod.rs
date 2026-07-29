@@ -13,7 +13,7 @@
 //! ## Auto-detect all GPUs
 //!
 //! ```no_run
-//! use simon::gpu::GpuCollection;
+//! use simonlib::gpu::GpuCollection;
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! // Automatically detect and initialize all available GPUs
@@ -36,7 +36,7 @@
 //! ## Access individual GPU devices
 //!
 //! ```no_run
-//! use simon::gpu::GpuCollection;
+//! use simonlib::gpu::GpuCollection;
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! let gpus = GpuCollection::auto_detect()?;
@@ -69,7 +69,7 @@
 //! ```no_run,ignore
 //! // Note: Vendor-specific initialization requires feature flags
 //! // and uses internal types. Use GpuCollection::auto_detect() instead.
-//! use simon::gpu::GpuCollection;
+//! use simonlib::gpu::GpuCollection;
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! let gpus = GpuCollection::auto_detect()?;
@@ -871,9 +871,59 @@ impl GpuCollection {
             .collect()
     }
 
-    /// Get all GPU info snapshots
+    /// Get all GPU info snapshots.
+    ///
+    /// Queries run concurrently across devices. Vendor queries are dominated by
+    /// driver round-trips (NVML, DXGI, sysfs) rather than CPU, so on a multi-GPU
+    /// host this turns an N-device serial walk into roughly the cost of the
+    /// slowest single device.
+    ///
+    /// Short-circuits on the first error, matching the original semantics. Use
+    /// [`GpuCollection::snapshot_all_partial`] when one failing device should not
+    /// blank the rest.
     pub fn snapshot_all(&self) -> Result<Vec<GpuInfo>, crate::Error> {
-        self.gpus.iter().map(|gpu| gpu.info()).collect()
+        self.snapshot_all_partial().into_iter().collect()
+    }
+
+    /// Get all GPU info snapshots, preserving per-device results.
+    ///
+    /// The returned vector is always the same length as [`GpuCollection::len`] and
+    /// is index-aligned with [`GpuCollection::gpus`], so a failing device does not
+    /// shift the indices of its neighbours. This matters for callers that pair
+    /// dynamic samples against static descriptors captured earlier.
+    pub fn snapshot_all_partial(&self) -> Vec<Result<GpuInfo, crate::Error>> {
+        // Spawning is only worth it past one device.
+        if self.gpus.len() <= 1 {
+            return self.gpus.iter().map(|gpu| gpu.info()).collect();
+        }
+
+        std::thread::scope(|scope| {
+            let handles: Vec<_> = self
+                .gpus
+                .iter()
+                .map(|gpu| {
+                    scope.spawn(move || {
+                        // Some Windows GPU paths reach DXGI/WMI, which require COM
+                        // to be initialized on the calling thread.
+                        #[cfg(target_os = "windows")]
+                        let _com = wmi::COMLibrary::new().ok();
+
+                        gpu.info()
+                    })
+                })
+                .collect();
+
+            handles
+                .into_iter()
+                .map(|handle| {
+                    handle.join().unwrap_or_else(|_| {
+                        Err(crate::error::Error::GpuError(
+                            "GPU query panicked".to_string(),
+                        ))
+                    })
+                })
+                .collect()
+        })
     }
 }
 

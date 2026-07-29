@@ -7,7 +7,7 @@
 //! # Examples
 //!
 //! ```no_run
-//! use simon::predictive::{MaintenanceEngine, PredictionConfig};
+//! use simonlib::predictive::{MaintenanceEngine, PredictionConfig};
 //!
 //! let mut engine = MaintenanceEngine::new(PredictionConfig::default());
 //!
@@ -409,13 +409,17 @@ impl MaintenanceEngine {
                             },
                             message: format!(
                                 "GPU {} clocks declining ({:.0} MHz loss over {} samples)",
-                                gpu_idx, decline, ts.len()
+                                gpu_idx,
+                                decline,
+                                ts.len()
                             ),
                             eta_hours: None,
                             degradation_rate: Some(slope),
                             current_value: current,
                             threshold: 0.0,
-                            action: "May indicate chip degradation. Monitor power limits and thermals.".into(),
+                            action:
+                                "May indicate chip degradation. Monitor power limits and thermals."
+                                    .into(),
                             confidence,
                         });
                     }
@@ -558,9 +562,15 @@ impl MaintenanceEngine {
         let alerts = self.predict();
         MaintenanceSummary {
             total_alerts: alerts.len(),
-            critical: alerts.iter().filter(|a| a.urgency == Urgency::Critical).count(),
+            critical: alerts
+                .iter()
+                .filter(|a| a.urgency == Urgency::Critical)
+                .count(),
             high: alerts.iter().filter(|a| a.urgency == Urgency::High).count(),
-            medium: alerts.iter().filter(|a| a.urgency == Urgency::Medium).count(),
+            medium: alerts
+                .iter()
+                .filter(|a| a.urgency == Urgency::Medium)
+                .count(),
             low: alerts.iter().filter(|a| a.urgency == Urgency::Low).count(),
             components_monitored: self.gpu_temps.len()
                 + self.disk_health.len()
@@ -628,7 +638,11 @@ mod tests {
             ts.push(i as f64 * 3.0);
         }
         let r2 = ts.r_squared();
-        assert!(r2 > 0.99, "R² should be near 1.0 for perfect linear data, got {}", r2);
+        assert!(
+            r2 > 0.99,
+            "R² should be near 1.0 for perfect linear data, got {}",
+            r2
+        );
     }
 
     #[test]
@@ -651,7 +665,9 @@ mod tests {
         }
         let alerts = engine.predict();
         assert!(
-            alerts.iter().any(|a| a.issue_type == IssueType::DiskFailure),
+            alerts
+                .iter()
+                .any(|a| a.issue_type == IssueType::DiskFailure),
             "Should detect disk health decline"
         );
     }

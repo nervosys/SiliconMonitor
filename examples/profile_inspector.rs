@@ -32,14 +32,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     "  {:<30} = {}{}",
                     setting.display_name,
                     setting.value,
-                    setting.unit.as_deref().map(|u| format!(" {}", u)).unwrap_or_default()
+                    setting
+                        .unit
+                        .as_deref()
+                        .map(|u| format!(" {}", u))
+                        .unwrap_or_default()
                 );
             }
         }
         Some(name) => match Subsystem::parse(name) {
             Some(sub) => print_subsystem(&mut inspector, sub),
             None => {
-                eprintln!("Unknown subsystem: {}. Valid: gpu, cpu, nvme, display, memory", name);
+                eprintln!(
+                    "Unknown subsystem: {}. Valid: gpu, cpu, nvme, display, memory",
+                    name
+                );
                 std::process::exit(2);
             }
         },
@@ -73,7 +80,11 @@ fn print_subsystem(inspector: &mut ProfileInspector, sub: Subsystem) {
         println!("\n▸ {} ({})", group.device, group.display_name);
         println!("  source: {}", group.source);
         for s in &group.settings {
-            let unit = s.unit.as_deref().map(|u| format!(" {}", u)).unwrap_or_default();
+            let unit = s
+                .unit
+                .as_deref()
+                .map(|u| format!(" {}", u))
+                .unwrap_or_default();
             println!("    {:<28} = {}{}", s.id, s.value, unit);
         }
         for n in &group.notes {

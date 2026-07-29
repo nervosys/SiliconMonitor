@@ -8,8 +8,8 @@
 //! - **Linux**: `/sys/class/dma/`, `/sys/bus/dsa/devices/`
 //! - **Windows / macOS**: Not available
 
-use serde::{Deserialize, Serialize};
 use crate::error::SimonError;
+use serde::{Deserialize, Serialize};
 
 /// DMA engine type.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -144,7 +144,8 @@ impl DmaEngineMonitor {
     #[cfg(target_os = "linux")]
     fn scan() -> Result<DmaOverview, SimonError> {
         let dma_path = std::path::Path::new("/sys/class/dma");
-        let mut controllers: std::collections::HashMap<String, DmaController> = std::collections::HashMap::new();
+        let mut controllers: std::collections::HashMap<String, DmaController> =
+            std::collections::HashMap::new();
 
         if dma_path.exists() {
             let entries = std::fs::read_dir(dma_path).map_err(SimonError::Io)?;
@@ -211,15 +212,27 @@ impl DmaEngineMonitor {
 
         let total = ctrls.len() as u32;
         let total_channels: u32 = ctrls.iter().map(|c| c.channel_count).sum();
-        let has_ioat = ctrls.iter().any(|c| c.engine_type == DmaEngineType::IntelIoat);
-        let has_dsa = ctrls.iter().any(|c| matches!(c.engine_type, DmaEngineType::IntelDsa | DmaEngineType::IntelIax | DmaEngineType::IntelIdxd));
+        let has_ioat = ctrls
+            .iter()
+            .any(|c| c.engine_type == DmaEngineType::IntelIoat);
+        let has_dsa = ctrls.iter().any(|c| {
+            matches!(
+                c.engine_type,
+                DmaEngineType::IntelDsa | DmaEngineType::IntelIax | DmaEngineType::IntelIdxd
+            )
+        });
 
         let mut recs = Vec::new();
         if has_ioat {
-            recs.push("Intel IOAT available — enable kernel DMA offload for network/storage workloads".into());
+            recs.push(
+                "Intel IOAT available — enable kernel DMA offload for network/storage workloads"
+                    .into(),
+            );
         }
         if has_dsa {
-            recs.push("Intel DSA/IAX available — use IDXD driver for memory/compression offload".into());
+            recs.push(
+                "Intel DSA/IAX available — use IDXD driver for memory/compression offload".into(),
+            );
         }
 
         Ok(DmaOverview {
@@ -247,9 +260,15 @@ impl DmaEngineMonitor {
     #[cfg(target_os = "linux")]
     fn detect_engine_type(ctrl_name: &str) -> DmaEngineType {
         // Try to read driver name for the DMA device
-        let sysfs_path = format!("/sys/class/dma/{}chan0/device/driver", ctrl_name.replace("dma", "dma0"));
+        let sysfs_path = format!(
+            "/sys/class/dma/{}chan0/device/driver",
+            ctrl_name.replace("dma", "dma0")
+        );
         if let Ok(link) = std::fs::read_link(&sysfs_path) {
-            let driver = link.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+            let driver = link
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default();
             return match driver.as_str() {
                 "ioatdma" => DmaEngineType::IntelIoat,
                 "idxd" => DmaEngineType::IntelIdxd,
@@ -344,7 +363,9 @@ impl DmaEngineMonitor {
 
     #[cfg(target_os = "linux")]
     fn read_sysfs(path: &std::path::Path) -> Option<String> {
-        std::fs::read_to_string(path).ok().map(|s| s.trim().to_string())
+        std::fs::read_to_string(path)
+            .ok()
+            .map(|s| s.trim().to_string())
     }
 
     #[cfg(target_os = "linux")]
@@ -419,12 +440,39 @@ mod tests {
             engine_type: DmaEngineType::IntelIoat,
             channel_count: 4,
             channels: vec![
-                DmaChannel { name: "dma0chan0".into(), in_use: true, bytes_transferred: Some(1_000_000), transfer_count: Some(100) },
-                DmaChannel { name: "dma0chan1".into(), in_use: false, bytes_transferred: Some(0), transfer_count: Some(0) },
-                DmaChannel { name: "dma0chan2".into(), in_use: true, bytes_transferred: Some(500_000), transfer_count: Some(50) },
-                DmaChannel { name: "dma0chan3".into(), in_use: false, bytes_transferred: None, transfer_count: None },
+                DmaChannel {
+                    name: "dma0chan0".into(),
+                    in_use: true,
+                    bytes_transferred: Some(1_000_000),
+                    transfer_count: Some(100),
+                },
+                DmaChannel {
+                    name: "dma0chan1".into(),
+                    in_use: false,
+                    bytes_transferred: Some(0),
+                    transfer_count: Some(0),
+                },
+                DmaChannel {
+                    name: "dma0chan2".into(),
+                    in_use: true,
+                    bytes_transferred: Some(500_000),
+                    transfer_count: Some(50),
+                },
+                DmaChannel {
+                    name: "dma0chan3".into(),
+                    in_use: false,
+                    bytes_transferred: None,
+                    transfer_count: None,
+                },
             ],
-            capabilities: DmaCapabilities { memcpy: true, xor: true, memset: true, sg: true, pq: false, interrupt: true },
+            capabilities: DmaCapabilities {
+                memcpy: true,
+                xor: true,
+                memset: true,
+                sg: true,
+                pq: false,
+                interrupt: true,
+            },
             numa_node: 0,
         };
         let active: Vec<_> = ctrl.channels.iter().filter(|c| c.in_use).collect();

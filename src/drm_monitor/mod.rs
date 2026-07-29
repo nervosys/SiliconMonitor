@@ -240,10 +240,7 @@ impl DrmMonitor {
     }
 
     #[cfg(target_os = "linux")]
-    fn read_drm_device(
-        card_name: &str,
-        path: &std::path::Path,
-    ) -> Result<DrmDevice, SimonError> {
+    fn read_drm_device(card_name: &str, path: &std::path::Path) -> Result<DrmDevice, SimonError> {
         let device_path = path.join("device");
 
         // Read driver
@@ -301,10 +298,7 @@ impl DrmMonitor {
     }
 
     #[cfg(target_os = "linux")]
-    fn read_connectors(
-        card_name: &str,
-        _card_path: &std::path::Path,
-    ) -> Vec<DrmConnector> {
+    fn read_connectors(card_name: &str, _card_path: &std::path::Path) -> Vec<DrmConnector> {
         let drm_path = std::path::Path::new("/sys/class/drm");
         let mut connectors = Vec::new();
 

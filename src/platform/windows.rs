@@ -10,7 +10,7 @@ use crate::core::{
     power::PowerStats,
     temperature::TemperatureStats,
 };
-use crate::error::{SimonError, Result};
+use crate::error::{Result, SimonError};
 use std::collections::HashMap;
 use std::mem;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -41,17 +41,32 @@ pub fn read_cpu_stats() -> Result<CpuStats> {
     let model = get_cpu_model_name();
     let frequency = get_cpu_frequency();
 
-    // Create cores (Windows doesn't provide per-core stats easily without PDH)
+    // Real per-processor times. Falls back to `None` if the query fails, which
+    // consumers render as "unavailable" — deliberately not the system average.
+    //
+    // Until this existed, every core was assigned the *system-wide* figure from
+    // GetSystemTimes, so a 24-core machine showed 24 identical bars that looked like
+    // per-core measurements but were one number repeated.
+    let per_core = read_per_core_utilization(cpu_count);
+
     for cpu_id in 0..cpu_count {
+        let (core_user, core_system, core_idle) = match per_core {
+            Some(ref cores) => match cores.get(cpu_id) {
+                Some(&(u, s, i)) => (Some(u), Some(s), Some(i)),
+                None => (None, None, None),
+            },
+            None => (None, None, None),
+        };
+
         let core = CpuCore {
             id: cpu_id,
             online: true,
             governor: "windows".to_string(),
             frequency: frequency.clone(),
-            user: Some(user_percent),
+            user: core_user,
             nice: Some(0.0), // Windows doesn't have nice
-            system: Some(system_percent),
-            idle: Some(idle_percent),
+            system: core_system,
+            idle: core_idle,
             model: model.clone(),
         };
         stats.cores.push(core);
@@ -66,6 +81,146 @@ pub fn read_cpu_stats() -> Result<CpuStats> {
     };
 
     Ok(stats)
+}
+
+// ============================================================================
+// Per-processor CPU times
+// ============================================================================
+
+/// Per-processor timing record returned by `NtQuerySystemInformation`.
+///
+/// Mirrors `SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION`. Times are in 100ns units, and
+/// `kernel_time` *includes* `idle_time`, matching `GetSystemTimes`.
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+struct SystemProcessorPerformanceInformation {
+    idle_time: i64,
+    kernel_time: i64,
+    user_time: i64,
+    dpc_time: i64,
+    interrupt_time: i64,
+    interrupt_count: u32,
+    // Explicit tail padding so the struct stride matches what the kernel writes;
+    // the array is indexed by stride, so getting this wrong misaligns every core
+    // after the first.
+    _reserved: u32,
+}
+
+/// `SystemProcessorPerformanceInformation` information class.
+const SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION_CLASS: u32 = 8;
+
+#[link(name = "ntdll")]
+extern "system" {
+    /// Queries kernel performance data.
+    ///
+    /// Used because Win32 exposes no per-processor time API: `GetSystemTimes` is
+    /// system-wide, and the documented alternative (PDH `\Processor(N)\% Processor
+    /// Time`) requires a persistent query handle and two sampling passes. This call
+    /// is what Task Manager and every mainstream monitor rely on.
+    fn NtQuerySystemInformation(
+        system_information_class: u32,
+        system_information: *mut core::ffi::c_void,
+        system_information_length: u32,
+        return_length: *mut u32,
+    ) -> i32;
+}
+
+/// Previous per-processor sample, for delta calculation.
+static PREV_PER_CORE: std::sync::OnceLock<
+    std::sync::Mutex<Vec<SystemProcessorPerformanceInformation>>,
+> = std::sync::OnceLock::new();
+
+/// Read raw per-processor times.
+fn query_per_core_times(cpu_count: usize) -> Option<Vec<SystemProcessorPerformanceInformation>> {
+    if cpu_count == 0 {
+        return None;
+    }
+
+    let mut buffer: Vec<SystemProcessorPerformanceInformation> =
+        vec![SystemProcessorPerformanceInformation::default(); cpu_count];
+    let byte_len = std::mem::size_of_val(buffer.as_slice()) as u32;
+    let mut returned: u32 = 0;
+
+    // SAFETY: the buffer is sized for exactly `cpu_count` records and its length in
+    // bytes is passed alongside it, so the kernel cannot write past the end. Both
+    // out-pointers reference live local storage for the duration of the call.
+    let status = unsafe {
+        NtQuerySystemInformation(
+            SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION_CLASS,
+            buffer.as_mut_ptr() as *mut core::ffi::c_void,
+            byte_len,
+            &mut returned,
+        )
+    };
+
+    // NTSTATUS: negative values are failures.
+    if status < 0 {
+        return None;
+    }
+
+    // Trust the kernel's reported count over our assumption: a machine with more than
+    // 64 logical processors splits into processor groups, and GetSystemInfo reports
+    // only the calling group.
+    let record_size = std::mem::size_of::<SystemProcessorPerformanceInformation>();
+    let returned_records = (returned as usize) / record_size;
+    if returned_records == 0 {
+        return None;
+    }
+    buffer.truncate(returned_records.min(cpu_count));
+
+    Some(buffer)
+}
+
+/// Per-core `(user, system, idle)` percentages.
+///
+/// The first call has no previous sample to difference against, so it reports each
+/// core's average since boot — genuinely per-core, just averaged over uptime. Every
+/// later call reports the delta since the previous call, which is the instantaneous
+/// figure callers expect.
+fn read_per_core_utilization(cpu_count: usize) -> Option<Vec<(f32, f32, f32)>> {
+    let current = query_per_core_times(cpu_count)?;
+
+    let lock = PREV_PER_CORE.get_or_init(|| std::sync::Mutex::new(Vec::new()));
+    let mut previous = lock.lock().ok()?;
+
+    let use_deltas = previous.len() == current.len();
+
+    let result = current
+        .iter()
+        .enumerate()
+        .map(|(i, now)| {
+            let (idle, kernel, user) = if use_deltas {
+                let before = &previous[i];
+                (
+                    now.idle_time.saturating_sub(before.idle_time),
+                    now.kernel_time.saturating_sub(before.kernel_time),
+                    now.user_time.saturating_sub(before.user_time),
+                )
+            } else {
+                (now.idle_time, now.kernel_time, now.user_time)
+            };
+
+            // kernel_time includes idle_time, so system time is the remainder.
+            let system = kernel.saturating_sub(idle);
+            let total = idle + system + user;
+
+            if total <= 0 {
+                // No elapsed time between samples — report fully idle rather than
+                // dividing by zero.
+                return (0.0, 0.0, 100.0);
+            }
+
+            let total = total as f32;
+            (
+                (user as f32 / total) * 100.0,
+                (system as f32 / total) * 100.0,
+                (idle as f32 / total) * 100.0,
+            )
+        })
+        .collect();
+
+    *previous = current;
+    Some(result)
 }
 
 /// Get CPU utilization using kernel32 GetSystemTimes via FFI
@@ -553,9 +708,8 @@ pub fn read_process_stats() -> Result<crate::core::process::ProcessStats> {
 
     unsafe {
         // Create snapshot of all processes
-        let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0).map_err(|e| {
-            SimonError::System(format!("Failed to create process snapshot: {}", e))
-        })?;
+        let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
+            .map_err(|e| SimonError::System(format!("Failed to create process snapshot: {}", e)))?;
 
         let mut entry: PROCESSENTRY32W = mem::zeroed();
         entry.dwSize = mem::size_of::<PROCESSENTRY32W>() as u32;
@@ -666,9 +820,198 @@ pub fn read_process_stats() -> Result<crate::core::process::ProcessStats> {
     Ok(stats)
 }
 
+// ============================================================================
+// Logical drive enumeration
+// ============================================================================
+
+/// A mounted logical drive with capacity and filesystem information.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LogicalDrive {
+    /// Drive root, e.g. `C:\`.
+    pub name: String,
+    /// Total capacity in bytes.
+    pub total: u64,
+    /// Used bytes (total minus free).
+    pub used: u64,
+    /// Free bytes available to the caller.
+    pub free: u64,
+    /// Filesystem name as reported by the volume, e.g. `NTFS`, `exFAT`.
+    pub filesystem: String,
+}
+
+/// Enumerate mounted logical drives.
+///
+/// This is deliberately cheaper and safer than probing `A:`..`Z:` with
+/// `fs::metadata`:
+///
+/// - `GetLogicalDrives` returns the present-drive bitmask in a single call rather
+///   than 26 filesystem round-trips.
+/// - Network (`DRIVE_REMOTE`) and optical (`DRIVE_CDROM`) volumes are skipped.
+///   A disconnected mapped network drive can block for seconds on capacity queries,
+///   which would stall the collector tick.
+/// - The filesystem name comes from `GetVolumeInformationW` instead of being
+///   hardcoded to `"NTFS"`.
+pub fn logical_drives() -> Result<Vec<LogicalDrive>> {
+    use windows::core::PCWSTR;
+    use windows::Win32::Storage::FileSystem::{
+        GetDiskFreeSpaceExW, GetDriveTypeW, GetLogicalDrives, GetVolumeInformationW,
+    };
+
+    const DRIVE_REMOTE: u32 = 4;
+    const DRIVE_CDROM: u32 = 5;
+
+    let mask = unsafe { GetLogicalDrives() };
+    if mask == 0 {
+        return Err(SimonError::Other(
+            "GetLogicalDrives returned no drives".to_string(),
+        ));
+    }
+
+    let mut drives = Vec::new();
+
+    for bit in 0..26u32 {
+        if mask & (1 << bit) == 0 {
+            continue;
+        }
+
+        let letter = b'A' + bit as u8;
+        // Drive roots are pure ASCII, so build the wide string directly rather than
+        // allocating through OsStr.
+        let root_wide: [u16; 4] = [letter as u16, b':' as u16, b'\\' as u16, 0];
+        let root = PCWSTR(root_wide.as_ptr());
+
+        // Skip volumes whose capacity queries can block.
+        let drive_type = unsafe { GetDriveTypeW(root) };
+        if drive_type == DRIVE_REMOTE || drive_type == DRIVE_CDROM {
+            continue;
+        }
+
+        let mut free_to_caller: u64 = 0;
+        let mut total: u64 = 0;
+        let mut total_free: u64 = 0;
+
+        let has_space = unsafe {
+            GetDiskFreeSpaceExW(
+                root,
+                Some(&mut free_to_caller),
+                Some(&mut total),
+                Some(&mut total_free),
+            )
+            .is_ok()
+        };
+
+        // An empty card reader reports as present but has no media.
+        if !has_space || total == 0 {
+            continue;
+        }
+
+        let mut fs_buf = [0u16; 32];
+        let filesystem = unsafe {
+            if GetVolumeInformationW(root, None, None, None, None, Some(&mut fs_buf)).is_ok() {
+                let len = fs_buf.iter().position(|&c| c == 0).unwrap_or(fs_buf.len());
+                String::from_utf16_lossy(&fs_buf[..len])
+            } else {
+                "Unknown".to_string()
+            }
+        };
+
+        drives.push(LogicalDrive {
+            name: format!("{}:\\", letter as char),
+            total,
+            used: total.saturating_sub(total_free),
+            free: free_to_caller,
+            filesystem,
+        });
+    }
+
+    Ok(drives)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Per-core figures must be genuinely per-core, not one number replicated.
+    ///
+    /// This is the regression that motivated the NtQuerySystemInformation path:
+    /// `GetSystemTimes` is system-wide, so every core previously reported the same
+    /// value and a 24-core box drew 24 identical bars that looked measured.
+    #[test]
+    fn per_core_utilization_is_not_the_system_average() {
+        let cpu_count = num_cpus::get();
+
+        // Assert on the *cumulative* counters rather than instantaneous percentages.
+        //
+        // An earlier version of this test loaded one thread and asserted the busiest
+        // and least-busy cores differed. That is flaky by construction: run under a
+        // saturated machine (the full test suite, or CI) every core legitimately
+        // reads 100% busy, and the test fails on correct data.
+        //
+        // Idle time accumulated since boot, by contrast, differs per core on any real
+        // system regardless of present load — and is exactly what would be identical
+        // if the values were the system aggregate replicated, which was the bug.
+        let raw = query_per_core_times(cpu_count)
+            .expect("NtQuerySystemInformation returned no per-processor data");
+        assert!(!raw.is_empty(), "no per-processor records returned");
+
+        if raw.len() > 1 {
+            let distinct = raw
+                .iter()
+                .map(|r| r.idle_time)
+                .collect::<std::collections::HashSet<_>>()
+                .len();
+            eprintln!(
+                "{} distinct cumulative idle times across {} cores",
+                distinct,
+                raw.len()
+            );
+            assert!(
+                distinct > 1,
+                "all {} cores report identical cumulative idle time — the values are \
+                 a single system-wide figure replicated, not per-core data",
+                raw.len()
+            );
+        }
+
+        // Percentages must still be well-formed, whatever the load happens to be.
+        let cores = read_per_core_utilization(cpu_count).expect("per-core utilization");
+        for (i, (user, system, idle)) in cores.iter().enumerate() {
+            let total = user + system + idle;
+            assert!(
+                (total - 100.0).abs() < 1.0,
+                "core {i} percentages sum to {total}, expected ~100"
+            );
+            assert!(
+                (0.0..=100.0).contains(idle),
+                "core {i} idle {idle} out of range"
+            );
+        }
+    }
+
+    #[test]
+    fn test_logical_drives() {
+        let drives = logical_drives().expect("enumeration should succeed");
+        assert!(
+            !drives.is_empty(),
+            "a Windows host always has at least one fixed drive"
+        );
+        for drive in &drives {
+            assert!(drive.total > 0, "{} reported zero capacity", drive.name);
+            assert!(
+                drive.used <= drive.total,
+                "{} used {} exceeds total {}",
+                drive.name,
+                drive.used,
+                drive.total
+            );
+            assert!(
+                drive.name.ends_with(":\\"),
+                "{} is not a drive root",
+                drive.name
+            );
+            assert!(!drive.filesystem.is_empty());
+        }
+    }
 
     #[test]
     fn test_read_cpu_stats() {

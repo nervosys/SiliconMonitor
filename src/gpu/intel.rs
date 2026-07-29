@@ -621,8 +621,10 @@ fn detect_intel_gpus_wmi(collection: &mut GpuCollection) -> Result<(), Error> {
 
         // Use DXGI for accurate VRAM and LUID (fixes 4GB WMI cap)
         let dxgi_adapters = super::windows_helpers::enumerate_dxgi_adapters();
-        let dxgi_match = super::windows_helpers::find_dxgi_adapter(&dxgi_adapters, name)
-            .or_else(|| super::windows_helpers::find_dxgi_adapter_by_vendor(&dxgi_adapters, 0x8086));
+        let dxgi_match =
+            super::windows_helpers::find_dxgi_adapter(&dxgi_adapters, name).or_else(|| {
+                super::windows_helpers::find_dxgi_adapter_by_vendor(&dxgi_adapters, 0x8086)
+            });
 
         let (dedicated_video_memory, shared_system_memory, luid_filter) =
             if let Some(dxgi) = &dxgi_match {
@@ -684,7 +686,10 @@ struct WinIntelPerfData {
 }
 
 #[cfg(windows)]
-fn query_intel_gpu_perf_counters(adapter_name_filter: &str, luid_filter: Option<&str>) -> WinIntelPerfData {
+fn query_intel_gpu_perf_counters(
+    adapter_name_filter: &str,
+    luid_filter: Option<&str>,
+) -> WinIntelPerfData {
     // Use shared helper for engine + memory data
     let perf = super::windows_helpers::query_gpu_perf_counters(luid_filter);
 
@@ -725,10 +730,7 @@ impl Gpu for WmiIntelGpu {
 
     fn dynamic_info(&self) -> Result<GpuDynamicInfo, Error> {
         // Query real-time GPU performance counters via shared helpers
-        let perf = query_intel_gpu_perf_counters(
-            &self.gpu_name_hint,
-            self.luid_filter.as_deref(),
-        );
+        let perf = query_intel_gpu_perf_counters(&self.gpu_name_hint, self.luid_filter.as_deref());
 
         // For Intel iGPUs, memory is shared with system
         // For Arc discrete GPUs, we have dedicated VRAM

@@ -12,7 +12,7 @@
 //! ## List All Interfaces
 //!
 //! ```no_run
-//! use simon::NetworkMonitor;
+//! use simonlib::NetworkMonitor;
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! let mut monitor = NetworkMonitor::new()?;
@@ -32,7 +32,7 @@
 //! ## Monitor Active Interfaces
 //!
 //! ```no_run
-//! use simon::NetworkMonitor;
+//! use simonlib::NetworkMonitor;
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! let mut monitor = NetworkMonitor::new()?;
@@ -55,7 +55,7 @@
 //! ## Calculate Bandwidth Rates
 //!
 //! ```no_run
-//! use simon::NetworkMonitor;
+//! use simonlib::NetworkMonitor;
 //! use std::{thread, time::Duration};
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -84,7 +84,7 @@
 //! ## Monitor Specific Interface
 //!
 //! ```no_run
-//! use simon::NetworkMonitor;
+//! use simonlib::NetworkMonitor;
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! let mut monitor = NetworkMonitor::new()?;
@@ -115,7 +115,7 @@
 //! ## Track Interface Health
 //!
 //! ```no_run
-//! use simon::NetworkMonitor;
+//! use simonlib::NetworkMonitor;
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! let mut monitor = NetworkMonitor::new()?;

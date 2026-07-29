@@ -27,8 +27,8 @@
 //! println!("Risk score: {}/100", inventory.risk_score());
 //! ```
 
-use serde::{Deserialize, Serialize};
 use crate::error::SimonError;
+use serde::{Deserialize, Serialize};
 
 /// Firmware component type.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -167,12 +167,18 @@ impl FirmwareInventory {
 
     /// Overall firmware risk score (max across all components).
     pub fn risk_score(&self) -> u8 {
-        self.entries.iter().map(|e| e.inferred_risk_score).max().unwrap_or(0)
+        self.entries
+            .iter()
+            .map(|e| e.inferred_risk_score)
+            .max()
+            .unwrap_or(0)
     }
 
     /// Average firmware age in days.
     pub fn average_firmware_age_days(&self) -> Option<f64> {
-        let ages: Vec<f64> = self.entries.iter()
+        let ages: Vec<f64> = self
+            .entries
+            .iter()
             .filter_map(|e| e.estimated_age_days.map(|d| d as f64))
             .collect();
         if ages.is_empty() {
@@ -184,7 +190,10 @@ impl FirmwareInventory {
 
     /// Firmware entries that need attention (risk > 50).
     pub fn high_risk_entries(&self) -> Vec<&FirmwareEntry> {
-        self.entries.iter().filter(|e| e.inferred_risk_score > 50).collect()
+        self.entries
+            .iter()
+            .filter(|e| e.inferred_risk_score > 50)
+            .collect()
     }
 
     /// Estimate age from date string.
@@ -253,12 +262,12 @@ impl FirmwareInventory {
         // Age-based risk
         if let Some(age_days) = entry.estimated_age_days {
             risk = match age_days {
-                0..=180 => 0,        // < 6 months: low risk
-                181..=365 => 10,     // 6-12 months
-                366..=730 => 25,     // 1-2 years
-                731..=1095 => 45,    // 2-3 years
-                1096..=1825 => 65,   // 3-5 years
-                _ => 85,            // 5+ years: high risk
+                0..=180 => 0,      // < 6 months: low risk
+                181..=365 => 10,   // 6-12 months
+                366..=730 => 25,   // 1-2 years
+                731..=1095 => 45,  // 2-3 years
+                1096..=1825 => 65, // 3-5 years
+                _ => 85,           // 5+ years: high risk
             };
         }
 
@@ -295,19 +304,31 @@ impl FirmwareInventory {
 
         // System info
         self.system_vendor = std::fs::read_to_string(dmi.join("sys_vendor"))
-            .unwrap_or_default().trim().to_string();
+            .unwrap_or_default()
+            .trim()
+            .to_string();
         self.system_product = std::fs::read_to_string(dmi.join("product_name"))
-            .unwrap_or_default().trim().to_string();
+            .unwrap_or_default()
+            .trim()
+            .to_string();
         self.system_serial = std::fs::read_to_string(dmi.join("product_serial"))
-            .unwrap_or_default().trim().to_string();
+            .unwrap_or_default()
+            .trim()
+            .to_string();
 
         // BIOS
         let bios_vendor = std::fs::read_to_string(dmi.join("bios_vendor"))
-            .unwrap_or_default().trim().to_string();
+            .unwrap_or_default()
+            .trim()
+            .to_string();
         let bios_version = std::fs::read_to_string(dmi.join("bios_version"))
-            .unwrap_or_default().trim().to_string();
+            .unwrap_or_default()
+            .trim()
+            .to_string();
         let bios_date = std::fs::read_to_string(dmi.join("bios_date"))
-            .unwrap_or_default().trim().to_string();
+            .unwrap_or_default()
+            .trim()
+            .to_string();
 
         if !bios_vendor.is_empty() {
             self.entries.push(FirmwareEntry {
@@ -325,7 +346,8 @@ impl FirmwareInventory {
         // Secure boot check
         if std::path::Path::new("/sys/firmware/efi").exists() {
             self.boot_mode = BootMode::UEFI;
-            let sb_path = "/sys/firmware/efi/efivars/SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c";
+            let sb_path =
+                "/sys/firmware/efi/efivars/SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c";
             if let Ok(data) = std::fs::read(sb_path) {
                 // Last byte: 1 = enabled, 0 = disabled
                 self.secure_boot = if data.last() == Some(&1) {
@@ -416,7 +438,9 @@ impl FirmwareInventory {
                                 FirmwareComponent::Thunderbolt
                             } else if name.to_lowercase().contains("tpm") {
                                 FirmwareComponent::Tpm
-                            } else if name.to_lowercase().contains("bmc") || name.to_lowercase().contains("ipmi") {
+                            } else if name.to_lowercase().contains("bmc")
+                                || name.to_lowercase().contains("ipmi")
+                            {
                                 FirmwareComponent::Bmc
                             } else {
                                 FirmwareComponent::Other(name.to_string())
@@ -428,9 +452,12 @@ impl FirmwareInventory {
                                 version: version.to_string(),
                                 date: String::new(),
                                 device: name.to_string(),
-                                updateable: dev.get("Flags")
+                                updateable: dev
+                                    .get("Flags")
                                     .and_then(|f| f.as_array())
-                                    .map(|flags| flags.iter().any(|f| f.as_str() == Some("updatable")))
+                                    .map(|flags| {
+                                        flags.iter().any(|f| f.as_str() == Some("updatable"))
+                                    })
                                     .unwrap_or(false),
                                 estimated_age_days: None,
                                 inferred_risk_score: 0,
@@ -508,11 +535,13 @@ impl FirmwareInventory {
 
         // Secure Boot status
         if let Ok(output) = std::process::Command::new("powershell")
-            .args(["-NoProfile", "-Command",
-                "Confirm-SecureBootUEFI"])
+            .args(["-NoProfile", "-Command", "Confirm-SecureBootUEFI"])
             .output()
         {
-            let text = String::from_utf8(output.stdout).unwrap_or_default().trim().to_string();
+            let text = String::from_utf8(output.stdout)
+                .unwrap_or_default()
+                .trim()
+                .to_string();
             self.secure_boot = match text.as_str() {
                 "True" => SecureBootStatus::Enabled,
                 "False" => SecureBootStatus::Disabled,
@@ -669,9 +698,18 @@ mod tests {
 
     #[test]
     fn test_date_parsing() {
-        assert_eq!(FirmwareInventory::parse_date("2024-01-15"), Some((2024, 1, 15)));
-        assert_eq!(FirmwareInventory::parse_date("01/15/2024"), Some((2024, 1, 15)));
-        assert_eq!(FirmwareInventory::parse_date("20240115"), Some((2024, 1, 15)));
+        assert_eq!(
+            FirmwareInventory::parse_date("2024-01-15"),
+            Some((2024, 1, 15))
+        );
+        assert_eq!(
+            FirmwareInventory::parse_date("01/15/2024"),
+            Some((2024, 1, 15))
+        );
+        assert_eq!(
+            FirmwareInventory::parse_date("20240115"),
+            Some((2024, 1, 15))
+        );
     }
 
     #[test]

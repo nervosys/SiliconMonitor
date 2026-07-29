@@ -3,7 +3,7 @@
 //! This module provides configuration persistence for TUI preferences,
 //! display options, and monitoring settings.
 
-use crate::error::{SimonError, Result};
+use crate::error::{Result, SimonError};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 

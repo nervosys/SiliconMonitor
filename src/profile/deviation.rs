@@ -27,7 +27,9 @@ pub fn deviations_from_default(snapshot: &ProfileSnapshot) -> Vec<Deviation> {
     for (sub, groups) in &snapshot.providers {
         for group in groups {
             for s in &group.settings {
-                let Some(default) = s.default.clone() else { continue };
+                let Some(default) = s.default.clone() else {
+                    continue;
+                };
                 if default == s.value {
                     continue;
                 }

@@ -21,8 +21,8 @@
 //! }
 //! ```
 
-use serde::{Deserialize, Serialize};
 use crate::error::SimonError;
+use serde::{Deserialize, Serialize};
 
 /// Overall disk health assessment
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -155,13 +155,22 @@ impl SmartMonitor {
     pub fn unhealthy_disks(&self) -> Vec<&SmartDiskInfo> {
         self.disks
             .iter()
-            .filter(|d| matches!(d.health, DiskHealth::Warning | DiskHealth::Critical | DiskHealth::Failed))
+            .filter(|d| {
+                matches!(
+                    d.health,
+                    DiskHealth::Warning | DiskHealth::Critical | DiskHealth::Failed
+                )
+            })
             .collect()
     }
 
     /// Get the hottest disk temperature.
     pub fn max_temperature(&self) -> u32 {
-        self.disks.iter().map(|d| d.temperature_celsius).max().unwrap_or(0)
+        self.disks
+            .iter()
+            .map(|d| d.temperature_celsius)
+            .max()
+            .unwrap_or(0)
     }
 
     /// Infer health status and remaining life from raw attributes.
@@ -327,18 +336,17 @@ impl SmartMonitor {
                                     .unwrap_or(0);
                                 disk.power_on_hours = val["power_on_hours"].as_u64().unwrap_or(0);
                                 disk.power_cycle_count = val["power_cycles"].as_u64().unwrap_or(0);
-                                disk.nvme_percentage_used = val["percent_used"].as_u64().map(|v| v as u8);
-                                disk.nvme_available_spare = val["avail_spare"].as_u64().map(|v| v as u8);
-                                disk.uncorrectable_errors = val["media_errors"].as_u64().unwrap_or(0);
+                                disk.nvme_percentage_used =
+                                    val["percent_used"].as_u64().map(|v| v as u8);
+                                disk.nvme_available_spare =
+                                    val["avail_spare"].as_u64().map(|v| v as u8);
+                                disk.uncorrectable_errors =
+                                    val["media_errors"].as_u64().unwrap_or(0);
                                 // data_units_written * 512 * 1000
-                                disk.total_bytes_written = val["data_units_written"]
-                                    .as_u64()
-                                    .unwrap_or(0)
-                                    * 512_000;
-                                disk.total_bytes_read = val["data_units_read"]
-                                    .as_u64()
-                                    .unwrap_or(0)
-                                    * 512_000;
+                                disk.total_bytes_written =
+                                    val["data_units_written"].as_u64().unwrap_or(0) * 512_000;
+                                disk.total_bytes_read =
+                                    val["data_units_read"].as_u64().unwrap_or(0) * 512_000;
                             }
                         }
                     }
@@ -430,18 +438,18 @@ impl SmartMonitor {
                     let pre_fail = attr["flags"]["prefailure"].as_bool().unwrap_or(false);
 
                     match id {
-                        5 => disk.reallocated_sectors = raw_val,     // Reallocated_Sector_Ct
-                        9 => disk.power_on_hours = raw_val,          // Power_On_Hours
-                        12 => disk.power_cycle_count = raw_val,      // Power_Cycle_Count
+                        5 => disk.reallocated_sectors = raw_val, // Reallocated_Sector_Ct
+                        9 => disk.power_on_hours = raw_val,      // Power_On_Hours
+                        12 => disk.power_cycle_count = raw_val,  // Power_Cycle_Count
                         177 | 233 => {
                             // Wear_Leveling_Count or Media_Wearout_Indicator
                             disk.wear_leveling_percent = Some(100.0 - value as f32);
                         }
                         194 | 190 => disk.temperature_celsius = raw_val as u32, // Temperature
-                        197 => disk.pending_sectors = raw_val,       // Current_Pending_Sector
-                        198 => disk.uncorrectable_errors = raw_val,  // Offline_Uncorrectable
+                        197 => disk.pending_sectors = raw_val, // Current_Pending_Sector
+                        198 => disk.uncorrectable_errors = raw_val, // Offline_Uncorrectable
                         241 => disk.total_bytes_written = raw_val * 512, // Total_LBAs_Written
-                        242 => disk.total_bytes_read = raw_val * 512,   // Total_LBAs_Read
+                        242 => disk.total_bytes_read = raw_val * 512, // Total_LBAs_Read
                         _ => {}
                     }
 
@@ -471,7 +479,10 @@ impl SmartMonitor {
     fn refresh_windows(&mut self) {
         // Use Get-PhysicalDisk + Get-StorageReliabilityCounter
         if let Ok(output) = std::process::Command::new("powershell")
-            .args(["-NoProfile", "-Command", r#"
+            .args([
+                "-NoProfile",
+                "-Command",
+                r#"
 Get-PhysicalDisk | ForEach-Object {
     $disk = $_
     $rel = $_ | Get-StorageReliabilityCounter -ErrorAction SilentlyContinue
@@ -491,7 +502,8 @@ Get-PhysicalDisk | ForEach-Object {
         Wear = if ($rel) { $rel.Wear } else { $null }
     }
 } | ConvertTo-Json -Compress
-"#])
+"#,
+            ])
             .output()
         {
             if let Ok(text) = String::from_utf8(output.stdout) {
@@ -510,9 +522,13 @@ Get-PhysicalDisk | ForEach-Object {
                             _ => {
                                 // Infer from model name
                                 let model = item["Model"].as_str().unwrap_or("").to_lowercase();
-                                if model.contains("nvme") { DriveMediaType::NVMe }
-                                else if model.contains("ssd") { DriveMediaType::SSD }
-                                else { DriveMediaType::Unknown }
+                                if model.contains("nvme") {
+                                    DriveMediaType::NVMe
+                                } else if model.contains("ssd") {
+                                    DriveMediaType::SSD
+                                } else {
+                                    DriveMediaType::Unknown
+                                }
                             }
                         };
 
@@ -527,10 +543,21 @@ Get-PhysicalDisk | ForEach-Object {
                         let wear = item["Wear"].as_u64().map(|w| w as f32);
 
                         self.disks.push(SmartDiskInfo {
-                            device: format!(r"\\.\PhysicalDrive{}", item["DeviceId"].as_u64().unwrap_or(0)),
+                            device: format!(
+                                r"\\.\PhysicalDrive{}",
+                                item["DeviceId"].as_u64().unwrap_or(0)
+                            ),
                             model: item["Model"].as_str().unwrap_or("").trim().to_string(),
-                            serial: item["SerialNumber"].as_str().unwrap_or("").trim().to_string(),
-                            firmware: item["FirmwareVersion"].as_str().unwrap_or("").trim().to_string(),
+                            serial: item["SerialNumber"]
+                                .as_str()
+                                .unwrap_or("")
+                                .trim()
+                                .to_string(),
+                            firmware: item["FirmwareVersion"]
+                                .as_str()
+                                .unwrap_or("")
+                                .trim()
+                                .to_string(),
                             media_type,
                             capacity_bytes: item["Size"].as_u64().unwrap_or(0),
                             health,
@@ -568,7 +595,9 @@ Get-PhysicalDisk | ForEach-Object {
                     if let Some(devices) = val["devices"].as_array() {
                         for dev in devices {
                             let name = dev["name"].as_str().unwrap_or_default();
-                            if name.is_empty() { continue; }
+                            if name.is_empty() {
+                                continue;
+                            }
 
                             let mut disk = SmartDiskInfo {
                                 device: name.to_string(),
@@ -607,14 +636,25 @@ Get-PhysicalDisk | ForEach-Object {
                                 .output()
                             {
                                 if let Ok(info_text) = String::from_utf8(info_out.stdout) {
-                                    if let Ok(info) = serde_json::from_str::<serde_json::Value>(&info_text) {
-                                        disk.model = info["model_name"].as_str().unwrap_or("").to_string();
-                                        disk.serial = info["serial_number"].as_str().unwrap_or("").to_string();
-                                        disk.firmware = info["firmware_version"].as_str().unwrap_or("").to_string();
-                                        if let Some(temp) = info["temperature"]["current"].as_u64() {
+                                    if let Ok(info) =
+                                        serde_json::from_str::<serde_json::Value>(&info_text)
+                                    {
+                                        disk.model =
+                                            info["model_name"].as_str().unwrap_or("").to_string();
+                                        disk.serial = info["serial_number"]
+                                            .as_str()
+                                            .unwrap_or("")
+                                            .to_string();
+                                        disk.firmware = info["firmware_version"]
+                                            .as_str()
+                                            .unwrap_or("")
+                                            .to_string();
+                                        if let Some(temp) = info["temperature"]["current"].as_u64()
+                                        {
                                             disk.temperature_celsius = temp as u32;
                                         }
-                                        if let Some(hours) = info["power_on_time"]["hours"].as_u64() {
+                                        if let Some(hours) = info["power_on_time"]["hours"].as_u64()
+                                        {
                                             disk.power_on_hours = hours;
                                         }
                                     }
@@ -639,7 +679,10 @@ Get-PhysicalDisk | ForEach-Object {
                 for line in text.lines() {
                     if line.contains("/dev/disk") {
                         let device = line.trim().to_string();
-                        if !device.contains("s") || device.ends_with("disk0") || device.ends_with("disk1") {
+                        if !device.contains("s")
+                            || device.ends_with("disk0")
+                            || device.ends_with("disk1")
+                        {
                             self.disks.push(SmartDiskInfo {
                                 device,
                                 model: String::new(),
@@ -763,7 +806,10 @@ mod tests {
             estimated_days_remaining: None,
         };
         SmartMonitor::infer_health(&mut disk);
-        assert!(matches!(disk.health, DiskHealth::Critical | DiskHealth::Failed));
+        assert!(matches!(
+            disk.health,
+            DiskHealth::Critical | DiskHealth::Failed
+        ));
     }
 
     #[test]

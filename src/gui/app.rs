@@ -12,34 +12,23 @@ use super::widgets::{
 };
 
 use crate::ai_api::AiDataApi;
-use crate::connections::{ConnectionInfo, ConnectionMonitor, ConnectionState, Protocol};
+use crate::connections::{ConnectionInfo, ConnectionState, Protocol};
 use crate::core::cpu::CpuStats;
 use crate::core::memory::MemoryStats;
-#[cfg(target_os = "windows")]
-use crate::platform::windows as platform_impl;
 use crate::disk::{self, DiskDevice};
 use crate::gpu::{GpuCollection, GpuDynamicInfo, GpuStaticInfo};
 use crate::motherboard::{self, DriverInfo, MotherboardDevice, SystemInfo as MBSystemInfo};
 use crate::network_monitor::NetworkMonitor;
 use crate::network_tools::{self, PortStatus};
-use crate::process_monitor::{ProcessMonitor, ProcessMonitorInfo};
+#[cfg(target_os = "windows")]
+use crate::platform::windows as platform_impl;
+use crate::process_monitor::ProcessMonitorInfo;
 use crate::system_stats::SystemStats;
 
 const HISTORY_SIZE: usize = 60;
 const UPDATE_INTERVAL: Duration = Duration::from_millis(100); // Fast UI updates (10 FPS minimum)
 const DATA_POLL_INTERVAL: Duration = Duration::from_millis(500); // Data polling rate
-const GPU_DETECT_INTERVAL: Duration = Duration::from_secs(10); // GPU re-detection rate
 const SLOW_UPDATE_INTERVAL: Duration = Duration::from_secs(2); // Slow updates for heavy ops
-
-/// Background data update result
-struct DataUpdateResult {
-    cpu_stats: Option<CpuStats>,
-    memory_stats: Option<MemoryStats>,
-    gpu_static_info: Vec<GpuStaticInfo>,
-    gpu_dynamic_info: Vec<GpuDynamicInfo>,
-    network_rx: u64,
-    network_tx: u64,
-}
 
 /// Cached disk data to avoid blocking I/O calls on every frame
 #[derive(Default, Clone)]
@@ -70,14 +59,12 @@ pub struct SiliconMonitorApp {
     gpu_static_info: Vec<GpuStaticInfo>,
     gpu_dynamic_info: Vec<GpuDynamicInfo>,
     network_monitor: Option<NetworkMonitor>,
-    process_monitor: Option<ProcessMonitor>,
     process_list: Vec<ProcessMonitorInfo>,
 
     // Disk data
     disks: Vec<Box<dyn DiskDevice>>,
 
     // Connection data
-    connection_monitor: Option<ConnectionMonitor>,
     connections: Vec<ConnectionInfo>,
     connection_filter: String,
     connection_protocol_filter: Option<Protocol>,
@@ -151,7 +138,7 @@ pub struct SiliconMonitorApp {
     agent_history: VecDeque<AgentChatEntry>,
     agent_is_processing: bool,
     agent_response_receiver: Option<Receiver<Result<AgentResponse, String>>>,
-    
+
     // AI configuration UI state (reserved for future use)
     #[allow(dead_code)]
     ai_api_key_input: String,
@@ -179,11 +166,19 @@ pub struct SiliconMonitorApp {
     cached_disk_data: Vec<CachedDiskData>,
     last_disk_data_refresh: Instant,
 
-    // Background data polling
-    data_receiver: Option<Receiver<DataUpdateResult>>,
-    data_poll_in_flight: bool,
-    last_data_poll: Instant,
-    last_gpu_detect: Instant,
+    // Snapshot pipeline
+    //
+    // Replaces the previous per-poll `std::thread::spawn` + channel machinery. That
+    // path re-ran `GpuCollection::auto_detect()` on *every* poll (both branches did,
+    // despite the "skip static re-detect" fast path), so NVML was fully
+    // re-initialized twice a second. The collector now initializes once and keeps
+    // its handles alive.
+    /// Background collector. Dropping this stops and joins the thread.
+    collector: Option<crate::pipeline::Collector>,
+    /// Newest published snapshot.
+    snapshot: std::sync::Arc<crate::pipeline::Snapshot>,
+    /// Generation already folded into UI state, so repeated frames do no work.
+    applied_generation: u64,
 
     // Settings
     show_settings: bool,
@@ -296,12 +291,12 @@ impl Default for AiBackendSelection {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ColorTheme {
     #[default]
-    Cyber,       // Default neon cyber theme (dark)
-    Light,       // Clean light theme
-    Ocean,       // Blue/teal oceanic theme
-    Forest,      // Green nature theme
-    Sunset,      // Orange/red warm theme
-    Monochrome,  // Grayscale minimalist
+    Cyber, // Default neon cyber theme (dark)
+    Light,      // Clean light theme
+    Ocean,      // Blue/teal oceanic theme
+    Forest,     // Green nature theme
+    Sunset,     // Orange/red warm theme
+    Monochrome, // Grayscale minimalist
 }
 
 impl ColorTheme {
@@ -331,10 +326,10 @@ impl ColorTheme {
     pub fn accent_color(&self) -> egui::Color32 {
         match self {
             ColorTheme::Cyber => CyberColors::CYAN,
-            ColorTheme::Light => egui::Color32::from_rgb(59, 130, 246),    // Blue
-            ColorTheme::Ocean => egui::Color32::from_rgb(64, 224, 208),    // Turquoise
-            ColorTheme::Forest => egui::Color32::from_rgb(34, 197, 94),    // Green
-            ColorTheme::Sunset => egui::Color32::from_rgb(251, 146, 60),   // Orange
+            ColorTheme::Light => egui::Color32::from_rgb(59, 130, 246), // Blue
+            ColorTheme::Ocean => egui::Color32::from_rgb(64, 224, 208), // Turquoise
+            ColorTheme::Forest => egui::Color32::from_rgb(34, 197, 94), // Green
+            ColorTheme::Sunset => egui::Color32::from_rgb(251, 146, 60), // Orange
             ColorTheme::Monochrome => egui::Color32::from_rgb(200, 200, 200), // Light gray
         }
     }
@@ -344,10 +339,10 @@ impl ColorTheme {
     pub fn secondary_color(&self) -> egui::Color32 {
         match self {
             ColorTheme::Cyber => CyberColors::MAGENTA,
-            ColorTheme::Light => egui::Color32::from_rgb(99, 102, 241),    // Indigo
-            ColorTheme::Ocean => egui::Color32::from_rgb(56, 189, 248),    // Sky blue
-            ColorTheme::Forest => egui::Color32::from_rgb(74, 222, 128),   // Light green
-            ColorTheme::Sunset => egui::Color32::from_rgb(248, 113, 113),  // Red
+            ColorTheme::Light => egui::Color32::from_rgb(99, 102, 241), // Indigo
+            ColorTheme::Ocean => egui::Color32::from_rgb(56, 189, 248), // Sky blue
+            ColorTheme::Forest => egui::Color32::from_rgb(74, 222, 128), // Light green
+            ColorTheme::Sunset => egui::Color32::from_rgb(248, 113, 113), // Red
             ColorTheme::Monochrome => egui::Color32::from_rgb(150, 150, 150), // Medium gray
         }
     }
@@ -403,8 +398,6 @@ pub struct HistoricalDataPoint {
     pub gpu_temps: Vec<f32>,
     pub gpu_utils: Vec<f32>,
 }
-
-
 
 /// Application settings
 #[derive(Debug, Clone)]
@@ -508,10 +501,8 @@ impl SiliconMonitorApp {
             gpu_static_info,
             gpu_dynamic_info,
             network_monitor: NetworkMonitor::new().ok(),
-            process_monitor: ProcessMonitor::new().ok(),
             process_list: Vec::new(),
             disks: Vec::new(), // Loaded lazily when Disk tab is visited
-            connection_monitor: ConnectionMonitor::new().ok(),
             connections: Vec::new(),
             connection_filter: String::new(),
             connection_protocol_filter: None,
@@ -578,13 +569,13 @@ impl SiliconMonitorApp {
             agent_history: VecDeque::with_capacity(50),
             agent_is_processing: false,
             agent_response_receiver: None,
-            
+
             // AI configuration UI
             ai_api_key_input: String::new(),
             ai_selected_backend: AiBackendSelection::default(),
             ai_prev_backend: AiBackendSelection::default(),
             ai_selected_model: String::new(), // Will be set when ollama models load
-            ai_ollama_models: Vec::new(), // Loading in background
+            ai_ollama_models: Vec::new(),     // Loading in background
             ai_ollama_starting: false,
             ai_status_message: None,
 
@@ -604,11 +595,16 @@ impl SiliconMonitorApp {
             cached_disk_data: Vec::new(),
             last_disk_data_refresh: Instant::now(),
 
-            // Background data polling
-            data_receiver: None,
-            data_poll_in_flight: false,
-            last_data_poll: Instant::now(),
-            last_gpu_detect: Instant::now() - GPU_DETECT_INTERVAL, // Force initial detection
+            // Snapshot pipeline
+            collector: Some(crate::pipeline::Collector::spawn(
+                crate::pipeline::CollectorConfig {
+                    interval: DATA_POLL_INTERVAL,
+                    history_size: HISTORY_SIZE,
+                    ..Default::default()
+                },
+            )),
+            snapshot: std::sync::Arc::new(crate::pipeline::Snapshot::default()),
+            applied_generation: 0,
 
             // Settings
             show_settings: false,
@@ -679,101 +675,37 @@ impl SiliconMonitorApp {
         app
     }
 
-    /// Start a background data poll (non-blocking)
-    fn start_data_poll(&mut self) {
-        if self.data_poll_in_flight {
-            return;
+    /// Fold the newest collector snapshot into UI state.
+    ///
+    /// Returns `true` when a new generation was applied.
+    ///
+    /// Performs no hardware I/O — an atomic load plus in-memory mapping — so it
+    /// cannot stall a frame. This replaces the previous `start_data_poll` /
+    /// `apply_data_update` pair, which spawned a thread per poll, re-ran
+    /// `GpuCollection::auto_detect()` on every one of them, and still performed
+    /// blocking `NetworkMonitor::interfaces()` calls on the UI thread while
+    /// "applying" results.
+    fn sync_snapshot(&mut self) -> bool {
+        let Some(ref collector) = self.collector else {
+            return false;
+        };
+        let handle = collector.handle();
+
+        // Generation 0 is the placeholder published before the first tick.
+        let generation = handle.generation();
+        if generation == 0 || generation == self.applied_generation {
+            return false;
         }
+        self.snapshot = handle.latest();
+        self.applied_generation = generation;
+        let snapshot = std::sync::Arc::clone(&self.snapshot);
 
-        self.data_poll_in_flight = true;
-        self.last_data_poll = Instant::now();
-
-        // Only run expensive GPU detection periodically, not every poll
-        let should_detect_gpu = self.last_gpu_detect.elapsed() >= GPU_DETECT_INTERVAL
-            || self.gpu_static_info.is_empty();
-        if should_detect_gpu {
-            self.last_gpu_detect = Instant::now();
-        }
-
-        let (tx, rx) = channel();
-        self.data_receiver = Some(rx);
-
-        std::thread::spawn(move || {
-            // Collect CPU stats
-            #[cfg(target_os = "windows")]
-            let cpu_stats = crate::platform::windows::read_cpu_stats().ok();
-            #[cfg(not(target_os = "windows"))]
-            let cpu_stats = CpuStats::new().ok();
-
-            // Collect Memory stats
-            #[cfg(target_os = "windows")]
-            let memory_stats = crate::platform::windows::read_memory_stats().ok();
-            #[cfg(not(target_os = "windows"))]
-            let memory_stats = MemoryStats::new().ok();
-
-            // Collect GPU info - only run expensive auto_detect when needed
-            let (gpu_static_info, gpu_dynamic_info): (Vec<GpuStaticInfo>, Vec<GpuDynamicInfo>) =
-                if should_detect_gpu {
-                    if let Ok(gpus) = GpuCollection::auto_detect() {
-                        let statics: Vec<GpuStaticInfo> = gpus
-                            .gpus()
-                            .iter()
-                            .filter_map(|g| g.static_info().ok())
-                            .collect();
-                        let dynamics: Vec<GpuDynamicInfo> = gpus
-                            .gpus()
-                            .iter()
-                            .filter_map(|g| g.dynamic_info().ok())
-                            .collect();
-                        (statics, dynamics)
-                    } else {
-                        (vec![], vec![])
-                    }
-                } else {
-                    // Quick path: still need dynamic info for charts, but skip static re-detect
-                    if let Ok(gpus) = GpuCollection::auto_detect() {
-                        let dynamics: Vec<GpuDynamicInfo> = gpus
-                            .gpus()
-                            .iter()
-                            .filter_map(|g| g.dynamic_info().ok())
-                            .collect();
-                        (vec![], dynamics)
-                    } else {
-                        (vec![], vec![])
-                    }
-                };
-
-            // Collect network stats (simplified - just totals)
-            let mut network_rx = 0u64;
-            let mut network_tx = 0u64;
-
-            if let Ok(mut monitor) = NetworkMonitor::new() {
-                if let Ok(interfaces) = monitor.interfaces() {
-                    network_rx = interfaces.iter().map(|i| i.rx_bytes).sum();
-                    network_tx = interfaces.iter().map(|i| i.tx_bytes).sum();
-                }
-            }
-
-            let _ = tx.send(DataUpdateResult {
-                cpu_stats,
-                memory_stats,
-                gpu_static_info,
-                gpu_dynamic_info,
-                network_rx,
-                network_tx,
-            });
-        });
-    }
-
-    /// Apply data from background poll to UI state (fast, non-blocking)
-    fn apply_data_update(&mut self, result: DataUpdateResult) {
-        // Update CPU
-        if let Some(stats) = result.cpu_stats {
+        // === CPU ===
+        if let Some(ref stats) = snapshot.cpu {
             let cpu_usage = 100.0 - stats.total.idle;
             self.cpu_history.pop_front();
             self.cpu_history.push_back(cpu_usage);
 
-            // Update per-core history
             for (i, core) in stats.cores.iter().enumerate() {
                 if i < self.per_core_history.len() {
                     let util = core.user.unwrap_or(0.0) + core.system.unwrap_or(0.0);
@@ -782,47 +714,59 @@ impl SiliconMonitorApp {
                 }
             }
 
-            self.cpu_stats = Some(stats);
+            self.cpu_stats = Some(stats.clone());
         }
 
-        // Update Memory
-        if let Some(stats) = result.memory_stats {
+        // === Memory ===
+        if let Some(ref stats) = snapshot.memory {
             let usage = stats.ram_usage_percent();
             self.memory_history.pop_front();
             self.memory_history.push_back(usage);
-            self.memory_stats = Some(stats);
+            self.memory_stats = Some(stats.clone());
         }
 
-        // Update GPU - also update static info if we gained new GPUs
-        if !result.gpu_static_info.is_empty() {
-            // If static info was empty or GPU count changed, update and resize history
-            if self.gpu_static_info.len() != result.gpu_static_info.len() {
-                let new_count = result.gpu_static_info.len();
-                self.gpu_static_info = result.gpu_static_info;
+        // === GPU ===
+        // Static descriptors are captured once by the collector and never change at
+        // runtime, so a length change means the device set itself changed.
+        if !snapshot.gpu_static.is_empty()
+            && self.gpu_static_info.len() != snapshot.gpu_static.len()
+        {
+            let new_count = snapshot.gpu_static.len();
+            self.gpu_static_info = snapshot.gpu_static.clone();
 
-                // Resize history vectors to match new GPU count
-                self.gpu_history.resize_with(new_count, || {
-                    let mut v = VecDeque::with_capacity(HISTORY_SIZE);
-                    for _ in 0..HISTORY_SIZE { v.push_back(0.0); }
-                    v
-                });
-                self.gpu_memory_history.resize_with(new_count, || {
-                    let mut v = VecDeque::with_capacity(HISTORY_SIZE);
-                    for _ in 0..HISTORY_SIZE { v.push_back(0.0); }
-                    v
-                });
-                self.gpu_temp_history.resize_with(new_count, || {
-                    let mut v = VecDeque::with_capacity(HISTORY_SIZE);
-                    for _ in 0..HISTORY_SIZE { v.push_back(0.0); }
-                    v
-                });
-            } else {
-                self.gpu_static_info = result.gpu_static_info;
+            let fresh_series = || {
+                let mut v = VecDeque::with_capacity(HISTORY_SIZE);
+                for _ in 0..HISTORY_SIZE {
+                    v.push_back(0.0);
+                }
+                v
+            };
+            self.gpu_history.resize_with(new_count, fresh_series);
+            self.gpu_memory_history.resize_with(new_count, fresh_series);
+            self.gpu_temp_history.resize_with(new_count, fresh_series);
+        }
+
+        // `snapshot.gpu_dynamic` is index-aligned with `gpu_static` and carries `None`
+        // for devices whose query failed this tick. Keep the last-known sample for a
+        // failed slot rather than dropping it, which would shift every device after it
+        // and mislabel the charts.
+        if snapshot.gpu_dynamic.len() == self.gpu_dynamic_info.len() {
+            for (slot, fresh) in self
+                .gpu_dynamic_info
+                .iter_mut()
+                .zip(snapshot.gpu_dynamic.iter())
+            {
+                if let Some(fresh) = fresh {
+                    *slot = fresh.clone();
+                }
             }
+        } else {
+            self.gpu_dynamic_info = snapshot.gpu_dynamic.iter().flatten().cloned().collect();
         }
 
-        self.gpu_dynamic_info = result.gpu_dynamic_info;
-        for (i, info) in self.gpu_dynamic_info.iter().enumerate() {
+        for (i, info) in snapshot.gpu_dynamic.iter().enumerate() {
+            let Some(info) = info.as_ref() else { continue };
+
             if i < self.gpu_history.len() {
                 self.gpu_history[i].pop_front();
                 self.gpu_history[i].push_back(info.utilization as f32);
@@ -845,49 +789,49 @@ impl SiliconMonitorApp {
             }
         }
 
-        // Update Network - calculate rates using persistent monitor
+        // === Network ===
+        // The previous code charted `(cumulative_bytes / 1MB) % 10000`, which is a
+        // sawtooth of a running total rather than a throughput series. These are now
+        // actual rates in MB/s, matching the axis label.
         self.network_rx_history.pop_front();
         self.network_rx_history
-            .push_back((result.network_rx as f32 / 1024.0 / 1024.0) % 10000.0);
+            .push_back((snapshot.total_rx_rate() / 1024.0 / 1024.0) as f32);
         self.network_tx_history.pop_front();
         self.network_tx_history
-            .push_back((result.network_tx as f32 / 1024.0 / 1024.0) % 10000.0);
+            .push_back((snapshot.total_tx_rate() / 1024.0 / 1024.0) as f32);
 
-        // Calculate network rates using persistent monitor (has prev_stats for rate calculation)
-        if let Some(ref mut monitor) = self.network_monitor {
-            if let Ok(interfaces) = monitor.interfaces() {
-                for iface in &interfaces {
-                    let (rx_rate, tx_rate) = monitor.bandwidth_rate(&iface.name, iface);
-                    self.network_rates.insert(iface.name.clone(), (rx_rate, tx_rate));
-                }
-            }
+        self.network_rates.clear();
+        for iface in &snapshot.network {
+            self.network_rates
+                .insert(iface.name.clone(), (iface.rx_rate, iface.tx_rate));
         }
+
+        true
     }
 
     /// Slow update for heavy operations (processes, connections)
     fn update_data_slow(&mut self) {
-        // Update Processes (only if tab is visible or list is empty)
-        if self.current_tab == Tab::Processes || self.process_list.is_empty() {
-            if let Some(ref mut monitor) = self.process_monitor {
-                if let Ok(processes) = monitor.processes() {
-                    self.process_list = processes;
-                    self.process_list_version = self.process_list_version.wrapping_add(1);
-                }
-            }
+        // Processes, connections and system stats all arrive with the snapshot now.
+        // Previously this ran `monitor.processes()`, `all_connections()` and
+        // `SystemStats::new()` synchronously on the UI thread every 2s, which is
+        // exactly the kind of stall that shows up as a dropped frame.
+        //
+        // The copies below are still gated on tab visibility: cloning a 300-entry
+        // process table for a panel nobody is looking at is pure waste.
+        if (self.current_tab == Tab::Processes || self.process_list.is_empty())
+            && !self.snapshot.processes.is_empty()
+        {
+            self.process_list = self.snapshot.processes.clone();
+            self.process_list_version = self.process_list_version.wrapping_add(1);
         }
 
-        // Update Connections (only if tab is visible)
-        if self.current_tab == Tab::Connections {
-            if let Some(ref monitor) = self.connection_monitor {
-                if let Ok(conns) = monitor.all_connections() {
-                    self.connections = conns;
-                }
-            }
+        if self.current_tab == Tab::Connections && !self.snapshot.connections.is_empty() {
+            self.connections = self.snapshot.connections.clone();
         }
 
-        // Update System Stats (Linux/BSD style - load avg, vmstat, etc.)
-        if let Ok(stats) = SystemStats::new() {
-            // Track context switches per second
+        // System Stats (load avg, vmstat, etc.)
+        if let Some(stats) = self.snapshot.system_stats.clone() {
+            // Track context switches and interrupts per interval.
             if let Some(ref vm) = stats.vm_stats {
                 let ctx_delta = vm
                     .context_switches
@@ -910,14 +854,8 @@ impl SiliconMonitorApp {
 
     /// Check for completed background loading operations (non-blocking)
     fn check_background_loaders(&mut self) {
-        // Check data poll background loading (most important - high frequency)
-        if let Some(ref receiver) = self.data_receiver {
-            if let Ok(result) = receiver.try_recv() {
-                self.apply_data_update(result);
-                self.data_poll_in_flight = false;
-                self.data_receiver = None;
-            }
-        }
+        // Hardware data no longer arrives through a per-poll channel; it is pulled
+        // from the collector's published snapshot in `sync_snapshot`.
 
         // Check profile snapshot background loading. Handle both the
         // "still loading" (Empty) and "thread died without sending"
@@ -955,7 +893,10 @@ impl SiliconMonitorApp {
         if let Some(ref receiver) = self.disk_receiver {
             if let Ok(disks) = receiver.try_recv() {
                 // Convert from Send-able to regular DiskDevice
-                self.disks = disks.into_iter().map(|d| d as Box<dyn DiskDevice>).collect();
+                self.disks = disks
+                    .into_iter()
+                    .map(|d| d as Box<dyn DiskDevice>)
+                    .collect();
                 self.disk_loading = false;
                 self.disk_loaded = true;
                 self.disk_receiver = None;
@@ -1183,17 +1124,22 @@ impl SiliconMonitorApp {
     fn export_to_json(&self) -> Result<String, String> {
         use serde_json::json;
         let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
-        
+
         let cpu_data = self.cpu_stats.as_ref().map(|s| {
             let usage = 100.0 - s.total.idle;
-            let freq = s.cores.first().and_then(|c| c.frequency.as_ref()).map(|f| f.current).unwrap_or(0);
+            let freq = s
+                .cores
+                .first()
+                .and_then(|c| c.frequency.as_ref())
+                .map(|f| f.current)
+                .unwrap_or(0);
             json!({
                 "usage_percent": usage,
                 "frequency_mhz": freq,
                 "core_count": s.cores.len(),
             })
         });
-        
+
         let mem_data = self.memory_stats.as_ref().map(|s| {
             json!({
                 "total_bytes": s.ram.total,
@@ -1202,8 +1148,10 @@ impl SiliconMonitorApp {
                 "usage_percent": s.ram_usage_percent(),
             })
         });
-        
-        let gpu_data: Vec<_> = self.gpu_static_info.iter()
+
+        let gpu_data: Vec<_> = self
+            .gpu_static_info
+            .iter()
             .zip(self.gpu_dynamic_info.iter())
             .map(|(static_info, dynamic)| {
                 json!({
@@ -1217,7 +1165,7 @@ impl SiliconMonitorApp {
                 })
             })
             .collect();
-        
+
         let data = json!({
             "timestamp": timestamp,
             "cpu": cpu_data,
@@ -1226,7 +1174,7 @@ impl SiliconMonitorApp {
             "processes_count": self.process_list.len(),
             "network_interfaces": self.network_rates.len(),
         });
-        
+
         serde_json::to_string_pretty(&data).map_err(|e| e.to_string())
     }
 
@@ -1234,35 +1182,73 @@ impl SiliconMonitorApp {
     fn export_to_csv(&self) -> String {
         let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
         let mut csv = String::from("metric,value,unit,timestamp\n");
-        
+
         if let Some(cpu) = &self.cpu_stats {
             let usage = 100.0 - cpu.total.idle;
             csv.push_str(&format!("cpu_usage,{:.1},percent,{}\n", usage, timestamp));
             if let Some(freq) = cpu.cores.first().and_then(|c| c.frequency.as_ref()) {
-                csv.push_str(&format!("cpu_frequency,{},MHz,{}\n", freq.current, timestamp));
+                csv.push_str(&format!(
+                    "cpu_frequency,{},MHz,{}\n",
+                    freq.current, timestamp
+                ));
             }
-            csv.push_str(&format!("cpu_cores,{},count,{}\n", cpu.cores.len(), timestamp));
+            csv.push_str(&format!(
+                "cpu_cores,{},count,{}\n",
+                cpu.cores.len(),
+                timestamp
+            ));
         }
-        
+
         if let Some(mem) = &self.memory_stats {
-            csv.push_str(&format!("memory_total,{},bytes,{}\n", mem.ram.total, timestamp));
-            csv.push_str(&format!("memory_used,{},bytes,{}\n", mem.ram.used, timestamp));
-            csv.push_str(&format!("memory_usage,{:.1},percent,{}\n", mem.ram_usage_percent(), timestamp));
+            csv.push_str(&format!(
+                "memory_total,{},bytes,{}\n",
+                mem.ram.total, timestamp
+            ));
+            csv.push_str(&format!(
+                "memory_used,{},bytes,{}\n",
+                mem.ram.used, timestamp
+            ));
+            csv.push_str(&format!(
+                "memory_usage,{:.1},percent,{}\n",
+                mem.ram_usage_percent(),
+                timestamp
+            ));
         }
-        
-        for (i, (static_info, dynamic)) in self.gpu_static_info.iter().zip(self.gpu_dynamic_info.iter()).enumerate() {
-            csv.push_str(&format!("gpu{}_name,\"{}\",string,{}\n", i, static_info.name, timestamp));
-            csv.push_str(&format!("gpu{}_memory_used,{},MB,{}\n", i, dynamic.memory.used / (1024 * 1024), timestamp));
-            csv.push_str(&format!("gpu{}_memory_total,{},MB,{}\n", i, dynamic.memory.total / (1024 * 1024), timestamp));
+
+        for (i, (static_info, dynamic)) in self
+            .gpu_static_info
+            .iter()
+            .zip(self.gpu_dynamic_info.iter())
+            .enumerate()
+        {
+            csv.push_str(&format!(
+                "gpu{}_name,\"{}\",string,{}\n",
+                i, static_info.name, timestamp
+            ));
+            csv.push_str(&format!(
+                "gpu{}_memory_used,{},MB,{}\n",
+                i,
+                dynamic.memory.used / (1024 * 1024),
+                timestamp
+            ));
+            csv.push_str(&format!(
+                "gpu{}_memory_total,{},MB,{}\n",
+                i,
+                dynamic.memory.total / (1024 * 1024),
+                timestamp
+            ));
             if let Some(temp) = dynamic.thermal.temperature {
                 csv.push_str(&format!("gpu{}_temperature,{},C,{}\n", i, temp, timestamp));
             }
-            csv.push_str(&format!("gpu{}_utilization,{},percent,{}\n", i, dynamic.utilization, timestamp));
+            csv.push_str(&format!(
+                "gpu{}_utilization,{},percent,{}\n",
+                i, dynamic.utilization, timestamp
+            ));
             if let Some(power) = dynamic.power.draw {
                 csv.push_str(&format!("gpu{}_power,{:.1},mW,{}\n", i, power, timestamp));
             }
         }
-        
+
         csv
     }
 }
@@ -1295,10 +1281,10 @@ impl eframe::App for SiliconMonitorApp {
         // Check for background loading completions (non-blocking) - must be first!
         self.check_background_loaders();
 
-        // Start new data poll if needed (non-blocking async data collection)
-        if self.last_data_poll.elapsed() >= DATA_POLL_INTERVAL && !self.data_poll_in_flight {
-            self.start_data_poll();
-        }
+        // Fold in the newest snapshot. Cheap enough to attempt every frame: when the
+        // collector has not published since the last frame this is a single atomic
+        // load and an early return.
+        let got_new_data = self.sync_snapshot();
 
         // Slow updates (Processes, Connections, System Stats) - every 2s
         if self.last_slow_update.elapsed() >= SLOW_UPDATE_INTERVAL {
@@ -1306,8 +1292,22 @@ impl eframe::App for SiliconMonitorApp {
             self.last_slow_update = Instant::now();
         }
 
-        // Request fast repaint for smooth UI (100ms = 10 FPS minimum)
-        ctx.request_repaint_after(UPDATE_INTERVAL);
+        // Schedule the next repaint against the collector's cadence rather than a
+        // fixed 100ms tick. Waking at 10 FPS to redraw identical pixels burns GPU and
+        // battery for nothing; the data only changes when a snapshot lands.
+        //
+        // When data did arrive, ask for the next frame around the next expected
+        // publish. Otherwise poll on a coarser interval so a late snapshot is still
+        // picked up promptly without spinning.
+        let next_repaint = if got_new_data {
+            self.collector
+                .as_ref()
+                .map(|c| c.handle().interval())
+                .unwrap_or(UPDATE_INTERVAL)
+        } else {
+            UPDATE_INTERVAL
+        };
+        ctx.request_repaint_after(next_repaint);
 
         // Top panel with title and tabs
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
@@ -1398,7 +1398,7 @@ impl eframe::App for SiliconMonitorApp {
                     let settings_btn = ui.add(
                         egui::Button::new(RichText::new("⚙").size(16.0))
                             .fill(egui::Color32::TRANSPARENT)
-                            .stroke(egui::Stroke::NONE)
+                            .stroke(egui::Stroke::NONE),
                     );
                     if settings_btn.clicked() {
                         self.show_settings = !self.show_settings;
@@ -1406,7 +1406,7 @@ impl eframe::App for SiliconMonitorApp {
                     if settings_btn.hovered() {
                         settings_btn.on_hover_text("Settings");
                     }
-                    
+
                     ui.add_space(8.0);
                     ui.label(
                         RichText::new(format!("{}@{}", self.hostname, self.os_info))
@@ -1501,44 +1501,63 @@ impl SiliconMonitorApp {
     fn check_alerts(&mut self) {
         let settings = self.settings.alert_settings.clone();
         let mut new_alerts: Vec<(AlertSeverity, String)> = Vec::new();
-        
+
         // Check CPU usage
         let cpu_usage = self.cpu_usage();
         if cpu_usage >= settings.cpu_critical_threshold {
-            new_alerts.push((AlertSeverity::Critical, format!("CPU usage critical: {:.1}%", cpu_usage)));
+            new_alerts.push((
+                AlertSeverity::Critical,
+                format!("CPU usage critical: {:.1}%", cpu_usage),
+            ));
         } else if cpu_usage >= settings.cpu_warning_threshold {
-            new_alerts.push((AlertSeverity::Warning, format!("CPU usage high: {:.1}%", cpu_usage)));
+            new_alerts.push((
+                AlertSeverity::Warning,
+                format!("CPU usage high: {:.1}%", cpu_usage),
+            ));
         }
-        
+
         // Check memory usage
         if let Some(ref mem) = self.memory_stats {
             let mem_percent = mem.ram_usage_percent();
             if mem_percent >= settings.memory_critical_threshold {
-                new_alerts.push((AlertSeverity::Critical, format!("Memory usage critical: {:.1}%", mem_percent)));
+                new_alerts.push((
+                    AlertSeverity::Critical,
+                    format!("Memory usage critical: {:.1}%", mem_percent),
+                ));
             } else if mem_percent >= settings.memory_warning_threshold {
-                new_alerts.push((AlertSeverity::Warning, format!("Memory usage high: {:.1}%", mem_percent)));
+                new_alerts.push((
+                    AlertSeverity::Warning,
+                    format!("Memory usage high: {:.1}%", mem_percent),
+                ));
             }
         }
-        
+
         // Check GPU temperatures
         for (i, gpu) in self.gpu_dynamic_info.iter().enumerate() {
             if let Some(temp) = gpu.thermal.temperature {
                 if temp as f32 >= settings.gpu_temp_critical {
-                    new_alerts.push((AlertSeverity::Critical, format!("GPU {} temperature critical: {}°C", i, temp)));
+                    new_alerts.push((
+                        AlertSeverity::Critical,
+                        format!("GPU {} temperature critical: {}°C", i, temp),
+                    ));
                 } else if temp as f32 >= settings.gpu_temp_warning {
-                    new_alerts.push((AlertSeverity::Warning, format!("GPU {} temperature high: {}°C", i, temp)));
+                    new_alerts.push((
+                        AlertSeverity::Warning,
+                        format!("GPU {} temperature high: {}°C", i, temp),
+                    ));
                 }
             }
         }
-        
+
         // Add collected alerts
         for (severity, message) in new_alerts {
             self.add_alert(severity, message);
         }
-        
+
         // Remove old alerts (older than 30 seconds)
         let now = std::time::Instant::now();
-        self.active_alerts.retain(|a| now.duration_since(a.timestamp).as_secs() < 30);
+        self.active_alerts
+            .retain(|a| now.duration_since(a.timestamp).as_secs() < 30);
     }
 
     /// Add an alert if not already present
@@ -1555,10 +1574,22 @@ impl SiliconMonitorApp {
     /// Save current metrics to historical data for AI queries
     fn save_historical_data(&mut self) {
         let cpu_usage = self.cpu_usage();
-        let memory_usage = self.memory_stats.as_ref().map(|m| m.ram_usage_percent()).unwrap_or(0.0);
-        let gpu_temps: Vec<f32> = self.gpu_dynamic_info.iter().filter_map(|g| g.thermal.temperature.map(|t| t as f32)).collect();
-        let gpu_utils: Vec<f32> = self.gpu_dynamic_info.iter().map(|g| g.utilization as f32).collect();
-        
+        let memory_usage = self
+            .memory_stats
+            .as_ref()
+            .map(|m| m.ram_usage_percent())
+            .unwrap_or(0.0);
+        let gpu_temps: Vec<f32> = self
+            .gpu_dynamic_info
+            .iter()
+            .filter_map(|g| g.thermal.temperature.map(|t| t as f32))
+            .collect();
+        let gpu_utils: Vec<f32> = self
+            .gpu_dynamic_info
+            .iter()
+            .map(|g| g.utilization as f32)
+            .collect();
+
         self.historical_data.push(HistoricalDataPoint {
             timestamp: std::time::Instant::now(),
             cpu_usage,
@@ -1566,7 +1597,7 @@ impl SiliconMonitorApp {
             gpu_temps,
             gpu_utils,
         });
-        
+
         // Keep only last 60 minutes of data
         if self.historical_data.len() > 60 {
             self.historical_data.remove(0);
@@ -1583,7 +1614,9 @@ impl SiliconMonitorApp {
             if age >= target_duration {
                 let mut summary = format!(
                     "Historical data from {} minutes ago:\n- CPU: {:.1}%\n- Memory: {:.1}%",
-                    age.as_secs() / 60, point.cpu_usage, point.memory_usage
+                    age.as_secs() / 60,
+                    point.cpu_usage,
+                    point.memory_usage
                 );
                 if !point.gpu_temps.is_empty() {
                     summary.push_str(&format!("\n- GPU temps: {:?}°C", point.gpu_temps));
@@ -2208,12 +2241,24 @@ impl SiliconMonitorApp {
         // Auto-scale layout based on device count
         let device_count = self.gpu_static_info.len();
         let available_width = ui.available_width();
-        
+
         // Scale elements based on device count
-        let chart_height = if device_count == 1 { 100.0 } else if device_count == 2 { 80.0 } else { 65.0 };
+        let chart_height = if device_count == 1 {
+            100.0
+        } else if device_count == 2 {
+            80.0
+        } else {
+            65.0
+        };
         let bar_height = if device_count <= 2 { 18.0 } else { 14.0 };
-        let _font_scale = if device_count <= 2 { 1.0 } else if device_count <= 4 { 0.9 } else { 0.8 };
-        
+        let _font_scale = if device_count <= 2 {
+            1.0
+        } else if device_count <= 4 {
+            0.9
+        } else {
+            0.8
+        };
+
         ScrollArea::vertical().show(ui, |ui| {
             for (i, (static_info, dynamic_info)) in self
                 .gpu_static_info
@@ -2222,17 +2267,17 @@ impl SiliconMonitorApp {
                 .enumerate()
             {
                 let accel_color = DeviceTitleColors::ACCEL;
-                
+
                 // Device pane frame - compact
                 let frame = egui::Frame::none()
                     .fill(CyberColors::SURFACE)
                     .stroke(egui::Stroke::new(1.0, CyberColors::BORDER))
                     .rounding(4.0)
                     .inner_margin(8.0);
-                
+
                 frame.show(ui, |ui| {
                     ui.set_width(available_width - 16.0);
-                    
+
                     // Header row: Icon + Name + Live Metrics
                     ui.horizontal(|ui| {
                         ui.label(RichText::new("⚡").color(accel_color).size(20.0));
@@ -2242,7 +2287,7 @@ impl SiliconMonitorApp {
                                 .strong()
                                 .size(18.0),
                         );
-                        
+
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             // Live metrics on the right
                             if let Some(clock) = dynamic_info.clocks.graphics {
@@ -2276,27 +2321,37 @@ impl SiliconMonitorApp {
                         // Left side: Progress bars
                         ui.vertical(|ui| {
                             ui.set_width(220.0);
-                            
+
                             // Utilization bar
-                            ui.label(RichText::new(format!("Utilization {}%", dynamic_info.utilization)).color(CyberColors::TEXT_SECONDARY).size(13.0));
+                            ui.label(
+                                RichText::new(format!("Utilization {}%", dynamic_info.utilization))
+                                    .color(CyberColors::TEXT_SECONDARY)
+                                    .size(13.0),
+                            );
                             ui.add(
                                 CyberProgressBar::new(dynamic_info.utilization as f32 / 100.0)
                                     .color(accel_color)
                                     .height(bar_height),
                             );
-                            
+
                             ui.add_space(4.0);
-                            
+
                             // VRAM bar
                             let mem_used_mb = dynamic_info.memory.used / 1024 / 1024;
                             let mem_total_mb = dynamic_info.memory.total / 1024 / 1024;
-                            ui.label(RichText::new(format!("VRAM {}/{}MB", mem_used_mb, mem_total_mb)).color(CyberColors::TEXT_SECONDARY).size(13.0));
-                            ui.add(
-                                CyberProgressBar::new(dynamic_info.memory.utilization as f32 / 100.0)
-                                    .color(DeviceTitleColors::MEMORY)
-                                    .height(bar_height),
+                            ui.label(
+                                RichText::new(format!("VRAM {}/{}MB", mem_used_mb, mem_total_mb))
+                                    .color(CyberColors::TEXT_SECONDARY)
+                                    .size(13.0),
                             );
-                            
+                            ui.add(
+                                CyberProgressBar::new(
+                                    dynamic_info.memory.utilization as f32 / 100.0,
+                                )
+                                .color(DeviceTitleColors::MEMORY)
+                                .height(bar_height),
+                            );
+
                             // Vendor/Driver info at bottom
                             ui.add_space(4.0);
                             ui.label(
@@ -2318,36 +2373,40 @@ impl SiliconMonitorApp {
                         // Right side: Charts (expand to fill)
                         ui.vertical(|ui| {
                             ui.set_width(ui.available_width());
-                            
+
                             if i < self.gpu_history.len() {
                                 ui.add(
-                                    SparklineChart::new(self.gpu_history[i].iter().cloned().collect())
-                                        .color(accel_color)
-                                        .height(chart_height)
-                                        .title("Utilization")
-                                        .unit("%")
-                                        .max_value(100.0)
-                                        .show_scale(true),
+                                    SparklineChart::new(
+                                        self.gpu_history[i].iter().cloned().collect(),
+                                    )
+                                    .color(accel_color)
+                                    .height(chart_height)
+                                    .title("Utilization")
+                                    .unit("%")
+                                    .max_value(100.0)
+                                    .show_scale(true),
                                 );
                             }
-                            
+
                             ui.add_space(2.0);
-                            
+
                             if i < self.gpu_temp_history.len() {
                                 ui.add(
-                                    SparklineChart::new(self.gpu_temp_history[i].iter().cloned().collect())
-                                        .color(CyberColors::NEON_YELLOW)
-                                        .height(chart_height)
-                                        .title("Temperature")
-                                        .unit("°C")
-                                        .max_value(100.0)
-                                        .show_scale(true),
+                                    SparklineChart::new(
+                                        self.gpu_temp_history[i].iter().cloned().collect(),
+                                    )
+                                    .color(CyberColors::NEON_YELLOW)
+                                    .height(chart_height)
+                                    .title("Temperature")
+                                    .unit("°C")
+                                    .max_value(100.0)
+                                    .show_scale(true),
                                 );
                             }
                         });
                     });
                 });
-                
+
                 // Minimal gap between device panes
                 if i < device_count - 1 {
                     ui.add_space(2.0);
@@ -2947,13 +3006,11 @@ impl SiliconMonitorApp {
                             );
 
                             ui.add(
-                                MetricCard::new("Packets In", iface.rx_packets)
-                                    .color(iface_color),
+                                MetricCard::new("Packets In", iface.rx_packets).color(iface_color),
                             );
 
                             ui.add(
-                                MetricCard::new("Packets Out", iface.tx_packets)
-                                    .color(iface_color),
+                                MetricCard::new("Packets Out", iface.tx_packets).color(iface_color),
                             );
                         });
 
@@ -3041,13 +3098,14 @@ impl SiliconMonitorApp {
         // Header row - use exact same allocation method as data rows for perfect alignment
         // Must account for: 1px stroke + 12px inner_margin from each card's Frame
         const CARD_LEFT_OFFSET: f32 = 13.0;
-        
+
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = COL_SPACING;
             ui.add_space(CARD_LEFT_OFFSET);
-            
+
             // Column 1: Device (left-aligned to match data)
-            let (model_rect, _) = ui.allocate_exact_size(egui::vec2(COL_MODEL, HEADER_HEIGHT), egui::Sense::hover());
+            let (model_rect, _) =
+                ui.allocate_exact_size(egui::vec2(COL_MODEL, HEADER_HEIGHT), egui::Sense::hover());
             if ui.is_rect_visible(model_rect) {
                 ui.painter().text(
                     model_rect.left_center(),
@@ -3057,9 +3115,12 @@ impl SiliconMonitorApp {
                     CyberColors::TEXT_MUTED,
                 );
             }
-            
+
             // Column 2: Interface (centered to match data)
-            let (iface_rect, _) = ui.allocate_exact_size(egui::vec2(COL_INTERFACE, HEADER_HEIGHT), egui::Sense::hover());
+            let (iface_rect, _) = ui.allocate_exact_size(
+                egui::vec2(COL_INTERFACE, HEADER_HEIGHT),
+                egui::Sense::hover(),
+            );
             if ui.is_rect_visible(iface_rect) {
                 ui.painter().text(
                     iface_rect.center(),
@@ -3069,9 +3130,12 @@ impl SiliconMonitorApp {
                     CyberColors::TEXT_MUTED,
                 );
             }
-            
+
             // Column 3: Capacity (centered to match data)
-            let (cap_rect, _) = ui.allocate_exact_size(egui::vec2(COL_CAPACITY, HEADER_HEIGHT), egui::Sense::hover());
+            let (cap_rect, _) = ui.allocate_exact_size(
+                egui::vec2(COL_CAPACITY, HEADER_HEIGHT),
+                egui::Sense::hover(),
+            );
             if ui.is_rect_visible(cap_rect) {
                 ui.painter().text(
                     cap_rect.center(),
@@ -3081,9 +3145,10 @@ impl SiliconMonitorApp {
                     CyberColors::TEXT_MUTED,
                 );
             }
-            
+
             // Column 4: Read (centered to match data)
-            let (read_rect, _) = ui.allocate_exact_size(egui::vec2(COL_READ, HEADER_HEIGHT), egui::Sense::hover());
+            let (read_rect, _) =
+                ui.allocate_exact_size(egui::vec2(COL_READ, HEADER_HEIGHT), egui::Sense::hover());
             if ui.is_rect_visible(read_rect) {
                 ui.painter().text(
                     read_rect.center(),
@@ -3093,9 +3158,10 @@ impl SiliconMonitorApp {
                     CyberColors::TEXT_MUTED,
                 );
             }
-            
+
             // Column 5: Write (centered to match data)
-            let (write_rect, _) = ui.allocate_exact_size(egui::vec2(COL_WRITE, HEADER_HEIGHT), egui::Sense::hover());
+            let (write_rect, _) =
+                ui.allocate_exact_size(egui::vec2(COL_WRITE, HEADER_HEIGHT), egui::Sense::hover());
             if ui.is_rect_visible(write_rect) {
                 ui.painter().text(
                     write_rect.center(),
@@ -3105,11 +3171,15 @@ impl SiliconMonitorApp {
                     CyberColors::TEXT_MUTED,
                 );
             }
-            
+
             // Health column (right side)
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.add_space(CARD_LEFT_OFFSET);
-                ui.label(RichText::new("Health").color(CyberColors::TEXT_MUTED).size(13.0));
+                ui.label(
+                    RichText::new("Health")
+                        .color(CyberColors::TEXT_MUTED)
+                        .size(13.0),
+                );
             });
         });
         ui.add_space(4.0);
@@ -3127,7 +3197,12 @@ impl SiliconMonitorApp {
             });
     }
 
-    fn draw_disk_row_cached(ui: &mut egui::Ui, disk: &Box<dyn DiskDevice>, _index: usize, cached: &CachedDiskData) {
+    fn draw_disk_row_cached(
+        ui: &mut egui::Ui,
+        disk: &Box<dyn DiskDevice>,
+        _index: usize,
+        cached: &CachedDiskData,
+    ) {
         let disk_color = DeviceTitleColors::DISK;
         let disk_name = disk.name().to_string();
         let disk_type = disk.disk_type();
@@ -3144,26 +3219,51 @@ impl SiliconMonitorApp {
 
         let format_bytes = |bytes: u64| -> String {
             let b = bytes as f64;
-            if b >= 1e12 { format!("{:.2} TB", b / 1e12) }
-            else if b >= 1e9 { format!("{:.1} GB", b / 1e9) }
-            else if b >= 1e6 { format!("{:.0} MB", b / 1e6) }
-            else if b >= 1e3 { format!("{:.0} KB", b / 1e3) }
-            else { format!("{} B", bytes) }
+            if b >= 1e12 {
+                format!("{:.2} TB", b / 1e12)
+            } else if b >= 1e9 {
+                format!("{:.1} GB", b / 1e9)
+            } else if b >= 1e6 {
+                format!("{:.0} MB", b / 1e6)
+            } else if b >= 1e3 {
+                format!("{:.0} KB", b / 1e3)
+            } else {
+                format!("{} B", bytes)
+            }
         };
 
         // Use cached data instead of making I/O calls
         let info = &cached.info;
         let io_stats = &cached.io_stats;
         let health = &cached.health;
-        
-        let model_name = info.as_ref().map(|i| {
-            if i.model.len() > 40 { format!("{}…", &i.model[..38]) } else { i.model.clone() }
-        }).unwrap_or_else(|| disk_name.clone());
-        let interface = info.as_ref().and_then(|i| i.interface_type.clone()).unwrap_or_else(|| "Unknown".to_string());
-        let capacity = info.as_ref().map(|i| format_bytes(i.capacity)).unwrap_or_else(|| "N/A".to_string());
-        let read_bytes = io_stats.as_ref().map(|io| format_bytes(io.read_bytes)).unwrap_or_else(|| "N/A".to_string());
-        let write_bytes = io_stats.as_ref().map(|io| format_bytes(io.write_bytes)).unwrap_or_else(|| "N/A".to_string());
-        
+
+        let model_name = info
+            .as_ref()
+            .map(|i| {
+                if i.model.len() > 40 {
+                    format!("{}…", &i.model[..38])
+                } else {
+                    i.model.clone()
+                }
+            })
+            .unwrap_or_else(|| disk_name.clone());
+        let interface = info
+            .as_ref()
+            .and_then(|i| i.interface_type.clone())
+            .unwrap_or_else(|| "Unknown".to_string());
+        let capacity = info
+            .as_ref()
+            .map(|i| format_bytes(i.capacity))
+            .unwrap_or_else(|| "N/A".to_string());
+        let read_bytes = io_stats
+            .as_ref()
+            .map(|io| format_bytes(io.read_bytes))
+            .unwrap_or_else(|| "N/A".to_string());
+        let write_bytes = io_stats
+            .as_ref()
+            .map(|io| format_bytes(io.write_bytes))
+            .unwrap_or_else(|| "N/A".to_string());
+
         egui::Frame::none()
             .fill(CyberColors::SURFACE)
             .stroke(egui::Stroke::new(1.0, disk_color.gamma_multiply(0.4)))
@@ -3177,59 +3277,125 @@ impl SiliconMonitorApp {
                 const COL_READ: f32 = 110.0;
                 const COL_WRITE: f32 = 110.0;
                 const ROW_HEIGHT: f32 = 45.0;
-                
+
                 // Row 1: Use exact size allocation to guarantee column widths
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 30.0;
-                    
+
                     // Column 1: Icon + Model - use exact size
-                    let (model_rect, _) = ui.allocate_exact_size(egui::vec2(COL_MODEL, ROW_HEIGHT), egui::Sense::hover());
+                    let (model_rect, _) = ui.allocate_exact_size(
+                        egui::vec2(COL_MODEL, ROW_HEIGHT),
+                        egui::Sense::hover(),
+                    );
                     if ui.is_rect_visible(model_rect) {
                         // Draw icon
                         let icon_pos = model_rect.left_center() + egui::vec2(14.0, 0.0);
-                        ui.painter().text(icon_pos, egui::Align2::LEFT_CENTER, type_icon, egui::FontId::proportional(28.0), CyberColors::TEXT_PRIMARY);
-                        
+                        ui.painter().text(
+                            icon_pos,
+                            egui::Align2::LEFT_CENTER,
+                            type_icon,
+                            egui::FontId::proportional(28.0),
+                            CyberColors::TEXT_PRIMARY,
+                        );
+
                         // Draw model name
                         let name_pos = model_rect.left_center() + egui::vec2(50.0, -8.0);
-                        ui.painter().text(name_pos, egui::Align2::LEFT_CENTER, &model_name, egui::FontId::proportional(18.0), disk_color);
-                        
+                        ui.painter().text(
+                            name_pos,
+                            egui::Align2::LEFT_CENTER,
+                            &model_name,
+                            egui::FontId::proportional(18.0),
+                            disk_color,
+                        );
+
                         // Draw disk name
                         let disk_name_pos = model_rect.left_center() + egui::vec2(50.0, 10.0);
-                        ui.painter().text(disk_name_pos, egui::Align2::LEFT_CENTER, &disk_name, egui::FontId::monospace(13.0), CyberColors::TEXT_MUTED);
+                        ui.painter().text(
+                            disk_name_pos,
+                            egui::Align2::LEFT_CENTER,
+                            &disk_name,
+                            egui::FontId::monospace(13.0),
+                            CyberColors::TEXT_MUTED,
+                        );
                     }
-                    
+
                     // Column 2: Interface - exact size, centered
-                    let (iface_rect, _) = ui.allocate_exact_size(egui::vec2(COL_INTERFACE, ROW_HEIGHT), egui::Sense::hover());
+                    let (iface_rect, _) = ui.allocate_exact_size(
+                        egui::vec2(COL_INTERFACE, ROW_HEIGHT),
+                        egui::Sense::hover(),
+                    );
                     if ui.is_rect_visible(iface_rect) {
-                        ui.painter().text(iface_rect.center(), egui::Align2::CENTER_CENTER, &interface, egui::FontId::proportional(16.0), CyberColors::NEON_PURPLE);
+                        ui.painter().text(
+                            iface_rect.center(),
+                            egui::Align2::CENTER_CENTER,
+                            &interface,
+                            egui::FontId::proportional(16.0),
+                            CyberColors::NEON_PURPLE,
+                        );
                     }
-                    
+
                     // Column 3: Capacity - exact size, centered
-                    let (cap_rect, _) = ui.allocate_exact_size(egui::vec2(COL_CAPACITY, ROW_HEIGHT), egui::Sense::hover());
+                    let (cap_rect, _) = ui.allocate_exact_size(
+                        egui::vec2(COL_CAPACITY, ROW_HEIGHT),
+                        egui::Sense::hover(),
+                    );
                     if ui.is_rect_visible(cap_rect) {
-                        ui.painter().text(cap_rect.center(), egui::Align2::CENTER_CENTER, &capacity, egui::FontId::proportional(18.0), CyberColors::CYAN);
+                        ui.painter().text(
+                            cap_rect.center(),
+                            egui::Align2::CENTER_CENTER,
+                            &capacity,
+                            egui::FontId::proportional(18.0),
+                            CyberColors::CYAN,
+                        );
                     }
-                    
+
                     // Column 4: Read - exact size, centered
-                    let (read_rect, _) = ui.allocate_exact_size(egui::vec2(COL_READ, ROW_HEIGHT), egui::Sense::hover());
+                    let (read_rect, _) = ui.allocate_exact_size(
+                        egui::vec2(COL_READ, ROW_HEIGHT),
+                        egui::Sense::hover(),
+                    );
                     if ui.is_rect_visible(read_rect) {
-                        ui.painter().text(read_rect.center(), egui::Align2::CENTER_CENTER, &read_bytes, egui::FontId::proportional(16.0), CyberColors::NEON_GREEN);
+                        ui.painter().text(
+                            read_rect.center(),
+                            egui::Align2::CENTER_CENTER,
+                            &read_bytes,
+                            egui::FontId::proportional(16.0),
+                            CyberColors::NEON_GREEN,
+                        );
                     }
-                    
+
                     // Column 5: Write - exact size, centered
-                    let (write_rect, _) = ui.allocate_exact_size(egui::vec2(COL_WRITE, ROW_HEIGHT), egui::Sense::hover());
+                    let (write_rect, _) = ui.allocate_exact_size(
+                        egui::vec2(COL_WRITE, ROW_HEIGHT),
+                        egui::Sense::hover(),
+                    );
                     if ui.is_rect_visible(write_rect) {
-                        ui.painter().text(write_rect.center(), egui::Align2::CENTER_CENTER, &write_bytes, egui::FontId::proportional(16.0), CyberColors::NEON_ORANGE);
+                        ui.painter().text(
+                            write_rect.center(),
+                            egui::Align2::CENTER_CENTER,
+                            &write_bytes,
+                            egui::FontId::proportional(16.0),
+                            CyberColors::NEON_ORANGE,
+                        );
                     }
-                    
+
                     // Column 6: Health - right aligned, use remaining space
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if let Some(h) = &health {
                             let (text, color) = match h {
-                                crate::disk::DiskHealth::Healthy => ("✓ Healthy", CyberColors::NEON_GREEN),
-                                crate::disk::DiskHealth::Warning => ("⚠ Warning", CyberColors::NEON_ORANGE),
-                                crate::disk::DiskHealth::Critical | crate::disk::DiskHealth::Failed => ("✗ Critical", CyberColors::NEON_RED),
-                                crate::disk::DiskHealth::Unknown => ("Unknown", CyberColors::TEXT_MUTED),
+                                crate::disk::DiskHealth::Healthy => {
+                                    ("✓ Healthy", CyberColors::NEON_GREEN)
+                                }
+                                crate::disk::DiskHealth::Warning => {
+                                    ("⚠ Warning", CyberColors::NEON_ORANGE)
+                                }
+                                crate::disk::DiskHealth::Critical
+                                | crate::disk::DiskHealth::Failed => {
+                                    ("✗ Critical", CyberColors::NEON_RED)
+                                }
+                                crate::disk::DiskHealth::Unknown => {
+                                    ("Unknown", CyberColors::TEXT_MUTED)
+                                }
                             };
                             egui::Frame::none()
                                 .fill(color.gamma_multiply(0.15))
@@ -3241,56 +3407,96 @@ impl SiliconMonitorApp {
                         }
                     });
                 });
-                
+
                 // Row 2: Partitions with aligned columns (use cached filesystem data)
                 let filesystems = &cached.filesystems;
                 if !filesystems.is_empty() {
                     ui.add_space(8.0);
                     ui.separator();
                     ui.add_space(6.0);
-                    
+
                     for fs in filesystems.iter().take(3) {
                         let pct = fs.usage_percent();
-                        let color = if pct > 90.0 { CyberColors::NEON_RED } 
-                            else if pct > 75.0 { CyberColors::NEON_ORANGE } 
-                            else { CyberColors::NEON_GREEN };
-                        
+                        let color = if pct > 90.0 {
+                            CyberColors::NEON_RED
+                        } else if pct > 75.0 {
+                            CyberColors::NEON_ORANGE
+                        } else {
+                            CyberColors::NEON_GREEN
+                        };
+
                         ui.horizontal(|ui| {
                             ui.spacing_mut().item_spacing.x = 20.0; // Even spacing
-                            
+
                             // Mount point (fixed width 50px)
                             ui.allocate_ui(egui::vec2(50.0, 22.0), |ui| {
                                 let mount = fs.mount_point.to_string_lossy();
-                                ui.label(RichText::new(mount.as_ref()).color(CyberColors::TEXT_PRIMARY).size(15.0).monospace());
+                                ui.label(
+                                    RichText::new(mount.as_ref())
+                                        .color(CyberColors::TEXT_PRIMARY)
+                                        .size(15.0)
+                                        .monospace(),
+                                );
                             });
-                            
+
                             // Filesystem type (fixed width 60px)
                             ui.allocate_ui(egui::vec2(60.0, 22.0), |ui| {
-                                ui.label(RichText::new(&fs.fs_type).color(CyberColors::TEXT_MUTED).size(13.0));
+                                ui.label(
+                                    RichText::new(&fs.fs_type)
+                                        .color(CyberColors::TEXT_MUTED)
+                                        .size(13.0),
+                                );
                             });
-                            
+
                             // Progress bar (fixed width 180px)
                             let bar_w = 180.0;
                             let bar_h = 18.0;
-                            let (rect, _) = ui.allocate_exact_size(egui::vec2(bar_w, bar_h), egui::Sense::hover());
+                            let (rect, _) = ui.allocate_exact_size(
+                                egui::vec2(bar_w, bar_h),
+                                egui::Sense::hover(),
+                            );
                             if ui.is_rect_visible(rect) {
-                                ui.painter().rect_filled(rect, 3.0, CyberColors::BACKGROUND_DARK);
+                                ui.painter()
+                                    .rect_filled(rect, 3.0, CyberColors::BACKGROUND_DARK);
                                 let w = rect.width() * pct / 100.0;
-                                ui.painter().rect_filled(egui::Rect::from_min_size(rect.min, egui::vec2(w, rect.height())), 3.0, color.gamma_multiply(0.8));
-                                ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, 
-                                    format!("{:.0}%", pct), egui::FontId::proportional(12.0), CyberColors::TEXT_PRIMARY);
+                                ui.painter().rect_filled(
+                                    egui::Rect::from_min_size(
+                                        rect.min,
+                                        egui::vec2(w, rect.height()),
+                                    ),
+                                    3.0,
+                                    color.gamma_multiply(0.8),
+                                );
+                                ui.painter().text(
+                                    rect.center(),
+                                    egui::Align2::CENTER_CENTER,
+                                    format!("{:.0}%", pct),
+                                    egui::FontId::proportional(12.0),
+                                    CyberColors::TEXT_PRIMARY,
+                                );
                             }
-                            
+
                             // Used / Total (fixed width)
                             ui.allocate_ui(egui::vec2(180.0, 22.0), |ui| {
-                                ui.label(RichText::new(format!("{} / {}", format_bytes(fs.used_size), format_bytes(fs.total_size)))
-                                    .color(CyberColors::TEXT_SECONDARY).size(14.0));
+                                ui.label(
+                                    RichText::new(format!(
+                                        "{} / {}",
+                                        format_bytes(fs.used_size),
+                                        format_bytes(fs.total_size)
+                                    ))
+                                    .color(CyberColors::TEXT_SECONDARY)
+                                    .size(14.0),
+                                );
                             });
                         });
                         ui.add_space(2.0); // Space between partition rows
                     }
                     if filesystems.len() > 3 {
-                        ui.label(RichText::new(format!("+{} more partitions", filesystems.len() - 3)).color(CyberColors::TEXT_MUTED).size(12.0));
+                        ui.label(
+                            RichText::new(format!("+{} more partitions", filesystems.len() - 3))
+                                .color(CyberColors::TEXT_MUTED)
+                                .size(12.0),
+                        );
                     }
                 }
             });
@@ -3547,7 +3753,10 @@ impl SiliconMonitorApp {
             if self.system_info_loading {
                 ui.horizontal(|ui| {
                     ui.spinner();
-                    ui.label(RichText::new("Loading detailed system information...").color(CyberColors::TEXT_MUTED));
+                    ui.label(
+                        RichText::new("Loading detailed system information...")
+                            .color(CyberColors::TEXT_MUTED),
+                    );
                 });
                 ui.add_space(8.0);
             }
@@ -3741,7 +3950,7 @@ impl SiliconMonitorApp {
 
             // Collect all available temperatures from various sources
             let mut all_temps: Vec<(String, f32, &str)> = Vec::new();
-            
+
             // Get motherboard sensor data
             let mut has_mb_sensors = false;
             for sensor_device in &self.motherboard_sensors {
@@ -3757,7 +3966,9 @@ impl SiliconMonitorApp {
             // Get GPU temperatures
             for (i, info) in self.gpu_dynamic_info.iter().enumerate() {
                 if let Some(temp) = info.thermal.temperature {
-                    let gpu_name = self.gpu_static_info.get(i)
+                    let gpu_name = self
+                        .gpu_static_info
+                        .get(i)
                         .map(|s| s.name.clone())
                         .unwrap_or_else(|| format!("GPU {}", i));
                     all_temps.push((gpu_name, temp as f32, "GPU"));
@@ -3783,14 +3994,16 @@ impl SiliconMonitorApp {
                                 .color(CyberColors::TEXT_MUTED),
                         );
                         ui.label(
-                            RichText::new("Windows WMI doesn't expose CPU temperatures on most systems.")
-                                .color(CyberColors::TEXT_MUTED)
-                                .small(),
+                            RichText::new(
+                                "Windows WMI doesn't expose CPU temperatures on most systems.",
+                            )
+                            .color(CyberColors::TEXT_MUTED)
+                            .small(),
                         );
                     });
                 });
                 ui.add_space(8.0);
-                
+
                 // LHM download link
                 ui.horizontal(|ui| {
                     ui.label(RichText::new("💡").size(14.0));
@@ -3841,7 +4054,9 @@ impl SiliconMonitorApp {
                                 .small(),
                         );
                         ui.hyperlink_to(
-                            RichText::new("LibreHardwareMonitor").color(CyberColors::CYAN).small(),
+                            RichText::new("LibreHardwareMonitor")
+                                .color(CyberColors::CYAN)
+                                .small(),
                             "https://github.com/LibreHardwareMonitor/LibreHardwareMonitor",
                         );
                     });
@@ -3897,9 +4112,7 @@ impl SiliconMonitorApp {
                                     Some(rpm) => (format!("{} RPM", rpm), CyberColors::NEON_GREEN),
                                     None => ("N/A".to_string(), CyberColors::TEXT_MUTED),
                                 };
-                                ui.label(
-                                    RichText::new(rpm_text).color(rpm_color),
-                                );
+                                ui.label(RichText::new(rpm_text).color(rpm_color));
                                 ui.end_row();
                             }
                         });
@@ -3927,13 +4140,16 @@ impl SiliconMonitorApp {
                         for device in &self.sata_devices {
                             // Device name
                             ui.label(RichText::new(&device.name).color(CyberColors::TEXT_PRIMARY));
-                            
+
                             // Model
-                            ui.label(RichText::new(device.model.as_deref().unwrap_or("-"))
-                                .color(CyberColors::TEXT_SECONDARY));
-                            
+                            ui.label(
+                                RichText::new(device.model.as_deref().unwrap_or("-"))
+                                    .color(CyberColors::TEXT_SECONDARY),
+                            );
+
                             // Capacity
-                            let capacity = device.capacity_gb
+                            let capacity = device
+                                .capacity_gb
                                 .map(|gb| {
                                     if gb >= 1000.0 {
                                         format!("{:.1} TB", gb / 1000.0)
@@ -3943,16 +4159,22 @@ impl SiliconMonitorApp {
                                 })
                                 .unwrap_or_else(|| "-".to_string());
                             ui.label(RichText::new(capacity).color(CyberColors::NEON_YELLOW));
-                            
+
                             // Interface
-                            ui.label(RichText::new(device.interface_speed.as_deref().unwrap_or("-"))
-                                .color(CyberColors::NEON_BLUE));
-                            
+                            ui.label(
+                                RichText::new(device.interface_speed.as_deref().unwrap_or("-"))
+                                    .color(CyberColors::NEON_BLUE),
+                            );
+
                             // Media type
                             let (type_str, type_color) = match device.media_type {
                                 motherboard::SataMediaType::Ssd => ("SSD", CyberColors::NEON_GREEN),
-                                motherboard::SataMediaType::Hdd => ("HDD", CyberColors::NEON_ORANGE),
-                                motherboard::SataMediaType::Unknown => ("Unknown", CyberColors::TEXT_MUTED),
+                                motherboard::SataMediaType::Hdd => {
+                                    ("HDD", CyberColors::NEON_ORANGE)
+                                }
+                                motherboard::SataMediaType::Unknown => {
+                                    ("Unknown", CyberColors::TEXT_MUTED)
+                                }
                             };
                             ui.label(RichText::new(type_str).color(type_color));
                             ui.end_row();
@@ -3988,13 +4210,15 @@ impl SiliconMonitorApp {
                                 None => ("Other", CyberColors::TEXT_MUTED),
                             };
                             ui.label(RichText::new(class_str).color(class_color));
-                            
+
                             // Device name
                             ui.label(RichText::new(&device.name).color(CyberColors::TEXT_PRIMARY));
-                            
+
                             // Vendor
-                            ui.label(RichText::new(device.vendor.as_deref().unwrap_or("-"))
-                                .color(CyberColors::TEXT_SECONDARY));
+                            ui.label(
+                                RichText::new(device.vendor.as_deref().unwrap_or("-"))
+                                    .color(CyberColors::TEXT_SECONDARY),
+                            );
                             ui.end_row();
                         }
                     });
@@ -4066,13 +4290,13 @@ impl SiliconMonitorApp {
         if !self.system_info_tried && !self.system_info_loading {
             self.system_info_tried = true;
             self.system_info_loading = true;
-            
+
             let (tx, rx) = channel();
             self.system_info_receiver = Some(rx);
-            
+
             std::thread::spawn(move || {
                 std::thread::sleep(std::time::Duration::from_millis(10));
-                
+
                 let system_info = motherboard::get_system_info().ok();
                 let sensors = motherboard::enumerate_sensors().unwrap_or_default();
                 let drivers = motherboard::get_driver_versions().unwrap_or_default();
@@ -4080,7 +4304,7 @@ impl SiliconMonitorApp {
                 let sata_devices = motherboard::get_sata_devices().unwrap_or_default();
                 let system_temps = motherboard::get_system_temperatures().ok();
                 let peripherals = motherboard::get_peripherals().ok();
-                
+
                 let _ = tx.send(SystemInfoResult {
                     system_info,
                     sensors,
@@ -4095,37 +4319,59 @@ impl SiliconMonitorApp {
 
         ScrollArea::vertical().show(ui, |ui| {
             ui.add(SectionHeader::new("🔌 Peripherals & Buses"));
-            
+
             // Show loading indicator if peripherals not yet loaded
             if self.peripherals.is_none() && self.system_info_loading {
                 ui.horizontal(|ui| {
                     ui.spinner();
-                    ui.label(RichText::new("Loading peripheral information...").color(CyberColors::TEXT_MUTED));
+                    ui.label(
+                        RichText::new("Loading peripheral information...")
+                            .color(CyberColors::TEXT_MUTED),
+                    );
                 });
                 ui.add_space(8.0);
             }
-            
+
             if let Some(ref peripherals) = self.peripherals {
                 // USB Devices Section
                 if !peripherals.usb_devices.is_empty() {
                     ui.add_space(8.0);
                     ui.add(SectionHeader::new("🔗 USB Devices"));
-                    
+
                     // Group by USB version
-                    let mut usb3_devices: Vec<_> = peripherals.usb_devices.iter()
-                        .filter(|d| matches!(d.usb_version, motherboard::UsbVersion::Usb3_0 | motherboard::UsbVersion::Usb3_1 | motherboard::UsbVersion::Usb3_2 | motherboard::UsbVersion::Usb4))
+                    let mut usb3_devices: Vec<_> = peripherals
+                        .usb_devices
+                        .iter()
+                        .filter(|d| {
+                            matches!(
+                                d.usb_version,
+                                motherboard::UsbVersion::Usb3_0
+                                    | motherboard::UsbVersion::Usb3_1
+                                    | motherboard::UsbVersion::Usb3_2
+                                    | motherboard::UsbVersion::Usb4
+                            )
+                        })
                         .collect();
-                    let mut usb2_devices: Vec<_> = peripherals.usb_devices.iter()
+                    let mut usb2_devices: Vec<_> = peripherals
+                        .usb_devices
+                        .iter()
                         .filter(|d| matches!(d.usb_version, motherboard::UsbVersion::Usb2_0))
                         .collect();
-                    let mut other_usb: Vec<_> = peripherals.usb_devices.iter()
-                        .filter(|d| matches!(d.usb_version, motherboard::UsbVersion::Usb1_1 | motherboard::UsbVersion::Unknown))
+                    let mut other_usb: Vec<_> = peripherals
+                        .usb_devices
+                        .iter()
+                        .filter(|d| {
+                            matches!(
+                                d.usb_version,
+                                motherboard::UsbVersion::Usb1_1 | motherboard::UsbVersion::Unknown
+                            )
+                        })
                         .collect();
-                    
+
                     usb3_devices.sort_by(|a, b| a.name.cmp(&b.name));
                     usb2_devices.sort_by(|a, b| a.name.cmp(&b.name));
                     other_usb.sort_by(|a, b| a.name.cmp(&b.name));
-                    
+
                     egui::Grid::new("usb_devices_grid")
                         .num_columns(4)
                         .spacing([15.0, 4.0])
@@ -4137,7 +4383,7 @@ impl SiliconMonitorApp {
                             ui.label(RichText::new("Class").color(CyberColors::CYAN).strong());
                             ui.label(RichText::new("Status").color(CyberColors::CYAN).strong());
                             ui.end_row();
-                            
+
                             // USB 3.x devices first (fastest)
                             for device in &usb3_devices {
                                 let version_color = match device.usb_version {
@@ -4147,53 +4393,102 @@ impl SiliconMonitorApp {
                                     motherboard::UsbVersion::Usb3_0 => CyberColors::NEON_BLUE,
                                     _ => CyberColors::TEXT_SECONDARY,
                                 };
-                                ui.label(RichText::new(format!("{}", device.usb_version)).color(version_color));
-                                ui.label(RichText::new(&device.name).color(CyberColors::TEXT_PRIMARY));
-                                ui.label(RichText::new(device.device_class.as_deref().unwrap_or("-")).color(CyberColors::TEXT_SECONDARY));
-                                let status_color = if device.status.as_deref() == Some("OK") { CyberColors::NEON_GREEN } else { CyberColors::NEON_ORANGE };
-                                ui.label(RichText::new(device.status.as_deref().unwrap_or("-")).color(status_color));
+                                ui.label(
+                                    RichText::new(format!("{}", device.usb_version))
+                                        .color(version_color),
+                                );
+                                ui.label(
+                                    RichText::new(&device.name).color(CyberColors::TEXT_PRIMARY),
+                                );
+                                ui.label(
+                                    RichText::new(device.device_class.as_deref().unwrap_or("-"))
+                                        .color(CyberColors::TEXT_SECONDARY),
+                                );
+                                let status_color = if device.status.as_deref() == Some("OK") {
+                                    CyberColors::NEON_GREEN
+                                } else {
+                                    CyberColors::NEON_ORANGE
+                                };
+                                ui.label(
+                                    RichText::new(device.status.as_deref().unwrap_or("-"))
+                                        .color(status_color),
+                                );
                                 ui.end_row();
                             }
-                            
+
                             // USB 2.0 devices
                             for device in &usb2_devices {
-                                ui.label(RichText::new(format!("{}", device.usb_version)).color(CyberColors::NEON_YELLOW));
-                                ui.label(RichText::new(&device.name).color(CyberColors::TEXT_PRIMARY));
-                                ui.label(RichText::new(device.device_class.as_deref().unwrap_or("-")).color(CyberColors::TEXT_SECONDARY));
-                                let status_color = if device.status.as_deref() == Some("OK") { CyberColors::NEON_GREEN } else { CyberColors::NEON_ORANGE };
-                                ui.label(RichText::new(device.status.as_deref().unwrap_or("-")).color(status_color));
+                                ui.label(
+                                    RichText::new(format!("{}", device.usb_version))
+                                        .color(CyberColors::NEON_YELLOW),
+                                );
+                                ui.label(
+                                    RichText::new(&device.name).color(CyberColors::TEXT_PRIMARY),
+                                );
+                                ui.label(
+                                    RichText::new(device.device_class.as_deref().unwrap_or("-"))
+                                        .color(CyberColors::TEXT_SECONDARY),
+                                );
+                                let status_color = if device.status.as_deref() == Some("OK") {
+                                    CyberColors::NEON_GREEN
+                                } else {
+                                    CyberColors::NEON_ORANGE
+                                };
+                                ui.label(
+                                    RichText::new(device.status.as_deref().unwrap_or("-"))
+                                        .color(status_color),
+                                );
                                 ui.end_row();
                             }
-                            
+
                             // Other USB devices
                             for device in &other_usb {
-                                ui.label(RichText::new(format!("{}", device.usb_version)).color(CyberColors::TEXT_MUTED));
-                                ui.label(RichText::new(&device.name).color(CyberColors::TEXT_PRIMARY));
-                                ui.label(RichText::new(device.device_class.as_deref().unwrap_or("-")).color(CyberColors::TEXT_SECONDARY));
-                                let status_color = if device.status.as_deref() == Some("OK") { CyberColors::NEON_GREEN } else { CyberColors::NEON_ORANGE };
-                                ui.label(RichText::new(device.status.as_deref().unwrap_or("-")).color(status_color));
+                                ui.label(
+                                    RichText::new(format!("{}", device.usb_version))
+                                        .color(CyberColors::TEXT_MUTED),
+                                );
+                                ui.label(
+                                    RichText::new(&device.name).color(CyberColors::TEXT_PRIMARY),
+                                );
+                                ui.label(
+                                    RichText::new(device.device_class.as_deref().unwrap_or("-"))
+                                        .color(CyberColors::TEXT_SECONDARY),
+                                );
+                                let status_color = if device.status.as_deref() == Some("OK") {
+                                    CyberColors::NEON_GREEN
+                                } else {
+                                    CyberColors::NEON_ORANGE
+                                };
+                                ui.label(
+                                    RichText::new(device.status.as_deref().unwrap_or("-"))
+                                        .color(status_color),
+                                );
                                 ui.end_row();
                             }
                         });
-                    
+
                     // USB summary
                     ui.add_space(4.0);
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new(format!(
-                            "Total: {} devices ({} USB 3.x, {} USB 2.0, {} other)",
-                            peripherals.usb_devices.len(),
-                            usb3_devices.len(),
-                            usb2_devices.len(),
-                            other_usb.len()
-                        )).color(CyberColors::TEXT_MUTED).small());
+                        ui.label(
+                            RichText::new(format!(
+                                "Total: {} devices ({} USB 3.x, {} USB 2.0, {} other)",
+                                peripherals.usb_devices.len(),
+                                usb3_devices.len(),
+                                usb2_devices.len(),
+                                other_usb.len()
+                            ))
+                            .color(CyberColors::TEXT_MUTED)
+                            .small(),
+                        );
                     });
                 }
-                
+
                 // Display Outputs Section
                 if !peripherals.display_outputs.is_empty() {
                     ui.add_space(16.0);
                     ui.add(SectionHeader::new("🖥️ Display Outputs"));
-                    
+
                     egui::Grid::new("display_outputs_grid")
                         .num_columns(4)
                         .spacing([20.0, 4.0])
@@ -4202,33 +4497,54 @@ impl SiliconMonitorApp {
                             // Header
                             ui.label(RichText::new("Type").color(CyberColors::CYAN).strong());
                             ui.label(RichText::new("Name").color(CyberColors::CYAN).strong());
-                            ui.label(RichText::new("Resolution").color(CyberColors::CYAN).strong());
+                            ui.label(
+                                RichText::new("Resolution")
+                                    .color(CyberColors::CYAN)
+                                    .strong(),
+                            );
                             ui.label(RichText::new("Refresh").color(CyberColors::CYAN).strong());
                             ui.end_row();
-                            
+
                             for output in &peripherals.display_outputs {
                                 let type_color = match output.output_type {
-                                    motherboard::DisplayOutputType::Hdmi => CyberColors::NEON_PURPLE,
-                                    motherboard::DisplayOutputType::DisplayPort => CyberColors::NEON_GREEN,
-                                    motherboard::DisplayOutputType::Thunderbolt => CyberColors::NEON_YELLOW,
+                                    motherboard::DisplayOutputType::Hdmi => {
+                                        CyberColors::NEON_PURPLE
+                                    }
+                                    motherboard::DisplayOutputType::DisplayPort => {
+                                        CyberColors::NEON_GREEN
+                                    }
+                                    motherboard::DisplayOutputType::Thunderbolt => {
+                                        CyberColors::NEON_YELLOW
+                                    }
                                     motherboard::DisplayOutputType::UsbC => CyberColors::NEON_BLUE,
                                     _ => CyberColors::TEXT_SECONDARY,
                                 };
-                                ui.label(RichText::new(format!("{}", output.output_type)).color(type_color));
-                                ui.label(RichText::new(&output.name).color(CyberColors::TEXT_PRIMARY));
-                                ui.label(RichText::new(output.resolution.as_deref().unwrap_or("-")).color(CyberColors::NEON_YELLOW));
-                                let refresh = output.refresh_rate.map(|r| format!("{} Hz", r)).unwrap_or_else(|| "-".to_string());
+                                ui.label(
+                                    RichText::new(format!("{}", output.output_type))
+                                        .color(type_color),
+                                );
+                                ui.label(
+                                    RichText::new(&output.name).color(CyberColors::TEXT_PRIMARY),
+                                );
+                                ui.label(
+                                    RichText::new(output.resolution.as_deref().unwrap_or("-"))
+                                        .color(CyberColors::NEON_YELLOW),
+                                );
+                                let refresh = output
+                                    .refresh_rate
+                                    .map(|r| format!("{} Hz", r))
+                                    .unwrap_or_else(|| "-".to_string());
                                 ui.label(RichText::new(refresh).color(CyberColors::TEXT_SECONDARY));
                                 ui.end_row();
                             }
                         });
                 }
-                
+
                 // Audio Devices Section
                 if !peripherals.audio_devices.is_empty() {
                     ui.add_space(16.0);
                     ui.add(SectionHeader::new("🔊 Audio Devices"));
-                    
+
                     egui::Grid::new("audio_devices_grid")
                         .num_columns(4)
                         .spacing([20.0, 4.0])
@@ -4237,32 +4553,55 @@ impl SiliconMonitorApp {
                             // Header
                             ui.label(RichText::new("Type").color(CyberColors::CYAN).strong());
                             ui.label(RichText::new("Device").color(CyberColors::CYAN).strong());
-                            ui.label(RichText::new("Manufacturer").color(CyberColors::CYAN).strong());
+                            ui.label(
+                                RichText::new("Manufacturer")
+                                    .color(CyberColors::CYAN)
+                                    .strong(),
+                            );
                             ui.label(RichText::new("Status").color(CyberColors::CYAN).strong());
                             ui.end_row();
-                            
+
                             for device in &peripherals.audio_devices {
                                 let type_color = match device.device_type {
                                     motherboard::AudioDeviceType::Output => CyberColors::NEON_GREEN,
                                     motherboard::AudioDeviceType::Input => CyberColors::NEON_BLUE,
-                                    motherboard::AudioDeviceType::OutputInput => CyberColors::NEON_PURPLE,
-                                    motherboard::AudioDeviceType::Unknown => CyberColors::TEXT_MUTED,
+                                    motherboard::AudioDeviceType::OutputInput => {
+                                        CyberColors::NEON_PURPLE
+                                    }
+                                    motherboard::AudioDeviceType::Unknown => {
+                                        CyberColors::TEXT_MUTED
+                                    }
                                 };
-                                ui.label(RichText::new(format!("{}", device.device_type)).color(type_color));
-                                ui.label(RichText::new(&device.name).color(CyberColors::TEXT_PRIMARY));
-                                ui.label(RichText::new(device.manufacturer.as_deref().unwrap_or("-")).color(CyberColors::TEXT_SECONDARY));
-                                let status_color = if device.status.as_deref() == Some("OK") { CyberColors::NEON_GREEN } else { CyberColors::NEON_ORANGE };
-                                ui.label(RichText::new(device.status.as_deref().unwrap_or("-")).color(status_color));
+                                ui.label(
+                                    RichText::new(format!("{}", device.device_type))
+                                        .color(type_color),
+                                );
+                                ui.label(
+                                    RichText::new(&device.name).color(CyberColors::TEXT_PRIMARY),
+                                );
+                                ui.label(
+                                    RichText::new(device.manufacturer.as_deref().unwrap_or("-"))
+                                        .color(CyberColors::TEXT_SECONDARY),
+                                );
+                                let status_color = if device.status.as_deref() == Some("OK") {
+                                    CyberColors::NEON_GREEN
+                                } else {
+                                    CyberColors::NEON_ORANGE
+                                };
+                                ui.label(
+                                    RichText::new(device.status.as_deref().unwrap_or("-"))
+                                        .color(status_color),
+                                );
                                 ui.end_row();
                             }
                         });
                 }
-                
+
                 // Network Ports Section
                 if !peripherals.network_ports.is_empty() {
                     ui.add_space(16.0);
                     ui.add(SectionHeader::new("🌐 Network Ports"));
-                    
+
                     egui::Grid::new("network_ports_grid")
                         .num_columns(4)
                         .spacing([20.0, 4.0])
@@ -4274,29 +4613,46 @@ impl SiliconMonitorApp {
                             ui.label(RichText::new("Speed").color(CyberColors::CYAN).strong());
                             ui.label(RichText::new("MAC").color(CyberColors::CYAN).strong());
                             ui.end_row();
-                            
+
                             for port in &peripherals.network_ports {
                                 let type_color = match port.port_type {
-                                    motherboard::NetworkPortType::Ethernet => CyberColors::NEON_BLUE,
+                                    motherboard::NetworkPortType::Ethernet => {
+                                        CyberColors::NEON_BLUE
+                                    }
                                     motherboard::NetworkPortType::WiFi => CyberColors::NEON_GREEN,
-                                    motherboard::NetworkPortType::Bluetooth => CyberColors::NEON_PURPLE,
-                                    motherboard::NetworkPortType::Thunderbolt => CyberColors::NEON_YELLOW,
+                                    motherboard::NetworkPortType::Bluetooth => {
+                                        CyberColors::NEON_PURPLE
+                                    }
+                                    motherboard::NetworkPortType::Thunderbolt => {
+                                        CyberColors::NEON_YELLOW
+                                    }
                                     motherboard::NetworkPortType::Other => CyberColors::TEXT_MUTED,
                                 };
-                                ui.label(RichText::new(format!("{}", port.port_type)).color(type_color));
-                                ui.label(RichText::new(&port.name).color(CyberColors::TEXT_PRIMARY));
-                                ui.label(RichText::new(port.speed.as_deref().unwrap_or("-")).color(CyberColors::NEON_YELLOW));
-                                ui.label(RichText::new(port.mac_address.as_deref().unwrap_or("-")).color(CyberColors::TEXT_MUTED).small());
+                                ui.label(
+                                    RichText::new(format!("{}", port.port_type)).color(type_color),
+                                );
+                                ui.label(
+                                    RichText::new(&port.name).color(CyberColors::TEXT_PRIMARY),
+                                );
+                                ui.label(
+                                    RichText::new(port.speed.as_deref().unwrap_or("-"))
+                                        .color(CyberColors::NEON_YELLOW),
+                                );
+                                ui.label(
+                                    RichText::new(port.mac_address.as_deref().unwrap_or("-"))
+                                        .color(CyberColors::TEXT_MUTED)
+                                        .small(),
+                                );
                                 ui.end_row();
                             }
                         });
                 }
-                
+
                 // Bluetooth Devices Section (if any)
                 if !peripherals.bluetooth_devices.is_empty() {
                     ui.add_space(16.0);
                     ui.add(SectionHeader::new("📶 Bluetooth Devices"));
-                    
+
                     egui::Grid::new("bluetooth_devices_grid")
                         .num_columns(3)
                         .spacing([20.0, 4.0])
@@ -4306,12 +4662,27 @@ impl SiliconMonitorApp {
                             ui.label(RichText::new("Address").color(CyberColors::CYAN).strong());
                             ui.label(RichText::new("Status").color(CyberColors::CYAN).strong());
                             ui.end_row();
-                            
+
                             for device in &peripherals.bluetooth_devices {
-                                ui.label(RichText::new(&device.name).color(CyberColors::TEXT_PRIMARY));
-                                ui.label(RichText::new(device.address.as_deref().unwrap_or("-")).color(CyberColors::TEXT_MUTED));
-                                let status = if device.connected { "Connected" } else if device.paired { "Paired" } else { "Available" };
-                                let status_color = if device.connected { CyberColors::NEON_GREEN } else { CyberColors::TEXT_SECONDARY };
+                                ui.label(
+                                    RichText::new(&device.name).color(CyberColors::TEXT_PRIMARY),
+                                );
+                                ui.label(
+                                    RichText::new(device.address.as_deref().unwrap_or("-"))
+                                        .color(CyberColors::TEXT_MUTED),
+                                );
+                                let status = if device.connected {
+                                    "Connected"
+                                } else if device.paired {
+                                    "Paired"
+                                } else {
+                                    "Available"
+                                };
+                                let status_color = if device.connected {
+                                    CyberColors::NEON_GREEN
+                                } else {
+                                    CyberColors::TEXT_SECONDARY
+                                };
                                 ui.label(RichText::new(status).color(status_color));
                                 ui.end_row();
                             }
@@ -4319,7 +4690,10 @@ impl SiliconMonitorApp {
                 }
             } else if !self.system_info_loading {
                 ui.add_space(16.0);
-                ui.label(RichText::new("⚠ Peripheral information not available").color(CyberColors::NEON_ORANGE));
+                ui.label(
+                    RichText::new("⚠ Peripheral information not available")
+                        .color(CyberColors::NEON_ORANGE),
+                );
             }
         });
     }
@@ -4457,7 +4831,7 @@ impl SiliconMonitorApp {
                 ui.add_space(10.0);
                 ui.horizontal(|ui| {
                     ui.label(RichText::new("Nmap-Style Scans:").color(CyberColors::CYAN));
-                    
+
                     // Quick scan button
                     if ui
                         .button(RichText::new("⚡ Quick Scan").color(CyberColors::NEON_GREEN))
@@ -4476,7 +4850,7 @@ impl SiliconMonitorApp {
                         }
                     }
 
-                    // Full scan button  
+                    // Full scan button
                     if ui
                         .button(RichText::new("🔬 Full Scan").color(CyberColors::NEON_BLUE))
                         .clicked()
@@ -4774,7 +5148,7 @@ impl SiliconMonitorApp {
                             CyberColors::NEON_RED
                         };
                         let status_text = if result.is_up { "UP" } else { "DOWN" };
-                        
+
                         ui.label(RichText::new(&result.host).color(CyberColors::CYAN));
                         ui.label(RichText::new(format!("({})", status_text)).color(status_color));
                         if let Some(latency) = result.latency_ms {
@@ -4841,7 +5215,7 @@ impl SiliconMonitorApp {
                                         for svc in &result.services {
                                             ui.label(RichText::new(format!("{}/tcp", svc.port)).color(CyberColors::TEXT_PRIMARY));
                                             ui.label(RichText::new(&svc.service).color(CyberColors::NEON_GREEN));
-                                            
+
                                             let version = match (&svc.product, &svc.version) {
                                                 (Some(p), Some(v)) => format!("{} {}", p, v),
                                                 (Some(p), None) => p.clone(),
@@ -4849,7 +5223,7 @@ impl SiliconMonitorApp {
                                                 _ => "-".to_string(),
                                             };
                                             ui.label(RichText::new(version).color(CyberColors::NEON_PURPLE));
-                                            
+
                                             let banner = svc.banner.as_ref()
                                                 .map(|b| if b.len() > 40 { format!("{}...", &b[..40]) } else { b.clone() })
                                                 .unwrap_or_else(|| "-".to_string());
@@ -4875,7 +5249,7 @@ impl SiliconMonitorApp {
 
                 // Check if capture tools are available
                 let capture_available = network_tools::is_capture_available();
-                
+
                 if !capture_available {
                     ui.label(
                         RichText::new("⚠️ No packet capture tool found. Install Wireshark (tshark) or tcpdump.")
@@ -4920,7 +5294,7 @@ impl SiliconMonitorApp {
                                 timeout_secs: 30,
                                 ..Default::default()
                             };
-                            
+
                             match network_tools::capture_packets(&config) {
                                 Ok(result) => {
                                     self.nettools_capture_result = Some(result);
@@ -4936,7 +5310,7 @@ impl SiliconMonitorApp {
                     // Capture results
                     if let Some(ref result) = self.nettools_capture_result {
                         ui.add_space(10.0);
-                        
+
                         // Summary stats
                         ui.horizontal(|ui| {
                             ui.label(RichText::new(format!("{} packets", result.total_packets)).color(CyberColors::NEON_GREEN));
@@ -5033,8 +5407,9 @@ impl SiliconMonitorApp {
     fn draw_ai_assistant_tab(&mut self, ui: &mut egui::Ui) {
         // Show loading state while agent is being initialized in background
         // But timeout after 3 seconds to show the UI anyway
-        let loading_timeout = self.agent_loading && self.agent_loading_start.elapsed().as_secs() < 3;
-        
+        let loading_timeout =
+            self.agent_loading && self.agent_loading_start.elapsed().as_secs() < 3;
+
         if loading_timeout {
             ui.vertical_centered(|ui| {
                 ui.add_space(50.0);
@@ -5053,7 +5428,7 @@ impl SiliconMonitorApp {
             });
             return;
         }
-        
+
         // If we timed out, mark loading as done
         if self.agent_loading && self.agent_loading_start.elapsed().as_secs() >= 3 {
             self.agent_loading = false;
@@ -5067,10 +5442,10 @@ impl SiliconMonitorApp {
 
             // Header with provider/model selection
             let mut refresh_ollama = false;
-            
+
             ui.horizontal(|ui| {
                 ui.add(SectionHeader::new("🤖 AI System Assistant"));
-                
+
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     // Model dropdown - use detected models for Ollama, predefined for others
                     let display_model = if self.ai_selected_model.is_empty() {
@@ -5078,14 +5453,14 @@ impl SiliconMonitorApp {
                     } else {
                         self.ai_selected_model.clone()
                     };
-                
+
                 // Refresh button for Ollama models
                 if matches!(self.ai_selected_backend, AiBackendSelection::Ollama) {
                     if ui.button(RichText::new("🔄").size(14.0)).on_hover_text("Refresh model list").clicked() {
                         refresh_ollama = true;
                     }
                 }
-                
+
                 egui::ComboBox::from_id_salt("ai_model_select")
                     .selected_text(RichText::new(&display_model).color(CyberColors::NEON_GREEN))
                     .width(180.0)
@@ -5121,11 +5496,11 @@ impl SiliconMonitorApp {
                             }
                         }
                     });
-                
+
                 ui.label(RichText::new("Model:").color(CyberColors::TEXT_SECONDARY).size(12.0));
-                
+
                 ui.add_space(12.0);
-                
+
                 // Provider dropdown
                 let provider_name = match self.ai_selected_backend {
                     AiBackendSelection::Ollama => "🦙 Ollama",
@@ -5144,7 +5519,7 @@ impl SiliconMonitorApp {
                         ui.selectable_value(&mut self.ai_selected_backend, AiBackendSelection::GitHub, "🐙 GitHub");
                         ui.selectable_value(&mut self.ai_selected_backend, AiBackendSelection::LmStudio, "📦 LM Studio");
                     });
-                
+
                 ui.label(RichText::new("Provider:").color(CyberColors::TEXT_SECONDARY).size(12.0));
             });
         });
@@ -5203,7 +5578,7 @@ impl SiliconMonitorApp {
 
         // Chat history area - fills available space
         let chat_height = ui.available_height() - 80.0; // Leave room for input area
-        
+
         egui::Frame::none()
             .fill(CyberColors::BACKGROUND)
             .stroke(egui::Stroke::new(1.0, CyberColors::BORDER))
@@ -5211,7 +5586,7 @@ impl SiliconMonitorApp {
             .inner_margin(12.0)
             .show(ui, |ui| {
                 ui.set_min_size(egui::vec2(ui.available_width(), chat_height.max(300.0)));
-                
+
                 if self.agent_history.is_empty() {
                     ui.vertical_centered(|ui| {
                         ui.add_space(20.0);
@@ -5227,7 +5602,7 @@ impl SiliconMonitorApp {
                                 .size(14.0),
                         );
                         ui.add_space(24.0);
-                        
+
                         // Example questions
                         egui::Frame::none()
                             .fill(CyberColors::SURFACE)
@@ -5256,10 +5631,10 @@ impl SiliconMonitorApp {
                         .show(ui, |ui| {
                     // Calculate max bubble width - allow wider bubbles
                     let max_bubble_width = (ui.available_width() - 60.0).min(800.0);
-                    
+
                     for entry in self.agent_history.iter() {
                         let is_user = entry.role == ChatRole::User;
-                        
+
                         let (bg_color, border_color, text_color, icon) = if is_user {
                             (CyberColors::SURFACE, CyberColors::CYAN_DIM, CyberColors::TEXT_PRIMARY, "👤")
                         } else {
@@ -5270,7 +5645,7 @@ impl SiliconMonitorApp {
                         if is_user {
                             ui.add_space(40.0); // Indent user messages
                         }
-                        
+
                         egui::Frame::none()
                             .fill(bg_color)
                             .stroke(egui::Stroke::new(1.0, border_color))
@@ -5278,7 +5653,7 @@ impl SiliconMonitorApp {
                             .rounding(8.0)
                             .show(ui, |ui| {
                                 ui.set_max_width(max_bubble_width);
-                                
+
                                 // Header with icon and role
                                 ui.horizontal(|ui| {
                                     ui.label(RichText::new(icon).size(14.0));
@@ -5288,7 +5663,7 @@ impl SiliconMonitorApp {
                                             .strong()
                                             .size(12.0),
                                     );
-                                    
+
                                     // Metadata on the right
                                     if !is_user {
                                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -5305,9 +5680,9 @@ impl SiliconMonitorApp {
                                         });
                                     }
                                 });
-                                
+
                                 ui.add_space(4.0);
-                                        
+
                                 // Message content with text wrapping
                                 ui.label(
                                     RichText::new(&entry.content)
@@ -5315,7 +5690,7 @@ impl SiliconMonitorApp {
                                         .size(13.0),
                                 );
                             });
-                        
+
                         ui.add_space(8.0);
                     }
                     }); // End ScrollArea
@@ -5368,9 +5743,9 @@ impl SiliconMonitorApp {
             if ui.button(RichText::new("🗑️ Clear").color(CyberColors::TEXT_MUTED).size(12.0)).clicked() {
                 self.agent_history.clear();
             }
-            
+
             ui.add_space(8.0);
-            
+
             if self.agent_is_processing {
                 ui.spinner();
                 ui.label(
@@ -5429,28 +5804,25 @@ impl SiliconMonitorApp {
                     .ok()
                     .map(|mut api| api.auto_query(&query))
                     .unwrap_or_default();
-                
+
                 // Enhance the query with tool context if available
                 let enhanced_query = if !tool_context.is_empty() {
-                    format!(
-                        "{}\n\n---\n\n## User Question\n{}", 
-                        tool_context,
-                        query
-                    )
+                    format!("{}\n\n---\n\n## User Question\n{}", tool_context, query)
                 } else {
                     query
                 };
-                
-                let response = agent.ask(&enhanced_query, &monitor)
+
+                let response = agent
+                    .ask(&enhanced_query, &monitor)
                     .map_err(|e| format!("{}", e))?;
-                
+
                 Ok(AgentResponse {
                     response: response.response,
                     inference_time_ms: response.inference_time_ms,
                     from_cache: response.from_cache,
                 })
             })();
-            
+
             let _ = tx.send(result);
         });
     }
@@ -5459,10 +5831,14 @@ impl SiliconMonitorApp {
     #[allow(dead_code)]
     fn draw_ai_setup_panel(&mut self, ui: &mut egui::Ui) {
         ui.add_space(10.0);
-        
+
         // Show status message if any
         if let Some((msg, is_error)) = &self.ai_status_message {
-            let color = if *is_error { CyberColors::NEON_RED } else { CyberColors::NEON_GREEN };
+            let color = if *is_error {
+                CyberColors::NEON_RED
+            } else {
+                CyberColors::NEON_GREEN
+            };
             ui.horizontal(|ui| {
                 ui.label(RichText::new(if *is_error { "❌" } else { "✓" }).color(color));
                 ui.label(RichText::new(msg.as_str()).color(color));
@@ -5478,13 +5854,22 @@ impl SiliconMonitorApp {
                 .rounding(8.0)
                 .inner_margin(15.0)
                 .show(ui, |ui| {
-                    ui.label(RichText::new("✓ Available Backends").color(CyberColors::NEON_GREEN).size(16.0));
+                    ui.label(
+                        RichText::new("✓ Available Backends")
+                            .color(CyberColors::NEON_GREEN)
+                            .size(16.0),
+                    );
                     ui.add_space(5.0);
                     for backend in &available {
-                        ui.label(RichText::new(format!("  • {:?}", backend)).color(CyberColors::CYAN));
+                        ui.label(
+                            RichText::new(format!("  • {:?}", backend)).color(CyberColors::CYAN),
+                        );
                     }
                     ui.add_space(10.0);
-                    if ui.button(RichText::new("🔄 Retry Connection").color(CyberColors::CYAN)).clicked() {
+                    if ui
+                        .button(RichText::new("🔄 Retry Connection").color(CyberColors::CYAN))
+                        .clicked()
+                    {
                         self.retry_agent_connection();
                     }
                 });
@@ -5497,22 +5882,71 @@ impl SiliconMonitorApp {
             .rounding(8.0)
             .inner_margin(15.0)
             .show(ui, |ui| {
-                ui.label(RichText::new("🔧 Configure AI Backend").color(CyberColors::CYAN).size(18.0));
+                ui.label(
+                    RichText::new("🔧 Configure AI Backend")
+                        .color(CyberColors::CYAN)
+                        .size(18.0),
+                );
                 ui.add_space(15.0);
 
                 // Backend selection tabs - read current value first to avoid borrow issues
                 let current_backend = self.ai_selected_backend;
                 ui.horizontal(|ui| {
-                    ui.selectable_value(&mut self.ai_selected_backend, AiBackendSelection::Ollama, 
-                        RichText::new("🦙 Ollama").color(if current_backend == AiBackendSelection::Ollama { CyberColors::CYAN } else { CyberColors::TEXT_SECONDARY }));
-                    ui.selectable_value(&mut self.ai_selected_backend, AiBackendSelection::OpenAi, 
-                        RichText::new("🤖 OpenAI").color(if current_backend == AiBackendSelection::OpenAi { CyberColors::CYAN } else { CyberColors::TEXT_SECONDARY }));
-                    ui.selectable_value(&mut self.ai_selected_backend, AiBackendSelection::Anthropic, 
-                        RichText::new("🧠 Anthropic").color(if current_backend == AiBackendSelection::Anthropic { CyberColors::CYAN } else { CyberColors::TEXT_SECONDARY }));
-                    ui.selectable_value(&mut self.ai_selected_backend, AiBackendSelection::GitHub, 
-                        RichText::new("🐙 GitHub").color(if current_backend == AiBackendSelection::GitHub { CyberColors::CYAN } else { CyberColors::TEXT_SECONDARY }));
-                    ui.selectable_value(&mut self.ai_selected_backend, AiBackendSelection::LmStudio, 
-                        RichText::new("📦 LM Studio").color(if current_backend == AiBackendSelection::LmStudio { CyberColors::CYAN } else { CyberColors::TEXT_SECONDARY }));
+                    ui.selectable_value(
+                        &mut self.ai_selected_backend,
+                        AiBackendSelection::Ollama,
+                        RichText::new("🦙 Ollama").color(
+                            if current_backend == AiBackendSelection::Ollama {
+                                CyberColors::CYAN
+                            } else {
+                                CyberColors::TEXT_SECONDARY
+                            },
+                        ),
+                    );
+                    ui.selectable_value(
+                        &mut self.ai_selected_backend,
+                        AiBackendSelection::OpenAi,
+                        RichText::new("🤖 OpenAI").color(
+                            if current_backend == AiBackendSelection::OpenAi {
+                                CyberColors::CYAN
+                            } else {
+                                CyberColors::TEXT_SECONDARY
+                            },
+                        ),
+                    );
+                    ui.selectable_value(
+                        &mut self.ai_selected_backend,
+                        AiBackendSelection::Anthropic,
+                        RichText::new("🧠 Anthropic").color(
+                            if current_backend == AiBackendSelection::Anthropic {
+                                CyberColors::CYAN
+                            } else {
+                                CyberColors::TEXT_SECONDARY
+                            },
+                        ),
+                    );
+                    ui.selectable_value(
+                        &mut self.ai_selected_backend,
+                        AiBackendSelection::GitHub,
+                        RichText::new("🐙 GitHub").color(
+                            if current_backend == AiBackendSelection::GitHub {
+                                CyberColors::CYAN
+                            } else {
+                                CyberColors::TEXT_SECONDARY
+                            },
+                        ),
+                    );
+                    ui.selectable_value(
+                        &mut self.ai_selected_backend,
+                        AiBackendSelection::LmStudio,
+                        RichText::new("📦 LM Studio").color(
+                            if current_backend == AiBackendSelection::LmStudio {
+                                CyberColors::CYAN
+                            } else {
+                                CyberColors::TEXT_SECONDARY
+                            },
+                        ),
+                    );
                 });
                 ui.add_space(15.0);
                 ui.separator();
@@ -5520,109 +5954,221 @@ impl SiliconMonitorApp {
 
                 match self.ai_selected_backend {
                     AiBackendSelection::Ollama => {
-                        ui.label(RichText::new("Ollama - Local AI (Recommended)").color(CyberColors::TEXT_PRIMARY).size(14.0));
+                        ui.label(
+                            RichText::new("Ollama - Local AI (Recommended)")
+                                .color(CyberColors::TEXT_PRIMARY)
+                                .size(14.0),
+                        );
                         ui.add_space(5.0);
-                        ui.label(RichText::new("Run AI models locally on your machine. Free and private.").color(CyberColors::TEXT_SECONDARY));
+                        ui.label(
+                            RichText::new(
+                                "Run AI models locally on your machine. Free and private.",
+                            )
+                            .color(CyberColors::TEXT_SECONDARY),
+                        );
                         ui.add_space(15.0);
-                        
+
                         ui.horizontal(|ui| {
                             if self.ai_ollama_starting {
                                 ui.spinner();
-                                ui.label(RichText::new("Starting Ollama...").color(CyberColors::CYAN));
+                                ui.label(
+                                    RichText::new("Starting Ollama...").color(CyberColors::CYAN),
+                                );
                             } else {
-                                if ui.button(RichText::new("▶ Start Ollama").color(CyberColors::NEON_GREEN).size(14.0)).clicked() {
+                                if ui
+                                    .button(
+                                        RichText::new("▶ Start Ollama")
+                                            .color(CyberColors::NEON_GREEN)
+                                            .size(14.0),
+                                    )
+                                    .clicked()
+                                {
                                     self.start_ollama();
                                 }
-                                if ui.button(RichText::new("📥 Install Ollama").color(CyberColors::TEXT_SECONDARY)).clicked() {
+                                if ui
+                                    .button(
+                                        RichText::new("📥 Install Ollama")
+                                            .color(CyberColors::TEXT_SECONDARY),
+                                    )
+                                    .clicked()
+                                {
                                     let _ = open::that("https://ollama.com/download");
                                 }
                             }
                         });
                         ui.add_space(10.0);
-                        ui.label(RichText::new("After starting Ollama, click 'Retry Connection' above.").color(CyberColors::TEXT_MUTED).small());
+                        ui.label(
+                            RichText::new("After starting Ollama, click 'Retry Connection' above.")
+                                .color(CyberColors::TEXT_MUTED)
+                                .small(),
+                        );
                     }
                     AiBackendSelection::OpenAi => {
-                        ui.label(RichText::new("OpenAI API").color(CyberColors::TEXT_PRIMARY).size(14.0));
+                        ui.label(
+                            RichText::new("OpenAI API")
+                                .color(CyberColors::TEXT_PRIMARY)
+                                .size(14.0),
+                        );
                         ui.add_space(5.0);
-                        ui.label(RichText::new("Use GPT models via OpenAI API. Requires API key.").color(CyberColors::TEXT_SECONDARY));
+                        ui.label(
+                            RichText::new("Use GPT models via OpenAI API. Requires API key.")
+                                .color(CyberColors::TEXT_SECONDARY),
+                        );
                         ui.add_space(15.0);
-                        
+
                         ui.horizontal(|ui| {
                             ui.label(RichText::new("API Key:").color(CyberColors::TEXT_SECONDARY));
-                            ui.add(egui::TextEdit::singleline(&mut self.ai_api_key_input)
-                                .password(true)
-                                .hint_text("sk-...")
-                                .desired_width(300.0));
+                            ui.add(
+                                egui::TextEdit::singleline(&mut self.ai_api_key_input)
+                                    .password(true)
+                                    .hint_text("sk-...")
+                                    .desired_width(300.0),
+                            );
                         });
                         ui.add_space(10.0);
-                        if ui.button(RichText::new("💾 Set API Key").color(CyberColors::CYAN)).clicked() {
+                        if ui
+                            .button(RichText::new("💾 Set API Key").color(CyberColors::CYAN))
+                            .clicked()
+                        {
                             self.set_api_key("OPENAI_API_KEY");
                         }
                         ui.add_space(5.0);
-                        if ui.link(RichText::new("Get an API key from OpenAI →").color(CyberColors::TEXT_MUTED).small()).clicked() {
+                        if ui
+                            .link(
+                                RichText::new("Get an API key from OpenAI →")
+                                    .color(CyberColors::TEXT_MUTED)
+                                    .small(),
+                            )
+                            .clicked()
+                        {
                             let _ = open::that("https://platform.openai.com/api-keys");
                         }
                     }
                     AiBackendSelection::Anthropic => {
-                        ui.label(RichText::new("Anthropic Claude API").color(CyberColors::TEXT_PRIMARY).size(14.0));
+                        ui.label(
+                            RichText::new("Anthropic Claude API")
+                                .color(CyberColors::TEXT_PRIMARY)
+                                .size(14.0),
+                        );
                         ui.add_space(5.0);
-                        ui.label(RichText::new("Use Claude models via Anthropic API. Requires API key.").color(CyberColors::TEXT_SECONDARY));
+                        ui.label(
+                            RichText::new("Use Claude models via Anthropic API. Requires API key.")
+                                .color(CyberColors::TEXT_SECONDARY),
+                        );
                         ui.add_space(15.0);
-                        
+
                         ui.horizontal(|ui| {
                             ui.label(RichText::new("API Key:").color(CyberColors::TEXT_SECONDARY));
-                            ui.add(egui::TextEdit::singleline(&mut self.ai_api_key_input)
-                                .password(true)
-                                .hint_text("sk-ant-...")
-                                .desired_width(300.0));
+                            ui.add(
+                                egui::TextEdit::singleline(&mut self.ai_api_key_input)
+                                    .password(true)
+                                    .hint_text("sk-ant-...")
+                                    .desired_width(300.0),
+                            );
                         });
                         ui.add_space(10.0);
-                        if ui.button(RichText::new("💾 Set API Key").color(CyberColors::CYAN)).clicked() {
+                        if ui
+                            .button(RichText::new("💾 Set API Key").color(CyberColors::CYAN))
+                            .clicked()
+                        {
                             self.set_api_key("ANTHROPIC_API_KEY");
                         }
                         ui.add_space(5.0);
-                        if ui.link(RichText::new("Get an API key from Anthropic →").color(CyberColors::TEXT_MUTED).small()).clicked() {
+                        if ui
+                            .link(
+                                RichText::new("Get an API key from Anthropic →")
+                                    .color(CyberColors::TEXT_MUTED)
+                                    .small(),
+                            )
+                            .clicked()
+                        {
                             let _ = open::that("https://console.anthropic.com/settings/keys");
                         }
                     }
                     AiBackendSelection::GitHub => {
-                        ui.label(RichText::new("GitHub Models").color(CyberColors::TEXT_PRIMARY).size(14.0));
+                        ui.label(
+                            RichText::new("GitHub Models")
+                                .color(CyberColors::TEXT_PRIMARY)
+                                .size(14.0),
+                        );
                         ui.add_space(5.0);
-                        ui.label(RichText::new("Use AI models via GitHub. Requires GitHub token.").color(CyberColors::TEXT_SECONDARY));
+                        ui.label(
+                            RichText::new("Use AI models via GitHub. Requires GitHub token.")
+                                .color(CyberColors::TEXT_SECONDARY),
+                        );
                         ui.add_space(15.0);
-                        
+
                         ui.horizontal(|ui| {
                             ui.label(RichText::new("Token:").color(CyberColors::TEXT_SECONDARY));
-                            ui.add(egui::TextEdit::singleline(&mut self.ai_api_key_input)
-                                .password(true)
-                                .hint_text("ghp_...")
-                                .desired_width(300.0));
+                            ui.add(
+                                egui::TextEdit::singleline(&mut self.ai_api_key_input)
+                                    .password(true)
+                                    .hint_text("ghp_...")
+                                    .desired_width(300.0),
+                            );
                         });
                         ui.add_space(10.0);
-                        if ui.button(RichText::new("💾 Set Token").color(CyberColors::CYAN)).clicked() {
+                        if ui
+                            .button(RichText::new("💾 Set Token").color(CyberColors::CYAN))
+                            .clicked()
+                        {
                             self.set_api_key("GITHUB_TOKEN");
                         }
                         ui.add_space(5.0);
-                        if ui.link(RichText::new("Create a GitHub token →").color(CyberColors::TEXT_MUTED).small()).clicked() {
+                        if ui
+                            .link(
+                                RichText::new("Create a GitHub token →")
+                                    .color(CyberColors::TEXT_MUTED)
+                                    .small(),
+                            )
+                            .clicked()
+                        {
                             let _ = open::that("https://github.com/settings/tokens");
                         }
                     }
                     AiBackendSelection::LmStudio => {
-                        ui.label(RichText::new("LM Studio - Local AI").color(CyberColors::TEXT_PRIMARY).size(14.0));
+                        ui.label(
+                            RichText::new("LM Studio - Local AI")
+                                .color(CyberColors::TEXT_PRIMARY)
+                                .size(14.0),
+                        );
                         ui.add_space(5.0);
-                        ui.label(RichText::new("Run local models with LM Studio's OpenAI-compatible API.").color(CyberColors::TEXT_SECONDARY));
+                        ui.label(
+                            RichText::new(
+                                "Run local models with LM Studio's OpenAI-compatible API.",
+                            )
+                            .color(CyberColors::TEXT_SECONDARY),
+                        );
                         ui.add_space(15.0);
-                        
-                        ui.label(RichText::new("1. Download and install LM Studio").color(CyberColors::TEXT_SECONDARY));
-                        ui.label(RichText::new("2. Download a model (e.g., Llama 3.2, Mistral)").color(CyberColors::TEXT_SECONDARY));
-                        ui.label(RichText::new("3. Start the local server on port 1234").color(CyberColors::TEXT_SECONDARY));
+
+                        ui.label(
+                            RichText::new("1. Download and install LM Studio")
+                                .color(CyberColors::TEXT_SECONDARY),
+                        );
+                        ui.label(
+                            RichText::new("2. Download a model (e.g., Llama 3.2, Mistral)")
+                                .color(CyberColors::TEXT_SECONDARY),
+                        );
+                        ui.label(
+                            RichText::new("3. Start the local server on port 1234")
+                                .color(CyberColors::TEXT_SECONDARY),
+                        );
                         ui.add_space(10.0);
-                        
-                        if ui.button(RichText::new("📥 Download LM Studio").color(CyberColors::CYAN)).clicked() {
+
+                        if ui
+                            .button(RichText::new("📥 Download LM Studio").color(CyberColors::CYAN))
+                            .clicked()
+                        {
                             let _ = open::that("https://lmstudio.ai/");
                         }
                         ui.add_space(5.0);
-                        ui.label(RichText::new("After starting the server, click 'Retry Connection' above.").color(CyberColors::TEXT_MUTED).small());
+                        ui.label(
+                            RichText::new(
+                                "After starting the server, click 'Retry Connection' above.",
+                            )
+                            .color(CyberColors::TEXT_MUTED)
+                            .small(),
+                        );
                     }
                 }
             });
@@ -5633,42 +6179,51 @@ impl SiliconMonitorApp {
     fn start_ollama(&mut self) {
         self.ai_ollama_starting = true;
         self.ai_status_message = Some(("Starting Ollama...".to_string(), false));
-        
+
         // Try to start Ollama
         #[cfg(target_os = "windows")]
         {
             // On Windows, try to start Ollama from common locations
             let ollama_paths = [
-                std::env::var("LOCALAPPDATA").ok().map(|p| format!("{}\\Ollama\\ollama.exe", p)),
+                std::env::var("LOCALAPPDATA")
+                    .ok()
+                    .map(|p| format!("{}\\Ollama\\ollama.exe", p)),
                 Some("C:\\Program Files\\Ollama\\ollama.exe".to_string()),
                 Some("ollama".to_string()), // Try PATH
             ];
-            
+
             for path in ollama_paths.into_iter().flatten() {
-                if let Ok(_) = std::process::Command::new(&path)
-                    .arg("serve")
-                    .spawn()
-                {
-                    self.ai_status_message = Some(("Ollama started! Wait a few seconds and click 'Retry Connection'.".to_string(), false));
+                if let Ok(_) = std::process::Command::new(&path).arg("serve").spawn() {
+                    self.ai_status_message = Some((
+                        "Ollama started! Wait a few seconds and click 'Retry Connection'."
+                            .to_string(),
+                        false,
+                    ));
                     self.ai_ollama_starting = false;
                     return;
                 }
             }
-            self.ai_status_message = Some(("Could not start Ollama. Please install it from ollama.com".to_string(), true));
+            self.ai_status_message = Some((
+                "Could not start Ollama. Please install it from ollama.com".to_string(),
+                true,
+            ));
         }
-        
+
         #[cfg(not(target_os = "windows"))]
         {
-            if let Ok(_) = std::process::Command::new("ollama")
-                .arg("serve")
-                .spawn()
-            {
-                self.ai_status_message = Some(("Ollama started! Wait a few seconds and click 'Retry Connection'.".to_string(), false));
+            if let Ok(_) = std::process::Command::new("ollama").arg("serve").spawn() {
+                self.ai_status_message = Some((
+                    "Ollama started! Wait a few seconds and click 'Retry Connection'.".to_string(),
+                    false,
+                ));
             } else {
-                self.ai_status_message = Some(("Could not start Ollama. Please install it from ollama.com".to_string(), true));
+                self.ai_status_message = Some((
+                    "Could not start Ollama. Please install it from ollama.com".to_string(),
+                    true,
+                ));
             }
         }
-        
+
         self.ai_ollama_starting = false;
     }
 
@@ -5680,12 +6235,12 @@ impl SiliconMonitorApp {
             self.ai_status_message = Some(("Please enter an API key".to_string(), true));
             return;
         }
-        
+
         // Set environment variable for this process
         std::env::set_var(env_var, key);
         self.ai_api_key_input.clear();
         self.ai_status_message = Some((format!("{} set! Retrying connection...", env_var), false));
-        
+
         // Retry connection
         self.retry_agent_connection();
     }
@@ -5696,7 +6251,9 @@ impl SiliconMonitorApp {
             match self.ai_selected_backend {
                 AiBackendSelection::Ollama => {
                     // Use first detected model, fall back to llama3.2:latest
-                    self.ai_ollama_models.first().cloned()
+                    self.ai_ollama_models
+                        .first()
+                        .cloned()
                         .unwrap_or_else(|| "llama3.2:latest".to_string())
                 }
                 AiBackendSelection::OpenAi => "gpt-4o-mini".to_string(),
@@ -5715,8 +6272,12 @@ impl SiliconMonitorApp {
         match self.ai_selected_backend {
             AiBackendSelection::Ollama => crate::agent::BackendConfig::ollama(&model),
             AiBackendSelection::OpenAi => crate::agent::BackendConfig::openai(&model, api_key),
-            AiBackendSelection::Anthropic => crate::agent::BackendConfig::anthropic(&model, api_key),
-            AiBackendSelection::GitHub => crate::agent::BackendConfig::github_models(&model, api_key),
+            AiBackendSelection::Anthropic => {
+                crate::agent::BackendConfig::anthropic(&model, api_key)
+            }
+            AiBackendSelection::GitHub => {
+                crate::agent::BackendConfig::github_models(&model, api_key)
+            }
             AiBackendSelection::LmStudio => crate::agent::BackendConfig::lm_studio(&model),
         }
     }
@@ -5725,11 +6286,11 @@ impl SiliconMonitorApp {
     fn retry_agent_connection(&mut self) {
         self.agent_loading = true;
         self.ai_status_message = None;
-        
+
         let backend_config = self.build_backend_config();
         let (tx, rx) = channel();
         self.agent_receiver = Some(rx);
-        
+
         std::thread::spawn(move || {
             let config = crate::agent::AgentConfig::with_backend(backend_config);
             let agent = crate::agent::Agent::new(config).ok();
@@ -5750,7 +6311,7 @@ impl SiliconMonitorApp {
             .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-10.0, 50.0))
             .show(ctx, |ui| {
                 ui.add_space(8.0);
-                
+
                 // Close button in corner
                 ui.horizontal(|ui| {
                     ui.heading(RichText::new("Appearance").color(CyberColors::CYAN));
@@ -5760,7 +6321,7 @@ impl SiliconMonitorApp {
                         }
                     });
                 });
-                
+
                 ui.add_space(12.0);
                 ui.separator();
                 ui.add_space(8.0);
@@ -5768,7 +6329,7 @@ impl SiliconMonitorApp {
                 // Color Theme Selection
                 ui.label(RichText::new("Color Theme").color(CyberColors::TEXT_PRIMARY));
                 ui.add_space(4.0);
-                
+
                 egui::ComboBox::from_id_salt("theme_selector")
                     .selected_text(self.settings.color_theme.name())
                     .width(200.0)
@@ -5782,7 +6343,7 @@ impl SiliconMonitorApp {
                                     egui::Sense::hover(),
                                 );
                                 ui.painter().rect_filled(rect, 2.0, theme.accent_color());
-                                
+
                                 if ui.selectable_label(is_selected, theme.name()).clicked() {
                                     self.settings.color_theme = *theme;
                                 }
@@ -5791,16 +6352,16 @@ impl SiliconMonitorApp {
                     });
 
                 ui.add_space(16.0);
-                
+
                 // Graph Line Thickness
                 ui.label(RichText::new("Graph Line Thickness").color(CyberColors::TEXT_PRIMARY));
                 ui.add_space(4.0);
-                
+
                 ui.horizontal(|ui| {
                     ui.add(
                         egui::Slider::new(&mut self.settings.graph_line_thickness, 1.0..=5.0)
                             .step_by(0.5)
-                            .suffix(" px")
+                            .suffix(" px"),
                     );
                 });
 
@@ -5814,10 +6375,10 @@ impl SiliconMonitorApp {
                     egui::Sense::hover(),
                 );
                 let rect = response.rect;
-                
+
                 // Draw preview background
                 painter.rect_filled(rect, 4.0, CyberColors::SURFACE);
-                
+
                 // Draw sample sine wave with current thickness
                 let points: Vec<egui::Pos2> = (0..50)
                     .map(|i| {
@@ -5827,7 +6388,7 @@ impl SiliconMonitorApp {
                         egui::Pos2::new(x, y)
                     })
                     .collect();
-                
+
                 painter.add(egui::Shape::line(
                     points,
                     egui::Stroke::new(
@@ -5837,7 +6398,7 @@ impl SiliconMonitorApp {
                 ));
 
                 ui.add_space(16.0);
-                
+
                 // Show Grid Lines
                 ui.checkbox(
                     &mut self.settings.show_grid_lines,
@@ -5845,14 +6406,14 @@ impl SiliconMonitorApp {
                 );
 
                 ui.add_space(8.0);
-                
+
                 // Animation Speed
                 ui.label(RichText::new("Animation Speed").color(CyberColors::TEXT_PRIMARY));
                 ui.add_space(4.0);
                 ui.add(
                     egui::Slider::new(&mut self.settings.animation_speed, 0.5..=2.0)
                         .step_by(0.1)
-                        .suffix("x")
+                        .suffix("x"),
                 );
 
                 ui.add_space(16.0);
@@ -5864,14 +6425,14 @@ impl SiliconMonitorApp {
                     if ui.button("Reset to Defaults").clicked() {
                         self.settings = AppSettings::default();
                     }
-                    
+
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui.button("Close").clicked() {
                             self.show_settings = false;
                         }
                     });
                 });
-                
+
                 ui.add_space(8.0);
             });
     }
@@ -5879,14 +6440,11 @@ impl SiliconMonitorApp {
     /// Detect locally installed Ollama models by running `ollama list`
     fn detect_ollama_models() -> Vec<String> {
         // Try to run `ollama list` and parse output
-        match std::process::Command::new("ollama")
-            .arg("list")
-            .output()
-        {
+        match std::process::Command::new("ollama").arg("list").output() {
             Ok(output) if output.status.success() => {
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 let mut models = Vec::new();
-                
+
                 // Skip header line (NAME, ID, SIZE, MODIFIED)
                 for line in stdout.lines().skip(1) {
                     // First column is the model name
@@ -5896,7 +6454,7 @@ impl SiliconMonitorApp {
                         }
                     }
                 }
-                
+
                 if models.is_empty() {
                     // No models installed - return empty so UI can prompt user
                     vec![]
@@ -5938,13 +6496,3 @@ fn format_bytes(bytes: f64) -> String {
         format!("{:.0} B", bytes)
     }
 }
-
-
-
-
-
-
-
-
-
-

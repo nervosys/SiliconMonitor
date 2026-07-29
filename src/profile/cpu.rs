@@ -67,12 +67,7 @@ impl ProfileProvider for CpuProfileProvider {
         }
 
         if groups.is_empty() {
-            let mut g = ProfileGroup::new(
-                Subsystem::Cpu,
-                "(CPU)",
-                "Default",
-                "auto-detect",
-            );
+            let mut g = ProfileGroup::new(Subsystem::Cpu, "(CPU)", "Default", "auto-detect");
             g.note(
                 "No CPU tuning surfaces were readable. On Linux, run as root for \
                 MSR access; on Windows, signed-driver MSR access is required for \
@@ -100,7 +95,11 @@ fn linux_cpufreq_group() -> Option<ProfileGroup> {
     // Aggregate across CPU0 only for compactness — the governor is typically
     // uniform. Per-core breakdown is available via crate::cpufreq.
     let cpu0 = base.join("cpu0/cpufreq");
-    let read = |name: &str| std::fs::read_to_string(cpu0.join(name)).ok().map(|s| s.trim().to_string());
+    let read = |name: &str| {
+        std::fs::read_to_string(cpu0.join(name))
+            .ok()
+            .map(|s| s.trim().to_string())
+    };
 
     if let Some(v) = read("scaling_governor") {
         let mut s = Setting::info("scaling_governor", "CPU Governor", SettingValue::Text(v))
@@ -118,9 +117,24 @@ fn linux_cpufreq_group() -> Option<ProfileGroup> {
         g.push(s);
     }
     for (file, id, label, unit) in [
-        ("scaling_min_freq", "scaling_min_khz", "Min Frequency", "kHz"),
-        ("scaling_max_freq", "scaling_max_khz", "Max Frequency", "kHz"),
-        ("scaling_cur_freq", "scaling_cur_khz", "Current Frequency", "kHz"),
+        (
+            "scaling_min_freq",
+            "scaling_min_khz",
+            "Min Frequency",
+            "kHz",
+        ),
+        (
+            "scaling_max_freq",
+            "scaling_max_khz",
+            "Max Frequency",
+            "kHz",
+        ),
+        (
+            "scaling_cur_freq",
+            "scaling_cur_khz",
+            "Current Frequency",
+            "kHz",
+        ),
         ("cpuinfo_min_freq", "hw_min_khz", "Hardware Min", "kHz"),
         ("cpuinfo_max_freq", "hw_max_khz", "Hardware Max", "kHz"),
     ] {
@@ -137,9 +151,13 @@ fn linux_cpufreq_group() -> Option<ProfileGroup> {
     }
     if let Some(v) = read("energy_performance_preference") {
         g.push(
-            Setting::info("epp", "Energy Performance Preference", SettingValue::Text(v))
-                .with_risk(SettingRisk::Moderate)
-                .with_source("EPP"),
+            Setting::info(
+                "epp",
+                "Energy Performance Preference",
+                SettingValue::Text(v),
+            )
+            .with_risk(SettingRisk::Moderate)
+            .with_source("EPP"),
         );
     }
     Some(g)
@@ -157,14 +175,30 @@ fn linux_intel_pstate_group() -> Option<ProfileGroup> {
         "intel_pstate parameters",
         dir.display().to_string(),
     );
-    let read = |name: &str| std::fs::read_to_string(dir.join(name)).ok().map(|s| s.trim().to_string());
+    let read = |name: &str| {
+        std::fs::read_to_string(dir.join(name))
+            .ok()
+            .map(|s| s.trim().to_string())
+    };
     for (file, label, risk) in [
         ("status", "Driver Status", SettingRisk::Informational),
-        ("no_turbo", "No-Turbo (Turbo Disabled)", SettingRisk::Moderate),
-        ("hwp_dynamic_boost", "HWP Dynamic Boost", SettingRisk::Moderate),
+        (
+            "no_turbo",
+            "No-Turbo (Turbo Disabled)",
+            SettingRisk::Moderate,
+        ),
+        (
+            "hwp_dynamic_boost",
+            "HWP Dynamic Boost",
+            SettingRisk::Moderate,
+        ),
         ("max_perf_pct", "Max Performance %", SettingRisk::Moderate),
         ("min_perf_pct", "Min Performance %", SettingRisk::Moderate),
-        ("num_pstates", "Number of P-States", SettingRisk::Informational),
+        (
+            "num_pstates",
+            "Number of P-States",
+            SettingRisk::Informational,
+        ),
         ("turbo_pct", "Turbo Range %", SettingRisk::Informational),
     ] {
         if let Some(v) = read(file) {

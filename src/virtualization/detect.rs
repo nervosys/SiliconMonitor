@@ -62,17 +62,27 @@ pub struct CpuVirtCapability {
 pub fn detect_platform() -> VirtPlatform {
     #[cfg(target_os = "linux")]
     {
-        if is_wsl() { return VirtPlatform::WSL; }
-        if is_container_env() { return VirtPlatform::Container; }
-        if detect_hypervisor().is_some() { return VirtPlatform::VirtualMachine; }
+        if is_wsl() {
+            return VirtPlatform::WSL;
+        }
+        if is_container_env() {
+            return VirtPlatform::Container;
+        }
+        if detect_hypervisor().is_some() {
+            return VirtPlatform::VirtualMachine;
+        }
     }
     #[cfg(target_os = "windows")]
     {
-        if detect_hypervisor().is_some() { return VirtPlatform::VirtualMachine; }
+        if detect_hypervisor().is_some() {
+            return VirtPlatform::VirtualMachine;
+        }
     }
     #[cfg(target_os = "macos")]
     {
-        if detect_hypervisor().is_some() { return VirtPlatform::VirtualMachine; }
+        if detect_hypervisor().is_some() {
+            return VirtPlatform::VirtualMachine;
+        }
     }
     VirtPlatform::BareMetal
 }
@@ -97,14 +107,18 @@ fn detect_cpuid_hypervisor() -> Option<HypervisorInfo> {
         // CPUID leaf 0x40000000 - hypervisor vendor string
         let result = unsafe { core::arch::x86_64::__cpuid(0x1) };
         let hypervisor_bit = (result.ecx >> 31) & 1;
-        if hypervisor_bit == 0 { return None; }
+        if hypervisor_bit == 0 {
+            return None;
+        }
 
         let vendor = unsafe { core::arch::x86_64::__cpuid(0x40000000) };
         let mut vendor_str = [0u8; 12];
         vendor_str[0..4].copy_from_slice(&vendor.ebx.to_le_bytes());
         vendor_str[4..8].copy_from_slice(&vendor.ecx.to_le_bytes());
         vendor_str[8..12].copy_from_slice(&vendor.edx.to_le_bytes());
-        let vendor_id = String::from_utf8_lossy(&vendor_str).trim_end_matches('\0').to_string();
+        let vendor_id = String::from_utf8_lossy(&vendor_str)
+            .trim_end_matches('\0')
+            .to_string();
 
         let hypervisor = match vendor_id.as_str() {
             "VMwareVMware" => Hypervisor::VMware,
@@ -128,17 +142,25 @@ fn detect_cpuid_hypervisor() -> Option<HypervisorInfo> {
         });
     }
     #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
-    { None }
+    {
+        None
+    }
 }
 
 #[cfg(target_os = "linux")]
 fn detect_dmi_hypervisor() -> Option<HypervisorInfo> {
     let product = std::fs::read_to_string("/sys/class/dmi/id/product_name")
-        .unwrap_or_default().trim().to_lowercase();
+        .unwrap_or_default()
+        .trim()
+        .to_lowercase();
     let vendor = std::fs::read_to_string("/sys/class/dmi/id/sys_vendor")
-        .unwrap_or_default().trim().to_lowercase();
+        .unwrap_or_default()
+        .trim()
+        .to_lowercase();
     let bios = std::fs::read_to_string("/sys/class/dmi/id/bios_vendor")
-        .unwrap_or_default().trim().to_lowercase();
+        .unwrap_or_default()
+        .trim()
+        .to_lowercase();
 
     let hypervisor = if product.contains("virtualbox") || bios.contains("virtualbox") {
         Hypervisor::VirtualBox
@@ -173,9 +195,13 @@ fn detect_cloud_provider() -> Option<String> {
     #[cfg(target_os = "linux")]
     {
         let vendor = std::fs::read_to_string("/sys/class/dmi/id/sys_vendor")
-            .unwrap_or_default().trim().to_lowercase();
+            .unwrap_or_default()
+            .trim()
+            .to_lowercase();
         let product = std::fs::read_to_string("/sys/class/dmi/id/product_name")
-            .unwrap_or_default().trim().to_lowercase();
+            .unwrap_or_default()
+            .trim()
+            .to_lowercase();
 
         if vendor.contains("amazon") || product.contains("nitro") {
             return Some("AWS".into());
@@ -199,7 +225,13 @@ pub fn detect_cpu_virt_caps() -> Option<CpuVirtCapability> {
             (ext.ecx >> 2) & 1 == 1 // AMD-V
         };
         let hw_virt = vmx || svm;
-        let tech = if vmx { "Intel VT-x" } else if svm { "AMD-V" } else { "None" };
+        let tech = if vmx {
+            "Intel VT-x"
+        } else if svm {
+            "AMD-V"
+        } else {
+            "None"
+        };
 
         return Some(CpuVirtCapability {
             hardware_virt: hw_virt,
@@ -214,7 +246,7 @@ pub fn detect_cpu_virt_caps() -> Option<CpuVirtCapability> {
     {
         return Some(CpuVirtCapability {
             hardware_virt: true, // ARMv8 always has EL2
-            ept_npt: true, // Stage-2 translation
+            ept_npt: true,       // Stage-2 translation
             iommu: false,
             sriov: false,
             nested: false,
@@ -222,7 +254,9 @@ pub fn detect_cpu_virt_caps() -> Option<CpuVirtCapability> {
         });
     }
     #[cfg(not(any(target_arch = "x86", target_arch = "x86_64", target_arch = "aarch64")))]
-    { None }
+    {
+        None
+    }
 }
 
 #[cfg(target_os = "linux")]

@@ -54,7 +54,7 @@ impl Simon {
     /// # Example
     ///
     /// ```no_run
-    /// use simon::Simon;
+    /// use simonlib::Simon;
     ///
     /// let stats = Simon::new().unwrap();
     /// ```
@@ -71,7 +71,7 @@ impl Simon {
     /// # Example
     ///
     /// ```no_run
-    /// use simon::Simon;
+    /// use simonlib::Simon;
     ///
     /// let stats = Simon::with_interval(0.5).unwrap();
     /// ```
@@ -93,7 +93,7 @@ impl Simon {
     /// # Example
     ///
     /// ```no_run
-    /// use simon::Simon;
+    /// use simonlib::Simon;
     ///
     /// let mut stats = Simon::new().unwrap();
     /// let snapshot = stats.snapshot().unwrap();

@@ -11,8 +11,8 @@
 //! - **Windows**: Registry-based kernel tuning
 //! - **macOS**: sysctl parameters
 
-use serde::{Deserialize, Serialize};
 use crate::error::SimonError;
+use serde::{Deserialize, Serialize};
 
 /// Parameter category.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -127,7 +127,10 @@ impl KernelParamsMonitor {
             .cloned()
             .collect();
 
-        let non_recommended = params.iter().filter(|p| !p.is_recommended && p.recommended.is_some()).count() as u32;
+        let non_recommended = params
+            .iter()
+            .filter(|p| !p.is_recommended && p.recommended.is_some())
+            .count() as u32;
 
         let security_score = Self::compute_security_score(&security_params);
         let network_score = Self::compute_network_score(&network_params);
@@ -190,42 +193,219 @@ impl KernelParamsMonitor {
     fn read_params() -> Vec<KernelParam> {
         let checks: Vec<(&str, &str, ParamCategory, &str, &str)> = vec![
             // Security parameters
-            ("kernel.randomize_va_space", "2", ParamCategory::Security, "ASLR level (0=off, 1=stack, 2=full)", "2"),
-            ("kernel.kptr_restrict", "1", ParamCategory::Security, "Restrict kernel pointer exposure", "1"),
-            ("kernel.dmesg_restrict", "1", ParamCategory::Security, "Restrict dmesg to privileged users", "1"),
-            ("kernel.yama.ptrace_scope", "1", ParamCategory::Security, "Ptrace scope restriction", "1"),
-            ("kernel.unprivileged_bpf_disabled", "1", ParamCategory::Security, "Disable unprivileged BPF", "1"),
-            ("kernel.kexec_load_disabled", "1", ParamCategory::Security, "Disable kexec_load", "1"),
-            ("kernel.sysrq", "0", ParamCategory::Security, "Magic SysRq key (0=disable)", "0"),
-            ("kernel.core_uses_pid", "1", ParamCategory::Security, "Core dumps include PID", "1"),
-            ("kernel.modules_disabled", "0", ParamCategory::Security, "Disable module loading (0=allow)", "0"),
-
+            (
+                "kernel.randomize_va_space",
+                "2",
+                ParamCategory::Security,
+                "ASLR level (0=off, 1=stack, 2=full)",
+                "2",
+            ),
+            (
+                "kernel.kptr_restrict",
+                "1",
+                ParamCategory::Security,
+                "Restrict kernel pointer exposure",
+                "1",
+            ),
+            (
+                "kernel.dmesg_restrict",
+                "1",
+                ParamCategory::Security,
+                "Restrict dmesg to privileged users",
+                "1",
+            ),
+            (
+                "kernel.yama.ptrace_scope",
+                "1",
+                ParamCategory::Security,
+                "Ptrace scope restriction",
+                "1",
+            ),
+            (
+                "kernel.unprivileged_bpf_disabled",
+                "1",
+                ParamCategory::Security,
+                "Disable unprivileged BPF",
+                "1",
+            ),
+            (
+                "kernel.kexec_load_disabled",
+                "1",
+                ParamCategory::Security,
+                "Disable kexec_load",
+                "1",
+            ),
+            (
+                "kernel.sysrq",
+                "0",
+                ParamCategory::Security,
+                "Magic SysRq key (0=disable)",
+                "0",
+            ),
+            (
+                "kernel.core_uses_pid",
+                "1",
+                ParamCategory::Security,
+                "Core dumps include PID",
+                "1",
+            ),
+            (
+                "kernel.modules_disabled",
+                "0",
+                ParamCategory::Security,
+                "Disable module loading (0=allow)",
+                "0",
+            ),
             // Network parameters
-            ("net.ipv4.tcp_syncookies", "1", ParamCategory::Network, "SYN flood protection", "1"),
-            ("net.ipv4.conf.all.rp_filter", "1", ParamCategory::Network, "Reverse path filtering", "1"),
-            ("net.ipv4.conf.all.accept_redirects", "0", ParamCategory::Network, "ICMP redirect acceptance", "0"),
-            ("net.ipv4.conf.all.send_redirects", "0", ParamCategory::Network, "ICMP redirect sending", "0"),
-            ("net.ipv4.conf.all.accept_source_route", "0", ParamCategory::Network, "Source routing", "0"),
-            ("net.ipv4.conf.all.log_martians", "1", ParamCategory::Network, "Log martian packets", "1"),
-            ("net.ipv4.tcp_max_syn_backlog", "4096", ParamCategory::Network, "Max SYN backlog", "4096"),
-            ("net.core.somaxconn", "4096", ParamCategory::Network, "Max socket backlog", "4096"),
-            ("net.ipv4.tcp_tw_reuse", "1", ParamCategory::Network, "TIME_WAIT socket reuse", "1"),
-            ("net.ipv4.tcp_fin_timeout", "15", ParamCategory::Network, "FIN timeout seconds", "15"),
-            ("net.core.rmem_max", "16777216", ParamCategory::Network, "Max receive buffer", "16777216"),
-            ("net.core.wmem_max", "16777216", ParamCategory::Network, "Max send buffer", "16777216"),
-
+            (
+                "net.ipv4.tcp_syncookies",
+                "1",
+                ParamCategory::Network,
+                "SYN flood protection",
+                "1",
+            ),
+            (
+                "net.ipv4.conf.all.rp_filter",
+                "1",
+                ParamCategory::Network,
+                "Reverse path filtering",
+                "1",
+            ),
+            (
+                "net.ipv4.conf.all.accept_redirects",
+                "0",
+                ParamCategory::Network,
+                "ICMP redirect acceptance",
+                "0",
+            ),
+            (
+                "net.ipv4.conf.all.send_redirects",
+                "0",
+                ParamCategory::Network,
+                "ICMP redirect sending",
+                "0",
+            ),
+            (
+                "net.ipv4.conf.all.accept_source_route",
+                "0",
+                ParamCategory::Network,
+                "Source routing",
+                "0",
+            ),
+            (
+                "net.ipv4.conf.all.log_martians",
+                "1",
+                ParamCategory::Network,
+                "Log martian packets",
+                "1",
+            ),
+            (
+                "net.ipv4.tcp_max_syn_backlog",
+                "4096",
+                ParamCategory::Network,
+                "Max SYN backlog",
+                "4096",
+            ),
+            (
+                "net.core.somaxconn",
+                "4096",
+                ParamCategory::Network,
+                "Max socket backlog",
+                "4096",
+            ),
+            (
+                "net.ipv4.tcp_tw_reuse",
+                "1",
+                ParamCategory::Network,
+                "TIME_WAIT socket reuse",
+                "1",
+            ),
+            (
+                "net.ipv4.tcp_fin_timeout",
+                "15",
+                ParamCategory::Network,
+                "FIN timeout seconds",
+                "15",
+            ),
+            (
+                "net.core.rmem_max",
+                "16777216",
+                ParamCategory::Network,
+                "Max receive buffer",
+                "16777216",
+            ),
+            (
+                "net.core.wmem_max",
+                "16777216",
+                ParamCategory::Network,
+                "Max send buffer",
+                "16777216",
+            ),
             // VM/Memory parameters
-            ("vm.swappiness", "60", ParamCategory::Vm, "Swappiness (0-200)", "60"),
-            ("vm.dirty_ratio", "20", ParamCategory::Vm, "Dirty page ratio (% of RAM)", "20"),
-            ("vm.dirty_background_ratio", "10", ParamCategory::Vm, "Background dirty ratio", "10"),
-            ("vm.overcommit_memory", "0", ParamCategory::Vm, "Memory overcommit (0=heuristic)", "0"),
-            ("vm.max_map_count", "65530", ParamCategory::Vm, "Max memory mappings", "65530"),
-            ("vm.vfs_cache_pressure", "100", ParamCategory::Vm, "VFS cache pressure", "100"),
-            ("vm.min_free_kbytes", "65536", ParamCategory::Vm, "Minimum free memory (kB)", "65536"),
-
+            (
+                "vm.swappiness",
+                "60",
+                ParamCategory::Vm,
+                "Swappiness (0-200)",
+                "60",
+            ),
+            (
+                "vm.dirty_ratio",
+                "20",
+                ParamCategory::Vm,
+                "Dirty page ratio (% of RAM)",
+                "20",
+            ),
+            (
+                "vm.dirty_background_ratio",
+                "10",
+                ParamCategory::Vm,
+                "Background dirty ratio",
+                "10",
+            ),
+            (
+                "vm.overcommit_memory",
+                "0",
+                ParamCategory::Vm,
+                "Memory overcommit (0=heuristic)",
+                "0",
+            ),
+            (
+                "vm.max_map_count",
+                "65530",
+                ParamCategory::Vm,
+                "Max memory mappings",
+                "65530",
+            ),
+            (
+                "vm.vfs_cache_pressure",
+                "100",
+                ParamCategory::Vm,
+                "VFS cache pressure",
+                "100",
+            ),
+            (
+                "vm.min_free_kbytes",
+                "65536",
+                ParamCategory::Vm,
+                "Minimum free memory (kB)",
+                "65536",
+            ),
             // Filesystem parameters
-            ("fs.file-max", "1048576", ParamCategory::FileSystem, "Max open files system-wide", "1048576"),
-            ("fs.inotify.max_user_watches", "524288", ParamCategory::FileSystem, "Max inotify watches per user", "524288"),
+            (
+                "fs.file-max",
+                "1048576",
+                ParamCategory::FileSystem,
+                "Max open files system-wide",
+                "1048576",
+            ),
+            (
+                "fs.inotify.max_user_watches",
+                "524288",
+                ParamCategory::FileSystem,
+                "Max inotify watches per user",
+                "524288",
+            ),
         ];
 
         let mut params = Vec::new();
@@ -269,7 +449,11 @@ impl KernelParamsMonitor {
 
         // TCP auto-tuning
         let output = std::process::Command::new("powershell")
-            .args(["-NoProfile", "-Command", "Get-NetTCPSetting | Select-Object -First 1 -ExpandProperty AutoTuningLevelLocal"])
+            .args([
+                "-NoProfile",
+                "-Command",
+                "Get-NetTCPSetting | Select-Object -First 1 -ExpandProperty AutoTuningLevelLocal",
+            ])
             .output();
 
         if let Ok(out) = output {
@@ -290,10 +474,30 @@ impl KernelParamsMonitor {
     #[cfg(target_os = "macos")]
     fn read_params() -> Vec<KernelParam> {
         let checks = vec![
-            ("kern.maxfiles", ParamCategory::FileSystem, "Max open files", "49152"),
-            ("kern.maxfilesperproc", ParamCategory::FileSystem, "Max files per process", "24576"),
-            ("net.inet.tcp.msl", ParamCategory::Network, "TCP MSL (milliseconds)", "15000"),
-            ("net.inet.tcp.delayed_ack", ParamCategory::Network, "Delayed ACK", "0"),
+            (
+                "kern.maxfiles",
+                ParamCategory::FileSystem,
+                "Max open files",
+                "49152",
+            ),
+            (
+                "kern.maxfilesperproc",
+                ParamCategory::FileSystem,
+                "Max files per process",
+                "24576",
+            ),
+            (
+                "net.inet.tcp.msl",
+                ParamCategory::Network,
+                "TCP MSL (milliseconds)",
+                "15000",
+            ),
+            (
+                "net.inet.tcp.delayed_ack",
+                ParamCategory::Network,
+                "Delayed ACK",
+                "0",
+            ),
             ("vm.swapusage", ParamCategory::Vm, "Swap usage", ""),
         ];
 
@@ -322,7 +526,11 @@ impl KernelParamsMonitor {
                 value,
                 category: *category,
                 is_recommended,
-                recommended: if recommended.is_empty() { None } else { Some(recommended.to_string()) },
+                recommended: if recommended.is_empty() {
+                    None
+                } else {
+                    Some(recommended.to_string())
+                },
                 description: description.to_string(),
             });
         }
@@ -366,8 +574,22 @@ mod tests {
     #[test]
     fn test_security_scoring() {
         let params = vec![
-            KernelParam { name: "a".into(), value: "2".into(), category: ParamCategory::Security, is_recommended: true, recommended: Some("2".into()), description: "".into() },
-            KernelParam { name: "b".into(), value: "0".into(), category: ParamCategory::Security, is_recommended: false, recommended: Some("1".into()), description: "".into() },
+            KernelParam {
+                name: "a".into(),
+                value: "2".into(),
+                category: ParamCategory::Security,
+                is_recommended: true,
+                recommended: Some("2".into()),
+                description: "".into(),
+            },
+            KernelParam {
+                name: "b".into(),
+                value: "0".into(),
+                category: ParamCategory::Security,
+                is_recommended: false,
+                recommended: Some("1".into()),
+                description: "".into(),
+            },
         ];
         let score = KernelParamsMonitor::compute_security_score(&params);
         assert_eq!(score, 50);
@@ -376,8 +598,22 @@ mod tests {
     #[test]
     fn test_perfect_score() {
         let params = vec![
-            KernelParam { name: "a".into(), value: "1".into(), category: ParamCategory::Security, is_recommended: true, recommended: Some("1".into()), description: "".into() },
-            KernelParam { name: "b".into(), value: "1".into(), category: ParamCategory::Security, is_recommended: true, recommended: Some("1".into()), description: "".into() },
+            KernelParam {
+                name: "a".into(),
+                value: "1".into(),
+                category: ParamCategory::Security,
+                is_recommended: true,
+                recommended: Some("1".into()),
+                description: "".into(),
+            },
+            KernelParam {
+                name: "b".into(),
+                value: "1".into(),
+                category: ParamCategory::Security,
+                is_recommended: true,
+                recommended: Some("1".into()),
+                description: "".into(),
+            },
         ];
         let score = KernelParamsMonitor::compute_security_score(&params);
         assert_eq!(score, 100);

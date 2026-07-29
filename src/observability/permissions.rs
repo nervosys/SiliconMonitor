@@ -57,7 +57,7 @@ pub enum Capability {
     Power,
     /// Fan information
     Fan,
-    
+
     // Process management
     /// Process listing and metrics
     Process,
@@ -65,7 +65,7 @@ pub enum Capability {
     Connections,
     /// Service status
     Services,
-    
+
     // System information
     /// System identification info
     SystemInfo,
@@ -73,7 +73,7 @@ pub enum Capability {
     BootConfig,
     /// Driver information
     Drivers,
-    
+
     // Advanced features
     /// Historical data queries
     History,
@@ -81,7 +81,7 @@ pub enum Capability {
     Events,
     /// System context materialization
     Context,
-    
+
     // Control capabilities (dangerous)
     /// Fan control
     FanControl,
@@ -91,7 +91,7 @@ pub enum Capability {
     GpuControl,
     /// System power control (shutdown, reboot)
     PowerControl,
-    
+
     // Administrative
     /// API management
     Admin,
@@ -386,7 +386,11 @@ fn default_true() -> bool {
 
 impl ApiKey {
     /// Create a new API key with specified permissions
-    pub fn new(name: impl Into<String>, key: impl Into<String>, permissions: Vec<Permission>) -> Self {
+    pub fn new(
+        name: impl Into<String>,
+        key: impl Into<String>,
+        permissions: Vec<Permission>,
+    ) -> Self {
         Self {
             name: name.into(),
             key: key.into(),
@@ -417,7 +421,11 @@ impl ApiKey {
     /// Check if this key has a specific permission
     pub fn has_permission(&self, capability: Capability, required_scope: &Scope) -> bool {
         // Admin capability grants everything
-        if self.permissions.iter().any(|p| p.capability == Capability::Admin) {
+        if self
+            .permissions
+            .iter()
+            .any(|p| p.capability == Capability::Admin)
+        {
             return true;
         }
 
@@ -436,7 +444,11 @@ impl ApiKey {
 
     /// Get all granted capabilities
     pub fn granted_capabilities(&self) -> HashSet<Capability> {
-        if self.permissions.iter().any(|p| p.capability == Capability::Admin) {
+        if self
+            .permissions
+            .iter()
+            .any(|p| p.capability == Capability::Admin)
+        {
             return Capability::all().into_iter().collect();
         }
         self.permissions.iter().map(|p| p.capability).collect()
@@ -482,7 +494,9 @@ impl RateLimiter {
         let now = Instant::now();
         let window_start = now - self.limit.period();
         let active_requests = self.requests.iter().filter(|&&t| t > window_start).count();
-        self.limit.max_requests.saturating_sub(active_requests as u32)
+        self.limit
+            .max_requests
+            .saturating_sub(active_requests as u32)
     }
 
     /// Get time until next request is allowed
@@ -515,10 +529,8 @@ pub struct PermissionChecker {
 impl PermissionChecker {
     /// Create a new permission checker with API keys
     pub fn new(keys: Vec<ApiKey>) -> Self {
-        let key_map: HashMap<String, ApiKey> = keys
-            .into_iter()
-            .map(|k| (k.key.clone(), k))
-            .collect();
+        let key_map: HashMap<String, ApiKey> =
+            keys.into_iter().map(|k| (k.key.clone(), k)).collect();
         Self {
             keys: key_map,
             rate_limiters: HashMap::new(),
@@ -535,7 +547,8 @@ impl PermissionChecker {
                 max_requests: u32::MAX,
                 period_secs: 1,
             },
-        }    }
+        }
+    }
 
     /// Get an API key by its value
     pub fn get_key(&self, key: &str) -> Option<&ApiKey> {
@@ -558,7 +571,10 @@ impl PermissionChecker {
         }
 
         // Check rate limit
-        let rate_limit = key.rate_limit.clone().unwrap_or_else(|| self.default_rate_limit.clone());
+        let rate_limit = key
+            .rate_limit
+            .clone()
+            .unwrap_or_else(|| self.default_rate_limit.clone());
         let limiter = self
             .rate_limiters
             .entry(api_key.to_string())
@@ -636,7 +652,10 @@ pub enum PermissionError {
     /// Rate limit exceeded
     RateLimited { retry_after: Option<Duration> },
     /// Access denied for capability
-    AccessDenied { capability: Capability, scope: Scope },
+    AccessDenied {
+        capability: Capability,
+        scope: Scope,
+    },
 }
 
 impl std::fmt::Display for PermissionError {
@@ -811,11 +830,7 @@ mod tests {
 
     #[test]
     fn test_rate_limit_status_after_requests() {
-        let key = ApiKey::new(
-            "test",
-            "sk-test",
-            vec![Permission::read(Capability::Gpu)],
-        );
+        let key = ApiKey::new("test", "sk-test", vec![Permission::read(Capability::Gpu)]);
         let mut checker = PermissionChecker::new(vec![key]);
 
         // Make some requests

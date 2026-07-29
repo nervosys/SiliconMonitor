@@ -185,7 +185,9 @@ impl InputMonitor {
                 if name.is_empty() {
                     return;
                 }
-                let device_type = Self::classify_linux(name, handlers, bitmap_ev, bitmap_key, bitmap_rel, bitmap_abs);
+                let device_type = Self::classify_linux(
+                    name, handlers, bitmap_ev, bitmap_key, bitmap_rel, bitmap_abs,
+                );
                 let interface = Self::infer_interface_linux(phys, sysfs);
                 let mut caps = Vec::new();
                 if !bitmap_key.is_empty() && bitmap_key != "0" {
@@ -217,9 +219,16 @@ impl InputMonitor {
                 if line.is_empty() {
                     flush(
                         &mut self.devices,
-                        &name, &phys, &sysfs, &handlers,
-                        &bitmap_ev, &bitmap_key, &bitmap_rel, &bitmap_abs,
-                        &vendor_id, &product_id,
+                        &name,
+                        &phys,
+                        &sysfs,
+                        &handlers,
+                        &bitmap_ev,
+                        &bitmap_key,
+                        &bitmap_rel,
+                        &bitmap_abs,
+                        &vendor_id,
+                        &product_id,
                     );
                     name.clear();
                     phys.clear();
@@ -261,15 +270,29 @@ impl InputMonitor {
             // Flush last device
             flush(
                 &mut self.devices,
-                &name, &phys, &sysfs, &handlers,
-                &bitmap_ev, &bitmap_key, &bitmap_rel, &bitmap_abs,
-                &vendor_id, &product_id,
+                &name,
+                &phys,
+                &sysfs,
+                &handlers,
+                &bitmap_ev,
+                &bitmap_key,
+                &bitmap_rel,
+                &bitmap_abs,
+                &vendor_id,
+                &product_id,
             );
         }
     }
 
     #[cfg(target_os = "linux")]
-    fn classify_linux(name: &str, handlers: &str, _ev: &str, _key: &str, rel: &str, abs: &str) -> InputDeviceType {
+    fn classify_linux(
+        name: &str,
+        handlers: &str,
+        _ev: &str,
+        _key: &str,
+        rel: &str,
+        abs: &str,
+    ) -> InputDeviceType {
         let lower = name.to_lowercase();
         if lower.contains("keyboard") || lower.contains("kbd") {
             return InputDeviceType::Keyboard;
@@ -292,16 +315,23 @@ impl InputMonitor {
         if lower.contains("stylus") || lower.contains("pen") {
             return InputDeviceType::Stylus;
         }
-        if lower.contains("gamepad") || lower.contains("joystick") || lower.contains("controller")
-            || lower.contains("xbox") || lower.contains("playstation") || lower.contains("dualshock")
-            || lower.contains("dualsense") || lower.contains("nintendo") || handlers.contains("js")
+        if lower.contains("gamepad")
+            || lower.contains("joystick")
+            || lower.contains("controller")
+            || lower.contains("xbox")
+            || lower.contains("playstation")
+            || lower.contains("dualshock")
+            || lower.contains("dualsense")
+            || lower.contains("nintendo")
+            || handlers.contains("js")
         {
             return InputDeviceType::GameController;
         }
         if lower.contains("fingerprint") || lower.contains("biometric") {
             return InputDeviceType::Biometric;
         }
-        if lower.contains("remote") || lower.contains("consumer control") || lower.contains("media") {
+        if lower.contains("remote") || lower.contains("consumer control") || lower.contains("media")
+        {
             return InputDeviceType::Remote;
         }
         if lower.contains("mouse") || (!rel.is_empty() && rel != "0") {
@@ -448,11 +478,16 @@ impl InputMonitor {
 
                 for line in text.lines() {
                     let trimmed = line.trim();
-                    if trimmed.ends_with(':') && !trimmed.starts_with("USB") && !trimmed.is_empty() {
+                    if trimmed.ends_with(':') && !trimmed.starts_with("USB") && !trimmed.is_empty()
+                    {
                         // This is a device name
                         if !current_name.is_empty() {
                             // Check if previous device was an input device
-                            self.maybe_add_macos_device(&current_name, &current_vendor, &current_product);
+                            self.maybe_add_macos_device(
+                                &current_name,
+                                &current_vendor,
+                                &current_product,
+                            );
                         }
                         current_name = trimmed.trim_end_matches(':').to_string();
                         current_vendor.clear();
@@ -478,8 +513,10 @@ impl InputMonitor {
                 for line in text.lines() {
                     let trimmed = line.trim();
                     let lower = trimmed.to_lowercase();
-                    if (lower.contains("keyboard") || lower.contains("mouse")
-                        || lower.contains("trackpad") || lower.contains("magic"))
+                    if (lower.contains("keyboard")
+                        || lower.contains("mouse")
+                        || lower.contains("trackpad")
+                        || lower.contains("magic"))
                         && trimmed.ends_with(':')
                     {
                         let name = trimmed.trim_end_matches(':').to_string();
@@ -515,7 +552,10 @@ impl InputMonitor {
             InputDeviceType::Mouse
         } else if lower.contains("trackpad") || lower.contains("touchpad") {
             InputDeviceType::Touchpad
-        } else if lower.contains("gamepad") || lower.contains("controller") || lower.contains("joystick") {
+        } else if lower.contains("gamepad")
+            || lower.contains("controller")
+            || lower.contains("joystick")
+        {
             InputDeviceType::GameController
         } else if lower.contains("tablet") || lower.contains("wacom") || lower.contains("intuos") {
             InputDeviceType::Tablet
@@ -600,7 +640,10 @@ mod tests {
     #[test]
     fn test_input_device_type_display() {
         assert_eq!(InputDeviceType::Keyboard.to_string(), "Keyboard");
-        assert_eq!(InputDeviceType::GameController.to_string(), "Game Controller");
+        assert_eq!(
+            InputDeviceType::GameController.to_string(),
+            "Game Controller"
+        );
     }
 
     #[test]

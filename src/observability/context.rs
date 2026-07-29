@@ -61,9 +61,19 @@ impl SystemContext {
             timestamp: self.timestamp,
             hostname: self.system.hostname.clone(),
             os: self.system.os_name.clone(),
-            cpu_count: self.hardware.cpu.as_ref().map(|c| c.core_count).unwrap_or(0),
+            cpu_count: self
+                .hardware
+                .cpu
+                .as_ref()
+                .map(|c| c.core_count)
+                .unwrap_or(0),
             gpu_count: self.hardware.gpus.len(),
-            memory_total_gb: self.hardware.memory.as_ref().map(|m| m.total_gb).unwrap_or(0.0),
+            memory_total_gb: self
+                .hardware
+                .memory
+                .as_ref()
+                .map(|m| m.total_gb)
+                .unwrap_or(0.0),
             alert_count: self.alerts.len(),
         }
     }
@@ -598,10 +608,10 @@ impl SystemContextBuilder {
     pub fn build(mut self) -> SystemContext {
         let generation_time = self.start_time.elapsed().as_millis() as u64;
         let json = serde_json::to_string(&self.context).unwrap_or_default();
-        
+
         self.context.meta.generation_time_ms = generation_time;
         self.context.meta.size_bytes = json.len();
-        
+
         self.context
     }
 }

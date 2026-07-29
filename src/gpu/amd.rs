@@ -648,8 +648,10 @@ fn detect_amd_gpus_wmi(collection: &mut GpuCollection) -> Result<(), Error> {
 
         // Use DXGI for accurate VRAM and LUID (fixes 4GB WMI cap)
         let dxgi_adapters = super::windows_helpers::enumerate_dxgi_adapters();
-        let dxgi_match = super::windows_helpers::find_dxgi_adapter(&dxgi_adapters, name)
-            .or_else(|| super::windows_helpers::find_dxgi_adapter_by_vendor(&dxgi_adapters, 0x1002));
+        let dxgi_match =
+            super::windows_helpers::find_dxgi_adapter(&dxgi_adapters, name).or_else(|| {
+                super::windows_helpers::find_dxgi_adapter_by_vendor(&dxgi_adapters, 0x1002)
+            });
 
         let (dedicated_video_memory, luid_filter) = if let Some(dxgi) = &dxgi_match {
             let luid = super::windows_helpers::format_luid(dxgi.luid_high, dxgi.luid_low);
@@ -703,13 +705,16 @@ struct WinGpuPerfData {
 }
 
 #[cfg(windows)]
-fn query_gpu_perf_counters_wmi(adapter_name_filter: &str, luid_filter: Option<&str>) -> WinGpuPerfData {
+fn query_gpu_perf_counters_wmi(
+    adapter_name_filter: &str,
+    luid_filter: Option<&str>,
+) -> WinGpuPerfData {
     // Use shared helper for engine + memory data
     let perf = super::windows_helpers::query_gpu_perf_counters(luid_filter);
 
     // Use OHM/LHM for GPU-specific temperature instead of generic ACPI zones
-    let temperature = super::windows_helpers::query_gpu_temperature_ohm(adapter_name_filter)
-        .map(|t| t as u32);
+    let temperature =
+        super::windows_helpers::query_gpu_temperature_ohm(adapter_name_filter).map(|t| t as u32);
 
     WinGpuPerfData {
         utilization: perf.engines.overall,
@@ -752,10 +757,7 @@ impl Gpu for WmiAmdGpu {
 
     fn dynamic_info(&self) -> Result<GpuDynamicInfo, Error> {
         // Query real-time GPU performance counters via shared helpers
-        let perf = query_gpu_perf_counters_wmi(
-            &self.gpu_name_hint,
-            self.luid_filter.as_deref(),
-        );
+        let perf = query_gpu_perf_counters_wmi(&self.gpu_name_hint, self.luid_filter.as_deref());
 
         let mem_used = perf.dedicated_used;
         let mem_total = if self.dedicated_video_memory > 0 {

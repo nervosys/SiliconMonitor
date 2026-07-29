@@ -24,8 +24,8 @@
 //! println!("Inferred behavior: {:?}", monitor.inferred_behavior());
 //! ```
 
-use serde::{Deserialize, Serialize};
 use crate::error::SimonError;
+use serde::{Deserialize, Serialize};
 
 /// Named power profile.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -228,7 +228,8 @@ impl PowerProfileMonitor {
                     // Min freq locked high — wasteful
                     score = score.saturating_sub(10);
                     recommendations.push(
-                        "CPU minimum frequency is high — consider lowering for power savings".into(),
+                        "CPU minimum frequency is high — consider lowering for power savings"
+                            .into(),
                     );
                 }
             }
@@ -248,7 +249,8 @@ impl PowerProfileMonitor {
             match &self.active_profile {
                 PowerProfile::Performance => {
                     recommendations.push(
-                        "Running performance profile on battery — battery life will be reduced".into(),
+                        "Running performance profile on battery — battery life will be reduced"
+                            .into(),
                     );
                     score = score.saturating_sub(15);
                 }
@@ -267,7 +269,8 @@ impl PowerProfileMonitor {
             }
             ChargePolicy::Full => {
                 recommendations.push(
-                    "Consider setting a charge threshold (e.g., 80%) to extend battery lifespan".into(),
+                    "Consider setting a charge threshold (e.g., 80%) to extend battery lifespan"
+                        .into(),
                 );
             }
             _ => {}
@@ -277,7 +280,8 @@ impl PowerProfileMonitor {
         if let Some(brightness) = self.display_brightness {
             if brightness > 80 && !self.on_ac_power {
                 recommendations.push(
-                    "Display brightness is high on battery — consider reducing for power savings".into(),
+                    "Display brightness is high on battery — consider reducing for power savings"
+                        .into(),
                 );
                 score = score.saturating_sub(5);
             }
@@ -313,12 +317,10 @@ impl PowerProfileMonitor {
     #[cfg(target_os = "linux")]
     fn refresh_linux(&mut self) {
         // CPU frequency governor
-        let gov = std::fs::read_to_string(
-            "/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor",
-        )
-        .unwrap_or_default()
-        .trim()
-        .to_string();
+        let gov = std::fs::read_to_string("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor")
+            .unwrap_or_default()
+            .trim()
+            .to_string();
 
         let governor = match gov.as_str() {
             "performance" => CpuGovernor::Performance,
@@ -331,47 +333,41 @@ impl PowerProfileMonitor {
             other => CpuGovernor::Other(other.to_string()),
         };
 
-        let cur_freq = std::fs::read_to_string(
-            "/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq",
-        )
-        .ok()
-        .and_then(|s| s.trim().parse::<u32>().ok())
-        .unwrap_or(0)
-            / 1000; // kHz to MHz
+        let cur_freq =
+            std::fs::read_to_string("/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq")
+                .ok()
+                .and_then(|s| s.trim().parse::<u32>().ok())
+                .unwrap_or(0)
+                / 1000; // kHz to MHz
 
-        let min_freq = std::fs::read_to_string(
-            "/sys/devices/system/cpu/cpu0/cpufreq/scaling_min_freq",
-        )
-        .ok()
-        .and_then(|s| s.trim().parse::<u32>().ok())
-        .unwrap_or(0)
-            / 1000;
+        let min_freq =
+            std::fs::read_to_string("/sys/devices/system/cpu/cpu0/cpufreq/scaling_min_freq")
+                .ok()
+                .and_then(|s| s.trim().parse::<u32>().ok())
+                .unwrap_or(0)
+                / 1000;
 
-        let max_freq = std::fs::read_to_string(
-            "/sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq",
-        )
-        .ok()
-        .and_then(|s| s.trim().parse::<u32>().ok())
-        .unwrap_or(0)
-            / 1000;
+        let max_freq =
+            std::fs::read_to_string("/sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq")
+                .ok()
+                .and_then(|s| s.trim().parse::<u32>().ok())
+                .unwrap_or(0)
+                / 1000;
 
-        let base_freq = std::fs::read_to_string(
-            "/sys/devices/system/cpu/cpu0/cpufreq/base_frequency",
-        )
-        .ok()
-        .and_then(|s| s.trim().parse::<u32>().ok())
-        .map(|f| f / 1000);
+        let base_freq =
+            std::fs::read_to_string("/sys/devices/system/cpu/cpu0/cpufreq/base_frequency")
+                .ok()
+                .and_then(|s| s.trim().parse::<u32>().ok())
+                .map(|f| f / 1000);
 
-        let boost_enabled = std::fs::read_to_string(
-            "/sys/devices/system/cpu/cpufreq/boost",
-        )
-        .or_else(|_| std::fs::read_to_string("/sys/devices/system/cpu/intel_pstate/no_turbo"))
-        .map(|s| {
-            let val = s.trim();
-            // boost file: 1 = enabled; no_turbo: 0 = enabled (inverted)
-            val == "1" || val == "0"
-        })
-        .unwrap_or(false);
+        let boost_enabled = std::fs::read_to_string("/sys/devices/system/cpu/cpufreq/boost")
+            .or_else(|_| std::fs::read_to_string("/sys/devices/system/cpu/intel_pstate/no_turbo"))
+            .map(|s| {
+                let val = s.trim();
+                // boost file: 1 = enabled; no_turbo: 0 = enabled (inverted)
+                val == "1" || val == "0"
+            })
+            .unwrap_or(false);
 
         let epp = std::fs::read_to_string(
             "/sys/devices/system/cpu/cpu0/cpufreq/energy_performance_preference",
@@ -395,7 +391,10 @@ impl PowerProfileMonitor {
             .arg("get")
             .output()
         {
-            let profile = String::from_utf8(output.stdout).unwrap_or_default().trim().to_string();
+            let profile = String::from_utf8(output.stdout)
+                .unwrap_or_default()
+                .trim()
+                .to_string();
             self.active_profile = match profile.as_str() {
                 "performance" => PowerProfile::Performance,
                 "balanced" => PowerProfile::Balanced,
@@ -412,7 +411,10 @@ impl PowerProfileMonitor {
         }
 
         // AC power status
-        for entry in std::fs::read_dir("/sys/class/power_supply").into_iter().flatten() {
+        for entry in std::fs::read_dir("/sys/class/power_supply")
+            .into_iter()
+            .flatten()
+        {
             for e in entry {
                 let path = e.path();
                 if let Ok(ptype) = std::fs::read_to_string(path.join("type")) {
@@ -488,24 +490,21 @@ impl PowerProfileMonitor {
                             .to_string();
 
                         if active {
-                            self.active_profile = if name.to_lowercase().contains("high performance")
-                                || name.to_lowercase().contains("ultimate")
-                            {
-                                PowerProfile::Performance
-                            } else if name.to_lowercase().contains("power saver") {
-                                PowerProfile::PowerSaver
-                            } else if name.to_lowercase().contains("balanced") {
-                                PowerProfile::Balanced
-                            } else {
-                                PowerProfile::Custom(name.clone())
-                            };
+                            self.active_profile =
+                                if name.to_lowercase().contains("high performance")
+                                    || name.to_lowercase().contains("ultimate")
+                                {
+                                    PowerProfile::Performance
+                                } else if name.to_lowercase().contains("power saver") {
+                                    PowerProfile::PowerSaver
+                                } else if name.to_lowercase().contains("balanced") {
+                                    PowerProfile::Balanced
+                                } else {
+                                    PowerProfile::Custom(name.clone())
+                                };
                         }
 
-                        self.power_plans.push(PowerPlanInfo {
-                            guid,
-                            name,
-                            active,
-                        });
+                        self.power_plans.push(PowerPlanInfo { guid, name, active });
                     }
                 }
             }
@@ -513,11 +512,17 @@ impl PowerProfileMonitor {
 
         // AC power status
         if let Ok(output) = std::process::Command::new("powershell")
-            .args(["-NoProfile", "-Command",
-                "(Get-CimInstance Win32_Battery).BatteryStatus"])
+            .args([
+                "-NoProfile",
+                "-Command",
+                "(Get-CimInstance Win32_Battery).BatteryStatus",
+            ])
             .output()
         {
-            let text = String::from_utf8(output.stdout).unwrap_or_default().trim().to_string();
+            let text = String::from_utf8(output.stdout)
+                .unwrap_or_default()
+                .trim()
+                .to_string();
             // 2 = AC, 1 = battery
             self.on_ac_power = text != "1";
         }
@@ -577,12 +582,11 @@ impl PowerProfileMonitor {
         }
 
         // Infer profile from pmset settings
-        if let Ok(output) = std::process::Command::new("pmset")
-            .args(["-g"])
-            .output()
-        {
+        if let Ok(output) = std::process::Command::new("pmset").args(["-g"]).output() {
             let text = String::from_utf8(output.stdout).unwrap_or_default();
-            let low_power = text.lines().any(|l| l.contains("lowpowermode") && l.contains("1"));
+            let low_power = text
+                .lines()
+                .any(|l| l.contains("lowpowermode") && l.contains("1"));
             self.active_profile = if low_power {
                 PowerProfile::PowerSaver
             } else {

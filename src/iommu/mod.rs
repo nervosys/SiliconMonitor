@@ -10,8 +10,8 @@
 //! - **Windows**: VT-d detection via WMI/registry
 //! - **macOS**: Not applicable (stub)
 
-use serde::{Deserialize, Serialize};
 use crate::error::SimonError;
+use serde::{Deserialize, Serialize};
 
 /// IOMMU technology type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -117,9 +117,10 @@ impl IommuMonitor {
 
     /// Find group containing a specific BDF.
     pub fn group_for_device(&self, bdf: &str) -> Option<&IommuGroup> {
-        self.overview.groups.iter().find(|g| {
-            g.devices.iter().any(|d| d.bdf == bdf)
-        })
+        self.overview
+            .groups
+            .iter()
+            .find(|g| g.devices.iter().any(|d| d.bdf == bdf))
     }
 
     /// Get passthrough candidates.
@@ -146,7 +147,8 @@ impl IommuMonitor {
                 interrupt_remapping: false,
                 dmar_present: false,
                 recommendations: vec![
-                    "IOMMU not enabled; add intel_iommu=on or amd_iommu=on to kernel cmdline".into(),
+                    "IOMMU not enabled; add intel_iommu=on or amd_iommu=on to kernel cmdline"
+                        .into(),
                 ],
             });
         }
@@ -171,15 +173,15 @@ impl IommuMonitor {
         let total = groups.len() as u32;
         let passthrough = groups.iter().filter(|g| g.passthrough_candidate).count() as u32;
 
-        let interrupt_remapping = std::path::Path::new("/sys/class/iommu")
-            .exists();
+        let interrupt_remapping = std::path::Path::new("/sys/class/iommu").exists();
 
         let dmar_present = std::path::Path::new("/sys/firmware/acpi/tables/DMAR").exists()
             || std::path::Path::new("/sys/firmware/acpi/tables/IVRS").exists();
 
         let mut recommendations = Vec::new();
         if !interrupt_remapping {
-            recommendations.push("Interrupt remapping may not be active; needed for secure VFIO".into());
+            recommendations
+                .push("Interrupt remapping may not be active; needed for secure VFIO".into());
         }
         if passthrough > 0 {
             recommendations.push(format!(
@@ -283,7 +285,11 @@ impl IommuMonitor {
 
         Ok(IommuOverview {
             enabled: false, // Can't reliably detect on Windows without admin
-            iommu_type: if enabled { IommuType::IntelVtd } else { IommuType::Unknown },
+            iommu_type: if enabled {
+                IommuType::IntelVtd
+            } else {
+                IommuType::Unknown
+            },
             groups: Vec::new(),
             total_groups: 0,
             passthrough_groups: 0,
@@ -372,8 +378,18 @@ mod tests {
         let group = IommuGroup {
             id: 1,
             devices: vec![
-                IommuDevice { bdf: "0000:01:00.0".into(), description: "GPU".into(), driver: Some("amdgpu".into()), vfio_bound: false },
-                IommuDevice { bdf: "0000:01:00.1".into(), description: "Audio".into(), driver: Some("snd_hda_intel".into()), vfio_bound: false },
+                IommuDevice {
+                    bdf: "0000:01:00.0".into(),
+                    description: "GPU".into(),
+                    driver: Some("amdgpu".into()),
+                    vfio_bound: false,
+                },
+                IommuDevice {
+                    bdf: "0000:01:00.1".into(),
+                    description: "Audio".into(),
+                    driver: Some("snd_hda_intel".into()),
+                    vfio_bound: false,
+                },
             ],
             isolated: false,
             passthrough_candidate: false,

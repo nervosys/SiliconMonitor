@@ -32,7 +32,7 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
-use crate::error::{SimonError, Result};
+use crate::error::{Result, SimonError};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
@@ -40,15 +40,15 @@ use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Check if telemetry is disabled for this session via CLI flags.
-/// 
+///
 /// Returns `true` if the `--no-telemetry` or `--offline` CLI flag was used.
 /// This check is fast and can be used early in code paths to skip telemetry logic entirely.
-/// 
+///
 /// # Example
-/// 
+///
 /// ```no_run
-/// use simon::consent::is_telemetry_disabled;
-/// 
+/// use simonlib::consent::is_telemetry_disabled;
+///
 /// if is_telemetry_disabled() {
 ///     // Skip any telemetry code paths
 ///     return;
@@ -59,14 +59,14 @@ pub fn is_telemetry_disabled() -> bool {
 }
 
 /// Check if running in offline mode (all network features disabled).
-/// 
+///
 /// Returns `true` if the `--offline` CLI flag was used.
-/// 
+///
 /// # Example
-/// 
+///
 /// ```no_run
-/// use simon::consent::is_offline_mode;
-/// 
+/// use simonlib::consent::is_offline_mode;
+///
 /// if is_offline_mode() {
 ///     // Skip any network-dependent features
 ///     return;
@@ -82,16 +82,16 @@ pub fn is_offline_mode() -> bool {
 pub enum ConsentScope {
     /// Basic anonymized usage telemetry (feature usage, crash reports)
     BasicTelemetry,
-    
+
     /// Hardware information (GPU model, CPU type - anonymized)
     HardwareInfo,
-    
+
     /// Performance metrics (aggregated, anonymized)
     PerformanceMetrics,
-    
+
     /// Detailed diagnostics (for troubleshooting, includes system info)
     DetailedDiagnostics,
-    
+
     /// Anonymous analytics (usage patterns, feature popularity)
     Analytics,
 }
@@ -171,16 +171,16 @@ impl ConsentScope {
 pub struct ConsentRecord {
     /// The scope this consent applies to
     pub scope: ConsentScope,
-    
+
     /// Whether user granted consent
     pub granted: bool,
-    
+
     /// When the consent was recorded
     pub timestamp: u64,
-    
+
     /// Version of the consent prompt shown
     pub prompt_version: u32,
-    
+
     /// User's IP address at time of consent (for audit trail only)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ip_hash: Option<String>,
@@ -191,16 +191,16 @@ pub struct ConsentRecord {
 pub struct ConsentConfig {
     /// All consent records
     pub records: HashMap<ConsentScope, ConsentRecord>,
-    
+
     /// When the user was first prompted
     pub first_prompt_timestamp: Option<u64>,
-    
+
     /// Last time consent was reviewed
     pub last_review_timestamp: Option<u64>,
-    
+
     /// User can set a reminder to review consent
     pub review_reminder_days: Option<u32>,
-    
+
     /// Version of consent system (for tracking changes)
     pub consent_version: u32,
 }
@@ -251,11 +251,13 @@ impl ConsentManager {
     /// Load consent configuration from specific path
     pub fn load_from(path: &PathBuf) -> Result<Self> {
         let config = if path.exists() {
-            let contents = fs::read_to_string(path)
-                .map_err(|e| SimonError::Configuration(format!("Failed to read consent config: {}", e)))?;
-            
-            toml::from_str(&contents)
-                .map_err(|e| SimonError::Configuration(format!("Failed to parse consent config: {}", e)))?
+            let contents = fs::read_to_string(path).map_err(|e| {
+                SimonError::Configuration(format!("Failed to read consent config: {}", e))
+            })?;
+
+            toml::from_str(&contents).map_err(|e| {
+                SimonError::Configuration(format!("Failed to parse consent config: {}", e))
+            })?
         } else {
             ConsentConfig::default()
         };
@@ -270,28 +272,31 @@ impl ConsentManager {
     pub fn save(&self) -> Result<()> {
         // Create parent directory if it doesn't exist
         if let Some(parent) = self.config_path.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|e| SimonError::Configuration(format!("Failed to create config directory: {}", e)))?;
+            fs::create_dir_all(parent).map_err(|e| {
+                SimonError::Configuration(format!("Failed to create config directory: {}", e))
+            })?;
         }
 
-        let contents = toml::to_string_pretty(&self.config)
-            .map_err(|e| SimonError::Configuration(format!("Failed to serialize consent config: {}", e)))?;
+        let contents = toml::to_string_pretty(&self.config).map_err(|e| {
+            SimonError::Configuration(format!("Failed to serialize consent config: {}", e))
+        })?;
 
-        fs::write(&self.config_path, contents)
-            .map_err(|e| SimonError::Configuration(format!("Failed to write consent config: {}", e)))?;
+        fs::write(&self.config_path, contents).map_err(|e| {
+            SimonError::Configuration(format!("Failed to write consent config: {}", e))
+        })?;
 
         Ok(())
     }
 
     /// Check if user has granted consent for a specific scope
-    /// 
+    ///
     /// # Sandbox Protection
-    /// 
+    ///
     /// Returns `false` if running in a sandboxed environment, regardless of
     /// stored consent. This ensures no data is collected during analysis or testing.
-    /// 
+    ///
     /// # Runtime Opt-Out
-    /// 
+    ///
     /// Also returns `false` if the SIMON_NO_TELEMETRY or SIMON_OFFLINE environment
     /// variables are set (via --no-telemetry or --offline CLI flags).
     pub fn has_consent(&self, scope: ConsentScope) -> bool {
@@ -307,14 +312,15 @@ impl ConsentManager {
         }
 
         // Default to true (opt-in by default) if no explicit consent record exists
-        self.config.records
+        self.config
+            .records
             .get(&scope)
             .map(|r| r.granted)
             .unwrap_or(true)
     }
 
     /// Check if consent should be granted (including sandbox check)
-    /// 
+    ///
     /// This is a convenience method that combines consent checking with sandbox detection
     /// and runtime opt-out flags.
     pub fn should_collect_data(&self, scope: ConsentScope) -> bool {
@@ -341,14 +347,15 @@ impl ConsentManager {
         }
 
         // Check if review reminder is due
-        if let (Some(last_review), Some(reminder_days)) = 
-            (self.config.last_review_timestamp, self.config.review_reminder_days) 
-        {
+        if let (Some(last_review), Some(reminder_days)) = (
+            self.config.last_review_timestamp,
+            self.config.review_reminder_days,
+        ) {
             let now = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
                 .as_secs();
-            
+
             let days_since_review = (now - last_review) / 86400;
             if days_since_review >= reminder_days as u64 {
                 return true;
@@ -416,20 +423,29 @@ impl ConsentManager {
     /// Export consent status as human-readable string
     pub fn export_consent_status(&self) -> String {
         let mut output = String::from("=== Silicon Monitor - Consent Status ===\n\n");
-        
+
         if let Some(first_prompt) = self.config.first_prompt_timestamp {
-            output.push_str(&format!("First prompted: {}\n", format_timestamp(first_prompt)));
+            output.push_str(&format!(
+                "First prompted: {}\n",
+                format_timestamp(first_prompt)
+            ));
         }
-        
+
         if let Some(last_review) = self.config.last_review_timestamp {
-            output.push_str(&format!("Last reviewed: {}\n", format_timestamp(last_review)));
+            output.push_str(&format!(
+                "Last reviewed: {}\n",
+                format_timestamp(last_review)
+            ));
         }
-        
-        output.push_str(&format!("\nConsent version: {}\n\n", self.config.consent_version));
-        
+
+        output.push_str(&format!(
+            "\nConsent version: {}\n\n",
+            self.config.consent_version
+        ));
+
         output.push_str("Current consents:\n");
         output.push_str("─────────────────────────────────────────\n");
-        
+
         for scope in [
             ConsentScope::BasicTelemetry,
             ConsentScope::HardwareInfo,
@@ -437,14 +453,21 @@ impl ConsentManager {
             ConsentScope::DetailedDiagnostics,
             ConsentScope::Analytics,
         ] {
-            let status = if self.has_consent(scope) { "[+] GRANTED" } else { "[-] DENIED" };
+            let status = if self.has_consent(scope) {
+                "[+] GRANTED"
+            } else {
+                "[-] DENIED"
+            };
             output.push_str(&format!("{:<30} {}\n", scope.name(), status));
-            
+
             if let Some(record) = self.config.records.get(&scope) {
-                output.push_str(&format!("  Recorded: {}\n", format_timestamp(record.timestamp)));
+                output.push_str(&format!(
+                    "  Recorded: {}\n",
+                    format_timestamp(record.timestamp)
+                ));
             }
         }
-        
+
         output.push_str("\n=== End of Consent Status ===\n");
         output
     }
@@ -454,7 +477,7 @@ impl ConsentManager {
         println!("\n╔════════════════════════════════════════════════════════════════╗");
         println!("║           Silicon Monitor - Data Collection Consent           ║");
         println!("╚════════════════════════════════════════════════════════════════╝\n");
-        
+
         println!("Scope: {}\n", scope.name());
         println!("Description:\n{}\n", scope.description());
         println!("Data collected:");
@@ -466,14 +489,14 @@ impl ConsentManager {
         println!("  - Running: simon --consent-status");
         println!("  - Running: simon --revoke-consent");
         println!();
-        
+
         loop {
             println!("Do you consent to this data collection? [y/N]: ");
             let mut input = String::new();
             std::io::stdin()
                 .read_line(&mut input)
                 .map_err(|e| SimonError::Configuration(format!("Failed to read input: {}", e)))?;
-            
+
             let input = input.trim().to_lowercase();
             match input.as_str() {
                 "y" | "yes" => {
@@ -502,11 +525,11 @@ impl ConsentManager {
         println!("We respect your privacy and will only collect data you explicitly consent to.\n");
         println!("You'll be asked about several types of optional data collection.");
         println!("You can say 'no' to all of them - the tool works perfectly without any data collection.\n");
-        
+
         println!("Press Enter to continue...");
         let mut input = String::new();
         std::io::stdin().read_line(&mut input).ok();
-        
+
         for scope in [
             ConsentScope::BasicTelemetry,
             ConsentScope::HardwareInfo,
@@ -515,7 +538,7 @@ impl ConsentManager {
         ] {
             self.request_consent(scope)?;
         }
-        
+
         println!("╔════════════════════════════════════════════════════════════════╗");
         println!("║           Consent Setup Complete                              ║");
         println!("╚════════════════════════════════════════════════════════════════╝\n");
@@ -523,7 +546,7 @@ impl ConsentManager {
         println!("  simon --consent-status      # View current consent status");
         println!("  simon --revoke-consent      # Revoke all consents");
         println!("  simon --consent-review      # Review and change specific consents\n");
-        
+
         Ok(())
     }
 }
@@ -558,8 +581,10 @@ mod tests {
         };
 
         // Record consent
-        manager.record_consent(ConsentScope::BasicTelemetry, true).unwrap();
-        
+        manager
+            .record_consent(ConsentScope::BasicTelemetry, true)
+            .unwrap();
+
         // Check the record directly to bypass sandbox detection in has_consent
         // (sandbox detection may interfere with tests in CI/VMs)
         let record = manager.config.records.get(&ConsentScope::BasicTelemetry);
@@ -567,8 +592,10 @@ mod tests {
         assert!(record.unwrap().granted);
 
         // Revoke consent
-        manager.revoke_consent(ConsentScope::BasicTelemetry).unwrap();
-        
+        manager
+            .revoke_consent(ConsentScope::BasicTelemetry)
+            .unwrap();
+
         // Verify revocation by checking record directly
         let record = manager.config.records.get(&ConsentScope::BasicTelemetry);
         assert!(record.is_some());

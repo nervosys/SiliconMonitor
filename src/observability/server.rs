@@ -180,16 +180,23 @@ impl HttpResponse {
         let body = serde_json::to_string(data).unwrap_or_default();
         let mut headers = HashMap::new();
         headers.insert("content-type".to_string(), "application/json".to_string());
-        
-        Self { status, headers, body }
+
+        Self {
+            status,
+            headers,
+            body,
+        }
     }
 
     /// Create an error response
     pub fn error(status: u16, message: &str) -> Self {
-        Self::json(status, &serde_json::json!({
-            "error": message,
-            "status": status
-        }))
+        Self::json(
+            status,
+            &serde_json::json!({
+                "error": message,
+                "status": status
+            }),
+        )
     }
 
     /// 200 OK
@@ -234,7 +241,9 @@ impl HttpResponse {
     /// 429 Too Many Requests
     pub fn rate_limited(retry_after: u64) -> Self {
         let mut response = Self::error(429, "Rate limit exceeded");
-        response.headers.insert("retry-after".to_string(), retry_after.to_string());
+        response
+            .headers
+            .insert("retry-after".to_string(), retry_after.to_string());
         response
     }
 
@@ -325,9 +334,12 @@ impl OpenApiSpec {
                     operation_id: "health".to_string(),
                     tags: vec!["system".to_string()],
                     security: vec![],
-                    responses: HashMap::from([
-                        ("200".to_string(), OpenApiResponse { description: "OK".to_string() }),
-                    ]),
+                    responses: HashMap::from([(
+                        "200".to_string(),
+                        OpenApiResponse {
+                            description: "OK".to_string(),
+                        },
+                    )]),
                 }),
                 post: None,
                 put: None,
@@ -346,8 +358,18 @@ impl OpenApiSpec {
                     tags: vec!["context".to_string()],
                     security: vec![HashMap::from([("bearerAuth".to_string(), vec![])])],
                     responses: HashMap::from([
-                        ("200".to_string(), OpenApiResponse { description: "System context".to_string() }),
-                        ("401".to_string(), OpenApiResponse { description: "Unauthorized".to_string() }),
+                        (
+                            "200".to_string(),
+                            OpenApiResponse {
+                                description: "System context".to_string(),
+                            },
+                        ),
+                        (
+                            "401".to_string(),
+                            OpenApiResponse {
+                                description: "Unauthorized".to_string(),
+                            },
+                        ),
                     ]),
                 }),
                 post: None,
@@ -366,9 +388,12 @@ impl OpenApiSpec {
                     operation_id: "getGpus".to_string(),
                     tags: vec!["hardware".to_string()],
                     security: vec![HashMap::from([("bearerAuth".to_string(), vec![])])],
-                    responses: HashMap::from([
-                        ("200".to_string(), OpenApiResponse { description: "GPU list".to_string() }),
-                    ]),
+                    responses: HashMap::from([(
+                        "200".to_string(),
+                        OpenApiResponse {
+                            description: "GPU list".to_string(),
+                        },
+                    )]),
                 }),
                 post: None,
                 put: None,
@@ -440,8 +465,7 @@ impl RequestHandler {
         };
 
         // Create request context
-        let ctx = RequestContext::new(api_key.clone())
-            .with_request_id(generate_request_id());
+        let ctx = RequestContext::new(api_key.clone()).with_request_id(generate_request_id());
 
         // Route the request
         let response = self.route(&request, ctx);
@@ -499,7 +523,9 @@ impl RequestHandler {
         match (method, sub_path) {
             // Context
             ("GET", path) if path == routes::CONTEXT => self.handle_get_context(ctx),
-            ("GET", path) if path == routes::CONTEXT_MINIMAL => self.handle_get_minimal_context(ctx),
+            ("GET", path) if path == routes::CONTEXT_MINIMAL => {
+                self.handle_get_minimal_context(ctx)
+            }
 
             // Hardware
             ("GET", path) if path == routes::GPUS => self.handle_get_gpus(ctx),
@@ -517,7 +543,9 @@ impl RequestHandler {
             ("GET", path) if path == routes::METRICS_CPU => self.handle_get_cpu_metrics(ctx),
             ("GET", path) if path == routes::METRICS_MEMORY => self.handle_get_memory_metrics(ctx),
             ("GET", path) if path == routes::METRICS_DISK => self.handle_get_disk_metrics(ctx),
-            ("GET", path) if path == routes::METRICS_NETWORK => self.handle_get_network_metrics(ctx),
+            ("GET", path) if path == routes::METRICS_NETWORK => {
+                self.handle_get_network_metrics(ctx)
+            }
             ("GET", path) if path == routes::METRICS_PROMETHEUS => self.handle_prometheus_metrics(),
 
             // Processes
@@ -697,17 +725,16 @@ impl RequestHandler {
         let metrics = self.metric_collector.export_prometheus();
         HttpResponse {
             status: 200,
-            headers: HashMap::from([
-                ("content-type".to_string(), "text/plain; charset=utf-8".to_string()),
-            ]),
+            headers: HashMap::from([(
+                "content-type".to_string(),
+                "text/plain; charset=utf-8".to_string(),
+            )]),
             body: metrics,
         }
     }
 
     fn handle_get_processes(&self, ctx: RequestContext, request: &HttpRequest) -> HttpResponse {
-        let limit = request
-            .query_param("limit")
-            .and_then(|s| s.parse().ok());
+        let limit = request.query_param("limit").and_then(|s| s.parse().ok());
 
         match self.api.read() {
             Ok(api) => match api.get_processes(&ctx, limit) {
@@ -719,12 +746,8 @@ impl RequestHandler {
     }
 
     fn handle_get_events(&self, request: &HttpRequest) -> HttpResponse {
-        let limit = request
-            .query_param("limit")
-            .and_then(|s| s.parse().ok());
-        let since = request
-            .query_param("since")
-            .and_then(|s| s.parse().ok());
+        let limit = request.query_param("limit").and_then(|s| s.parse().ok());
+        let since = request.query_param("since").and_then(|s| s.parse().ok());
 
         let events = if let Some(since) = since {
             self.event_manager.get_events_since(since)

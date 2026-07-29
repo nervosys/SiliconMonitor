@@ -76,16 +76,20 @@ impl AgentManifest {
     }
 
     fn to_openai(&self) -> Value {
-        let functions: Vec<Value> = self.tools.iter().map(|tool| {
-            json!({
-                "type": "function",
-                "function": {
-                    "name": tool.name,
-                    "description": tool.description,
-                    "parameters": tool.parameters,
-                }
+        let functions: Vec<Value> = self
+            .tools
+            .iter()
+            .map(|tool| {
+                json!({
+                    "type": "function",
+                    "function": {
+                        "name": tool.name,
+                        "description": tool.description,
+                        "parameters": tool.parameters,
+                    }
+                })
             })
-        }).collect();
+            .collect();
         // Supports: gpt-4o, gpt-4.5-preview, o1, o3, o3-mini, gpt-4-turbo, gpt-4
         json!({
             "model": "gpt-4o",
@@ -101,13 +105,17 @@ impl AgentManifest {
     }
 
     fn to_anthropic(&self) -> Value {
-        let tools: Vec<Value> = self.tools.iter().map(|tool| {
-            json!({
-                "name": tool.name,
-                "description": tool.description,
-                "input_schema": tool.parameters,
+        let tools: Vec<Value> = self
+            .tools
+            .iter()
+            .map(|tool| {
+                json!({
+                    "name": tool.name,
+                    "description": tool.description,
+                    "input_schema": tool.parameters,
+                })
             })
-        }).collect();
+            .collect();
         // Supports: claude-4-opus, claude-4-sonnet, claude-3.5-sonnet, claude-3-opus
         json!({
             "tools": tools,
@@ -120,13 +128,17 @@ impl AgentManifest {
     }
 
     fn to_gemini(&self) -> Value {
-        let function_declarations: Vec<Value> = self.tools.iter().map(|tool| {
-            json!({
-                "name": tool.name,
-                "description": tool.description,
-                "parameters": tool.parameters,
+        let function_declarations: Vec<Value> = self
+            .tools
+            .iter()
+            .map(|tool| {
+                json!({
+                    "name": tool.name,
+                    "description": tool.description,
+                    "parameters": tool.parameters,
+                })
             })
-        }).collect();
+            .collect();
         // Supports: gemini-2.0-flash, gemini-2.0-pro, gemini-1.5-pro, gemini-1.5-flash
         json!({
             "tools": [{ "function_declarations": function_declarations }],
@@ -139,16 +151,20 @@ impl AgentManifest {
 
     fn to_grok(&self) -> Value {
         // xAI Grok uses OpenAI-compatible format
-        let functions: Vec<Value> = self.tools.iter().map(|tool| {
-            json!({
-                "type": "function",
-                "function": {
-                    "name": tool.name,
-                    "description": tool.description,
-                    "parameters": tool.parameters,
-                }
+        let functions: Vec<Value> = self
+            .tools
+            .iter()
+            .map(|tool| {
+                json!({
+                    "type": "function",
+                    "function": {
+                        "name": tool.name,
+                        "description": tool.description,
+                        "parameters": tool.parameters,
+                    }
+                })
             })
-        }).collect();
+            .collect();
         // Supports: grok-3, grok-3-mini, grok-2, grok-2-mini
         json!({
             "model": "grok-3",
@@ -160,16 +176,20 @@ impl AgentManifest {
 
     fn to_llama(&self) -> Value {
         // Meta Llama via various providers (Together, Fireworks, etc.) - OpenAI-compatible
-        let functions: Vec<Value> = self.tools.iter().map(|tool| {
-            json!({
-                "type": "function",
-                "function": {
-                    "name": tool.name,
-                    "description": tool.description,
-                    "parameters": tool.parameters,
-                }
+        let functions: Vec<Value> = self
+            .tools
+            .iter()
+            .map(|tool| {
+                json!({
+                    "type": "function",
+                    "function": {
+                        "name": tool.name,
+                        "description": tool.description,
+                        "parameters": tool.parameters,
+                    }
+                })
             })
-        }).collect();
+            .collect();
         // Supports: Llama 4 Scout/Maverick, Llama 3.3, Llama 3.1
         json!({
             "model": "meta-llama/Llama-4-Scout-17B-16E-Instruct",
@@ -188,16 +208,20 @@ impl AgentManifest {
 
     fn to_mistral(&self) -> Value {
         // Mistral AI - OpenAI-compatible format
-        let functions: Vec<Value> = self.tools.iter().map(|tool| {
-            json!({
-                "type": "function",
-                "function": {
-                    "name": tool.name,
-                    "description": tool.description,
-                    "parameters": tool.parameters,
-                }
+        let functions: Vec<Value> = self
+            .tools
+            .iter()
+            .map(|tool| {
+                json!({
+                    "type": "function",
+                    "function": {
+                        "name": tool.name,
+                        "description": tool.description,
+                        "parameters": tool.parameters,
+                    }
+                })
             })
-        }).collect();
+            .collect();
         // Supports: Mistral Large, Codestral, Mixtral
         json!({
             "model": "mistral-large-latest",
@@ -214,16 +238,20 @@ impl AgentManifest {
 
     fn to_deepseek(&self) -> Value {
         // DeepSeek - OpenAI-compatible format
-        let functions: Vec<Value> = self.tools.iter().map(|tool| {
-            json!({
-                "type": "function",
-                "function": {
-                    "name": tool.name,
-                    "description": tool.description,
-                    "parameters": tool.parameters,
-                }
+        let functions: Vec<Value> = self
+            .tools
+            .iter()
+            .map(|tool| {
+                json!({
+                    "type": "function",
+                    "function": {
+                        "name": tool.name,
+                        "description": tool.description,
+                        "parameters": tool.parameters,
+                    }
+                })
             })
-        }).collect();
+            .collect();
         // Supports: DeepSeek-R1, DeepSeek-V3, DeepSeek-Coder
         json!({
             "model": "deepseek-chat",
@@ -248,13 +276,17 @@ impl AgentManifest {
     }
 
     fn to_mcp(&self) -> Value {
-        let tools: Vec<Value> = self.tools.iter().map(|tool| {
-            json!({
-                "name": tool.name,
-                "description": tool.description,
-                "inputSchema": tool.parameters,
+        let tools: Vec<Value> = self
+            .tools
+            .iter()
+            .map(|tool| {
+                json!({
+                    "name": tool.name,
+                    "description": tool.description,
+                    "inputSchema": tool.parameters,
+                })
             })
-        }).collect();
+            .collect();
         json!({
             "name": "silicon-monitor",
             "version": self.version,
@@ -267,7 +299,9 @@ impl AgentManifest {
 }
 
 impl Default for AgentManifest {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 pub fn get_tools_by_category() -> HashMap<ToolCategory, Vec<ToolDefinition>> {

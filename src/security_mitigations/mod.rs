@@ -233,8 +233,7 @@ impl SecurityMitigationsMonitor {
         let mitigated = vulns
             .iter()
             .filter(|v| {
-                v.status == MitigationStatus::Mitigated
-                    || v.status == MitigationStatus::NotAffected
+                v.status == MitigationStatus::Mitigated || v.status == MitigationStatus::NotAffected
             })
             .count();
         let vulnerable = vulns
@@ -337,20 +336,68 @@ impl SecurityMitigationsMonitor {
         }
 
         let known_vulns = vec![
-            ("spectre_v1", "Spectre Variant 1 (Bounds Check Bypass)", vec!["CVE-2017-5753"]),
-            ("spectre_v2", "Spectre Variant 2 (Branch Target Injection)", vec!["CVE-2017-5715"]),
-            ("meltdown", "Meltdown (Rogue Data Cache Load)", vec!["CVE-2017-5754"]),
-            ("spec_store_bypass", "Speculative Store Bypass", vec!["CVE-2018-3639"]),
-            ("l1tf", "L1 Terminal Fault", vec!["CVE-2018-3615", "CVE-2018-3620"]),
-            ("mds", "Microarchitectural Data Sampling", vec!["CVE-2018-12126", "CVE-2018-12127"]),
-            ("tsx_async_abort", "TSX Asynchronous Abort", vec!["CVE-2019-11135"]),
+            (
+                "spectre_v1",
+                "Spectre Variant 1 (Bounds Check Bypass)",
+                vec!["CVE-2017-5753"],
+            ),
+            (
+                "spectre_v2",
+                "Spectre Variant 2 (Branch Target Injection)",
+                vec!["CVE-2017-5715"],
+            ),
+            (
+                "meltdown",
+                "Meltdown (Rogue Data Cache Load)",
+                vec!["CVE-2017-5754"],
+            ),
+            (
+                "spec_store_bypass",
+                "Speculative Store Bypass",
+                vec!["CVE-2018-3639"],
+            ),
+            (
+                "l1tf",
+                "L1 Terminal Fault",
+                vec!["CVE-2018-3615", "CVE-2018-3620"],
+            ),
+            (
+                "mds",
+                "Microarchitectural Data Sampling",
+                vec!["CVE-2018-12126", "CVE-2018-12127"],
+            ),
+            (
+                "tsx_async_abort",
+                "TSX Asynchronous Abort",
+                vec!["CVE-2019-11135"],
+            ),
             ("itlb_multihit", "ITLB Multihit", vec![]),
-            ("srbds", "Special Register Buffer Data Sampling", vec!["CVE-2020-0543"]),
+            (
+                "srbds",
+                "Special Register Buffer Data Sampling",
+                vec!["CVE-2020-0543"],
+            ),
             ("mmio_stale_data", "MMIO Stale Data", vec!["CVE-2022-21123"]),
-            ("retbleed", "Return Address Branch Target Injection", vec!["CVE-2022-29900", "CVE-2022-29901"]),
-            ("spec_rstack_overflow", "Speculative Return Stack Overflow", vec!["CVE-2023-20569"]),
-            ("gather_data_sampling", "Gather Data Sampling (Downfall)", vec!["CVE-2022-40982"]),
-            ("rfds", "Register File Data Sampling", vec!["CVE-2023-28746"]),
+            (
+                "retbleed",
+                "Return Address Branch Target Injection",
+                vec!["CVE-2022-29900", "CVE-2022-29901"],
+            ),
+            (
+                "spec_rstack_overflow",
+                "Speculative Return Stack Overflow",
+                vec!["CVE-2023-20569"],
+            ),
+            (
+                "gather_data_sampling",
+                "Gather Data Sampling (Downfall)",
+                vec!["CVE-2022-40982"],
+            ),
+            (
+                "rfds",
+                "Register File Data Sampling",
+                vec!["CVE-2023-28746"],
+            ),
             ("gds", "Gather Data Sampling", vec!["CVE-2022-40982"]),
         ];
 
@@ -445,19 +492,17 @@ impl SecurityMitigationsMonitor {
                 };
 
                 let mode = match module {
-                    SecurityModule::SELinux => {
-                        std::fs::read_to_string("/sys/fs/selinux/enforce")
-                            .ok()
-                            .map(|s| {
-                                if s.trim() == "1" {
-                                    "enforcing"
-                                } else {
-                                    "permissive"
-                                }
-                            })
-                            .unwrap_or("unknown")
-                            .to_string()
-                    }
+                    SecurityModule::SELinux => std::fs::read_to_string("/sys/fs/selinux/enforce")
+                        .ok()
+                        .map(|s| {
+                            if s.trim() == "1" {
+                                "enforcing"
+                            } else {
+                                "permissive"
+                            }
+                        })
+                        .unwrap_or("unknown")
+                        .to_string(),
                     _ => "active".to_string(),
                 };
 
@@ -491,7 +536,11 @@ impl SecurityMitigationsMonitor {
                 modules.push(LsmStatus {
                     module: SecurityModule::WindowsDefender,
                     enabled,
-                    mode: if enabled { "real-time".into() } else { "disabled".into() },
+                    mode: if enabled {
+                        "real-time".into()
+                    } else {
+                        "disabled".into()
+                    },
                 });
             }
         }
@@ -504,9 +553,7 @@ impl SecurityMitigationsMonitor {
         let mut modules = Vec::new();
 
         // Check SIP status
-        let sip = std::process::Command::new("csrutil")
-            .arg("status")
-            .output();
+        let sip = std::process::Command::new("csrutil").arg("status").output();
 
         if let Ok(out) = sip {
             let text = String::from_utf8_lossy(&out.stdout);
@@ -514,7 +561,11 @@ impl SecurityMitigationsMonitor {
             modules.push(LsmStatus {
                 module: SecurityModule::SIP,
                 enabled,
-                mode: if enabled { "enabled".into() } else { "disabled".into() },
+                mode: if enabled {
+                    "enabled".into()
+                } else {
+                    "disabled".into()
+                },
             });
         }
 

@@ -64,9 +64,10 @@ fn run_app<B: Backend>(
     let tick_duration = Duration::from_millis(TICK_MS);
 
     // Update frequencies in ticks
-    const FAST_UPDATE_TICKS: u64 = 2; // Every 2 ticks (500ms) - CPU, GPU, Memory, Network
+    const FAST_UPDATE_TICKS: u64 = 2; // Every 2 ticks (500ms) - CPU, GPU, Memory, Network, Disks
     const PROCESS_TICKS: u64 = 4; // Every 4 ticks (1s)
-    const DISK_TICKS: u64 = 20; // Every 20 ticks (5s)
+                                  // Disks no longer need their own tick: the collector re-enumerates them on its
+                                  // own slow cadence and publishes them with every snapshot.
     const INIT_CHECK_TICKS: u64 = 1; // Every tick (250ms)
 
     let mut tick_count: u64 = 0;
@@ -161,14 +162,16 @@ fn run_app<B: Backend>(
                                     KeyCode::Down => app.select_process_down(),
                                     KeyCode::PageUp => {
                                         if app.selected_tab == 7 {
-                                            app.profile_scroll = app.profile_scroll.saturating_sub(10);
+                                            app.profile_scroll =
+                                                app.profile_scroll.saturating_sub(10);
                                         } else {
                                             app.scroll_page_up();
                                         }
                                     }
                                     KeyCode::PageDown => {
                                         if app.selected_tab == 7 {
-                                            app.profile_scroll = app.profile_scroll.saturating_add(10);
+                                            app.profile_scroll =
+                                                app.profile_scroll.saturating_add(10);
                                         } else {
                                             app.scroll_page_down();
                                         }
@@ -205,7 +208,8 @@ fn run_app<B: Backend>(
                                     }
                                     KeyCode::Char('d') | KeyCode::Char('D') => {
                                         if app.selected_tab == 7 {
-                                            app.profile_show_deviations = !app.profile_show_deviations;
+                                            app.profile_show_deviations =
+                                                !app.profile_show_deviations;
                                         }
                                     }
                                     KeyCode::Char('a') | KeyCode::Char('A') => {
@@ -273,21 +277,23 @@ fn run_app<B: Backend>(
                 app.check_background_init();
             }
 
-            // Fast updates (CPU, GPU, Memory, Network)
+            // Fast updates (CPU, GPU, Memory, Network, Disks).
+            //
+            // These now read a published snapshot rather than calling hardware APIs,
+            // so the tick is cheap. Crucially, a redraw is requested only when the
+            // collector actually published a new generation — previously every tick
+            // forced a repaint whether or not any value had changed, which burned
+            // terminal bandwidth redrawing identical frames.
             if tick_count % FAST_UPDATE_TICKS == 0 {
                 let _ = app.update_fast();
-                needs_render = true;
+                if app.snapshot_changed_since_render() {
+                    needs_render = true;
+                }
             }
 
             // Process updates
             if tick_count % PROCESS_TICKS == 0 {
                 let _ = app.update_processes_only();
-                needs_render = true;
-            }
-
-            // Disk updates (expensive)
-            if tick_count % DISK_TICKS == 0 {
-                let _ = app.update_disks_only();
                 needs_render = true;
             }
 

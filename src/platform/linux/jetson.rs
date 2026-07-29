@@ -1,6 +1,6 @@
 //! Jetson-specific implementations
 
-use crate::error::{SimonError, Result};
+use crate::error::{Result, SimonError};
 use crate::platform::common::*;
 use std::fs;
 use std::path::{Path, PathBuf};

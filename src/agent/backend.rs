@@ -3,6 +3,7 @@
 //! This module provides a unified interface for both local and remote AI backends,
 //! with automatic discovery and configuration.
 
+use crate::agent::local::CliProvider;
 use crate::error::{Result, SimonError};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -12,6 +13,20 @@ use std::time::Duration;
 /// Agent backend type
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum BackendType {
+    /// IronWorks — simon's built-in inference engine, and the only one.
+    ///
+    /// Pure-Rust engine served over an OpenAI-compatible API on the local machine.
+    /// Every other entry in this enum is an *external provider*: a third-party server,
+    /// a command-line tool, or a hosted API. IronWorks is the engine simon itself
+    /// ships against, and it is preferred over all of them because it runs locally, so
+    /// system telemetry never leaves the host.
+    IronWorks,
+
+    /// A locally installed command-line AI tool driven as a subprocess.
+    ///
+    /// Note that only some of these infer locally — see [`CliProvider::runs_on_host`].
+    Cli(CliProvider),
+
     /// Local GGML/llama.cpp inference
     LocalGGML,
 
@@ -51,11 +66,50 @@ pub enum BackendType {
 
 impl BackendType {
     /// Check if this is a local backend (runs on user's machine)
+    ///
+    /// Note that IronWorks is *hosted* locally but reached over HTTP, so it is
+    /// "local" for privacy purposes while still needing a running server. Use
+    /// [`BackendType::runs_on_host`] when the question is "does telemetry leave this
+    /// machine", and [`BackendType::is_local`] when it is "is the model loaded
+    /// in-process".
     pub fn is_local(&self) -> bool {
         matches!(
             self,
             BackendType::LocalGGML | BackendType::LocalONNX | BackendType::LocalCandle
         )
+    }
+
+    /// Whether inference happens on this machine, so no telemetry is transmitted to
+    /// a third party.
+    ///
+    /// True for in-process backends and for servers listening on localhost.
+    pub fn runs_on_host(&self) -> bool {
+        match self {
+            // A CLI tool is a local *process*, which is not the same as local
+            // inference: `claude`, `codex` and `gemini` relay the prompt to their
+            // vendor's API. Only the tool itself knows.
+            BackendType::Cli(provider) => provider.runs_on_host(),
+            _ => matches!(
+                self,
+                BackendType::IronWorks
+                    | BackendType::LocalGGML
+                    | BackendType::LocalONNX
+                    | BackendType::LocalCandle
+                    | BackendType::RemoteOllama
+                    | BackendType::RemoteLMStudio
+                    | BackendType::RemoteVllm
+                    | BackendType::RemoteTensorRT
+            ),
+        }
+    }
+
+    /// Whether this is simon's built-in inference engine.
+    ///
+    /// Exactly one backend is built in: [`BackendType::IronWorks`]. Everything else is
+    /// an external provider that must be installed, started, or authenticated
+    /// separately.
+    pub fn is_builtin_engine(&self) -> bool {
+        matches!(self, BackendType::IronWorks)
     }
 
     /// Check if this is a remote backend
@@ -66,6 +120,8 @@ impl BackendType {
     /// Get display name
     pub fn display_name(&self) -> &str {
         match self {
+            BackendType::IronWorks => "IronWorks (Built-in Engine)",
+            BackendType::Cli(provider) => provider.display_name(),
             BackendType::LocalGGML => "GGML/llama.cpp (Local)",
             BackendType::LocalONNX => "ONNX Runtime (Local)",
             BackendType::LocalCandle => "Candle (Local)",
@@ -106,11 +162,17 @@ impl BackendType {
     /// Get default endpoint URL
     pub fn default_endpoint(&self) -> Option<String> {
         match self {
+            // Port 8080 matches the IronWorks server and CLI default. The `/v1`
+            // suffix is required because the OpenAI-compatible request path appends
+            // only "/chat/completions" to whatever is configured here.
+            BackendType::IronWorks => Some("http://localhost:8080/v1".to_string()),
             BackendType::RemoteOpenAI => Some("https://api.openai.com/v1".to_string()),
             BackendType::RemoteAnthropic => Some("https://api.anthropic.com/v1".to_string()),
             BackendType::RemoteOllama => Some("http://localhost:11434".to_string()),
             BackendType::RemoteLMStudio => Some("http://localhost:1234/v1".to_string()),
-            BackendType::RemoteVllm => Some("http://localhost:8000".to_string()),
+            // `/v1` is required: the request path appends only "/chat/completions",
+            // so without it every vLLM request went to /chat/completions and 404'd.
+            BackendType::RemoteVllm => Some("http://localhost:8000/v1".to_string()),
             BackendType::RemoteTensorRT => Some("http://localhost:8001".to_string()),
             BackendType::RemoteGitHub => Some("https://models.inference.ai.azure.com".to_string()),
             BackendType::RemoteAzure => None, // Requires custom endpoint
@@ -183,6 +245,44 @@ impl BackendConfig {
             max_tokens: 256,
             temperature: 0.3,
             timeout: Duration::from_secs(30),
+            options: HashMap::new(),
+        }
+    }
+
+    /// Create config for Ollama (local server)
+    /// Create config for an IronWorks server (the default backend).
+    ///
+    /// The timeout is more generous than the other local servers': IronWorks loads
+    /// the model on first request, so a cold start can exceed the 30s used elsewhere.
+    pub fn ironworks(model: &str) -> Self {
+        Self {
+            backend_type: BackendType::IronWorks,
+            model_id: model.to_string(),
+            endpoint: BackendType::IronWorks.default_endpoint(),
+            api_key: None,
+            model_path: None,
+            max_tokens: 256,
+            temperature: 0.3,
+            timeout: Duration::from_secs(120),
+            options: HashMap::new(),
+        }
+    }
+
+    /// Create config for a command-line AI tool.
+    ///
+    /// No endpoint is set — these are subprocesses, not servers. The timeout is
+    /// generous because a CLI tool pays process startup on every query and may also
+    /// be waiting on a hosted API behind the scenes.
+    pub fn cli(provider: CliProvider, model: &str) -> Self {
+        Self {
+            backend_type: BackendType::Cli(provider),
+            model_id: model.to_string(),
+            endpoint: None,
+            api_key: None,
+            model_path: None,
+            max_tokens: 256,
+            temperature: 0.3,
+            timeout: Duration::from_secs(120),
             options: HashMap::new(),
         }
     }
@@ -316,6 +416,12 @@ impl BackendDiscovery {
     pub fn discover() -> Self {
         let mut available = Vec::new();
 
+        // IronWorks first: it is the default backend, and probing it before anything
+        // else means a running instance is found without paying for other probes.
+        if Self::check_ironworks_available() {
+            available.push(BackendType::IronWorks);
+        }
+
         // Check for local backends
         if Self::check_ggml_available() {
             available.push(BackendType::LocalGGML);
@@ -355,6 +461,14 @@ impl BackendDiscovery {
             available.push(BackendType::RemoteTensorRT);
         }
 
+        // Command-line tools. Detection is a PATH lookup, so unlike the server probes
+        // above this costs no network round trip.
+        for provider in CliProvider::ALL {
+            if provider.detect().is_some() {
+                available.push(BackendType::Cli(provider));
+            }
+        }
+
         Self {
             available_backends: available,
         }
@@ -372,13 +486,31 @@ impl BackendDiscovery {
 
     /// Get recommended backend (prefer local, fallback to remote)
     pub fn recommended(&self) -> BackendType {
-        // Preference order: TensorRT > vLLM > Ollama > LM Studio > Local GGML > OpenAI > Rule-based
+        // Ordering encodes two preferences, in this priority:
+        //
+        //  1. Keep telemetry on the host. Everything above RemoteOpenAI infers
+        //     locally, so a hosted provider is only chosen when nothing local exists.
+        //  2. Prefer a running server to a subprocess. A CLI tool pays process-spawn
+        //     cost on every single query, so it ranks below an equivalent server.
+        //
+        // The CLI tools that relay to a vendor (claude/codex/gemini) sit alongside the
+        // hosted APIs, because that is exactly what they are — but ahead of raw API
+        // backends, since they are already authenticated and need no key configured.
+        // `LocalGGML` is deliberately absent even though it is discoverable. Finding
+        // `llama-cli` on PATH proves the tool exists, but llama.cpp also needs a GGUF
+        // model path that simon cannot guess — `BackendConfig::validate` rejects a
+        // local backend without one. Recommending it would hand back a config that
+        // fails at construction, so it must be configured explicitly.
         for backend in &[
+            BackendType::IronWorks,
             BackendType::RemoteTensorRT,
             BackendType::RemoteVllm,
             BackendType::RemoteOllama,
             BackendType::RemoteLMStudio,
-            BackendType::LocalGGML,
+            BackendType::Cli(CliProvider::Ollama),
+            BackendType::Cli(CliProvider::Claude),
+            BackendType::Cli(CliProvider::Codex),
+            BackendType::Cli(CliProvider::Gemini),
             BackendType::RemoteOpenAI,
         ] {
             if self.is_available(backend) {
@@ -386,16 +518,26 @@ impl BackendDiscovery {
             }
         }
 
-        // No backends available - return first one we tried or Ollama as default
-        // This will cause an error when trying to use it, which is appropriate
-        BackendType::RemoteOllama
+        // Nothing available. Return the default so the resulting error names the
+        // backend the user is most likely to want to start.
+        BackendType::IronWorks
+    }
+
+    /// Check if an IronWorks server is running.
+    fn check_ironworks_available() -> bool {
+        Self::check_http_endpoint("http://localhost:8080/v1/models")
     }
 
     /// Check if GGML/llama.cpp is available
     fn check_ggml_available() -> bool {
-        // Check for llama.cpp executable or library
-        // For now, return false until implementation
-        false
+        // llama.cpp is driven through its CLI (see `agent::local::llamacpp`), so
+        // availability means the executable is on PATH.
+        //
+        // This previously returned a hardcoded false, so a working llama.cpp install
+        // was never discovered despite the client being implemented.
+        ["llama-cli", "llama-server", "main"]
+            .iter()
+            .any(|name| crate::agent::local::cli::binary_on_path(name))
     }
 
     /// Check if ONNX Runtime is available
@@ -497,6 +639,29 @@ impl BackendCapabilities {
     /// Get capabilities for backend type
     pub fn for_backend(backend: &BackendType) -> Self {
         match backend {
+            BackendType::IronWorks => Self {
+                supports_streaming: true,
+                // IronWorks supports multimodal and tool use behind its own feature
+                // flags, so what a given server offers depends on how it was built.
+                // Report the conservative baseline rather than advertising a
+                // capability a stock server may not have.
+                supports_functions: false,
+                supports_vision: false,
+                max_context_length: 32_000,
+                cost_per_million_tokens: None, // Runs on your hardware
+            },
+            BackendType::Cli(_) => Self {
+                // A subprocess returns one complete stdout buffer, so nothing can be
+                // streamed regardless of what the underlying model supports.
+                supports_streaming: false,
+                supports_functions: false,
+                supports_vision: false,
+                max_context_length: 32_000,
+                // Ollama runs locally and is free. The others bill through the vendor
+                // account the tool is signed in to, at rates simon cannot observe —
+                // reporting a number here would be a guess.
+                cost_per_million_tokens: None,
+            },
             BackendType::RemoteOpenAI => Self {
                 supports_streaming: true,
                 supports_functions: true,
@@ -573,6 +738,151 @@ mod tests {
         assert!(BackendType::LocalGGML.is_local());
         assert!(BackendType::RemoteOpenAI.is_remote());
         assert!(BackendType::RemoteOllama.is_remote());
+    }
+
+    /// OpenAI-compatible backends must carry `/v1` in their endpoint.
+    ///
+    /// `RemoteClient::query` builds the URL as `{endpoint}/chat/completions`, so an
+    /// endpoint without `/v1` produces `host/chat/completions` and every request
+    /// 404s. This is silent — discovery still reports the backend as available,
+    /// because availability is probed on a different path.
+    #[test]
+    fn openai_compatible_endpoints_include_v1() {
+        for backend in [
+            BackendType::IronWorks,
+            BackendType::RemoteOpenAI,
+            BackendType::RemoteLMStudio,
+            BackendType::RemoteVllm,
+        ] {
+            let endpoint = backend
+                .default_endpoint()
+                .unwrap_or_else(|| panic!("{} has no default endpoint", backend.display_name()));
+            assert!(
+                endpoint.ends_with("/v1"),
+                "{} endpoint {endpoint} must end in /v1, or requests resolve to \
+                 /chat/completions and 404",
+                backend.display_name()
+            );
+        }
+    }
+
+    /// Whatever `recommended()` returns must be usable without further configuration.
+    ///
+    /// This is the invariant that makes `AgentConfig::auto_detect` safe: it feeds the
+    /// recommendation straight into a `BackendConfig` and validates it. A backend that
+    /// needs a model path (llama.cpp) or manual setup must therefore never be
+    /// recommended, however detectable it is — otherwise auto-detection hands back a
+    /// config that fails, and the user gets an error instead of a working agent.
+    #[test]
+    fn recommended_backend_is_always_auto_configurable() {
+        let recommended = BackendDiscovery::discover().recommended();
+
+        assert!(
+            !recommended.is_local(),
+            "{} requires an explicit model path, so it cannot be auto-configured",
+            recommended.display_name()
+        );
+
+        // Must round-trip through the same path auto_detect uses.
+        let config = crate::agent::AgentConfig::with_backend_type(recommended.clone());
+        assert!(
+            config.is_ok(),
+            "recommended backend {} is not constructible by auto-detection: {:?}",
+            recommended.display_name(),
+            config.err()
+        );
+    }
+
+    /// llama.cpp is discoverable but must never be auto-selected.
+    ///
+    /// The test above only exercises this on a machine that actually has `llama-cli`
+    /// installed, so it would pass vacuously in CI. This asserts the underlying
+    /// constraint directly: llama.cpp cannot be constructed without a model path, so
+    /// it must stay out of the `recommended()` preference list.
+    #[test]
+    fn llamacpp_is_discoverable_but_not_auto_configurable() {
+        assert!(
+            BackendType::LocalGGML.is_local(),
+            "local backends are the ones requiring an explicit model path"
+        );
+        assert!(
+            crate::agent::AgentConfig::with_backend_type(BackendType::LocalGGML).is_err(),
+            "llama.cpp became auto-configurable; only then may it rejoin recommended()"
+        );
+    }
+
+    /// Exactly one backend is simon's built-in engine.
+    #[test]
+    fn ironworks_is_the_only_builtin_engine() {
+        assert!(BackendType::IronWorks.is_builtin_engine());
+
+        for other in [
+            BackendType::LocalGGML,
+            BackendType::RemoteOllama,
+            BackendType::RemoteVllm,
+            BackendType::RemoteTensorRT,
+            BackendType::RemoteLMStudio,
+            BackendType::RemoteOpenAI,
+            BackendType::Cli(CliProvider::Ollama),
+            BackendType::Cli(CliProvider::Claude),
+        ] {
+            assert!(
+                !other.is_builtin_engine(),
+                "{} is an external provider, not the built-in engine",
+                other.display_name()
+            );
+        }
+    }
+
+    /// A CLI tool being a local *process* does not make it local *inference*.
+    ///
+    /// Getting this backwards would route hardware telemetry to a vendor while
+    /// reporting it as staying on the machine.
+    #[test]
+    fn cli_backends_report_host_locality_per_tool() {
+        assert!(BackendType::Cli(CliProvider::Ollama).runs_on_host());
+
+        for relayed in [CliProvider::Claude, CliProvider::Codex, CliProvider::Gemini] {
+            assert!(
+                !BackendType::Cli(relayed).runs_on_host(),
+                "{relayed} relays to a hosted API, so telemetry leaves the host"
+            );
+        }
+    }
+
+    /// CLI backends are subprocesses and must not be given an HTTP endpoint.
+    #[test]
+    fn cli_config_has_no_endpoint() {
+        let config = BackendConfig::cli(CliProvider::Claude, "default");
+        assert_eq!(config.backend_type, BackendType::Cli(CliProvider::Claude));
+        assert!(
+            config.endpoint.is_none(),
+            "a CLI backend has no server to address"
+        );
+        config
+            .validate()
+            .expect("a CLI config must be valid without an endpoint");
+    }
+
+    /// IronWorks is the default backend and must be preferred whenever it is running.
+    #[test]
+    fn ironworks_is_the_default_backend() {
+        let config = BackendConfig::ironworks("default");
+        assert_eq!(config.backend_type, BackendType::IronWorks);
+        assert_eq!(
+            config.endpoint.as_deref(),
+            Some("http://localhost:8080/v1"),
+            "must match the IronWorks server default port"
+        );
+        config
+            .validate()
+            .expect("the default IronWorks config must be valid as constructed");
+
+        // Telemetry stays on the host for IronWorks; that is why it outranks the
+        // hosted APIs in `recommended()`.
+        assert!(BackendType::IronWorks.runs_on_host());
+        assert!(!BackendType::RemoteOpenAI.runs_on_host());
+        assert!(!BackendType::IronWorks.requires_api_key());
     }
 
     #[test]

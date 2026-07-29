@@ -186,7 +186,9 @@ impl CameraMonitor {
                     CameraConnection::USB
                 } else if dev_path_str.contains("platform") || dev_path_str.contains("csi") {
                     CameraConnection::CSI
-                } else if name.to_lowercase().contains("virtual") || name.to_lowercase().contains("obs") {
+                } else if name.to_lowercase().contains("virtual")
+                    || name.to_lowercase().contains("obs")
+                {
                     CameraConnection::Virtual
                 } else if dev_path_str.contains("pci") {
                     CameraConnection::Internal
@@ -202,7 +204,10 @@ impl CameraMonitor {
                 if formats.iter().any(|f| f == "H264" || f == "HEVC") {
                     capabilities.push(CameraCapability::HardwareEncoding);
                 }
-                if formats.iter().any(|f| f.contains("Z16") || f.contains("INZI")) {
+                if formats
+                    .iter()
+                    .any(|f| f.contains("Z16") || f.contains("INZI"))
+                {
                     capabilities.push(CameraCapability::DepthSensing);
                 }
                 if name.to_lowercase().contains("ir ") || name.to_lowercase().contains("infrared") {
@@ -336,7 +341,10 @@ impl CameraMonitor {
 
                 for line in text.lines() {
                     let trimmed = line.trim();
-                    if trimmed.ends_with(':') && !trimmed.starts_with("Camera") && !trimmed.is_empty() {
+                    if trimmed.ends_with(':')
+                        && !trimmed.starts_with("Camera")
+                        && !trimmed.is_empty()
+                    {
                         // Flush previous
                         if !name.is_empty() {
                             let connection = if model_id.to_lowercase().contains("usb") {
@@ -355,7 +363,10 @@ impl CameraMonitor {
                                 max_width: 0,
                                 max_height: 0,
                                 formats: Vec::new(),
-                                capabilities: vec![CameraCapability::VideoCapture, CameraCapability::Autofocus],
+                                capabilities: vec![
+                                    CameraCapability::VideoCapture,
+                                    CameraCapability::Autofocus,
+                                ],
                                 is_active: true,
                                 index,
                             });

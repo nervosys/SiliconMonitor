@@ -74,17 +74,32 @@ pub struct IpmiController {
 
 impl IpmiController {
     pub fn new() -> Self {
-        Self { host: None, user: None, pass: None }
+        Self {
+            host: None,
+            user: None,
+            pass: None,
+        }
     }
 
     pub fn remote(host: String, user: String, pass: String) -> Self {
-        Self { host: Some(host), user: Some(user), pass: Some(pass) }
+        Self {
+            host: Some(host),
+            user: Some(user),
+            pass: Some(pass),
+        }
     }
 
     fn ipmitool_args(&self) -> Vec<String> {
         let mut args = Vec::new();
         if let (Some(h), Some(u), Some(p)) = (&self.host, &self.user, &self.pass) {
-            args.extend(["-H".into(), h.clone(), "-U".into(), u.clone(), "-P".into(), p.clone()]);
+            args.extend([
+                "-H".into(),
+                h.clone(),
+                "-U".into(),
+                u.clone(),
+                "-P".into(),
+                p.clone(),
+            ]);
         }
         args
     }
@@ -94,9 +109,9 @@ impl IpmiController {
         cmd.args(self.ipmitool_args());
         cmd.args(["sensor", "list"]);
 
-        let output = cmd.output().map_err(|e|
+        let output = cmd.output().map_err(|e| {
             super::DatacenterError::IpmiError(format!("Failed to run ipmitool: {}", e))
-        )?;
+        })?;
 
         if !output.status.success() {
             return self.read_sensors_sysfs();
@@ -107,7 +122,9 @@ impl IpmiController {
 
         for line in stdout.lines() {
             let parts: Vec<&str> = line.split('|').map(|s| s.trim()).collect();
-            if parts.len() < 4 { continue; }
+            if parts.len() < 4 {
+                continue;
+            }
 
             let name = parts[0].to_string();
             let value = parts[1].parse::<f64>().unwrap_or(0.0);
@@ -135,7 +152,13 @@ impl IpmiController {
             let upper_critical = parts.get(8).and_then(|s| s.parse().ok());
 
             sensors.push(IpmiSensor {
-                name, sensor_type, value, unit, status, lower_critical, upper_critical,
+                name,
+                sensor_type,
+                value,
+                unit,
+                status,
+                lower_critical,
+                upper_critical,
             });
         }
 
@@ -159,8 +182,10 @@ impl IpmiController {
                                 let temp_path = entry.path().join(format!("temp{}_input", i));
                                 if let Ok(val) = fs::read_to_string(&temp_path) {
                                     if let Ok(v) = val.trim().parse::<f64>() {
-                                        let label = fs::read_to_string(entry.path().join(format!("temp{}_label", i)))
-                                            .unwrap_or_else(|_| format!("Temp {}", i));
+                                        let label = fs::read_to_string(
+                                            entry.path().join(format!("temp{}_label", i)),
+                                        )
+                                        .unwrap_or_else(|_| format!("Temp {}", i));
                                         sensors.push(IpmiSensor {
                                             name: label.trim().to_string(),
                                             sensor_type: IpmiSensorType::Temperature,
@@ -186,9 +211,9 @@ impl IpmiController {
         cmd.args(self.ipmitool_args());
         cmd.args(["bmc", "info"]);
 
-        let output = cmd.output().map_err(|e|
+        let output = cmd.output().map_err(|e| {
             super::DatacenterError::IpmiError(format!("Failed to run ipmitool: {}", e))
-        )?;
+        })?;
 
         let stdout = String::from_utf8_lossy(&output.stdout);
         let mut firmware = String::new();
@@ -202,7 +227,12 @@ impl IpmiController {
             }
         }
 
-        Ok(BmcInfo { firmware_version: firmware, manufacturer, ip_address: None, mac_address: None })
+        Ok(BmcInfo {
+            firmware_version: firmware,
+            manufacturer,
+            ip_address: None,
+            mac_address: None,
+        })
     }
 
     pub fn power_reading(&self) -> Result<PowerReading, super::DatacenterError> {
@@ -210,9 +240,9 @@ impl IpmiController {
         cmd.args(self.ipmitool_args());
         cmd.args(["dcmi", "power", "reading"]);
 
-        let output = cmd.output().map_err(|e|
+        let output = cmd.output().map_err(|e| {
             super::DatacenterError::IpmiError(format!("Failed to run ipmitool: {}", e))
-        )?;
+        })?;
 
         let stdout = String::from_utf8_lossy(&output.stdout);
         let mut current = 0.0;
@@ -223,10 +253,15 @@ impl IpmiController {
         for line in stdout.lines() {
             let parts: Vec<&str> = line.split(':').collect();
             if parts.len() >= 2 {
-                let val = parts[1].trim().split_whitespace().next()
+                let val = parts[1]
+                    .trim()
+                    .split_whitespace()
+                    .next()
                     .and_then(|v| v.parse::<f64>().ok());
                 if line.contains("Instantaneous") || line.contains("Current") {
-                    if let Some(v) = val { current = v; }
+                    if let Some(v) = val {
+                        current = v;
+                    }
                 } else if line.contains("Minimum") {
                     minimum = val;
                 } else if line.contains("Maximum") {
@@ -237,6 +272,11 @@ impl IpmiController {
             }
         }
 
-        Ok(PowerReading { current_watts: current, minimum_watts: minimum, maximum_watts: maximum, average_watts: average })
+        Ok(PowerReading {
+            current_watts: current,
+            minimum_watts: minimum,
+            maximum_watts: maximum,
+            average_watts: average,
+        })
     }
 }

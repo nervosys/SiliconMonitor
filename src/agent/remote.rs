@@ -4,7 +4,7 @@
 //! (OpenAI, Anthropic, Ollama, etc.)
 
 use crate::agent::backend::BackendConfig;
-use crate::error::{SimonError, Result};
+use crate::error::{Result, SimonError};
 use serde::{Deserialize, Serialize};
 #[allow(unused_imports)]
 use std::time::Instant;
@@ -99,10 +99,13 @@ impl RemoteClient {
                 .timeout(config.timeout)
                 .pool_max_idle_per_host(0); // Disable connection pooling to avoid stale connections
 
-            // Increase timeout for local servers (Ollama, LM Studio, etc.)
+            // Increase timeout for locally hosted servers: they load models on demand
+            // and run on whatever hardware the user has, so first-token latency is far
+            // less predictable than a hosted API's.
             if matches!(
                 config.backend_type,
-                crate::agent::backend::BackendType::RemoteOllama
+                crate::agent::backend::BackendType::IronWorks
+                    | crate::agent::backend::BackendType::RemoteOllama
                     | crate::agent::backend::BackendType::RemoteLMStudio
                     | crate::agent::backend::BackendType::RemoteVllm
                     | crate::agent::backend::BackendType::RemoteTensorRT
@@ -110,9 +113,9 @@ impl RemoteClient {
                 builder = builder.timeout(std::time::Duration::from_secs(120)); // 2 minute timeout for local inference
             }
 
-            let http_client = builder.build().map_err(|e| {
-                SimonError::Network(format!("Failed to create HTTP client: {}", e))
-            })?;
+            let http_client = builder
+                .build()
+                .map_err(|e| SimonError::Network(format!("Failed to create HTTP client: {}", e)))?;
 
             Ok(Self {
                 config,
@@ -133,6 +136,22 @@ impl RemoteClient {
         #[cfg(feature = "remote-backends")]
         {
             let start = Instant::now();
+
+            // CLI providers are driven as subprocesses rather than over HTTP, so they
+            // are dispatched before any endpoint or message array is built.
+            if let crate::agent::backend::BackendType::Cli(provider) = self.config.backend_type {
+                let client = crate::agent::local::CliClient::detect(provider).ok_or_else(|| {
+                    SimonError::Configuration(format!(
+                        "{} is configured but its executable is no longer on PATH",
+                        provider.display_name()
+                    ))
+                })?;
+                return client.with_timeout(self.config.timeout).query_blocking(
+                    system_prompt,
+                    user_query,
+                    Some(&self.config.model_id),
+                );
+            }
 
             let messages = vec![
                 ChatMessage {

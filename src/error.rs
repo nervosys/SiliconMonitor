@@ -54,7 +54,6 @@ pub enum SimonError {
     #[error("Initialization error: {0}")]
     InitializationError(String),
 
-
     /// Network error (for remote backends)
     #[error("Network error: {0}")]
     Network(String),
@@ -98,7 +97,6 @@ pub enum SimonError {
     /// Disk-related error
     #[error("Disk error: {0}")]
     DiskError(String),
-
 
     /// Hardware-related error
     #[error("Hardware error: {0}")]

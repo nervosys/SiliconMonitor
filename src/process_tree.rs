@@ -5,14 +5,14 @@
 //! # Examples
 //!
 //! ```no_run
-//! use simon::process_tree::{ProcessTree, ProcessNode};
+//! use simonlib::process_tree::{ProcessTree, ProcessNode};
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! let tree = ProcessTree::build()?;
 //!
 //! // Print top-level processes with children
 //! for root in tree.roots() {
-//!     tree.print_tree(root, 0);
+//!     println!("{}", tree.print_tree(*root, 0));
 //! }
 //!
 //! // Check if a PID is containerized

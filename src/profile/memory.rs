@@ -44,8 +44,16 @@ impl ProfileProvider for MemoryProfileProvider {
             let label = format!(
                 "{} — {} {} ({:.2} GiB {:?})",
                 dimm.locator,
-                if dimm.manufacturer.is_empty() { "Unknown" } else { &dimm.manufacturer },
-                if dimm.part_number.is_empty() { "" } else { &dimm.part_number },
+                if dimm.manufacturer.is_empty() {
+                    "Unknown"
+                } else {
+                    &dimm.manufacturer
+                },
+                if dimm.part_number.is_empty() {
+                    ""
+                } else {
+                    &dimm.part_number
+                },
                 dimm.capacity_gib(),
                 dimm.memory_type,
             );
@@ -55,7 +63,11 @@ impl ProfileProvider for MemoryProfileProvider {
                 "DIMM SPD / configured",
                 "SMBIOS Type 17",
             );
-            g.push(Setting::info("bank", "Bank Locator", SettingValue::Text(dimm.bank.clone())));
+            g.push(Setting::info(
+                "bank",
+                "Bank Locator",
+                SettingValue::Text(dimm.bank.clone()),
+            ));
             g.push(
                 Setting::info(
                     "rated_speed_mts",
@@ -87,13 +99,11 @@ impl ProfileProvider for MemoryProfileProvider {
                     dimm.configured_speed_mts, dimm.speed_mts
                 ));
             }
-            g.push(
-                Setting::info(
-                    "memory_type",
-                    "Memory Type",
-                    SettingValue::Text(format!("{:?}", dimm.memory_type)),
-                ),
-            );
+            g.push(Setting::info(
+                "memory_type",
+                "Memory Type",
+                SettingValue::Text(format!("{:?}", dimm.memory_type)),
+            ));
             g.push(Setting::info(
                 "form_factor",
                 "Form Factor",
@@ -103,9 +113,15 @@ impl ProfileProvider for MemoryProfileProvider {
                 Setting::info("voltage_v", "Voltage", SettingValue::Float(dimm.voltage))
                     .with_unit("V")
                     .with_risk(SettingRisk::Dangerous)
-                    .with_description("DIMM operating voltage. Overriding via XMP/EXPO can affect stability."),
+                    .with_description(
+                        "DIMM operating voltage. Overriding via XMP/EXPO can affect stability.",
+                    ),
             );
-            g.push(Setting::info("ranks", "Ranks", SettingValue::Uint(dimm.ranks as u64)));
+            g.push(Setting::info(
+                "ranks",
+                "Ranks",
+                SettingValue::Uint(dimm.ranks as u64),
+            ));
             g.push(Setting::info(
                 "data_width_bits",
                 "Data Width",
@@ -116,7 +132,11 @@ impl ProfileProvider for MemoryProfileProvider {
                 "Total Width",
                 SettingValue::Uint(dimm.total_width_bits as u64),
             ));
-            g.push(Setting::info("ecc", "ECC", SettingValue::Bool(dimm.is_ecc())));
+            g.push(Setting::info(
+                "ecc",
+                "ECC",
+                SettingValue::Bool(dimm.is_ecc()),
+            ));
             if !dimm.serial_number.is_empty() {
                 g.push(Setting::info(
                     "serial_number",

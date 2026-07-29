@@ -10,8 +10,8 @@
 //! - **Windows**: Thread scheduling info via performance counters
 //! - **macOS**: Mach scheduling statistics
 
-use serde::{Deserialize, Serialize};
 use crate::error::SimonError;
+use serde::{Deserialize, Serialize};
 
 /// Scheduler policy / class.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -162,9 +162,17 @@ impl SchedulerMonitor {
         let avg_rq: f64 = if cpu_stats.is_empty() {
             0.0
         } else {
-            cpu_stats.iter().map(|c| c.runqueue_depth as f64).sum::<f64>() / cpu_stats.len() as f64
+            cpu_stats
+                .iter()
+                .map(|c| c.runqueue_depth as f64)
+                .sum::<f64>()
+                / cpu_stats.len() as f64
         };
-        let max_rq = cpu_stats.iter().map(|c| c.runqueue_depth).max().unwrap_or(0);
+        let max_rq = cpu_stats
+            .iter()
+            .map(|c| c.runqueue_depth)
+            .max()
+            .unwrap_or(0);
         let busiest = cpu_stats
             .iter()
             .max_by_key(|c| c.waiting_ns)
@@ -186,16 +194,19 @@ impl SchedulerMonitor {
 
         if let Some(cpu_psi) = pressure.iter().find(|p| p.resource == "cpu") {
             if cpu_psi.some_avg10 > 50.0 {
-                recommendations.push("Severe CPU pressure (>50% stall); add cores or reduce load".into());
+                recommendations
+                    .push("Severe CPU pressure (>50% stall); add cores or reduce load".into());
             } else if cpu_psi.some_avg10 > 25.0 {
-                recommendations.push("Moderate CPU pressure; consider workload redistribution".into());
+                recommendations
+                    .push("Moderate CPU pressure; consider workload redistribution".into());
             }
         }
 
         if let Some(mem_psi) = pressure.iter().find(|p| p.resource == "memory") {
             if let Some(full) = mem_psi.full_avg10 {
                 if full > 10.0 {
-                    recommendations.push("Memory pressure detected; add RAM or reduce memory usage".into());
+                    recommendations
+                        .push("Memory pressure detected; add RAM or reduce memory usage".into());
                 }
             }
         }
@@ -203,7 +214,9 @@ impl SchedulerMonitor {
         if let Some(io_psi) = pressure.iter().find(|p| p.resource == "io") {
             if let Some(full) = io_psi.full_avg10 {
                 if full > 20.0 {
-                    recommendations.push("I/O pressure detected; consider faster storage or I/O scheduling".into());
+                    recommendations.push(
+                        "I/O pressure detected; consider faster storage or I/O scheduling".into(),
+                    );
                 }
             }
         }
@@ -291,22 +304,38 @@ impl SchedulerMonitor {
                             match key {
                                 "avg10" => {
                                     if let Ok(v) = val.parse::<f64>() {
-                                        if is_full { full_avg10 = Some(v); } else { some_avg10 = v; }
+                                        if is_full {
+                                            full_avg10 = Some(v);
+                                        } else {
+                                            some_avg10 = v;
+                                        }
                                     }
                                 }
                                 "avg60" => {
                                     if let Ok(v) = val.parse::<f64>() {
-                                        if is_full { full_avg60 = Some(v); } else { some_avg60 = v; }
+                                        if is_full {
+                                            full_avg60 = Some(v);
+                                        } else {
+                                            some_avg60 = v;
+                                        }
                                     }
                                 }
                                 "avg300" => {
                                     if let Ok(v) = val.parse::<f64>() {
-                                        if is_full { full_avg300 = Some(v); } else { some_avg300 = v; }
+                                        if is_full {
+                                            full_avg300 = Some(v);
+                                        } else {
+                                            some_avg300 = v;
+                                        }
                                     }
                                 }
                                 "total" => {
                                     if let Ok(v) = val.parse::<u64>() {
-                                        if is_full { full_total = Some(v); } else { some_total = v; }
+                                        if is_full {
+                                            full_total = Some(v);
+                                        } else {
+                                            some_total = v;
+                                        }
                                     }
                                 }
                                 _ => {}
@@ -456,10 +485,23 @@ mod tests {
     #[test]
     fn test_runqueue_analysis() {
         let stats = vec![
-            CpuSchedStats { cpu: 0, running_ns: 100, waiting_ns: 50, timeslices: 10, runqueue_depth: 2 },
-            CpuSchedStats { cpu: 1, running_ns: 200, waiting_ns: 100, timeslices: 20, runqueue_depth: 6 },
+            CpuSchedStats {
+                cpu: 0,
+                running_ns: 100,
+                waiting_ns: 50,
+                timeslices: 10,
+                runqueue_depth: 2,
+            },
+            CpuSchedStats {
+                cpu: 1,
+                running_ns: 200,
+                waiting_ns: 100,
+                timeslices: 20,
+                runqueue_depth: 6,
+            },
         ];
-        let avg: f64 = stats.iter().map(|c| c.runqueue_depth as f64).sum::<f64>() / stats.len() as f64;
+        let avg: f64 =
+            stats.iter().map(|c| c.runqueue_depth as f64).sum::<f64>() / stats.len() as f64;
         assert!((avg - 4.0).abs() < 0.01);
     }
 

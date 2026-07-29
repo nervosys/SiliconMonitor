@@ -118,12 +118,36 @@ struct FeatureQuery {
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 fn feature_queries() -> &'static [FeatureQuery] {
     &[
-        FeatureQuery { fid: 0x02, primary_id: "feat.power_management", label: "Power Management" },
-        FeatureQuery { fid: 0x06, primary_id: "feat.write_cache", label: "Volatile Write Cache" },
-        FeatureQuery { fid: 0x07, primary_id: "feat.num_queues", label: "Number of Queues" },
-        FeatureQuery { fid: 0x0B, primary_id: "feat.async_event_config", label: "Async Event Config" },
-        FeatureQuery { fid: 0x0C, primary_id: "feat.apst", label: "Autonomous Power State Transition (APST)" },
-        FeatureQuery { fid: 0x0F, primary_id: "feat.software_progress", label: "Software Progress Marker" },
+        FeatureQuery {
+            fid: 0x02,
+            primary_id: "feat.power_management",
+            label: "Power Management",
+        },
+        FeatureQuery {
+            fid: 0x06,
+            primary_id: "feat.write_cache",
+            label: "Volatile Write Cache",
+        },
+        FeatureQuery {
+            fid: 0x07,
+            primary_id: "feat.num_queues",
+            label: "Number of Queues",
+        },
+        FeatureQuery {
+            fid: 0x0B,
+            primary_id: "feat.async_event_config",
+            label: "Async Event Config",
+        },
+        FeatureQuery {
+            fid: 0x0C,
+            primary_id: "feat.apst",
+            label: "Autonomous Power State Transition (APST)",
+        },
+        FeatureQuery {
+            fid: 0x0F,
+            primary_id: "feat.software_progress",
+            label: "Software Progress Marker",
+        },
     ]
 }
 
@@ -284,7 +308,11 @@ mod tests {
 
     #[test]
     fn decode_power_management() {
-        let q = FeatureQuery { fid: 0x02, primary_id: "x", label: "y" };
+        let q = FeatureQuery {
+            fid: 0x02,
+            primary_id: "x",
+            label: "y",
+        };
         // PS=3, WH=2 (heavy sustained)
         let raw = 3 | (2 << 5);
         let settings = decode_feature(&q, raw);
@@ -299,14 +327,28 @@ mod tests {
 
     #[test]
     fn decode_write_cache() {
-        let q = FeatureQuery { fid: 0x06, primary_id: "x", label: "y" };
-        assert!(matches!(decode_feature(&q, 1)[0].value, SettingValue::Bool(true)));
-        assert!(matches!(decode_feature(&q, 0)[0].value, SettingValue::Bool(false)));
+        let q = FeatureQuery {
+            fid: 0x06,
+            primary_id: "x",
+            label: "y",
+        };
+        assert!(matches!(
+            decode_feature(&q, 1)[0].value,
+            SettingValue::Bool(true)
+        ));
+        assert!(matches!(
+            decode_feature(&q, 0)[0].value,
+            SettingValue::Bool(false)
+        ));
     }
 
     #[test]
     fn decode_num_queues() {
-        let q = FeatureQuery { fid: 0x07, primary_id: "x", label: "y" };
+        let q = FeatureQuery {
+            fid: 0x07,
+            primary_id: "x",
+            label: "y",
+        };
         // NSQA=7 (=> 8 submission), NCQA=7 (=> 8 completion)
         let raw = 7 | (7 << 16);
         let settings = decode_feature(&q, raw);
@@ -316,7 +358,11 @@ mod tests {
 
     #[test]
     fn decode_async_event_config() {
-        let q = FeatureQuery { fid: 0x0B, primary_id: "x", label: "y" };
+        let q = FeatureQuery {
+            fid: 0x0B,
+            primary_id: "x",
+            label: "y",
+        };
         let raw = 0b0000_1010_0000_0001; // SMART critical + firmware activation
         let settings = decode_feature(&q, raw);
         assert!(matches!(settings[1].value, SettingValue::Bool(true))); // smart
@@ -326,7 +372,14 @@ mod tests {
 
     #[test]
     fn decode_apst() {
-        let q = FeatureQuery { fid: 0x0C, primary_id: "x", label: "y" };
-        assert!(matches!(decode_feature(&q, 1)[0].value, SettingValue::Bool(true)));
+        let q = FeatureQuery {
+            fid: 0x0C,
+            primary_id: "x",
+            label: "y",
+        };
+        assert!(matches!(
+            decode_feature(&q, 1)[0].value,
+            SettingValue::Bool(true)
+        ));
     }
 }

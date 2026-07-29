@@ -9,8 +9,8 @@
 //! - **Windows**: WMI `Win32_TemperatureProbe`
 //! - **macOS**: IOKit thermal sensors
 
-use serde::{Deserialize, Serialize};
 use crate::error::SimonError;
+use serde::{Deserialize, Serialize};
 
 /// Thermal zone type.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -222,7 +222,11 @@ impl ThermalZoneMonitor {
 
     /// Get zones that are throttling.
     pub fn throttling_zones(&self) -> Vec<&ThermalZoneInfo> {
-        self.overview.zones.iter().filter(|z| z.is_throttling()).collect()
+        self.overview
+            .zones
+            .iter()
+            .filter(|z| z.is_throttling())
+            .collect()
     }
 
     #[cfg(target_os = "linux")]
@@ -267,7 +271,10 @@ impl ThermalZoneMonitor {
 
         let mut recs = Vec::new();
         if throttling > 0 {
-            recs.push(format!("{} zone(s) in thermal throttling state", throttling));
+            recs.push(format!(
+                "{} zone(s) in thermal throttling state",
+                throttling
+            ));
         }
         for zone in &zones {
             if let Some(headroom) = zone.headroom_to_critical_c() {
@@ -298,7 +305,9 @@ impl ThermalZoneMonitor {
         let zone_type = match type_string.as_str() {
             "acpitz" | "ACPI\\_THM" => ThermalZoneType::Acpi,
             s if s.starts_with("x86_pkg") => ThermalZoneType::X86Pkg,
-            "pch_cannonlake" | "pch_skylake" | "pch_alderlake" | "pch_raptorlake" => ThermalZoneType::Pch,
+            "pch_cannonlake" | "pch_skylake" | "pch_alderlake" | "pch_raptorlake" => {
+                ThermalZoneType::Pch
+            }
             s if s.contains("pch") => ThermalZoneType::Pch,
             s if s.contains("soc") || s.contains("SoC") => ThermalZoneType::Soc,
             s if s.contains("gpu") || s.contains("GPU") => ThermalZoneType::Gpu,
@@ -339,7 +348,8 @@ impl ThermalZoneMonitor {
                 _ => continue,
             };
 
-            let hyst = Self::read_sysfs_i64(&path.join(format!("trip_point_{}_hyst", i))).unwrap_or(0);
+            let hyst =
+                Self::read_sysfs_i64(&path.join(format!("trip_point_{}_hyst", i))).unwrap_or(0);
 
             trip_points.push(TripPoint {
                 index: i,
@@ -383,7 +393,9 @@ impl ThermalZoneMonitor {
 
     #[cfg(target_os = "linux")]
     fn read_sysfs(path: &std::path::Path) -> Option<String> {
-        std::fs::read_to_string(path).ok().map(|s| s.trim().to_string())
+        std::fs::read_to_string(path)
+            .ok()
+            .map(|s| s.trim().to_string())
     }
 
     #[cfg(target_os = "linux")]
@@ -439,7 +451,12 @@ mod tests {
 
     #[test]
     fn test_trip_point_temp() {
-        let tp = TripPoint { index: 0, trip_type: TripPointType::Critical, temp_mc: 105000, hysteresis_mc: 0 };
+        let tp = TripPoint {
+            index: 0,
+            trip_type: TripPointType::Critical,
+            temp_mc: 105000,
+            hysteresis_mc: 0,
+        };
         assert!((tp.temp_c() - 105.0).abs() < 0.01);
     }
 
@@ -453,8 +470,18 @@ mod tests {
             policy: "step_wise".into(),
             available_policies: vec!["step_wise".into()],
             trip_points: vec![
-                TripPoint { index: 0, trip_type: TripPointType::Passive, temp_mc: 90000, hysteresis_mc: 2000 },
-                TripPoint { index: 1, trip_type: TripPointType::Critical, temp_mc: 105000, hysteresis_mc: 0 },
+                TripPoint {
+                    index: 0,
+                    trip_type: TripPointType::Passive,
+                    temp_mc: 90000,
+                    hysteresis_mc: 2000,
+                },
+                TripPoint {
+                    index: 1,
+                    trip_type: TripPointType::Critical,
+                    temp_mc: 105000,
+                    hysteresis_mc: 0,
+                },
             ],
             enabled: true,
             passive_active: true,
@@ -465,7 +492,12 @@ mod tests {
 
     #[test]
     fn test_cooling_utilization() {
-        let cd = CoolingDeviceInfo { name: "cooling_device0".into(), cooling_type: "Processor".into(), cur_state: 5, max_state: 10 };
+        let cd = CoolingDeviceInfo {
+            name: "cooling_device0".into(),
+            cooling_type: "Processor".into(),
+            cur_state: 5,
+            max_state: 10,
+        };
         assert!((cd.utilization_pct() - 50.0).abs() < 0.01);
     }
 

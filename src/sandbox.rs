@@ -17,7 +17,7 @@
 //! # Example
 //!
 //! ```no_run
-//! use simon::sandbox::SandboxDetector;
+//! use simonlib::sandbox::SandboxDetector;
 //!
 //! let detector = SandboxDetector::new();
 //! if detector.is_sandboxed() {

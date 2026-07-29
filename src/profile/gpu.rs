@@ -90,7 +90,9 @@ fn nvidia_groups() -> Vec<ProfileGroup> {
     let nvml_version = nvml.sys_nvml_version().unwrap_or_else(|_| "?".into());
 
     for i in 0..count {
-        let Ok(dev) = nvml.device_by_index(i) else { continue };
+        let Ok(dev) = nvml.device_by_index(i) else {
+            continue;
+        };
         let name = dev.name().unwrap_or_else(|_| format!("NVIDIA GPU {}", i));
         let mut g = ProfileGroup::new(
             Subsystem::Gpu,
@@ -100,12 +102,20 @@ fn nvidia_groups() -> Vec<ProfileGroup> {
         );
 
         g.push(
-            Setting::info("driver_version", "Driver Version", SettingValue::Text(driver_version.clone()))
-                .with_source("NVML"),
+            Setting::info(
+                "driver_version",
+                "Driver Version",
+                SettingValue::Text(driver_version.clone()),
+            )
+            .with_source("NVML"),
         );
         g.push(
-            Setting::info("nvml_version", "NVML Version", SettingValue::Text(nvml_version.clone()))
-                .with_source("NVML"),
+            Setting::info(
+                "nvml_version",
+                "NVML Version",
+                SettingValue::Text(nvml_version.clone()),
+            )
+            .with_source("NVML"),
         );
 
         if let Ok(mode) = dev.is_ecc_enabled() {
@@ -115,7 +125,9 @@ fn nvidia_groups() -> Vec<ProfileGroup> {
                     "ECC Memory",
                     SettingValue::Bool(mode.currently_enabled),
                 )
-                .with_description("Whether ECC error correction is currently active on this GPU's VRAM.")
+                .with_description(
+                    "Whether ECC error correction is currently active on this GPU's VRAM.",
+                )
                 .with_risk(SettingRisk::Moderate)
                 .with_source("nvmlDeviceIsEccEnabled"),
             );
@@ -171,9 +183,13 @@ fn nvidia_groups() -> Vec<ProfileGroup> {
         }
         if let Ok(v) = dev.clock(Clock::Graphics, ClockId::Current) {
             g.push(
-                Setting::info("current_gfx_clock_mhz", "Current Graphics Clock", SettingValue::Uint(v as u64))
-                    .with_unit("MHz")
-                    .with_source("nvmlDeviceGetClock"),
+                Setting::info(
+                    "current_gfx_clock_mhz",
+                    "Current Graphics Clock",
+                    SettingValue::Uint(v as u64),
+                )
+                .with_unit("MHz")
+                .with_source("nvmlDeviceGetClock"),
             );
         }
         if let Ok(p) = dev.performance_state() {
@@ -183,7 +199,9 @@ fn nvidia_groups() -> Vec<ProfileGroup> {
                     "Performance State",
                     SettingValue::Text(format!("{:?}", p)),
                 )
-                .with_description("P0 = highest performance, P15 = lowest. The driver picks this automatically.")
+                .with_description(
+                    "P0 = highest performance, P15 = lowest. The driver picks this automatically.",
+                )
                 .with_source("nvmlDeviceGetPerformanceState"),
             );
         }
@@ -275,18 +293,48 @@ fn amd_linux_groups() -> Vec<ProfileGroup> {
             dev_dir.display().to_string(),
         );
         for (file, id, label, risk) in [
-            ("power_dpm_state", "power_dpm_state", "Power DPM State", SettingRisk::Moderate),
+            (
+                "power_dpm_state",
+                "power_dpm_state",
+                "Power DPM State",
+                SettingRisk::Moderate,
+            ),
             (
                 "power_dpm_force_performance_level",
                 "perf_level",
                 "Performance Level",
                 SettingRisk::Moderate,
             ), // marked writable below via post-processing
-            ("pp_power_profile_mode", "power_profile_mode", "Power Profile Mode", SettingRisk::Moderate),
-            ("pp_od_clk_voltage", "od_clk_voltage", "Overdrive Clock/Voltage Table", SettingRisk::Dangerous),
-            ("pp_dpm_sclk", "dpm_sclk", "SCLK DPM Table", SettingRisk::Informational),
-            ("pp_dpm_mclk", "dpm_mclk", "MCLK DPM Table", SettingRisk::Informational),
-            ("pp_dpm_pcie", "dpm_pcie", "PCIe DPM Table", SettingRisk::Informational),
+            (
+                "pp_power_profile_mode",
+                "power_profile_mode",
+                "Power Profile Mode",
+                SettingRisk::Moderate,
+            ),
+            (
+                "pp_od_clk_voltage",
+                "od_clk_voltage",
+                "Overdrive Clock/Voltage Table",
+                SettingRisk::Dangerous,
+            ),
+            (
+                "pp_dpm_sclk",
+                "dpm_sclk",
+                "SCLK DPM Table",
+                SettingRisk::Informational,
+            ),
+            (
+                "pp_dpm_mclk",
+                "dpm_mclk",
+                "MCLK DPM Table",
+                SettingRisk::Informational,
+            ),
+            (
+                "pp_dpm_pcie",
+                "dpm_pcie",
+                "PCIe DPM Table",
+                SettingRisk::Informational,
+            ),
         ] {
             let p = dev_dir.join(file);
             if let Ok(v) = fs::read_to_string(&p) {
@@ -313,14 +361,10 @@ fn amd_linux_groups() -> Vec<ProfileGroup> {
                 if let Ok(v) = fs::read_to_string(&cap) {
                     if let Ok(uw) = v.trim().parse::<u64>() {
                         g.push(
-                            Setting::info(
-                                "power_cap_uw",
-                                "Power Cap",
-                                SettingValue::Uint(uw),
-                            )
-                            .with_unit("μW")
-                            .with_risk(SettingRisk::Moderate)
-                            .with_source(cap.display().to_string()),
+                            Setting::info("power_cap_uw", "Power Cap", SettingValue::Uint(uw))
+                                .with_unit("μW")
+                                .with_risk(SettingRisk::Moderate)
+                                .with_source(cap.display().to_string()),
                         );
                     }
                 }
@@ -363,7 +407,11 @@ fn intel_linux_groups() -> Vec<ProfileGroup> {
         for (file, id, label) in [
             ("gt_min_freq_mhz", "gt_min_freq_mhz", "GT Min Frequency"),
             ("gt_max_freq_mhz", "gt_max_freq_mhz", "GT Max Frequency"),
-            ("gt_boost_freq_mhz", "gt_boost_freq_mhz", "GT Boost Frequency"),
+            (
+                "gt_boost_freq_mhz",
+                "gt_boost_freq_mhz",
+                "GT Boost Frequency",
+            ),
             ("gt_cur_freq_mhz", "gt_cur_freq_mhz", "GT Current Frequency"),
             ("rc6_enable", "rc6_enable", "RC6 Power Saving"),
         ] {
@@ -395,7 +443,8 @@ fn windows_display_class_groups() -> Vec<ProfileGroup> {
     use winreg::RegKey;
 
     let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
-    let class_path = r"SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}";
+    let class_path =
+        r"SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}";
     let Ok(class_key) = hklm.open_subkey(class_path) else {
         return Vec::new();
     };
@@ -407,7 +456,9 @@ fn windows_display_class_groups() -> Vec<ProfileGroup> {
         if sub.len() != 4 || !sub.chars().all(|c| c.is_ascii_digit()) {
             continue;
         }
-        let Ok(inst) = class_key.open_subkey(&sub) else { continue };
+        let Ok(inst) = class_key.open_subkey(&sub) else {
+            continue;
+        };
         let desc: String = inst.get_value("DriverDesc").unwrap_or_default();
         if desc.is_empty() {
             continue;
@@ -422,9 +473,21 @@ fn windows_display_class_groups() -> Vec<ProfileGroup> {
             "Driver class registry",
             format!(r"HKLM\{}\{}", class_path, sub),
         );
-        g.push(Setting::info("provider", "Provider", SettingValue::Text(provider)));
-        g.push(Setting::info("driver_version", "Driver Version", SettingValue::Text(driver_ver)));
-        g.push(Setting::info("driver_date", "Driver Date", SettingValue::Text(driver_date)));
+        g.push(Setting::info(
+            "provider",
+            "Provider",
+            SettingValue::Text(provider),
+        ));
+        g.push(Setting::info(
+            "driver_version",
+            "Driver Version",
+            SettingValue::Text(driver_ver),
+        ));
+        g.push(Setting::info(
+            "driver_date",
+            "Driver Date",
+            SettingValue::Text(driver_date),
+        ));
 
         // Enumerate string/dword values under the instance key — these are
         // the vendor-specific UMD/KMD overrides that vendor control panels

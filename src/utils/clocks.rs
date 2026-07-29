@@ -4,7 +4,7 @@
 //! all frequencies (CPU, GPU, EMC, engines) to their maximum values.
 
 use super::verify_sudo_available;
-use crate::error::{SimonError, Result};
+use crate::error::{Result, SimonError};
 use std::fs;
 use std::path::Path;
 use std::process::Command;

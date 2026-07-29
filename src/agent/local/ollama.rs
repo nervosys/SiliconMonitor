@@ -18,7 +18,7 @@
 //! # Example
 //!
 //! ```no_run
-//! use simon::agent::local::{OllamaClient, InferenceRequest, LocalInferenceClient};
+//! use simonlib::agent::local::{OllamaClient, InferenceRequest, LocalInferenceClient};
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! let client = OllamaClient::new("http://localhost:11434")?;
@@ -36,7 +36,7 @@
 //! ```
 
 use super::{InferenceRequest, InferenceResponse, LocalInferenceClient, ModelInfo};
-use crate::error::{SimonError, Result};
+use crate::error::{Result, SimonError};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 #[allow(unused_imports)]
@@ -303,10 +303,7 @@ impl LocalInferenceClient for OllamaClient {
                 .map_err(|e| SimonError::Network(e.to_string()))?;
 
             if !response.status().is_success() {
-                return Err(SimonError::Agent(format!(
-                    "Model {} not found",
-                    model_name
-                )));
+                return Err(SimonError::Agent(format!("Model {} not found", model_name)));
             }
 
             let show_response: OllamaShowResponse = response

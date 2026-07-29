@@ -70,20 +70,33 @@ impl McpServer {
         let reader = BufReader::new(stdin.lock());
 
         for line in reader.lines() {
-            let line = line.map_err(|e| SimonError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
-            if line.trim().is_empty() { continue; }
+            let line = line
+                .map_err(|e| SimonError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+            if line.trim().is_empty() {
+                continue;
+            }
 
             let response = match serde_json::from_str::<McpRequest>(&line) {
                 Ok(request) => self.handle_request(request),
                 Err(e) => McpResponse {
-                    jsonrpc: "2.0".to_string(), id: None, result: None,
-                    error: Some(McpError { code: PARSE_ERROR, message: format!("Parse error: {}", e), data: None }),
+                    jsonrpc: "2.0".to_string(),
+                    id: None,
+                    result: None,
+                    error: Some(McpError {
+                        code: PARSE_ERROR,
+                        message: format!("Parse error: {}", e),
+                        data: None,
+                    }),
                 },
             };
 
-            let response_json = serde_json::to_string(&response).map_err(|e| SimonError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
-            writeln!(stdout, "{}", response_json).map_err(|e| SimonError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
-            stdout.flush().map_err(|e| SimonError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+            let response_json = serde_json::to_string(&response)
+                .map_err(|e| SimonError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+            writeln!(stdout, "{}", response_json)
+                .map_err(|e| SimonError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+            stdout
+                .flush()
+                .map_err(|e| SimonError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
         }
         Ok(())
     }
@@ -96,12 +109,26 @@ impl McpServer {
             "tools/call" => self.handle_tools_call(&request.params),
             "resources/list" => self.handle_resources_list(),
             "ping" => Ok(json!({})),
-            _ => Err(McpError { code: METHOD_NOT_FOUND, message: format!("Method not found: {}", request.method), data: None }),
+            _ => Err(McpError {
+                code: METHOD_NOT_FOUND,
+                message: format!("Method not found: {}", request.method),
+                data: None,
+            }),
         };
 
         match result {
-            Ok(value) => McpResponse { jsonrpc: "2.0".to_string(), id: request.id, result: Some(value), error: None },
-            Err(error) => McpResponse { jsonrpc: "2.0".to_string(), id: request.id, result: None, error: Some(error) },
+            Ok(value) => McpResponse {
+                jsonrpc: "2.0".to_string(),
+                id: request.id,
+                result: Some(value),
+                error: None,
+            },
+            Err(error) => McpResponse {
+                jsonrpc: "2.0".to_string(),
+                id: request.id,
+                result: None,
+                error: Some(error),
+            },
         }
     }
 
@@ -121,15 +148,23 @@ impl McpServer {
     }
 
     fn handle_tools_call(&mut self, params: &Value) -> std::result::Result<Value, McpError> {
-        let name = params.get("name").and_then(|v| v.as_str())
-            .ok_or_else(|| McpError { code: INVALID_PARAMS, message: "Missing tool name".to_string(), data: None })?;
+        let name = params
+            .get("name")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| McpError {
+                code: INVALID_PARAMS,
+                message: "Missing tool name".to_string(),
+                data: None,
+            })?;
         let arguments = params.get("arguments").cloned().unwrap_or(json!({}));
 
         match self.api.call_tool(name, arguments) {
             Ok(result) => Ok(json!({
                 "content": [{ "type": "text", "text": serde_json::to_string_pretty(&result).unwrap_or_else(|_| "".to_string()) }]
             })),
-            Err(e) => Ok(json!({ "content": [{ "type": "text", "text": format!("Error: {}", e) }], "isError": true })),
+            Err(e) => Ok(
+                json!({ "content": [{ "type": "text", "text": format!("Error: {}", e) }], "isError": true }),
+            ),
         }
     }
 

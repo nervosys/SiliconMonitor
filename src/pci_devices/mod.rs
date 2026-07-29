@@ -9,7 +9,7 @@
 //! # Examples
 //!
 //! ```no_run
-//! use simonlib::pci_devices::PciDeviceMonitor;
+//! use simonlib::pci_devices::{PciDeviceMonitor, PciClass};
 //!
 //! let monitor = PciDeviceMonitor::new().unwrap();
 //! for dev in monitor.devices() {
@@ -19,8 +19,8 @@
 //! println!("GPU devices: {}", monitor.devices_by_class(PciClass::DisplayController).len());
 //! ```
 
-use serde::{Deserialize, Serialize};
 use crate::error::SimonError;
+use serde::{Deserialize, Serialize};
 
 /// PCI device class (major categories)
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -134,7 +134,9 @@ pub struct PciDeviceMonitor {
 
 impl PciDeviceMonitor {
     pub fn new() -> Result<Self, SimonError> {
-        let mut monitor = Self { devices: Vec::new() };
+        let mut monitor = Self {
+            devices: Vec::new(),
+        };
         monitor.refresh()?;
         Ok(monitor)
     }
@@ -165,7 +167,10 @@ impl PciDeviceMonitor {
 
     /// Get devices by vendor ID.
     pub fn devices_by_vendor(&self, vendor_id: &str) -> Vec<&PciDeviceInfo> {
-        self.devices.iter().filter(|d| d.vendor_id == vendor_id).collect()
+        self.devices
+            .iter()
+            .filter(|d| d.vendor_id == vendor_id)
+            .collect()
     }
 
     /// Get all GPU devices.
@@ -254,10 +259,7 @@ impl PciDeviceMonitor {
                 // IOMMU group
                 let iommu_group = std::fs::read_link(base.join("iommu_group"))
                     .ok()
-                    .and_then(|p| {
-                        p.file_name()
-                            .and_then(|n| n.to_string_lossy().parse().ok())
-                    });
+                    .and_then(|p| p.file_name().and_then(|n| n.to_string_lossy().parse().ok()));
 
                 // NUMA node
                 let numa_node: i32 = Self::read_trimmed(&base.join("numa_node"))
@@ -284,12 +286,19 @@ impl PciDeviceMonitor {
                     let max_speed = Self::read_trimmed(&base.join("max_link_speed"));
                     let max_width = Self::read_trimmed(&base.join("max_link_width"));
                     if !speed.is_empty() || !max_speed.is_empty() {
-                        let gen = if max_speed.contains("32") { 5 }
-                            else if max_speed.contains("16") { 4 }
-                            else if max_speed.contains("8") { 3 }
-                            else if max_speed.contains("5") { 2 }
-                            else if max_speed.contains("2.5") { 1 }
-                            else { 0 };
+                        let gen = if max_speed.contains("32") {
+                            5
+                        } else if max_speed.contains("16") {
+                            4
+                        } else if max_speed.contains("8") {
+                            3
+                        } else if max_speed.contains("5") {
+                            2
+                        } else if max_speed.contains("2.5") {
+                            1
+                        } else {
+                            0
+                        };
                         Some(PciLinkInfo {
                             speed,
                             width,
@@ -439,17 +448,33 @@ impl PciDeviceMonitor {
     #[cfg(target_os = "windows")]
     fn infer_class_from_name(name: &str) -> PciClass {
         let lower = name.to_lowercase();
-        if lower.contains("display") || lower.contains("video") || lower.contains("graphics") || lower.contains("gpu") || lower.contains("vga") {
+        if lower.contains("display")
+            || lower.contains("video")
+            || lower.contains("graphics")
+            || lower.contains("gpu")
+            || lower.contains("vga")
+        {
             PciClass::DisplayController
-        } else if lower.contains("ethernet") || lower.contains("network") || lower.contains("wi-fi") || lower.contains("wifi") {
+        } else if lower.contains("ethernet")
+            || lower.contains("network")
+            || lower.contains("wi-fi")
+            || lower.contains("wifi")
+        {
             PciClass::NetworkController
-        } else if lower.contains("storage") || lower.contains("sata") || lower.contains("ahci") || lower.contains("nvme") || lower.contains("raid") {
+        } else if lower.contains("storage")
+            || lower.contains("sata")
+            || lower.contains("ahci")
+            || lower.contains("nvme")
+            || lower.contains("raid")
+        {
             PciClass::MassStorage
-        } else if lower.contains("audio") || lower.contains("sound") || lower.contains("multimedia") {
+        } else if lower.contains("audio") || lower.contains("sound") || lower.contains("multimedia")
+        {
             PciClass::MultimediaController
         } else if lower.contains("usb") || lower.contains("xhci") || lower.contains("smbus") {
             PciClass::SerialBusController
-        } else if lower.contains("bridge") || lower.contains("pci-to-pci") || lower.contains("host") {
+        } else if lower.contains("bridge") || lower.contains("pci-to-pci") || lower.contains("host")
+        {
             PciClass::Bridge
         } else if lower.contains("bluetooth") || lower.contains("wireless") {
             PciClass::WirelessController
@@ -484,9 +509,14 @@ impl PciDeviceMonitor {
                                 .trim_start_matches("0x")
                                 .to_lowercase();
                             let slot = item["sppci_slot_name"].as_str().unwrap_or("").to_string();
-                            let driver = item["sppci_driver_installed"].as_str().unwrap_or("").to_string();
-                            let link_speed = item["sppci_link-speed"].as_str().unwrap_or("").to_string();
-                            let link_width = item["sppci_link-width"].as_str().unwrap_or("").to_string();
+                            let driver = item["sppci_driver_installed"]
+                                .as_str()
+                                .unwrap_or("")
+                                .to_string();
+                            let link_speed =
+                                item["sppci_link-speed"].as_str().unwrap_or("").to_string();
+                            let link_width =
+                                item["sppci_link-width"].as_str().unwrap_or("").to_string();
 
                             let link_info = if !link_speed.is_empty() {
                                 Some(PciLinkInfo {
@@ -534,7 +564,8 @@ impl PciDeviceMonitor {
         let lower = name.to_lowercase();
         if lower.contains("gpu") || lower.contains("display") || lower.contains("graphics") {
             PciClass::DisplayController
-        } else if lower.contains("ethernet") || lower.contains("wifi") || lower.contains("network") {
+        } else if lower.contains("ethernet") || lower.contains("wifi") || lower.contains("network")
+        {
             PciClass::NetworkController
         } else if lower.contains("nvme") || lower.contains("ahci") || lower.contains("storage") {
             PciClass::MassStorage
@@ -552,7 +583,9 @@ impl PciDeviceMonitor {
 
 impl Default for PciDeviceMonitor {
     fn default() -> Self {
-        Self::new().unwrap_or(Self { devices: Vec::new() })
+        Self::new().unwrap_or(Self {
+            devices: Vec::new(),
+        })
     }
 }
 
@@ -606,15 +639,24 @@ mod tests {
 
     #[test]
     fn test_class_display() {
-        assert_eq!(PciClass::DisplayController.to_string(), "Display Controller");
+        assert_eq!(
+            PciClass::DisplayController.to_string(),
+            "Display Controller"
+        );
         assert_eq!(PciClass::MassStorage.to_string(), "Mass Storage");
     }
 
     #[test]
     fn test_classify_pci() {
-        assert_eq!(PciDeviceMonitor::classify_pci(0x03), PciClass::DisplayController);
+        assert_eq!(
+            PciDeviceMonitor::classify_pci(0x03),
+            PciClass::DisplayController
+        );
         assert_eq!(PciDeviceMonitor::classify_pci(0x01), PciClass::MassStorage);
-        assert_eq!(PciDeviceMonitor::classify_pci(0x02), PciClass::NetworkController);
+        assert_eq!(
+            PciDeviceMonitor::classify_pci(0x02),
+            PciClass::NetworkController
+        );
     }
 
     #[test]

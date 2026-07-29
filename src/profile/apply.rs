@@ -112,7 +112,8 @@ pub fn apply_setting(setting_id: &str, value: SettingValue, confirm: bool) -> Ap
             requested: value.clone(),
             status: ApplyStatus::NeedsConfirm,
             message:
-                "Apply rejected: explicit confirmation required (pass confirm=true or --confirm).".into(),
+                "Apply rejected: explicit confirmation required (pass confirm=true or --confirm)."
+                    .into(),
             timestamp: now,
         },
         Some(h) => h.apply(&value),
@@ -136,17 +137,13 @@ pub fn audit_log_path() -> PathBuf {
             #[cfg(windows)]
             {
                 if let Ok(local) = std::env::var("LOCALAPPDATA") {
-                    return PathBuf::from(local)
-                        .join("simon")
-                        .join("profile_audit.log");
+                    return PathBuf::from(local).join("simon").join("profile_audit.log");
                 }
             }
             #[cfg(unix)]
             {
                 if let Ok(state) = std::env::var("XDG_STATE_HOME") {
-                    return PathBuf::from(state)
-                        .join("simon")
-                        .join("profile_audit.log");
+                    return PathBuf::from(state).join("simon").join("profile_audit.log");
                 }
                 if let Ok(home) = std::env::var("HOME") {
                     return PathBuf::from(home)
@@ -240,10 +237,7 @@ impl ApplyHandler for NvidiaPersistenceModeHandler {
                         ApplyStatus::Failed
                     },
                     message: if refused {
-                        format!(
-                            "NVML write rejected — run as administrator/root: {}",
-                            s
-                        )
+                        format!("NVML write rejected — run as administrator/root: {}", s)
                     } else {
                         format!("NVML write failed: {}", s)
                     },
@@ -279,7 +273,8 @@ impl ApplyHandler for LinuxCpufreqGovernorHandler {
                     subsystem: self.subsystem(),
                     requested: other.clone(),
                     status: ApplyStatus::Failed,
-                    message: "scaling_governor requires a Text value (e.g. \"performance\").".into(),
+                    message: "scaling_governor requires a Text value (e.g. \"performance\")."
+                        .into(),
                     timestamp: now,
                 };
             }
@@ -363,7 +358,9 @@ impl ApplyHandler for LinuxAmdPerfLevelHandler {
                 };
             }
         };
-        let path = card.join("device").join("power_dpm_force_performance_level");
+        let path = card
+            .join("device")
+            .join("power_dpm_force_performance_level");
         match std::fs::write(&path, &target) {
             Ok(_) => ApplyOutcome {
                 setting_id: self.setting_id().into(),
@@ -379,9 +376,16 @@ impl ApplyHandler for LinuxAmdPerfLevelHandler {
                     setting_id: self.setting_id().into(),
                     subsystem: self.subsystem(),
                     requested: value.clone(),
-                    status: if refused { ApplyStatus::Refused } else { ApplyStatus::Failed },
+                    status: if refused {
+                        ApplyStatus::Refused
+                    } else {
+                        ApplyStatus::Failed
+                    },
                     message: if refused {
-                        format!("Permission denied — sysfs write to {} requires root.", path.display())
+                        format!(
+                            "Permission denied — sysfs write to {} requires root.",
+                            path.display()
+                        )
                     } else {
                         format!("sysfs write failed: {}", e)
                     },
@@ -452,9 +456,16 @@ impl ApplyHandler for LinuxIntelGtMaxFreqHandler {
                     setting_id: self.setting_id().into(),
                     subsystem: self.subsystem(),
                     requested: value.clone(),
-                    status: if refused { ApplyStatus::Refused } else { ApplyStatus::Failed },
+                    status: if refused {
+                        ApplyStatus::Refused
+                    } else {
+                        ApplyStatus::Failed
+                    },
                     message: if refused {
-                        format!("Permission denied — sysfs write to {} requires root.", path.display())
+                        format!(
+                            "Permission denied — sysfs write to {} requires root.",
+                            path.display()
+                        )
                     } else {
                         format!("sysfs write failed: {}", e)
                     },
@@ -558,7 +569,11 @@ impl ApplyHandler for WindowsActivePowerSchemeHandler {
                 setting_id: self.setting_id().into(),
                 subsystem: self.subsystem(),
                 requested: value.clone(),
-                status: if refused { ApplyStatus::Refused } else { ApplyStatus::Failed },
+                status: if refused {
+                    ApplyStatus::Refused
+                } else {
+                    ApplyStatus::Failed
+                },
                 message: if refused {
                     "Permission denied — try running as administrator.".into()
                 } else {
@@ -611,7 +626,11 @@ mod tests {
 
     #[test]
     fn unknown_setting_is_not_writable() {
-        let outcome = apply_setting("definitely-not-a-real-setting", SettingValue::Bool(true), true);
+        let outcome = apply_setting(
+            "definitely-not-a-real-setting",
+            SettingValue::Bool(true),
+            true,
+        );
         assert_eq!(outcome.status, ApplyStatus::NotWritable);
     }
 
@@ -630,10 +649,7 @@ mod tests {
     #[test]
     fn audit_log_path_resolves() {
         let p = audit_log_path();
-        assert!(p
-            .to_string_lossy()
-            .to_lowercase()
-            .contains("profile_audit"));
+        assert!(p.to_string_lossy().to_lowercase().contains("profile_audit"));
     }
 
     #[test]

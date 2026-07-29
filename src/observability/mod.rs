@@ -23,20 +23,18 @@
 //! # Example
 //!
 //! ```no_run
-//! use simon::observability::{ObservabilityApi, ApiConfig, Permission};
+//! use simonlib::observability::{ObservabilityApi, RequestContext};
+//! use simonlib::observability::permissions::ApiConfig;
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! // Create API with full permissions (local use)
-//! let api = ObservabilityApi::new_local()?;
+//! let mut api = ObservabilityApi::new(ApiConfig::default());
 //!
-//! // Get system context (materialized state)
-//! let context = api.get_context()?;
-//! println!("System: {}", context.system.hostname);
+//! // Every request carries the API key used for permission checks and rate
+//! // limiting, so callers are always attributable.
+//! let ctx = RequestContext::new("local-key");
 //!
-//! // Stream metrics
-//! for metric in api.metrics_stream()? {
-//!     println!("{}: {}", metric.name, metric.value);
-//! }
+//! let response = api.get_context(&ctx)?;
+//! println!("System: {}", response.data.system.hostname);
 //! # Ok(())
 //! # }
 //! ```
@@ -51,51 +49,46 @@ pub mod streaming;
 
 // Re-export commonly used types from api
 pub use api::{
-    ApiResponse, ObservabilityApi, ObservabilityError, RequestContext, ResponseMeta,
-    RateLimitInfo,
+    ApiResponse, ObservabilityApi, ObservabilityError, RateLimitInfo, RequestContext, ResponseMeta,
 };
 
 // Re-export context types
 pub use context::{
-    AlertContext, BootConfigContext, ContextMeta, CpuContext, 
-    CpuMetrics as ContextCpuMetrics, DiskContext, DiskMetrics as ContextDiskMetrics, 
-    DriverContext, FanContext, GpuClocks, GpuContext, GpuMetrics as ContextGpuMetrics, 
-    HardwareContext, MemoryContext, MemoryMetrics as ContextMemoryMetrics, MetricsContext,
-    MinimalContext, MotherboardContext, NetworkInterfaceContext,
-    NetworkMetrics as ContextNetworkMetrics, PcieContext, PowerSupplyContext,
-    ProcessMetrics as ContextProcessMetrics, ServiceContext, SoftwareContext,
+    AlertContext, BootConfigContext, ContextMeta, CpuContext, CpuMetrics as ContextCpuMetrics,
+    DiskContext, DiskMetrics as ContextDiskMetrics, DriverContext, FanContext, GpuClocks,
+    GpuContext, GpuMetrics as ContextGpuMetrics, HardwareContext, MemoryContext,
+    MemoryMetrics as ContextMemoryMetrics, MetricsContext, MinimalContext, MotherboardContext,
+    NetworkInterfaceContext, NetworkMetrics as ContextNetworkMetrics, PcieContext,
+    PowerSupplyContext, ProcessMetrics as ContextProcessMetrics, ServiceContext, SoftwareContext,
     SystemContext, SystemContextBuilder, SystemIdentity, SystemLoadMetrics,
     TemperatureSensorContext,
 };
 
 // Re-export event types
 pub use events::{
-    AlertChecker, EventCategory, EventFilter, EventManager, EventSeverity,
-    SubscriptionId, SystemEvent, ThresholdConfig, event_types,
+    event_types, AlertChecker, EventCategory, EventFilter, EventManager, EventSeverity,
+    SubscriptionId, SystemEvent, ThresholdConfig,
 };
 
 // Re-export metric types
 pub use metrics::{
-    CpuMetricSnapshot, DiskMetricSnapshot, GpuMetricSnapshot, MemoryMetricSnapshot,
-    MetricCollector, MetricDefinition, MetricSnapshot, MetricStats, MetricTimeSeries,
-    MetricType, MetricValue, NetworkMetricSnapshot, Percentiles, SystemMetricSnapshot,
-    TimeSeriesPoint, standard as metric_names,
+    standard as metric_names, CpuMetricSnapshot, DiskMetricSnapshot, GpuMetricSnapshot,
+    MemoryMetricSnapshot, MetricCollector, MetricDefinition, MetricSnapshot, MetricStats,
+    MetricTimeSeries, MetricType, MetricValue, NetworkMetricSnapshot, Percentiles,
+    SystemMetricSnapshot, TimeSeriesPoint,
 };
 
 // Re-export permission types
 pub use permissions::{
-    ApiConfig, ApiKey, Capability, Permission, PermissionChecker, PermissionError,
-    RateLimit, RateLimiter, Scope,
+    ApiConfig, ApiKey, Capability, Permission, PermissionChecker, PermissionError, RateLimit,
+    RateLimiter, Scope,
 };
 
 // Re-export server types
-pub use server::{
-    HttpRequest, HttpResponse, OpenApiSpec, RequestHandler, ServerConfig, routes,
-};
+pub use server::{routes, HttpRequest, HttpResponse, OpenApiSpec, RequestHandler, ServerConfig};
 
 // Re-export streaming types
 pub use streaming::{
-    ClientMessage, StreamChannel, StreamError, StreamFrame, StreamManager,
-    StreamMessage, Subscription,
+    ClientMessage, StreamChannel, StreamError, StreamFrame, StreamManager, StreamMessage,
+    Subscription,
 };
-

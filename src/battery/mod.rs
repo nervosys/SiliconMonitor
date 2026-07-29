@@ -6,11 +6,22 @@ use std::time::Duration;
 
 /// Battery charging state
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ChargingState { Charging, Discharging, Full, NotCharging, Unknown }
+pub enum ChargingState {
+    Charging,
+    Discharging,
+    Full,
+    NotCharging,
+    Unknown,
+}
 
 /// Battery health status
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum BatteryHealth { Good, Fair, Poor, Unknown }
+pub enum BatteryHealth {
+    Good,
+    Fair,
+    Poor,
+    Unknown,
+}
 
 /// Battery information
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -43,24 +54,27 @@ pub struct BatteryMonitor {
 
 impl BatteryMonitor {
     pub fn new() -> Result<Self, crate::error::SimonError> {
-        let mut monitor = Self { batteries: Vec::new(), ac_connected: true };
+        let mut monitor = Self {
+            batteries: Vec::new(),
+            ac_connected: true,
+        };
         monitor.refresh()?;
         Ok(monitor)
     }
-    
+
     pub fn refresh(&mut self) -> Result<(), crate::error::SimonError> {
         self.batteries.clear();
         self.ac_connected = true;
-        
+
         // Delegate to the comprehensive PowerSupplyMonitor
         if let Ok(ps_monitor) = crate::power_supply::PowerSupplyMonitor::new() {
             self.ac_connected = ps_monitor.on_ac_power();
-            
+
             for supply in ps_monitor.supplies() {
                 if !supply.is_battery() {
                     continue;
                 }
-                
+
                 let state = match supply.status {
                     crate::power_supply::ChargingStatus::Charging => ChargingState::Charging,
                     crate::power_supply::ChargingStatus::Discharging => ChargingState::Discharging,
@@ -68,15 +82,17 @@ impl BatteryMonitor {
                     crate::power_supply::ChargingStatus::NotCharging => ChargingState::NotCharging,
                     crate::power_supply::ChargingStatus::Unknown => ChargingState::Unknown,
                 };
-                
+
                 let health = match supply.health {
                     crate::power_supply::BatteryHealth::Good => BatteryHealth::Good,
-                    crate::power_supply::BatteryHealth::Dead | crate::power_supply::BatteryHealth::UnspecifiedFailure => BatteryHealth::Poor,
-                    crate::power_supply::BatteryHealth::Overheat | crate::power_supply::BatteryHealth::OverVoltage 
-                        | crate::power_supply::BatteryHealth::Cold => BatteryHealth::Fair,
+                    crate::power_supply::BatteryHealth::Dead
+                    | crate::power_supply::BatteryHealth::UnspecifiedFailure => BatteryHealth::Poor,
+                    crate::power_supply::BatteryHealth::Overheat
+                    | crate::power_supply::BatteryHealth::OverVoltage
+                    | crate::power_supply::BatteryHealth::Cold => BatteryHealth::Fair,
                     _ => BatteryHealth::Unknown,
                 };
-                
+
                 self.batteries.push(BatteryInfo {
                     name: supply.name.clone(),
                     manufacturer: supply.manufacturer.clone(),
@@ -91,24 +107,41 @@ impl BatteryMonitor {
                     energy_wh: supply.energy_wh(),
                     energy_full_wh: supply.energy_full_wh(),
                     energy_full_design_wh: supply.energy_full_design_wh(),
-                    time_to_empty: supply.time_to_empty_min.map(|m| Duration::from_secs(m as u64 * 60)),
-                    time_to_full: supply.time_to_full_min.map(|m| Duration::from_secs(m as u64 * 60)),
+                    time_to_empty: supply
+                        .time_to_empty_min
+                        .map(|m| Duration::from_secs(m as u64 * 60)),
+                    time_to_full: supply
+                        .time_to_full_min
+                        .map(|m| Duration::from_secs(m as u64 * 60)),
                     cycle_count: supply.cycle_count,
                     temperature_c: supply.temperature_celsius(),
                     wear_level_percent: supply.wear_level_percent(),
                 });
             }
         }
-        
+
         Ok(())
     }
-    
-    pub fn batteries(&self) -> &[BatteryInfo] { &self.batteries }
-    pub fn ac_connected(&self) -> bool { self.ac_connected }
-    pub fn has_battery(&self) -> bool { !self.batteries.is_empty() }
-    pub fn primary_battery(&self) -> Option<&BatteryInfo> { self.batteries.first() }
+
+    pub fn batteries(&self) -> &[BatteryInfo] {
+        &self.batteries
+    }
+    pub fn ac_connected(&self) -> bool {
+        self.ac_connected
+    }
+    pub fn has_battery(&self) -> bool {
+        !self.batteries.is_empty()
+    }
+    pub fn primary_battery(&self) -> Option<&BatteryInfo> {
+        self.batteries.first()
+    }
 }
 
 impl Default for BatteryMonitor {
-    fn default() -> Self { Self { batteries: Vec::new(), ac_connected: true } }
+    fn default() -> Self {
+        Self {
+            batteries: Vec::new(),
+            ac_connected: true,
+        }
+    }
 }

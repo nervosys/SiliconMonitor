@@ -197,7 +197,9 @@ mod tests {
         for (sub, device, profile, id, value) in values {
             let sub = Subsystem::parse(sub).unwrap();
             let entry = providers.entry(sub).or_default();
-            let group = entry.iter_mut().find(|g| g.device == *device && g.display_name == *profile);
+            let group = entry
+                .iter_mut()
+                .find(|g| g.device == *device && g.display_name == *profile);
             let group = match group {
                 Some(g) => g,
                 None => {
@@ -225,7 +227,7 @@ mod tests {
             ("gpu", "GPU0", "Global", "ecc", SettingValue::Bool(false)), // unchanged
             ("gpu", "GPU0", "Global", "power", SettingValue::Uint(450)), // changed
             ("gpu", "GPU0", "Global", "new_key", SettingValue::Int(42)), // added
-            // doomed removed
+                                                                         // doomed removed
         ]);
         let diff = diff_snapshots(&baseline, &current);
         assert_eq!(diff.added.len(), 1);
@@ -236,9 +238,7 @@ mod tests {
 
     #[test]
     fn detects_added_removed_group() {
-        let baseline = make_snapshot(&[
-            ("gpu", "GPU0", "Global", "a", SettingValue::Bool(true)),
-        ]);
+        let baseline = make_snapshot(&[("gpu", "GPU0", "Global", "a", SettingValue::Bool(true))]);
         let current = make_snapshot(&[
             ("gpu", "GPU0", "Global", "a", SettingValue::Bool(true)),
             ("gpu", "GPU1", "Global", "x", SettingValue::Uint(1)),

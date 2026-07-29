@@ -322,8 +322,8 @@ impl LinuxSiliconMonitor {
     /// The kernel exposes cumulative `runtime_active_time` and `runtime_suspended_time`
     /// in milliseconds.  By comparing two readings we can derive a duty-cycle percentage.
     fn read_npu_utilization(accel_path: &Path) -> u8 {
-        use std::sync::Mutex;
         use std::collections::HashMap;
+        use std::sync::Mutex;
 
         // Static storage for previous readings keyed by sysfs path
         static PREV: std::sync::OnceLock<Mutex<HashMap<String, (u64, u64)>>> =
@@ -335,9 +335,10 @@ impl LinuxSiliconMonitor {
         let active = std::fs::read_to_string(accel_path.join("device/power/runtime_active_time"))
             .ok()
             .and_then(|s| s.trim().parse::<u64>().ok());
-        let suspended = std::fs::read_to_string(accel_path.join("device/power/runtime_suspended_time"))
-            .ok()
-            .and_then(|s| s.trim().parse::<u64>().ok());
+        let suspended =
+            std::fs::read_to_string(accel_path.join("device/power/runtime_suspended_time"))
+                .ok()
+                .and_then(|s| s.trim().parse::<u64>().ok());
 
         if let (Some(active_ms), Some(suspended_ms)) = (active, suspended) {
             if let Ok(mut map) = prev_map.lock() {

@@ -30,7 +30,9 @@ pub enum LogLevel {
 }
 
 impl Default for LogLevel {
-    fn default() -> Self { LogLevel::Info }
+    fn default() -> Self {
+        LogLevel::Info
+    }
 }
 
 /// Fleet push configuration
@@ -81,8 +83,7 @@ impl DaemonConfig {
 
     /// Parse from TOML string
     pub fn from_toml(content: &str) -> Result<Self, DaemonError> {
-        toml::from_str(content)
-            .map_err(|e| DaemonError::Config(format!("TOML parse error: {}", e)))
+        toml::from_str(content).map_err(|e| DaemonError::Config(format!("TOML parse error: {}", e)))
     }
 
     /// Generate sample config
@@ -106,7 +107,8 @@ enable_rest_api = true
 # environment = "production"
 # datacenter = "us-east-1"
 # rack = "rack-42"
-"#.into()
+"#
+        .into()
     }
 }
 
@@ -171,7 +173,11 @@ impl MonitoringDaemon {
 
     /// Check if fleet push is enabled
     pub fn fleet_push_enabled(&self) -> bool {
-        self.config.fleet.as_ref().map(|f| f.enabled).unwrap_or(false)
+        self.config
+            .fleet
+            .as_ref()
+            .map(|f| f.enabled)
+            .unwrap_or(false)
     }
 }
 

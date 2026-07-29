@@ -37,7 +37,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Device-specific volume (if devices exist)
     let device_id = audio.devices().first().map(|d| d.id.clone());
     if let Some(id) = device_id {
-        let name = audio.devices().iter().find(|d| d.id == id).map(|d| d.name.clone()).unwrap_or_default();
+        let name = audio
+            .devices()
+            .iter()
+            .find(|d| d.id == id)
+            .map(|d| d.name.clone())
+            .unwrap_or_default();
         println!("\nSetting volume for device '{}' to 50%...", name);
         audio.set_device_volume(&id, 50)?;
         println!("Device volume updated");

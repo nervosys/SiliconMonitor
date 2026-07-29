@@ -10,8 +10,8 @@
 //! - **Windows**: I/O priority via performance counters
 //! - **macOS**: IOKit disk stats
 
-use serde::{Deserialize, Serialize};
 use crate::error::SimonError;
+use serde::{Deserialize, Serialize};
 
 /// I/O scheduler type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -126,7 +126,9 @@ impl BlockDeviceIo {
     /// Read throughput in MB/s (from stats).
     pub fn read_throughput_mbs(&self) -> f64 {
         if self.stats.read_time_ms > 0 {
-            (self.stats.sectors_read as f64 * 512.0) / (self.stats.read_time_ms as f64 / 1000.0) / 1_000_000.0
+            (self.stats.sectors_read as f64 * 512.0)
+                / (self.stats.read_time_ms as f64 / 1000.0)
+                / 1_000_000.0
         } else {
             0.0
         }
@@ -136,10 +138,16 @@ impl BlockDeviceIo {
     pub fn scheduler_optimal(&self) -> bool {
         if self.rotational {
             // HDDs benefit from BFQ or mq-deadline
-            matches!(self.scheduler, IoSchedulerType::Bfq | IoSchedulerType::MqDeadline)
+            matches!(
+                self.scheduler,
+                IoSchedulerType::Bfq | IoSchedulerType::MqDeadline
+            )
         } else {
             // SSDs/NVMe work best with none, mq-deadline, or kyber
-            matches!(self.scheduler, IoSchedulerType::None | IoSchedulerType::MqDeadline | IoSchedulerType::Kyber)
+            matches!(
+                self.scheduler,
+                IoSchedulerType::None | IoSchedulerType::MqDeadline | IoSchedulerType::Kyber
+            )
         }
     }
 }
@@ -231,8 +239,10 @@ impl IoSchedulerMonitor {
             let queue_depth = Self::read_sysfs_u32(&queue_path.join("nr_requests")).unwrap_or(128);
 
             // Block sizes
-            let logical_block_size = Self::read_sysfs_u32(&queue_path.join("logical_block_size")).unwrap_or(512);
-            let physical_block_size = Self::read_sysfs_u32(&queue_path.join("physical_block_size")).unwrap_or(512);
+            let logical_block_size =
+                Self::read_sysfs_u32(&queue_path.join("logical_block_size")).unwrap_or(512);
+            let physical_block_size =
+                Self::read_sysfs_u32(&queue_path.join("physical_block_size")).unwrap_or(512);
 
             // Discard support
             let discard_support = Self::read_sysfs_u32(&queue_path.join("discard_max_bytes"))
@@ -279,7 +289,11 @@ impl IoSchedulerMonitor {
                     dev.name,
                     dev.scheduler,
                     suggested,
-                    if dev.rotational { "rotational" } else { "SSD/NVMe" }
+                    if dev.rotational {
+                        "rotational"
+                    } else {
+                        "SSD/NVMe"
+                    }
                 ));
             }
         }
@@ -294,8 +308,7 @@ impl IoSchedulerMonitor {
 
     #[cfg(target_os = "linux")]
     fn read_scheduler(queue_path: &std::path::Path) -> (IoSchedulerType, Vec<IoSchedulerType>) {
-        let content = std::fs::read_to_string(queue_path.join("scheduler"))
-            .unwrap_or_default();
+        let content = std::fs::read_to_string(queue_path.join("scheduler")).unwrap_or_default();
 
         let mut active = IoSchedulerType::Unknown;
         let mut available = Vec::new();
@@ -431,7 +444,20 @@ mod tests {
             logical_block_size: 512,
             physical_block_size: 4096,
             discard_support: true,
-            stats: IoStats { reads_completed: 0, reads_merged: 0, sectors_read: 0, read_time_ms: 0, writes_completed: 0, writes_merged: 0, sectors_written: 0, write_time_ms: 0, in_flight: 0, io_time_ms: 0, weighted_io_time_ms: 0, discards_completed: 0 },
+            stats: IoStats {
+                reads_completed: 0,
+                reads_merged: 0,
+                sectors_read: 0,
+                read_time_ms: 0,
+                writes_completed: 0,
+                writes_merged: 0,
+                sectors_written: 0,
+                write_time_ms: 0,
+                in_flight: 0,
+                io_time_ms: 0,
+                weighted_io_time_ms: 0,
+                discards_completed: 0,
+            },
             size_bytes: 1_000_000_000_000,
             model: "Samsung 990 Pro".into(),
         };
@@ -449,7 +475,20 @@ mod tests {
             logical_block_size: 512,
             physical_block_size: 512,
             discard_support: false,
-            stats: IoStats { reads_completed: 0, reads_merged: 0, sectors_read: 0, read_time_ms: 0, writes_completed: 0, writes_merged: 0, sectors_written: 0, write_time_ms: 0, in_flight: 0, io_time_ms: 0, weighted_io_time_ms: 0, discards_completed: 0 },
+            stats: IoStats {
+                reads_completed: 0,
+                reads_merged: 0,
+                sectors_read: 0,
+                read_time_ms: 0,
+                writes_completed: 0,
+                writes_merged: 0,
+                sectors_written: 0,
+                write_time_ms: 0,
+                in_flight: 0,
+                io_time_ms: 0,
+                weighted_io_time_ms: 0,
+                discards_completed: 0,
+            },
             size_bytes: 2_000_000_000_000,
             model: "WDC WD20EARS".into(),
         };

@@ -178,10 +178,7 @@ impl OsInfoMonitor {
 
     /// Find a specific module by name.
     pub fn find_module(&self, name: &str) -> Option<&KernelModule> {
-        self.info
-            .loaded_modules
-            .iter()
-            .find(|m| m.name == name)
+        self.info.loaded_modules.iter().find(|m| m.name == name)
     }
 
     // ── Linux ──
@@ -396,11 +393,13 @@ impl OsInfoMonitor {
 
         // Boot mode (UEFI or BIOS)
         if let Ok(output) = std::process::Command::new("powershell")
-            .args(["-NoProfile", "-Command",
-                "$env:firmware_type"])
+            .args(["-NoProfile", "-Command", "$env:firmware_type"])
             .output()
         {
-            let text = String::from_utf8(output.stdout).unwrap_or_default().trim().to_string();
+            let text = String::from_utf8(output.stdout)
+                .unwrap_or_default()
+                .trim()
+                .to_string();
             self.info.boot_mode = if text.to_lowercase().contains("uefi") {
                 BootMode::UEFI
             } else if text.to_lowercase().contains("bios") {
@@ -412,8 +411,7 @@ impl OsInfoMonitor {
 
         // Secure Boot
         if let Ok(output) = std::process::Command::new("powershell")
-            .args(["-NoProfile", "-Command",
-                "Confirm-SecureBootUEFI 2>$null"])
+            .args(["-NoProfile", "-Command", "Confirm-SecureBootUEFI 2>$null"])
             .output()
         {
             let text = String::from_utf8(output.stdout).unwrap_or_default();
@@ -422,8 +420,7 @@ impl OsInfoMonitor {
 
         // Timezone
         if let Ok(output) = std::process::Command::new("powershell")
-            .args(["-NoProfile", "-Command",
-                "(Get-TimeZone).Id"])
+            .args(["-NoProfile", "-Command", "(Get-TimeZone).Id"])
             .output()
         {
             self.info.timezone = String::from_utf8(output.stdout)
@@ -558,10 +555,7 @@ impl OsInfoMonitor {
         }
 
         // Loaded kernel extensions
-        if let Ok(output) = std::process::Command::new("kextstat")
-            .args(["-l"])
-            .output()
-        {
+        if let Ok(output) = std::process::Command::new("kextstat").args(["-l"]).output() {
             let text = String::from_utf8(output.stdout).unwrap_or_default();
             for line in text.lines().skip(1) {
                 // "  Index Refs Address ... Name (Version) <Linked Against>"
@@ -569,11 +563,8 @@ impl OsInfoMonitor {
                 if parts.len() >= 6 {
                     let name = parts[5].to_string();
                     let refs: u32 = parts[1].parse().unwrap_or(0);
-                    let size: u64 = u64::from_str_radix(
-                        parts[3].trim_start_matches("0x"),
-                        16,
-                    )
-                    .unwrap_or(0);
+                    let size: u64 =
+                        u64::from_str_radix(parts[3].trim_start_matches("0x"), 16).unwrap_or(0);
 
                     self.info.loaded_modules.push(KernelModule {
                         name,

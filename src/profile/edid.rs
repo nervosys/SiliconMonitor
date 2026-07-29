@@ -34,7 +34,9 @@ pub fn scan_edid_groups() -> Vec<ProfileGroup> {
 #[cfg(target_os = "linux")]
 fn linux_scan(groups: &mut Vec<ProfileGroup>) {
     use std::fs;
-    let Ok(rd) = fs::read_dir("/sys/class/drm") else { return };
+    let Ok(rd) = fs::read_dir("/sys/class/drm") else {
+        return;
+    };
     for entry in rd.flatten() {
         let path = entry.path();
         let edid = path.join("edid");
@@ -57,11 +59,17 @@ fn windows_scan(groups: &mut Vec<ProfileGroup>) {
     use winreg::enums::*;
     use winreg::RegKey;
     let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
-    let Ok(display) = hklm.open_subkey(r"SYSTEM\CurrentControlSet\Enum\DISPLAY") else { return };
+    let Ok(display) = hklm.open_subkey(r"SYSTEM\CurrentControlSet\Enum\DISPLAY") else {
+        return;
+    };
     for mfg in display.enum_keys().flatten() {
-        let Ok(mfg_key) = display.open_subkey(&mfg) else { continue };
+        let Ok(mfg_key) = display.open_subkey(&mfg) else {
+            continue;
+        };
         for inst in mfg_key.enum_keys().flatten() {
-            let Ok(dev) = mfg_key.open_subkey(format!("{}\\Device Parameters", inst)) else { continue };
+            let Ok(dev) = mfg_key.open_subkey(format!("{}\\Device Parameters", inst)) else {
+                continue;
+            };
             let edid: Result<Vec<u8>, _> = dev.get_raw_value("EDID").map(|v| v.bytes);
             if let Ok(bytes) = edid {
                 let label = format!("{}/{}", mfg, inst);
@@ -165,7 +173,11 @@ pub fn decode_block(bytes: &[u8], source: String, locator: String) -> Option<Pro
     group.push(Setting::info(
         "edid.signal",
         "Video Signal",
-        SettingValue::Text(if digital { "Digital".into() } else { "Analog".into() }),
+        SettingValue::Text(if digital {
+            "Digital".into()
+        } else {
+            "Analog".into()
+        }),
     ));
     group.push(Setting::info(
         "edid.display_type",

@@ -195,7 +195,6 @@ enum ProfileSubcommand {
     },
 }
 
-
 /// AI subcommands for agent integration
 #[cfg(feature = "cli")]
 #[derive(Subcommand)]
@@ -500,20 +499,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         // AI subcommands - query, manifest, server
-        Some(Commands::Ai { action }) => {
-            match action {
-                AiSubcommand::Query { question } => {
-                    handle_ai_command(question.as_deref())?;
-                }
-                AiSubcommand::Manifest { format, output } => {
-                    handle_ai_manifest(&format, output.as_ref())?;
-                }
-                AiSubcommand::Server => {
-                    handle_mcp_server()?;
-                }
+        Some(Commands::Ai { action }) => match action {
+            AiSubcommand::Query { question } => {
+                handle_ai_command(question.as_deref())?;
             }
-        }
-
+            AiSubcommand::Manifest { format, output } => {
+                handle_ai_manifest(&format, output.as_ref())?;
+            }
+            AiSubcommand::Server => {
+                handle_mcp_server()?;
+            }
+        },
 
         // Record command - time-series database operations
         Some(Commands::Record { action }) => {
@@ -553,7 +549,10 @@ fn handle_mcp_server() -> Result<(), Box<dyn std::error::Error>> {
     use simonlib::ai_api::McpServer;
 
     eprintln!("[*] Starting MCP server on stdio...");
-    eprintln!("[*] Protocol version: {}", simonlib::ai_api::MCP_PROTOCOL_VERSION);
+    eprintln!(
+        "[*] Protocol version: {}",
+        simonlib::ai_api::MCP_PROTOCOL_VERSION
+    );
 
     let mut server = McpServer::new()?;
     server.run_stdio()?;
@@ -623,22 +622,22 @@ fn handle_cli_command(
             event::{self, Event, KeyCode},
             terminal::{disable_raw_mode, enable_raw_mode},
         };
-        
+
         println!("Watch mode - Press 'q' to quit, refreshing every {:.1}s", interval);
         enable_raw_mode()?;
-        
+
         loop {
             // Clear screen
             print!("\x1B[2J\x1B[1;1H");
-            
+
             // Display the data
             if let Err(e) = display_fn() {
                 disable_raw_mode()?;
                 return Err(e);
             }
-            
+
             println!("\n[Press 'q' to quit]");
-            
+
             // Check for quit key with timeout
             if event::poll(Duration::from_secs_f64(interval))? {
                 if let Event::Key(key) = event::read()? {
@@ -648,7 +647,7 @@ fn handle_cli_command(
                 }
             }
         }
-        
+
         disable_raw_mode()?;
         Ok(())
     };
@@ -761,22 +760,28 @@ fn handle_cli_command(
         }
         CliSubcommand::Audio => {
             use simonlib::audio::AudioMonitor;
-            
+
             let display_audio = || -> Result<(), Box<dyn std::error::Error>> {
                 let monitor = AudioMonitor::new()?;
                 if format == "json" {
                     println!("{}", serde_json::to_string_pretty(monitor.devices())?);
                 } else {
                     println!("{}", "═══ Audio Devices ═══".cyan().bold());
-                    println!("  Master Volume: {}%", monitor.master_volume().unwrap_or(100));
+                    println!(
+                        "  Master Volume: {}%",
+                        monitor.master_volume().unwrap_or(100)
+                    );
                     println!("  Muted: {}", if monitor.is_muted() { "Yes" } else { "No" });
                     for device in monitor.devices() {
-                        println!("  {} ({:?}) - {:?}", device.name, device.device_type, device.state);
+                        println!(
+                            "  {} ({:?}) - {:?}",
+                            device.name, device.device_type, device.state
+                        );
                     }
                 }
                 Ok(())
             };
-            
+
             if watch {
                 run_watch_mode(&display_audio)?;
             } else {
@@ -785,30 +790,40 @@ fn handle_cli_command(
         }
         CliSubcommand::Bluetooth => {
             use simonlib::bluetooth::BluetoothMonitor;
-            
+
             let display_bluetooth = || -> Result<(), Box<dyn std::error::Error>> {
                 let monitor = BluetoothMonitor::new()?;
                 if format == "json" {
-                    println!("{}", serde_json::to_string_pretty(&serde_json::json!({
-                        "available": monitor.is_available(),
-                        "adapters": monitor.adapters(),
-                        "devices": monitor.devices(),
-                    }))?);
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&serde_json::json!({
+                            "available": monitor.is_available(),
+                            "adapters": monitor.adapters(),
+                            "devices": monitor.devices(),
+                        }))?
+                    );
                 } else {
                     println!("{}", "═══ Bluetooth ═══".cyan().bold());
-                    println!("  Available: {}", if monitor.is_available() { "Yes" } else { "No" });
+                    println!(
+                        "  Available: {}",
+                        if monitor.is_available() { "Yes" } else { "No" }
+                    );
                     println!("  Adapters: {}", monitor.adapters().len());
                     for adapter in monitor.adapters() {
                         println!("    {} ({})", adapter.name, adapter.address);
                     }
                     println!("  Devices: {}", monitor.devices().len());
                     for device in monitor.devices() {
-                        println!("    {} - {:?}", device.name.as_deref().unwrap_or("Unknown"), device.state);
+                        println!(
+                            "    {} - {:?}",
+                            device.name.as_deref().unwrap_or("Unknown"),
+                            device.state
+                        );
                     }
                 }
                 Ok(())
             };
-            
+
             if watch {
                 run_watch_mode(&display_bluetooth)?;
             } else {
@@ -817,7 +832,7 @@ fn handle_cli_command(
         }
         CliSubcommand::Display => {
             use simonlib::display::DisplayMonitor;
-            
+
             let display_displays = || -> Result<(), Box<dyn std::error::Error>> {
                 let monitor = DisplayMonitor::new()?;
                 if format == "json" {
@@ -826,14 +841,19 @@ fn handle_cli_command(
                     println!("{}", "═══ Displays ═══".cyan().bold());
                     println!("  Count: {}", monitor.count());
                     for display in monitor.displays() {
-                        println!("  {} {}x{} @ {:.0}Hz {:?}",
-                            display.name.as_deref().unwrap_or("Unknown"), display.width, display.height,
-                            display.refresh_rate, display.connection);
+                        println!(
+                            "  {} {}x{} @ {:.0}Hz {:?}",
+                            display.name.as_deref().unwrap_or("Unknown"),
+                            display.width,
+                            display.height,
+                            display.refresh_rate,
+                            display.connection
+                        );
                     }
                 }
                 Ok(())
             };
-            
+
             if watch {
                 run_watch_mode(&display_displays)?;
             } else {
@@ -842,7 +862,7 @@ fn handle_cli_command(
         }
         CliSubcommand::Usb => {
             use simonlib::usb::UsbMonitor;
-            
+
             let display_usb = || -> Result<(), Box<dyn std::error::Error>> {
                 let monitor = UsbMonitor::new()?;
                 if format == "json" {
@@ -852,13 +872,15 @@ fn handle_cli_command(
                     println!("  Count: {}", monitor.devices().len());
                     for device in monitor.devices() {
                         let name = device.product.as_deref().unwrap_or("Unknown");
-                        println!("  [{:04x}:{:04x}] {} ({:?})",
-                            device.vendor_id, device.product_id, name, device.speed);
+                        println!(
+                            "  [{:04x}:{:04x}] {} ({:?})",
+                            device.vendor_id, device.product_id, name, device.speed
+                        );
                     }
                 }
                 Ok(())
             };
-            
+
             if watch {
                 run_watch_mode(&display_usb)?;
             } else {
@@ -1485,7 +1507,8 @@ fn print_process_info_backend(
     }
 
     // Group by category
-    let mut by_category: HashMap<ProcessCategory, Vec<&simonlib::ProcessMonitorInfo>> = HashMap::new();
+    let mut by_category: HashMap<ProcessCategory, Vec<&simonlib::ProcessMonitorInfo>> =
+        HashMap::new();
     for proc in processes.iter() {
         by_category.entry(proc.category).or_default().push(proc);
     }
@@ -2150,7 +2173,6 @@ fn handle_ai_query(query: Option<&str>) -> Result<(), Box<dyn std::error::Error>
 /// Handle record subcommands for time-series database operations
 #[cfg(feature = "cli")]
 fn handle_record_command(action: &RecordSubcommand) -> Result<(), Box<dyn std::error::Error>> {
-    use simonlib::backend::MonitoringBackend;
     use simonlib::tsdb::{
         format_size, parse_size, MetricsRecorder, ProcessSnapshot, SystemSnapshot, TimeSeriesDb,
     };
@@ -2196,8 +2218,34 @@ fn handle_record_command(action: &RecordSubcommand) -> Result<(), Box<dyn std::e
             let mut recorder =
                 MetricsRecorder::new(database, max_bytes, interval_duration, *max_processes)?;
 
-            // Create backend for data collection
-            let mut backend = MonitoringBackend::new()?;
+            // Collect on a background thread rather than inline.
+            //
+            // Inline serial collection cost roughly 1.2s, and the loop slept the
+            // requested interval *on top* of that — so `record --interval 1` actually
+            // sampled every ~2.2s. Recorded timestamps therefore never matched the
+            // requested cadence, and any rate derived from the database was wrong by
+            // the ratio between them.
+            //
+            // The collector now runs at its own cadence and the loop only reads the
+            // newest published snapshot, which is an atomic load.
+            let collector =
+                simonlib::pipeline::Collector::spawn(simonlib::pipeline::CollectorConfig {
+                    interval: interval_duration,
+                    collect_processes: *max_processes > 0,
+                    ..Default::default()
+                });
+            let snapshots = collector.handle();
+
+            // Wait for the first fully-populated snapshot so the database does not
+            // open with a row whose GPU and process columns are empty purely because
+            // driver enumeration had not finished yet.
+            let warmup_deadline = std::time::Instant::now() + Duration::from_secs(30);
+            while snapshots.latest().gpu_static.is_empty()
+                && snapshots.latest().processes.is_empty()
+                && std::time::Instant::now() < warmup_deadline
+            {
+                std::thread::sleep(Duration::from_millis(20));
+            }
 
             // Install Ctrl+C handler
             let running = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
@@ -2211,52 +2259,76 @@ fn handle_record_command(action: &RecordSubcommand) -> Result<(), Box<dyn std::e
             let start_time = std::time::Instant::now();
 
             while running.load(std::sync::atomic::Ordering::SeqCst) {
-                // Update backend
-                backend.update()?;
-                let state = backend.get_full_system_state();
+                let iteration_start = std::time::Instant::now();
+
+                // Read the newest published snapshot. Lock-free; never blocks on a
+                // driver, so a slow GPU query cannot stretch the sampling interval.
+                let state = snapshots.latest();
 
                 // Create system snapshot
                 let timestamp = simonlib::tsdb::TimeSeriesDb::now_millis();
 
-                // Collect per-core CPU usage (handle Option<CpuState>)
                 let cpu_per_core: Vec<f32> = state
                     .cpu
                     .as_ref()
-                    .map(|c| c.per_core_usage.clone())
+                    .map(|c| {
+                        c.cores
+                            .iter()
+                            .map(|core| 100.0 - core.idle.unwrap_or(100.0))
+                            .collect()
+                    })
                     .unwrap_or_default();
 
-                let cpu_percent = state.cpu.as_ref().map(|c| c.utilization).unwrap_or(0.0);
+                let cpu_percent = state.cpu_utilization();
 
-                // Collect memory stats (handle Option<MemoryState>)
+                // Platform collectors report memory in KB; the database stores bytes.
                 let (memory_used, memory_total, swap_used, swap_total) = state
                     .memory
                     .as_ref()
                     .map(|m| {
                         (
-                            m.used_bytes,
-                            m.total_bytes,
-                            m.swap_used_bytes,
-                            m.swap_total_bytes,
+                            m.ram.used * 1024,
+                            m.ram.total * 1024,
+                            m.swap.used * 1024,
+                            m.swap.total * 1024,
                         )
                     })
                     .unwrap_or((0, 0, 0, 0));
 
-                // Collect GPU stats
+                // Collect GPU stats. `gpu_dynamic` is index-aligned with the static
+                // descriptors and carries None for a device whose query failed this
+                // tick; those keep their column rather than shifting their neighbours.
                 let mut gpu_percent = Vec::new();
                 let mut gpu_memory_used = Vec::new();
                 let mut gpu_temperature = Vec::new();
                 let mut gpu_power_mw = Vec::new();
 
-                for acc in &state.accelerators {
-                    gpu_percent.push(acc.utilization);
-                    gpu_memory_used.push(acc.memory_used_bytes);
-                    gpu_temperature.push(acc.temperature.unwrap_or(0.0));
-                    gpu_power_mw.push(acc.power_watts.map(|p| (p * 1000.0) as u32).unwrap_or(0));
+                for gpu in &state.gpu_dynamic {
+                    match gpu {
+                        Some(g) => {
+                            gpu_percent.push(g.utilization as f32);
+                            gpu_memory_used.push(g.memory.used);
+                            gpu_temperature.push(g.thermal.temperature.unwrap_or(0) as f32);
+                            gpu_power_mw.push(g.power.draw.unwrap_or(0));
+                        }
+                        None => {
+                            gpu_percent.push(0.0);
+                            gpu_memory_used.push(0);
+                            gpu_temperature.push(0.0);
+                            gpu_power_mw.push(0);
+                        }
+                    }
                 }
 
-                // Collect process snapshots (use top_processes, not processes)
-                let processes: Vec<ProcessSnapshot> = state
-                    .top_processes
+                // Record the heaviest processes by CPU.
+                let mut ranked: Vec<_> = state.processes.iter().collect();
+                ranked.sort_by(|a, b| {
+                    b.cpu_percent
+                        .partial_cmp(&a.cpu_percent)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                });
+
+                let processes: Vec<ProcessSnapshot> = ranked
                     .iter()
                     .take(*max_processes)
                     .map(|p| ProcessSnapshot {
@@ -2264,20 +2336,17 @@ fn handle_record_command(action: &RecordSubcommand) -> Result<(), Box<dyn std::e
                         name: p.name.clone(),
                         cpu_percent: p.cpu_percent,
                         memory_bytes: p.memory_bytes,
-                        gpu_memory_bytes: p.gpu_memory_bytes,
-                        gpu_percent: 0.0,  // ProcessState doesn't have gpu_percent
-                        disk_read_bps: 0,  // Per-process I/O rates need delta tracking across snapshots
+                        gpu_memory_bytes: p.total_gpu_memory_bytes,
+                        gpu_percent: p.gpu_usage_percent.unwrap_or(0.0),
+                        disk_read_bps: 0, // Per-process I/O rates need delta tracking across snapshots
                         disk_write_bps: 0, // Absolute I/O bytes available in ProcessMonitorInfo
-                        net_rx_bps: 0,     // Per-process network rates not tracked by OS
-                        net_tx_bps: 0,     // System-level net rates are in SystemSnapshot
+                        net_rx_bps: 0,    // Per-process network rates not tracked by OS
+                        net_tx_bps: 0,    // System-level net rates are in SystemSnapshot
                     })
                     .collect();
 
-                // Aggregate network stats from all interfaces
-                let (net_rx_bps, net_tx_bps): (u64, u64) =
-                    state.network.iter().fold((0u64, 0u64), |(rx, tx), n| {
-                        (rx + n.rx_rate as u64, tx + n.tx_rate as u64)
-                    });
+                let net_rx_bps = state.total_rx_rate() as u64;
+                let net_tx_bps = state.total_tx_rate() as u64;
 
                 let snapshot = SystemSnapshot {
                     timestamp,
@@ -2323,8 +2392,11 @@ fn handle_record_command(action: &RecordSubcommand) -> Result<(), Box<dyn std::e
                     );
                 }
 
-                // Sleep for interval
-                std::thread::sleep(interval_duration);
+                // Sleep only the remainder of the interval. Sleeping the full
+                // interval regardless of how long the iteration took is what made the
+                // effective sample period drift past the requested one.
+                let spent = iteration_start.elapsed();
+                std::thread::sleep(interval_duration.saturating_sub(spent));
             }
 
             println!();
@@ -2858,7 +2930,10 @@ fn handle_profile_command(action: &ProfileSubcommand) -> Result<(), Box<dyn std:
                     );
                 }
                 println!();
-                println!("Use {} for details.", "simon profile show <subsystem>".italic());
+                println!(
+                    "Use {} for details.",
+                    "simon profile show <subsystem>".italic()
+                );
             }
         }
         ProfileSubcommand::Show { subsystem, json } => {
@@ -2917,7 +2992,12 @@ fn handle_profile_command(action: &ProfileSubcommand) -> Result<(), Box<dyn std:
                 }
             }
         }
-        ProfileSubcommand::Set { setting_id, value, confirm, json } => {
+        ProfileSubcommand::Set {
+            setting_id,
+            value,
+            confirm,
+            json,
+        } => {
             let parsed = parse_setting_value(value);
             let outcome = simonlib::profile::apply::apply_setting(setting_id, parsed, *confirm);
             if *json {
@@ -2928,7 +3008,9 @@ fn handle_profile_command(action: &ProfileSubcommand) -> Result<(), Box<dyn std:
                     simonlib::profile::apply::ApplyStatus::Refused => "refused".red(),
                     simonlib::profile::apply::ApplyStatus::Failed => "failed".red(),
                     simonlib::profile::apply::ApplyStatus::NotWritable => "not writable".yellow(),
-                    simonlib::profile::apply::ApplyStatus::NeedsConfirm => "needs --confirm".yellow(),
+                    simonlib::profile::apply::ApplyStatus::NeedsConfirm => {
+                        "needs --confirm".yellow()
+                    }
                 };
                 println!("status:    {}", status_color);
                 println!("setting:   {}", outcome.setting_id.bold());
@@ -2940,7 +3022,10 @@ fn handle_profile_command(action: &ProfileSubcommand) -> Result<(), Box<dyn std:
                 );
             }
             // Non-zero exit on non-success so scripts can detect failure.
-            if !matches!(outcome.status, simonlib::profile::apply::ApplyStatus::Applied) {
+            if !matches!(
+                outcome.status,
+                simonlib::profile::apply::ApplyStatus::Applied
+            ) {
                 std::process::exit(1);
             }
         }
@@ -3014,7 +3099,11 @@ fn handle_profile_command(action: &ProfileSubcommand) -> Result<(), Box<dyn std:
                     "settings/ms".bold()
                 );
                 let mut providers = report.providers.clone();
-                providers.sort_by(|a, b| b.elapsed_ms.partial_cmp(&a.elapsed_ms).unwrap_or(std::cmp::Ordering::Equal));
+                providers.sort_by(|a, b| {
+                    b.elapsed_ms
+                        .partial_cmp(&a.elapsed_ms)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                });
                 for p in providers {
                     println!(
                         "  {:<10} {:>8.2} ms {:>8} {:>10} {:>14.2}",
@@ -3027,7 +3116,11 @@ fn handle_profile_command(action: &ProfileSubcommand) -> Result<(), Box<dyn std:
                 }
             }
         }
-        ProfileSubcommand::Watch { interval, ticks, subsystem } => {
+        ProfileSubcommand::Watch {
+            interval,
+            ticks,
+            subsystem,
+        } => {
             use simonlib::profile::diff::diff_snapshots;
             use simonlib::profile::{ProfileSnapshot, Subsystem};
             use std::sync::atomic::{AtomicBool, Ordering};
@@ -3062,21 +3155,22 @@ fn handle_profile_command(action: &ProfileSubcommand) -> Result<(), Box<dyn std:
                 interval
             );
 
-            let snapshot = |inspector: &mut simonlib::profile::ProfileInspector| -> ProfileSnapshot {
-                match filter_sub {
-                    Some(sub) => {
-                        let groups = inspector.snapshot(sub);
-                        let mut providers = std::collections::BTreeMap::new();
-                        providers.insert(sub, groups);
-                        ProfileSnapshot {
-                            timestamp: 0,
-                            providers,
-                            errors: Default::default(),
+            let snapshot =
+                |inspector: &mut simonlib::profile::ProfileInspector| -> ProfileSnapshot {
+                    match filter_sub {
+                        Some(sub) => {
+                            let groups = inspector.snapshot(sub);
+                            let mut providers = std::collections::BTreeMap::new();
+                            providers.insert(sub, groups);
+                            ProfileSnapshot {
+                                timestamp: 0,
+                                providers,
+                                errors: Default::default(),
+                            }
                         }
+                        None => inspector.snapshot_all(),
                     }
-                    None => inspector.snapshot_all(),
-                }
-            };
+                };
 
             let mut prev = snapshot(&mut inspector);
             let mut tick = 0u32;
@@ -3152,13 +3246,19 @@ fn handle_profile_command(action: &ProfileSubcommand) -> Result<(), Box<dyn std:
                     println!("(no entries)");
                 }
                 for line in tail {
-                    if let Ok(v) = serde_json::from_str::<simonlib::profile::apply::ApplyOutcome>(line) {
+                    if let Ok(v) =
+                        serde_json::from_str::<simonlib::profile::apply::ApplyOutcome>(line)
+                    {
                         let st = match v.status {
                             simonlib::profile::apply::ApplyStatus::Applied => "applied".green(),
                             simonlib::profile::apply::ApplyStatus::Refused => "refused".red(),
                             simonlib::profile::apply::ApplyStatus::Failed => "failed".red(),
-                            simonlib::profile::apply::ApplyStatus::NotWritable => "not writable".yellow(),
-                            simonlib::profile::apply::ApplyStatus::NeedsConfirm => "needs confirm".yellow(),
+                            simonlib::profile::apply::ApplyStatus::NotWritable => {
+                                "not writable".yellow()
+                            }
+                            simonlib::profile::apply::ApplyStatus::NeedsConfirm => {
+                                "needs confirm".yellow()
+                            }
                         };
                         println!(
                             "  [{}] {:>12}  {} = {}",
@@ -3179,7 +3279,10 @@ fn handle_profile_command(action: &ProfileSubcommand) -> Result<(), Box<dyn std:
             if *json {
                 println!("{}", serde_json::to_string_pretty(&devs)?);
             } else if devs.is_empty() {
-                println!("{}", "No settings deviate from their declared defaults.".green());
+                println!(
+                    "{}",
+                    "No settings deviate from their declared defaults.".green()
+                );
             } else {
                 println!(
                     "{} setting(s) deviate from declared defaults:\n",
@@ -3215,10 +3318,7 @@ fn handle_profile_command(action: &ProfileSubcommand) -> Result<(), Box<dyn std:
                         println!("{}", serde_json::to_string_pretty(&exp)?);
                     } else {
                         println!("{}", exp.setting.display_name.bold().cyan());
-                        println!(
-                            "  id:        {}",
-                            exp.setting.id.italic()
-                        );
+                        println!("  id:        {}", exp.setting.id.italic());
                         println!(
                             "  scope:     [{}] {} / {}",
                             exp.subsystem.as_str(),
@@ -3241,7 +3341,8 @@ fn handle_profile_command(action: &ProfileSubcommand) -> Result<(), Box<dyn std:
                             println!("  range:     [{}, {}]", min, max);
                         }
                         if let Some(choices) = &exp.setting.choices {
-                            let names: Vec<String> = choices.iter().map(|(n, _)| n.clone()).collect();
+                            let names: Vec<String> =
+                                choices.iter().map(|(n, _)| n.clone()).collect();
                             println!("  choices:   {}", names.join(", "));
                         }
                         let risk = match exp.setting.risk {
@@ -3258,11 +3359,7 @@ fn handle_profile_command(action: &ProfileSubcommand) -> Result<(), Box<dyn std:
                         if !exp.related.is_empty() {
                             println!("\n  {}", "Related settings:".bold());
                             for r in &exp.related {
-                                println!(
-                                    "    · {:<32} = {}",
-                                    r.id,
-                                    r.value.to_string().bold()
-                                );
+                                println!("    · {:<32} = {}", r.id, r.value.to_string().bold());
                             }
                         }
                     }
@@ -3317,7 +3414,11 @@ fn handle_profile_command(action: &ProfileSubcommand) -> Result<(), Box<dyn std:
                 }
             }
         }
-        ProfileSubcommand::Diff { baseline, against, json } => {
+        ProfileSubcommand::Diff {
+            baseline,
+            against,
+            json,
+        } => {
             use simonlib::profile::diff::diff_snapshots;
             use simonlib::profile::ProfileSnapshot;
             let baseline_str = std::fs::read_to_string(baseline)?;
@@ -3374,7 +3475,11 @@ fn handle_profile_command(action: &ProfileSubcommand) -> Result<(), Box<dyn std:
                             c.profile.dimmed(),
                             c.display_name.bold()
                         );
-                        println!("      {} → {}", c.before.to_string().red(), c.after.to_string().green());
+                        println!(
+                            "      {} → {}",
+                            c.before.to_string().red(),
+                            c.after.to_string().green()
+                        );
                     }
                     println!();
                 }
@@ -3437,7 +3542,10 @@ fn handle_profile_command(action: &ProfileSubcommand) -> Result<(), Box<dyn std:
                                 "  {:<32} = {}{}",
                                 s.id,
                                 s.value,
-                                s.unit.as_deref().map(|u| format!(" {}", u)).unwrap_or_default()
+                                s.unit
+                                    .as_deref()
+                                    .map(|u| format!(" {}", u))
+                                    .unwrap_or_default()
                             )?;
                         }
                         for n in &group.notes {
@@ -3460,7 +3568,10 @@ fn handle_profile_command(action: &ProfileSubcommand) -> Result<(), Box<dyn std:
 
 /// Pretty-print profile groups for a subsystem.
 #[cfg(feature = "cli")]
-fn print_profile_groups(sub: simonlib::profile::Subsystem, groups: &[simonlib::profile::ProfileGroup]) {
+fn print_profile_groups(
+    sub: simonlib::profile::Subsystem,
+    groups: &[simonlib::profile::ProfileGroup],
+) {
     if groups.is_empty() {
         println!("(no profile data for {})", sub);
         return;
@@ -3468,11 +3579,7 @@ fn print_profile_groups(sub: simonlib::profile::Subsystem, groups: &[simonlib::p
     println!("{}", format!("== {} ==", sub).bold().cyan());
     for group in groups {
         println!();
-        println!(
-            "{} {}",
-            "▸".cyan(),
-            group.device.bold(),
-        );
+        println!("{} {}", "▸".cyan(), group.device.bold(),);
         println!(
             "  {} {}   {} {}",
             "profile:".dimmed(),
@@ -3481,7 +3588,11 @@ fn print_profile_groups(sub: simonlib::profile::Subsystem, groups: &[simonlib::p
             group.source.italic()
         );
         for s in &group.settings {
-            let unit = s.unit.as_deref().map(|u| format!(" {}", u)).unwrap_or_default();
+            let unit = s
+                .unit
+                .as_deref()
+                .map(|u| format!(" {}", u))
+                .unwrap_or_default();
             let risk = match s.risk {
                 simonlib::profile::SettingRisk::Informational => String::new(),
                 simonlib::profile::SettingRisk::Safe => " [safe]".green().to_string(),

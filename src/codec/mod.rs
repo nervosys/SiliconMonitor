@@ -18,13 +18,13 @@
 //!
 //! let monitor = CodecMonitor::new().unwrap();
 //! for cap in monitor.capabilities() {
-//!     println!("{}: {} {} (max {})",
+//!     println!("{}: {} {:?} (max {})",
 //!         cap.device, cap.codec, cap.direction, cap.max_resolution);
 //! }
 //! ```
 
-use serde::{Deserialize, Serialize};
 use crate::error::SimonError;
+use serde::{Deserialize, Serialize};
 
 /// Video codec type
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -54,12 +54,12 @@ pub enum CodecDirection {
 /// Maximum supported resolution
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum MaxResolution {
-    SD,       // 720x480
-    HD,       // 1280x720
-    FullHD,   // 1920x1080
-    QHD,      // 2560x1440
-    UHD4K,    // 3840x2160
-    UHD8K,    // 7680x4320
+    SD,     // 720x480
+    HD,     // 1280x720
+    FullHD, // 1920x1080
+    QHD,    // 2560x1440
+    UHD4K,  // 3840x2160
+    UHD8K,  // 7680x4320
     Unknown,
 }
 
@@ -209,7 +209,10 @@ impl CodecMonitor {
     pub fn max_decode_resolution(&self, codec: &VideoCodec) -> MaxResolution {
         self.codec_caps
             .iter()
-            .filter(|c| &c.codec == codec && matches!(c.direction, CodecDirection::Decode | CodecDirection::Both))
+            .filter(|c| {
+                &c.codec == codec
+                    && matches!(c.direction, CodecDirection::Decode | CodecDirection::Both)
+            })
             .map(|c| c.max_resolution.clone())
             .max()
             .unwrap_or(MaxResolution::Unknown)
@@ -217,7 +220,10 @@ impl CodecMonitor {
 
     /// Get estimated TFLOPS (FP32) across all devices.
     pub fn total_tflops_fp32(&self) -> f32 {
-        self.compute_caps.iter().map(|c| c.estimated_tflops_fp32).sum()
+        self.compute_caps
+            .iter()
+            .map(|c| c.estimated_tflops_fp32)
+            .sum()
     }
 
     fn detect_gpu_names() -> Vec<String> {
@@ -230,15 +236,13 @@ impl CodecMonitor {
                 for entry in entries.flatten() {
                     let name = entry.file_name().to_string_lossy().to_string();
                     if name.starts_with("card") && !name.contains('-') {
-                        let label = std::fs::read_to_string(
-                            entry.path().join("device/label"),
-                        )
-                        .or_else(|_| {
-                            std::fs::read_to_string(entry.path().join("device/product_name"))
-                        })
-                        .unwrap_or_default()
-                        .trim()
-                        .to_string();
+                        let label = std::fs::read_to_string(entry.path().join("device/label"))
+                            .or_else(|_| {
+                                std::fs::read_to_string(entry.path().join("device/product_name"))
+                            })
+                            .unwrap_or_default()
+                            .trim()
+                            .to_string();
                         if !label.is_empty() {
                             names.push(label);
                         }
@@ -265,8 +269,11 @@ impl CodecMonitor {
         #[cfg(target_os = "windows")]
         {
             if let Ok(output) = std::process::Command::new("powershell")
-                .args(["-NoProfile", "-Command",
-                    "Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name"])
+                .args([
+                    "-NoProfile",
+                    "-Command",
+                    "Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name",
+                ])
                 .output()
             {
                 let text = String::from_utf8(output.stdout).unwrap_or_default();
@@ -305,8 +312,12 @@ impl CodecMonitor {
         let lower = gpu_name.to_lowercase();
 
         // NVIDIA inference
-        if lower.contains("nvidia") || lower.contains("geforce") || lower.contains("quadro")
-            || lower.contains("tesla") || lower.contains("rtx") || lower.contains("gtx")
+        if lower.contains("nvidia")
+            || lower.contains("geforce")
+            || lower.contains("quadro")
+            || lower.contains("tesla")
+            || lower.contains("rtx")
+            || lower.contains("gtx")
         {
             self.infer_nvidia_codecs(gpu_name, &lower);
         }
@@ -317,15 +328,20 @@ impl CodecMonitor {
         }
 
         // Intel inference
-        if lower.contains("intel") || lower.contains("uhd") || lower.contains("iris")
+        if lower.contains("intel")
+            || lower.contains("uhd")
+            || lower.contains("iris")
             || lower.contains("arc")
         {
             self.infer_intel_codecs(gpu_name, &lower);
         }
 
         // Apple inference
-        if lower.contains("apple") || lower.contains("m1") || lower.contains("m2")
-            || lower.contains("m3") || lower.contains("m4")
+        if lower.contains("apple")
+            || lower.contains("m1")
+            || lower.contains("m2")
+            || lower.contains("m3")
+            || lower.contains("m4")
         {
             self.infer_apple_codecs(gpu_name);
         }
@@ -340,11 +356,36 @@ impl CodecMonitor {
 
         // All modern NVIDIA: H.264, H.265 decode/encode
         let codecs = vec![
-            (VideoCodec::H264, CodecDirection::Both, MaxResolution::UHD4K, BitDepth::Bit8),
-            (VideoCodec::H265, CodecDirection::Both, MaxResolution::UHD8K, BitDepth::Bit10),
-            (VideoCodec::VP9, CodecDirection::Decode, MaxResolution::UHD8K, BitDepth::Bit10),
-            (VideoCodec::MPEG2, CodecDirection::Decode, MaxResolution::FullHD, BitDepth::Bit8),
-            (VideoCodec::VC1, CodecDirection::Decode, MaxResolution::FullHD, BitDepth::Bit8),
+            (
+                VideoCodec::H264,
+                CodecDirection::Both,
+                MaxResolution::UHD4K,
+                BitDepth::Bit8,
+            ),
+            (
+                VideoCodec::H265,
+                CodecDirection::Both,
+                MaxResolution::UHD8K,
+                BitDepth::Bit10,
+            ),
+            (
+                VideoCodec::VP9,
+                CodecDirection::Decode,
+                MaxResolution::UHD8K,
+                BitDepth::Bit10,
+            ),
+            (
+                VideoCodec::MPEG2,
+                CodecDirection::Decode,
+                MaxResolution::FullHD,
+                BitDepth::Bit8,
+            ),
+            (
+                VideoCodec::VC1,
+                CodecDirection::Decode,
+                MaxResolution::FullHD,
+                BitDepth::Bit8,
+            ),
         ];
 
         for (codec, dir, res, depth) in codecs {
@@ -396,9 +437,24 @@ impl CodecMonitor {
         let is_rdna2 = lower.contains("6") && (lower.contains("rx ") || lower.contains("radeon"));
 
         let codecs = vec![
-            (VideoCodec::H264, CodecDirection::Both, MaxResolution::UHD4K, BitDepth::Bit8),
-            (VideoCodec::H265, CodecDirection::Both, MaxResolution::UHD4K, BitDepth::Bit10),
-            (VideoCodec::VP9, CodecDirection::Decode, MaxResolution::UHD4K, BitDepth::Bit10),
+            (
+                VideoCodec::H264,
+                CodecDirection::Both,
+                MaxResolution::UHD4K,
+                BitDepth::Bit8,
+            ),
+            (
+                VideoCodec::H265,
+                CodecDirection::Both,
+                MaxResolution::UHD4K,
+                BitDepth::Bit10,
+            ),
+            (
+                VideoCodec::VP9,
+                CodecDirection::Decode,
+                MaxResolution::UHD4K,
+                BitDepth::Bit10,
+            ),
         ];
 
         for (codec, dir, res, depth) in codecs {
@@ -446,9 +502,24 @@ impl CodecMonitor {
         let is_arc = lower.contains("arc");
 
         let codecs = vec![
-            (VideoCodec::H264, CodecDirection::Both, MaxResolution::UHD4K, BitDepth::Bit8),
-            (VideoCodec::H265, CodecDirection::Both, MaxResolution::UHD4K, BitDepth::Bit10),
-            (VideoCodec::VP9, CodecDirection::Both, MaxResolution::UHD4K, BitDepth::Bit10),
+            (
+                VideoCodec::H264,
+                CodecDirection::Both,
+                MaxResolution::UHD4K,
+                BitDepth::Bit8,
+            ),
+            (
+                VideoCodec::H265,
+                CodecDirection::Both,
+                MaxResolution::UHD4K,
+                BitDepth::Bit10,
+            ),
+            (
+                VideoCodec::VP9,
+                CodecDirection::Both,
+                MaxResolution::UHD4K,
+                BitDepth::Bit10,
+            ),
         ];
 
         for (codec, dir, res, depth) in codecs {
@@ -482,10 +553,30 @@ impl CodecMonitor {
 
     fn infer_apple_codecs(&mut self, gpu_name: &str) {
         let codecs = vec![
-            (VideoCodec::H264, CodecDirection::Both, MaxResolution::UHD4K, BitDepth::Bit8),
-            (VideoCodec::H265, CodecDirection::Both, MaxResolution::UHD8K, BitDepth::Bit10),
-            (VideoCodec::VP9, CodecDirection::Decode, MaxResolution::UHD4K, BitDepth::Bit10),
-            (VideoCodec::ProRes, CodecDirection::Both, MaxResolution::UHD8K, BitDepth::Bit10),
+            (
+                VideoCodec::H264,
+                CodecDirection::Both,
+                MaxResolution::UHD4K,
+                BitDepth::Bit8,
+            ),
+            (
+                VideoCodec::H265,
+                CodecDirection::Both,
+                MaxResolution::UHD8K,
+                BitDepth::Bit10,
+            ),
+            (
+                VideoCodec::VP9,
+                CodecDirection::Decode,
+                MaxResolution::UHD4K,
+                BitDepth::Bit10,
+            ),
+            (
+                VideoCodec::ProRes,
+                CodecDirection::Both,
+                MaxResolution::UHD8K,
+                BitDepth::Bit10,
+            ),
         ];
 
         for (codec, dir, res, depth) in codecs {
@@ -504,8 +595,10 @@ impl CodecMonitor {
 
         // M3+ and M2 Pro/Max/Ultra have AV1 decode
         let lower = gpu_name.to_lowercase();
-        if lower.contains("m3") || lower.contains("m4")
-            || (lower.contains("m2") && (lower.contains("pro") || lower.contains("max") || lower.contains("ultra")))
+        if lower.contains("m3")
+            || lower.contains("m4")
+            || (lower.contains("m2")
+                && (lower.contains("pro") || lower.contains("max") || lower.contains("ultra")))
         {
             self.codec_caps.push(CodecCapability {
                 device: gpu_name.to_string(),
@@ -525,28 +618,33 @@ impl CodecMonitor {
     fn infer_compute_from_gpu(&mut self, gpu_name: &str) {
         let lower = gpu_name.to_lowercase();
 
-        if lower.contains("nvidia") || lower.contains("geforce") || lower.contains("rtx")
-            || lower.contains("gtx") || lower.contains("quadro") || lower.contains("tesla")
+        if lower.contains("nvidia")
+            || lower.contains("geforce")
+            || lower.contains("rtx")
+            || lower.contains("gtx")
+            || lower.contains("quadro")
+            || lower.contains("tesla")
         {
-            let (cuda, tflops_32, tflops_16, tensor, rt) = if lower.contains("rtx 40") || lower.contains("rtx 4090") {
-                ("8.9", 82.6_f32, 165.2_f32, true, true)
-            } else if lower.contains("rtx 4080") {
-                ("8.9", 48.7, 97.5, true, true)
-            } else if lower.contains("rtx 4070") {
-                ("8.9", 29.1, 58.3, true, true)
-            } else if lower.contains("rtx 30") || lower.contains("rtx 3090") {
-                ("8.6", 35.6, 71.2, true, true)
-            } else if lower.contains("rtx 3080") {
-                ("8.6", 29.8, 59.6, true, true)
-            } else if lower.contains("rtx 20") || lower.contains("rtx 2080") {
-                ("7.5", 14.2, 28.4, true, true)
-            } else if lower.contains("gtx 1080") {
-                ("6.1", 8.9, 0.0, false, false)
-            } else if lower.contains("gtx 10") {
-                ("6.1", 6.5, 0.0, false, false)
-            } else {
-                ("6.0", 5.0, 0.0, false, false)
-            };
+            let (cuda, tflops_32, tflops_16, tensor, rt) =
+                if lower.contains("rtx 40") || lower.contains("rtx 4090") {
+                    ("8.9", 82.6_f32, 165.2_f32, true, true)
+                } else if lower.contains("rtx 4080") {
+                    ("8.9", 48.7, 97.5, true, true)
+                } else if lower.contains("rtx 4070") {
+                    ("8.9", 29.1, 58.3, true, true)
+                } else if lower.contains("rtx 30") || lower.contains("rtx 3090") {
+                    ("8.6", 35.6, 71.2, true, true)
+                } else if lower.contains("rtx 3080") {
+                    ("8.6", 29.8, 59.6, true, true)
+                } else if lower.contains("rtx 20") || lower.contains("rtx 2080") {
+                    ("7.5", 14.2, 28.4, true, true)
+                } else if lower.contains("gtx 1080") {
+                    ("6.1", 8.9, 0.0, false, false)
+                } else if lower.contains("gtx 10") {
+                    ("6.1", 6.5, 0.0, false, false)
+                } else {
+                    ("6.0", 5.0, 0.0, false, false)
+                };
 
             self.compute_caps.push(ComputeCapability {
                 device: gpu_name.to_string(),
@@ -563,8 +661,11 @@ impl CodecMonitor {
             });
         }
 
-        if lower.contains("apple") || lower.contains("m1") || lower.contains("m2")
-            || lower.contains("m3") || lower.contains("m4")
+        if lower.contains("apple")
+            || lower.contains("m1")
+            || lower.contains("m2")
+            || lower.contains("m3")
+            || lower.contains("m4")
         {
             let tflops = if lower.contains("m4") || lower.contains("ultra") {
                 27.0_f32
@@ -645,7 +746,11 @@ impl CodecMonitor {
                     codec,
                     direction,
                     max_resolution: MaxResolution::UHD4K,
-                    max_bit_depth: if profile.contains("10") { BitDepth::Bit10 } else { BitDepth::Bit8 },
+                    max_bit_depth: if profile.contains("10") {
+                        BitDepth::Bit10
+                    } else {
+                        BitDepth::Bit8
+                    },
                     max_fps: 60,
                     engine: "VA-API".into(),
                     source: CapabilitySource::DirectQuery,

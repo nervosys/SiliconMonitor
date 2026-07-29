@@ -143,8 +143,7 @@ impl InterruptMapMonitor {
         self.interrupts
             .iter()
             .filter(|i| {
-                i.interrupt_type == InterruptType::MSI
-                    || i.interrupt_type == InterruptType::MSIX
+                i.interrupt_type == InterruptType::MSI || i.interrupt_type == InterruptType::MSIX
             })
             .collect()
     }
@@ -220,9 +219,11 @@ impl InterruptMapMonitor {
                 "Severe interrupt imbalance: CPU {} handles {:.1}x more than CPU {}",
                 max_cpu, imbalance, min_cpu
             ));
-            recommendations.push("Consider using irqbalance or setting IRQ affinity manually".into());
+            recommendations
+                .push("Consider using irqbalance or setting IRQ affinity manually".into());
         } else if imbalance > 3.0 {
-            recommendations.push("Moderate interrupt imbalance detected; consider enabling irqbalance".into());
+            recommendations
+                .push("Moderate interrupt imbalance detected; consider enabling irqbalance".into());
         }
 
         InterruptAnalysis {
@@ -410,18 +411,16 @@ mod tests {
 
     #[test]
     fn test_analysis_balanced() {
-        let interrupts = vec![
-            InterruptInfo {
-                irq: "0".into(),
-                interrupt_type: InterruptType::LegacyPin,
-                per_cpu_counts: vec![1000, 1000, 1000, 1000],
-                total_count: 4000,
-                chip: "IO-APIC".into(),
-                description: "timer".into(),
-                affinity_cpus: vec![0, 1, 2, 3],
-                affinity_balanced: true,
-            },
-        ];
+        let interrupts = vec![InterruptInfo {
+            irq: "0".into(),
+            interrupt_type: InterruptType::LegacyPin,
+            per_cpu_counts: vec![1000, 1000, 1000, 1000],
+            total_count: 4000,
+            chip: "IO-APIC".into(),
+            description: "timer".into(),
+            affinity_cpus: vec![0, 1, 2, 3],
+            affinity_balanced: true,
+        }];
         let analysis = InterruptMapMonitor::analyze(&interrupts, 4);
         assert!(!analysis.significant_imbalance);
         assert!((analysis.imbalance_ratio - 1.0).abs() < 0.01);
@@ -429,18 +428,16 @@ mod tests {
 
     #[test]
     fn test_analysis_imbalanced() {
-        let interrupts = vec![
-            InterruptInfo {
-                irq: "42".into(),
-                interrupt_type: InterruptType::MSI,
-                per_cpu_counts: vec![10000, 100, 100, 100],
-                total_count: 10300,
-                chip: "PCI-MSI".into(),
-                description: "nvme0q0".into(),
-                affinity_cpus: vec![0],
-                affinity_balanced: false,
-            },
-        ];
+        let interrupts = vec![InterruptInfo {
+            irq: "42".into(),
+            interrupt_type: InterruptType::MSI,
+            per_cpu_counts: vec![10000, 100, 100, 100],
+            total_count: 10300,
+            chip: "PCI-MSI".into(),
+            description: "nvme0q0".into(),
+            affinity_cpus: vec![0],
+            affinity_balanced: false,
+        }];
         let analysis = InterruptMapMonitor::analyze(&interrupts, 4);
         assert!(analysis.significant_imbalance);
         assert!(analysis.imbalance_ratio > 3.0);

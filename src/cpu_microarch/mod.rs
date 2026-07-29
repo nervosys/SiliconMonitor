@@ -153,8 +153,7 @@ pub struct CpuMicroarchMonitor {
 impl CpuMicroarchMonitor {
     /// Create a new monitor and detect microarchitecture.
     pub fn new() -> Result<Self, SimonError> {
-        let (model_name, family, model, stepping, flags, cores, threads) =
-            Self::read_cpu_info()?;
+        let (model_name, family, model, stepping, flags, cores, threads) = Self::read_cpu_info()?;
         let microarch = Self::identify_microarch(&model_name, family, model, stepping);
         let extensions = Self::detect_extensions(&flags, &microarch);
         let performance = Self::infer_performance(&model_name, &microarch, cores);
@@ -210,16 +209,26 @@ impl CpuMicroarchMonitor {
 
         // Try vendor detection first — AMD checked before Intel to avoid
         // "CORE" matching in "16-Core Processor" AMD strings
-        let vendor = if upper.contains("AMD") || upper.contains("RYZEN") || upper.contains("EPYC")
-            || upper.contains("THREADRIPPER") || upper.contains("ATHLON")
+        let vendor = if upper.contains("AMD")
+            || upper.contains("RYZEN")
+            || upper.contains("EPYC")
+            || upper.contains("THREADRIPPER")
+            || upper.contains("ATHLON")
         {
             CpuVendor::AMD
-        } else if upper.contains("INTEL") || upper.contains("CORE") || upper.contains("XEON")
-            || upper.contains("CELERON") || upper.contains("PENTIUM") || upper.contains("ATOM")
+        } else if upper.contains("INTEL")
+            || upper.contains("CORE")
+            || upper.contains("XEON")
+            || upper.contains("CELERON")
+            || upper.contains("PENTIUM")
+            || upper.contains("ATOM")
         {
             CpuVendor::Intel
-        } else if upper.contains("APPLE") || upper.contains("M1") || upper.contains("M2")
-            || upper.contains("M3") || upper.contains("M4")
+        } else if upper.contains("APPLE")
+            || upper.contains("M1")
+            || upper.contains("M2")
+            || upper.contains("M3")
+            || upper.contains("M4")
         {
             CpuVendor::Apple
         } else if upper.contains("GRAVITON") {
@@ -275,57 +284,121 @@ impl CpuMicroarchMonitor {
 
     fn identify_intel(name: &str, family: u32, model: u32) -> Microarchitecture {
         // Intel identification via model name patterns and CPUID family/model
-        let (uarch, codename, process, year, hybrid, p_core, e_core) =
-            if name.contains("ULTRA 9 2") || name.contains("ULTRA 7 2") || name.contains("ULTRA 5 2")
-                || name.contains("ARROW LAKE")
-            {
-                ("Arrow Lake", "Arrow Lake", 3, 2024, true, Some("Lion Cove"), Some("Skymont"))
-            } else if name.contains("14TH GEN") || name.contains("14900") || name.contains("14700")
-                || name.contains("14600") || name.contains("RAPTOR LAKE")
-                || (family == 6 && (model == 0xB7 || model == 0xBF))
-            {
-                ("Raptor Lake", "Raptor Lake Refresh", 7, 2023, true, Some("Raptor Cove"), Some("Gracemont"))
-            } else if name.contains("13TH GEN") || name.contains("13900") || name.contains("13700")
-                || name.contains("13600")
-            {
-                ("Raptor Lake", "Raptor Lake", 7, 2022, true, Some("Raptor Cove"), Some("Gracemont"))
-            } else if name.contains("12TH GEN") || name.contains("12900") || name.contains("12700")
-                || name.contains("12600") || name.contains("ALDER LAKE")
-                || (family == 6 && model == 0x97)
-            {
-                ("Alder Lake", "Alder Lake", 7, 2021, true, Some("Golden Cove"), Some("Gracemont"))
-            } else if name.contains("11TH GEN") || name.contains("11900") || name.contains("11700")
-                || name.contains("ROCKET LAKE")
-                || (family == 6 && model == 0xA7)
-            {
-                ("Cypress Cove", "Rocket Lake", 14, 2021, false, None, None)
-            } else if name.contains("TIGER LAKE") || name.contains("1165") || name.contains("1185") {
-                ("Willow Cove", "Tiger Lake", 10, 2020, false, None, None)
-            } else if name.contains("10TH GEN") || name.contains("10900") || name.contains("10700")
-                || name.contains("COMET LAKE")
-            {
-                ("Skylake", "Comet Lake", 14, 2020, false, None, None)
-            } else if name.contains("ICE LAKE") || name.contains("1065") || name.contains("1035") {
-                ("Sunny Cove", "Ice Lake", 10, 2019, false, None, None)
-            } else if name.contains("9TH GEN") || name.contains("9900") || name.contains("COFFEE LAKE") {
-                ("Skylake", "Coffee Lake Refresh", 14, 2018, false, None, None)
-            } else if name.contains("8TH GEN") || name.contains("8700") {
-                ("Skylake", "Coffee Lake", 14, 2017, false, None, None)
-            } else if name.contains("SAPPHIRE RAPIDS") || name.contains("W9-3") || name.contains("W7-3")
-                || name.contains("W5-3")
-            {
-                ("Golden Cove", "Sapphire Rapids", 7, 2023, false, None, None)
-            } else if name.contains("EMERALD RAPIDS") {
-                ("Golden Cove", "Emerald Rapids", 7, 2023, false, None, None)
-            } else if name.contains("GRANITE RAPIDS") {
-                ("Redwood Cove", "Granite Rapids", 3, 2024, false, None, None)
-            } else if name.contains("SIERRA FOREST") {
-                ("Crestmont", "Sierra Forest", 3, 2024, false, None, None)
-            } else if name.contains("LUNAR LAKE") {
-                ("Lion Cove", "Lunar Lake", 3, 2024, true, Some("Lion Cove"), Some("Skymont"))
-            } else {
-                ("Unknown Intel", "", 0, 0, false, None, None)
-            };
+        let (uarch, codename, process, year, hybrid, p_core, e_core) = if name.contains("ULTRA 9 2")
+            || name.contains("ULTRA 7 2")
+            || name.contains("ULTRA 5 2")
+            || name.contains("ARROW LAKE")
+        {
+            (
+                "Arrow Lake",
+                "Arrow Lake",
+                3,
+                2024,
+                true,
+                Some("Lion Cove"),
+                Some("Skymont"),
+            )
+        } else if name.contains("14TH GEN")
+            || name.contains("14900")
+            || name.contains("14700")
+            || name.contains("14600")
+            || name.contains("RAPTOR LAKE")
+            || (family == 6 && (model == 0xB7 || model == 0xBF))
+        {
+            (
+                "Raptor Lake",
+                "Raptor Lake Refresh",
+                7,
+                2023,
+                true,
+                Some("Raptor Cove"),
+                Some("Gracemont"),
+            )
+        } else if name.contains("13TH GEN")
+            || name.contains("13900")
+            || name.contains("13700")
+            || name.contains("13600")
+        {
+            (
+                "Raptor Lake",
+                "Raptor Lake",
+                7,
+                2022,
+                true,
+                Some("Raptor Cove"),
+                Some("Gracemont"),
+            )
+        } else if name.contains("12TH GEN")
+            || name.contains("12900")
+            || name.contains("12700")
+            || name.contains("12600")
+            || name.contains("ALDER LAKE")
+            || (family == 6 && model == 0x97)
+        {
+            (
+                "Alder Lake",
+                "Alder Lake",
+                7,
+                2021,
+                true,
+                Some("Golden Cove"),
+                Some("Gracemont"),
+            )
+        } else if name.contains("11TH GEN")
+            || name.contains("11900")
+            || name.contains("11700")
+            || name.contains("ROCKET LAKE")
+            || (family == 6 && model == 0xA7)
+        {
+            ("Cypress Cove", "Rocket Lake", 14, 2021, false, None, None)
+        } else if name.contains("TIGER LAKE") || name.contains("1165") || name.contains("1185") {
+            ("Willow Cove", "Tiger Lake", 10, 2020, false, None, None)
+        } else if name.contains("10TH GEN")
+            || name.contains("10900")
+            || name.contains("10700")
+            || name.contains("COMET LAKE")
+        {
+            ("Skylake", "Comet Lake", 14, 2020, false, None, None)
+        } else if name.contains("ICE LAKE") || name.contains("1065") || name.contains("1035") {
+            ("Sunny Cove", "Ice Lake", 10, 2019, false, None, None)
+        } else if name.contains("9TH GEN") || name.contains("9900") || name.contains("COFFEE LAKE")
+        {
+            (
+                "Skylake",
+                "Coffee Lake Refresh",
+                14,
+                2018,
+                false,
+                None,
+                None,
+            )
+        } else if name.contains("8TH GEN") || name.contains("8700") {
+            ("Skylake", "Coffee Lake", 14, 2017, false, None, None)
+        } else if name.contains("SAPPHIRE RAPIDS")
+            || name.contains("W9-3")
+            || name.contains("W7-3")
+            || name.contains("W5-3")
+        {
+            ("Golden Cove", "Sapphire Rapids", 7, 2023, false, None, None)
+        } else if name.contains("EMERALD RAPIDS") {
+            ("Golden Cove", "Emerald Rapids", 7, 2023, false, None, None)
+        } else if name.contains("GRANITE RAPIDS") {
+            ("Redwood Cove", "Granite Rapids", 3, 2024, false, None, None)
+        } else if name.contains("SIERRA FOREST") {
+            ("Crestmont", "Sierra Forest", 3, 2024, false, None, None)
+        } else if name.contains("LUNAR LAKE") {
+            (
+                "Lion Cove",
+                "Lunar Lake",
+                3,
+                2024,
+                true,
+                Some("Lion Cove"),
+                Some("Skymont"),
+            )
+        } else {
+            ("Unknown Intel", "", 0, 0, false, None, None)
+        };
 
         Microarchitecture {
             name: uarch.into(),
@@ -341,44 +414,61 @@ impl CpuMicroarchMonitor {
     }
 
     fn identify_amd(name: &str, _family: u32, _model: u32) -> Microarchitecture {
-        let (uarch, codename, process, year) =
-            if name.contains("9950") || name.contains("9900") || name.contains("9700")
-                || name.contains("9600") || name.contains("ZEN 5") || name.contains("GRANITE RIDGE")
-            {
-                ("Zen 5", "Granite Ridge", 4, 2024)
-            } else if name.contains("7950") || name.contains("7900") || name.contains("7800")
-                || name.contains("7700") || name.contains("7600") || name.contains("7500")
-                || name.contains("ZEN 4")
-            {
-                ("Zen 4", "Raphael", 5, 2022)
-            } else if name.contains("5950") || name.contains("5900") || name.contains("5800")
-                || name.contains("5700") || name.contains("5600") || name.contains("5500")
-                || name.contains("ZEN 3")
-            {
-                ("Zen 3", "Vermeer", 7, 2020)
-            } else if name.contains("3950") || name.contains("3900") || name.contains("3800")
-                || name.contains("3700") || name.contains("3600") || name.contains("ZEN 2")
-            {
-                ("Zen 2", "Matisse", 7, 2019)
-            } else if name.contains("2700") || name.contains("2600") || name.contains("ZEN+") {
-                ("Zen+", "Pinnacle Ridge", 12, 2018)
-            } else if name.contains("1800") || name.contains("1700") || name.contains("ZEN 1") {
-                ("Zen", "Summit Ridge", 14, 2017)
-            } else if name.contains("EPYC 9") || name.contains("GENOA") {
-                ("Zen 4", "Genoa", 5, 2022)
-            } else if name.contains("EPYC 8") || name.contains("SIENA") {
-                ("Zen 4c", "Siena", 5, 2023)
-            } else if name.contains("EPYC 7") && (name.contains("73") || name.contains("75") || name.contains("79")) {
-                ("Zen 3", "Milan", 7, 2021)
-            } else if name.contains("TURIN") {
-                ("Zen 5", "Turin", 4, 2024)
-            } else if name.contains("THREADRIPPER 7") || name.contains("PRO 7") {
-                ("Zen 4", "Storm Peak", 5, 2023)
-            } else if name.contains("THREADRIPPER 5") || name.contains("PRO 5") {
-                ("Zen 3", "Chagall", 7, 2022)
-            } else {
-                ("Unknown AMD", "", 0, 0)
-            };
+        let (uarch, codename, process, year) = if name.contains("9950")
+            || name.contains("9900")
+            || name.contains("9700")
+            || name.contains("9600")
+            || name.contains("ZEN 5")
+            || name.contains("GRANITE RIDGE")
+        {
+            ("Zen 5", "Granite Ridge", 4, 2024)
+        } else if name.contains("7950")
+            || name.contains("7900")
+            || name.contains("7800")
+            || name.contains("7700")
+            || name.contains("7600")
+            || name.contains("7500")
+            || name.contains("ZEN 4")
+        {
+            ("Zen 4", "Raphael", 5, 2022)
+        } else if name.contains("5950")
+            || name.contains("5900")
+            || name.contains("5800")
+            || name.contains("5700")
+            || name.contains("5600")
+            || name.contains("5500")
+            || name.contains("ZEN 3")
+        {
+            ("Zen 3", "Vermeer", 7, 2020)
+        } else if name.contains("3950")
+            || name.contains("3900")
+            || name.contains("3800")
+            || name.contains("3700")
+            || name.contains("3600")
+            || name.contains("ZEN 2")
+        {
+            ("Zen 2", "Matisse", 7, 2019)
+        } else if name.contains("2700") || name.contains("2600") || name.contains("ZEN+") {
+            ("Zen+", "Pinnacle Ridge", 12, 2018)
+        } else if name.contains("1800") || name.contains("1700") || name.contains("ZEN 1") {
+            ("Zen", "Summit Ridge", 14, 2017)
+        } else if name.contains("EPYC 9") || name.contains("GENOA") {
+            ("Zen 4", "Genoa", 5, 2022)
+        } else if name.contains("EPYC 8") || name.contains("SIENA") {
+            ("Zen 4c", "Siena", 5, 2023)
+        } else if name.contains("EPYC 7")
+            && (name.contains("73") || name.contains("75") || name.contains("79"))
+        {
+            ("Zen 3", "Milan", 7, 2021)
+        } else if name.contains("TURIN") {
+            ("Zen 5", "Turin", 4, 2024)
+        } else if name.contains("THREADRIPPER 7") || name.contains("PRO 7") {
+            ("Zen 4", "Storm Peak", 5, 2023)
+        } else if name.contains("THREADRIPPER 5") || name.contains("PRO 5") {
+            ("Zen 3", "Chagall", 7, 2022)
+        } else {
+            ("Unknown AMD", "", 0, 0)
+        };
 
         Microarchitecture {
             name: uarch.into(),
@@ -394,26 +484,28 @@ impl CpuMicroarchMonitor {
     }
 
     fn identify_apple(name: &str) -> Microarchitecture {
-        let (uarch, codename, process, year, hybrid) =
-            if name.contains("M4 MAX") || name.contains("M4 PRO") || name.contains("M4 ULTRA") {
-                ("Everest", "M4 Pro/Max/Ultra", 3, 2024, true)
-            } else if name.contains("M4") {
-                ("Everest", "M4", 3, 2024, true)
-            } else if name.contains("M3 MAX") || name.contains("M3 PRO") || name.contains("M3 ULTRA") {
-                ("Ibiza", "M3 Pro/Max/Ultra", 3, 2023, true)
-            } else if name.contains("M3") {
-                ("Ibiza", "M3", 3, 2023, true)
-            } else if name.contains("M2 MAX") || name.contains("M2 PRO") || name.contains("M2 ULTRA") {
-                ("Avalanche/Blizzard", "M2 Pro/Max/Ultra", 5, 2023, true)
-            } else if name.contains("M2") {
-                ("Avalanche/Blizzard", "M2", 5, 2022, true)
-            } else if name.contains("M1 MAX") || name.contains("M1 PRO") || name.contains("M1 ULTRA") {
-                ("Firestorm/Icestorm", "M1 Pro/Max/Ultra", 5, 2021, true)
-            } else if name.contains("M1") {
-                ("Firestorm/Icestorm", "M1", 5, 2020, true)
-            } else {
-                ("Unknown Apple", "", 0, 0, true)
-            };
+        let (uarch, codename, process, year, hybrid) = if name.contains("M4 MAX")
+            || name.contains("M4 PRO")
+            || name.contains("M4 ULTRA")
+        {
+            ("Everest", "M4 Pro/Max/Ultra", 3, 2024, true)
+        } else if name.contains("M4") {
+            ("Everest", "M4", 3, 2024, true)
+        } else if name.contains("M3 MAX") || name.contains("M3 PRO") || name.contains("M3 ULTRA") {
+            ("Ibiza", "M3 Pro/Max/Ultra", 3, 2023, true)
+        } else if name.contains("M3") {
+            ("Ibiza", "M3", 3, 2023, true)
+        } else if name.contains("M2 MAX") || name.contains("M2 PRO") || name.contains("M2 ULTRA") {
+            ("Avalanche/Blizzard", "M2 Pro/Max/Ultra", 5, 2023, true)
+        } else if name.contains("M2") {
+            ("Avalanche/Blizzard", "M2", 5, 2022, true)
+        } else if name.contains("M1 MAX") || name.contains("M1 PRO") || name.contains("M1 ULTRA") {
+            ("Firestorm/Icestorm", "M1 Pro/Max/Ultra", 5, 2021, true)
+        } else if name.contains("M1") {
+            ("Firestorm/Icestorm", "M1", 5, 2020, true)
+        } else {
+            ("Unknown Apple", "", 0, 0, true)
+        };
 
         Microarchitecture {
             name: uarch.into(),
@@ -439,44 +531,219 @@ impl CpuMicroarchMonitor {
         if microarch.arch == "x86_64" {
             let x86_exts = vec![
                 ("sse", IsaCategory::Simd, "SSE", "Streaming SIMD Extensions"),
-                ("sse2", IsaCategory::Simd, "SSE2", "Streaming SIMD Extensions 2"),
-                ("sse3", IsaCategory::Simd, "SSE3", "Streaming SIMD Extensions 3"),
+                (
+                    "sse2",
+                    IsaCategory::Simd,
+                    "SSE2",
+                    "Streaming SIMD Extensions 2",
+                ),
+                (
+                    "sse3",
+                    IsaCategory::Simd,
+                    "SSE3",
+                    "Streaming SIMD Extensions 3",
+                ),
                 ("ssse3", IsaCategory::Simd, "SSSE3", "Supplemental SSE3"),
-                ("sse4_1", IsaCategory::Simd, "SSE4.1", "Streaming SIMD Extensions 4.1"),
-                ("sse4_2", IsaCategory::Simd, "SSE4.2", "Streaming SIMD Extensions 4.2"),
-                ("avx", IsaCategory::Simd, "AVX", "Advanced Vector Extensions"),
-                ("avx2", IsaCategory::Simd, "AVX2", "Advanced Vector Extensions 2"),
-                ("avx512f", IsaCategory::Simd, "AVX-512F", "AVX-512 Foundation"),
-                ("avx512bw", IsaCategory::Simd, "AVX-512BW", "AVX-512 Byte/Word"),
-                ("avx512vl", IsaCategory::Simd, "AVX-512VL", "AVX-512 Vector Length"),
-                ("avx512cd", IsaCategory::Simd, "AVX-512CD", "AVX-512 Conflict Detection"),
-                ("avx512vnni", IsaCategory::Simd, "AVX-512 VNNI", "Vector Neural Network Instructions"),
-                ("avx512_bf16", IsaCategory::MachineLearning, "AVX-512 BF16", "BFloat16 instructions"),
-                ("avx512_fp16", IsaCategory::FloatingPoint, "AVX-512 FP16", "Half-precision floating point"),
-                ("amx_tile", IsaCategory::MachineLearning, "AMX-TILE", "Advanced Matrix Extensions - Tile"),
-                ("amx_bf16", IsaCategory::MachineLearning, "AMX-BF16", "Advanced Matrix Extensions - BF16"),
-                ("amx_int8", IsaCategory::MachineLearning, "AMX-INT8", "Advanced Matrix Extensions - INT8"),
+                (
+                    "sse4_1",
+                    IsaCategory::Simd,
+                    "SSE4.1",
+                    "Streaming SIMD Extensions 4.1",
+                ),
+                (
+                    "sse4_2",
+                    IsaCategory::Simd,
+                    "SSE4.2",
+                    "Streaming SIMD Extensions 4.2",
+                ),
+                (
+                    "avx",
+                    IsaCategory::Simd,
+                    "AVX",
+                    "Advanced Vector Extensions",
+                ),
+                (
+                    "avx2",
+                    IsaCategory::Simd,
+                    "AVX2",
+                    "Advanced Vector Extensions 2",
+                ),
+                (
+                    "avx512f",
+                    IsaCategory::Simd,
+                    "AVX-512F",
+                    "AVX-512 Foundation",
+                ),
+                (
+                    "avx512bw",
+                    IsaCategory::Simd,
+                    "AVX-512BW",
+                    "AVX-512 Byte/Word",
+                ),
+                (
+                    "avx512vl",
+                    IsaCategory::Simd,
+                    "AVX-512VL",
+                    "AVX-512 Vector Length",
+                ),
+                (
+                    "avx512cd",
+                    IsaCategory::Simd,
+                    "AVX-512CD",
+                    "AVX-512 Conflict Detection",
+                ),
+                (
+                    "avx512vnni",
+                    IsaCategory::Simd,
+                    "AVX-512 VNNI",
+                    "Vector Neural Network Instructions",
+                ),
+                (
+                    "avx512_bf16",
+                    IsaCategory::MachineLearning,
+                    "AVX-512 BF16",
+                    "BFloat16 instructions",
+                ),
+                (
+                    "avx512_fp16",
+                    IsaCategory::FloatingPoint,
+                    "AVX-512 FP16",
+                    "Half-precision floating point",
+                ),
+                (
+                    "amx_tile",
+                    IsaCategory::MachineLearning,
+                    "AMX-TILE",
+                    "Advanced Matrix Extensions - Tile",
+                ),
+                (
+                    "amx_bf16",
+                    IsaCategory::MachineLearning,
+                    "AMX-BF16",
+                    "Advanced Matrix Extensions - BF16",
+                ),
+                (
+                    "amx_int8",
+                    IsaCategory::MachineLearning,
+                    "AMX-INT8",
+                    "Advanced Matrix Extensions - INT8",
+                ),
                 ("aes", IsaCategory::Crypto, "AES-NI", "AES New Instructions"),
                 ("vaes", IsaCategory::Crypto, "VAES", "Vectorized AES"),
-                ("sha_ni", IsaCategory::Crypto, "SHA-NI", "SHA New Instructions"),
-                ("pclmulqdq", IsaCategory::Crypto, "PCLMULQDQ", "Carry-Less Multiplication"),
-                ("rdrand", IsaCategory::Crypto, "RDRAND", "Hardware Random Number Generator"),
-                ("rdseed", IsaCategory::Crypto, "RDSEED", "Hardware Random Seed Generator"),
-                ("vmx", IsaCategory::Virtualization, "VMX", "Virtual Machine Extensions (VT-x)"),
-                ("svm", IsaCategory::Virtualization, "SVM", "Secure Virtual Machine (AMD-V)"),
-                ("sgx", IsaCategory::Security, "SGX", "Software Guard Extensions"),
-                ("sev", IsaCategory::Security, "SEV", "Secure Encrypted Virtualization"),
-                ("sme", IsaCategory::Security, "SME", "Secure Memory Encryption"),
-                ("fma", IsaCategory::FloatingPoint, "FMA3", "Fused Multiply-Add 3-operand"),
-                ("f16c", IsaCategory::FloatingPoint, "F16C", "Half-precision float conversion"),
-                ("bmi1", IsaCategory::BitManip, "BMI1", "Bit Manipulation Instructions 1"),
-                ("bmi2", IsaCategory::BitManip, "BMI2", "Bit Manipulation Instructions 2"),
-                ("popcnt", IsaCategory::BitManip, "POPCNT", "Population Count"),
-                ("lzcnt", IsaCategory::BitManip, "LZCNT", "Leading Zero Count"),
-                ("cx16", IsaCategory::Atomic, "CMPXCHG16B", "Compare and Exchange 16 bytes"),
-                ("tsx", IsaCategory::Memory, "TSX", "Transactional Synchronization Extensions"),
-                ("mpx", IsaCategory::Memory, "MPX", "Memory Protection Extensions"),
-                ("clflushopt", IsaCategory::Memory, "CLFLUSHOPT", "Optimized Cache Line Flush"),
+                (
+                    "sha_ni",
+                    IsaCategory::Crypto,
+                    "SHA-NI",
+                    "SHA New Instructions",
+                ),
+                (
+                    "pclmulqdq",
+                    IsaCategory::Crypto,
+                    "PCLMULQDQ",
+                    "Carry-Less Multiplication",
+                ),
+                (
+                    "rdrand",
+                    IsaCategory::Crypto,
+                    "RDRAND",
+                    "Hardware Random Number Generator",
+                ),
+                (
+                    "rdseed",
+                    IsaCategory::Crypto,
+                    "RDSEED",
+                    "Hardware Random Seed Generator",
+                ),
+                (
+                    "vmx",
+                    IsaCategory::Virtualization,
+                    "VMX",
+                    "Virtual Machine Extensions (VT-x)",
+                ),
+                (
+                    "svm",
+                    IsaCategory::Virtualization,
+                    "SVM",
+                    "Secure Virtual Machine (AMD-V)",
+                ),
+                (
+                    "sgx",
+                    IsaCategory::Security,
+                    "SGX",
+                    "Software Guard Extensions",
+                ),
+                (
+                    "sev",
+                    IsaCategory::Security,
+                    "SEV",
+                    "Secure Encrypted Virtualization",
+                ),
+                (
+                    "sme",
+                    IsaCategory::Security,
+                    "SME",
+                    "Secure Memory Encryption",
+                ),
+                (
+                    "fma",
+                    IsaCategory::FloatingPoint,
+                    "FMA3",
+                    "Fused Multiply-Add 3-operand",
+                ),
+                (
+                    "f16c",
+                    IsaCategory::FloatingPoint,
+                    "F16C",
+                    "Half-precision float conversion",
+                ),
+                (
+                    "bmi1",
+                    IsaCategory::BitManip,
+                    "BMI1",
+                    "Bit Manipulation Instructions 1",
+                ),
+                (
+                    "bmi2",
+                    IsaCategory::BitManip,
+                    "BMI2",
+                    "Bit Manipulation Instructions 2",
+                ),
+                (
+                    "popcnt",
+                    IsaCategory::BitManip,
+                    "POPCNT",
+                    "Population Count",
+                ),
+                (
+                    "lzcnt",
+                    IsaCategory::BitManip,
+                    "LZCNT",
+                    "Leading Zero Count",
+                ),
+                (
+                    "cx16",
+                    IsaCategory::Atomic,
+                    "CMPXCHG16B",
+                    "Compare and Exchange 16 bytes",
+                ),
+                (
+                    "tsx",
+                    IsaCategory::Memory,
+                    "TSX",
+                    "Transactional Synchronization Extensions",
+                ),
+                (
+                    "mpx",
+                    IsaCategory::Memory,
+                    "MPX",
+                    "Memory Protection Extensions",
+                ),
+                (
+                    "clflushopt",
+                    IsaCategory::Memory,
+                    "CLFLUSHOPT",
+                    "Optimized Cache Line Flush",
+                ),
                 ("clwb", IsaCategory::Memory, "CLWB", "Cache Line Write Back"),
             ];
 
@@ -495,17 +762,72 @@ impl CpuMicroarchMonitor {
             let aarch_exts = vec![
                 ("asimd", IsaCategory::Simd, "NEON/ASIMD", "Advanced SIMD"),
                 ("sve", IsaCategory::Simd, "SVE", "Scalable Vector Extension"),
-                ("sve2", IsaCategory::Simd, "SVE2", "Scalable Vector Extension 2"),
-                ("aes", IsaCategory::Crypto, "AES", "AES cryptographic instructions"),
-                ("sha1", IsaCategory::Crypto, "SHA-1", "SHA-1 cryptographic instructions"),
-                ("sha2", IsaCategory::Crypto, "SHA-2", "SHA-256 cryptographic instructions"),
-                ("sha3", IsaCategory::Crypto, "SHA-3", "SHA-3 cryptographic instructions"),
-                ("pmull", IsaCategory::Crypto, "PMULL", "Polynomial multiply long"),
-                ("atomics", IsaCategory::Atomic, "LSE Atomics", "Large System Extensions atomics"),
-                ("fphp", IsaCategory::FloatingPoint, "FP16", "Half-precision floating point"),
-                ("bf16", IsaCategory::MachineLearning, "BF16", "BFloat16 instructions"),
-                ("i8mm", IsaCategory::MachineLearning, "I8MM", "Int8 matrix multiply"),
-                ("dotprod", IsaCategory::MachineLearning, "DotProd", "Dot product instructions"),
+                (
+                    "sve2",
+                    IsaCategory::Simd,
+                    "SVE2",
+                    "Scalable Vector Extension 2",
+                ),
+                (
+                    "aes",
+                    IsaCategory::Crypto,
+                    "AES",
+                    "AES cryptographic instructions",
+                ),
+                (
+                    "sha1",
+                    IsaCategory::Crypto,
+                    "SHA-1",
+                    "SHA-1 cryptographic instructions",
+                ),
+                (
+                    "sha2",
+                    IsaCategory::Crypto,
+                    "SHA-2",
+                    "SHA-256 cryptographic instructions",
+                ),
+                (
+                    "sha3",
+                    IsaCategory::Crypto,
+                    "SHA-3",
+                    "SHA-3 cryptographic instructions",
+                ),
+                (
+                    "pmull",
+                    IsaCategory::Crypto,
+                    "PMULL",
+                    "Polynomial multiply long",
+                ),
+                (
+                    "atomics",
+                    IsaCategory::Atomic,
+                    "LSE Atomics",
+                    "Large System Extensions atomics",
+                ),
+                (
+                    "fphp",
+                    IsaCategory::FloatingPoint,
+                    "FP16",
+                    "Half-precision floating point",
+                ),
+                (
+                    "bf16",
+                    IsaCategory::MachineLearning,
+                    "BF16",
+                    "BFloat16 instructions",
+                ),
+                (
+                    "i8mm",
+                    IsaCategory::MachineLearning,
+                    "I8MM",
+                    "Int8 matrix multiply",
+                ),
+                (
+                    "dotprod",
+                    IsaCategory::MachineLearning,
+                    "DotProd",
+                    "Dot product instructions",
+                ),
             ];
 
             for (flag, cat, name, desc) in aarch_exts {
@@ -625,8 +947,7 @@ impl CpuMicroarchMonitor {
 
     #[cfg(target_os = "linux")]
     fn read_cpu_info() -> Result<(String, u32, u32, u32, Vec<String>, u32, u32), SimonError> {
-        let cpuinfo = std::fs::read_to_string("/proc/cpuinfo")
-            .map_err(|e| SimonError::Io(e))?;
+        let cpuinfo = std::fs::read_to_string("/proc/cpuinfo").map_err(|e| SimonError::Io(e))?;
 
         let mut model_name = String::new();
         let mut family = 0u32;
@@ -688,7 +1009,9 @@ impl CpuMicroarchMonitor {
 
         let model_name = val["Name"].as_str().unwrap_or("Unknown CPU").to_string();
         let cores = val["NumberOfCores"].as_u64().unwrap_or(1) as u32;
-        let threads = val["NumberOfLogicalProcessors"].as_u64().unwrap_or(cores as u64) as u32;
+        let threads = val["NumberOfLogicalProcessors"]
+            .as_u64()
+            .unwrap_or(cores as u64) as u32;
 
         // Windows doesn't easily expose CPUID family/model via WMI in the same format
         // Try registry for flags
@@ -708,11 +1031,13 @@ impl CpuMicroarchMonitor {
             let upper = id.to_uppercase();
             if upper.contains("INTEL") || upper.contains("AMD") {
                 // Modern x86_64 CPUs all have these
-                flags.extend([
-                    "sse", "sse2", "sse3", "ssse3", "sse4_1", "sse4_2", "popcnt", "cx16",
-                ]
-                .iter()
-                .map(|s| s.to_string()));
+                flags.extend(
+                    [
+                        "sse", "sse2", "sse3", "ssse3", "sse4_1", "sse4_2", "popcnt", "cx16",
+                    ]
+                    .iter()
+                    .map(|s| s.to_string()),
+                );
             }
         }
 
@@ -829,7 +1154,9 @@ mod tests {
     fn test_intel_raptor_lake() {
         let uarch = CpuMicroarchMonitor::identify_microarch(
             "13th Gen Intel(R) Core(TM) i9-13900K",
-            6, 0xB7, 1,
+            6,
+            0xB7,
+            1,
         );
         assert_eq!(uarch.name, "Raptor Lake");
         assert_eq!(uarch.vendor, CpuVendor::Intel);
@@ -841,7 +1168,9 @@ mod tests {
     fn test_amd_zen4() {
         let uarch = CpuMicroarchMonitor::identify_microarch(
             "AMD Ryzen 9 7950X 16-Core Processor",
-            25, 97, 2,
+            25,
+            97,
+            2,
         );
         assert_eq!(uarch.name, "Zen 4");
         assert_eq!(uarch.vendor, CpuVendor::AMD);
@@ -871,11 +1200,7 @@ mod tests {
             p_core_uarch: None,
             e_core_uarch: None,
         };
-        let perf = CpuMicroarchMonitor::infer_performance(
-            "AMD Ryzen 9 7950X",
-            &uarch,
-            16,
-        );
+        let perf = CpuMicroarchMonitor::infer_performance("AMD Ryzen 9 7950X", &uarch, 16);
         assert!(perf.single_thread_score >= 85);
         assert!(perf.relative_ipc >= 1.8);
         assert!(perf.estimated_tdp_watts > 100);

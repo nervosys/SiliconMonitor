@@ -203,10 +203,7 @@ impl StorageControllerMonitor {
     }
 
     /// Get controllers by interface type.
-    pub fn controllers_by_interface(
-        &self,
-        iface: StorageInterface,
-    ) -> Vec<&StorageControllerInfo> {
+    pub fn controllers_by_interface(&self, iface: StorageInterface) -> Vec<&StorageControllerInfo> {
         self.controllers
             .iter()
             .filter(|c| c.interface == iface)
@@ -448,10 +445,7 @@ impl StorageControllerMonitor {
         let device_link = base.join("device");
         std::fs::read_link(&device_link)
             .ok()
-            .and_then(|p| {
-                p.file_name()
-                    .map(|n| n.to_string_lossy().to_string())
-            })
+            .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
             .unwrap_or_default()
     }
 
@@ -578,15 +572,22 @@ impl StorageControllerMonitor {
                             let name = item["_name"].as_str().unwrap_or("NVMe").to_string();
                             let model = item["device_model"].as_str().unwrap_or("").to_string();
                             let serial = item["device_serial"].as_str().unwrap_or("").to_string();
-                            let firmware = item["device_revision"].as_str().unwrap_or("").to_string();
+                            let firmware =
+                                item["device_revision"].as_str().unwrap_or("").to_string();
 
                             let nvme_info = NvmeControllerInfo {
                                 name: format!("nvme{}", i),
                                 model: model.clone(),
                                 serial,
                                 firmware,
-                                pcie_speed: item["spnvme_linkspeed"].as_str().unwrap_or("").to_string(),
-                                pcie_width: item["spnvme_linkwidth"].as_str().unwrap_or("").to_string(),
+                                pcie_speed: item["spnvme_linkspeed"]
+                                    .as_str()
+                                    .unwrap_or("")
+                                    .to_string(),
+                                pcie_width: item["spnvme_linkwidth"]
+                                    .as_str()
+                                    .unwrap_or("")
+                                    .to_string(),
                                 namespace_count: 1,
                                 transport: "pcie".to_string(),
                             };

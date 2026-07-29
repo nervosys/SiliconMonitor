@@ -255,11 +255,9 @@ impl CgroupMonitor {
     #[cfg(target_os = "linux")]
     fn list_controllers(version: &CgroupVersion) -> Vec<String> {
         match version {
-            CgroupVersion::V2 => {
-                std::fs::read_to_string("/sys/fs/cgroup/cgroup.controllers")
-                    .map(|s| s.trim().split_whitespace().map(String::from).collect())
-                    .unwrap_or_default()
-            }
+            CgroupVersion::V2 => std::fs::read_to_string("/sys/fs/cgroup/cgroup.controllers")
+                .map(|s| s.trim().split_whitespace().map(String::from).collect())
+                .unwrap_or_default(),
             CgroupVersion::V1 => {
                 // List controller directories
                 std::fs::read_dir("/sys/fs/cgroup")
@@ -335,7 +333,10 @@ impl CgroupMonitor {
 
                     let friendly_name = if is_container {
                         // Try to extract container ID
-                        name.split('-').last().unwrap_or(&name).replace(".scope", "")
+                        name.split('-')
+                            .last()
+                            .unwrap_or(&name)
+                            .replace(".scope", "")
                     } else {
                         name.clone()
                     };
@@ -377,7 +378,10 @@ impl CgroupMonitor {
         let quota = if parts.first() == Some(&"max") {
             -1i64
         } else {
-            parts.first().and_then(|s| s.parse::<i64>().ok()).unwrap_or(-1)
+            parts
+                .first()
+                .and_then(|s| s.parse::<i64>().ok())
+                .unwrap_or(-1)
         };
         let period = parts
             .get(1)
@@ -583,7 +587,7 @@ mod tests {
     #[test]
     fn test_memory_usage_pct() {
         let mem = CgroupMemory {
-            usage_bytes: 500 * 1024 * 1024, // 500 MB
+            usage_bytes: 500 * 1024 * 1024,  // 500 MB
             limit_bytes: 1024 * 1024 * 1024, // 1 GB
             swap_usage_bytes: 0,
             swap_limit_bytes: u64::MAX,

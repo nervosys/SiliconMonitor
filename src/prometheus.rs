@@ -7,7 +7,7 @@
 //! # Examples
 //!
 //! ```no_run
-//! use simon::prometheus::{PrometheusExporter, MetricFamily};
+//! use simonlib::prometheus::{PrometheusExporter, MetricFamily};
 //!
 //! let mut exporter = PrometheusExporter::new("simon");
 //!
@@ -629,7 +629,10 @@ mod tests {
 
     #[test]
     fn test_sanitize_metric_name() {
-        assert_eq!(sanitize_metric_name("cpu.usage-percent"), "cpu_usage_percent");
+        assert_eq!(
+            sanitize_metric_name("cpu.usage-percent"),
+            "cpu_usage_percent"
+        );
         assert_eq!(sanitize_metric_name("valid_name"), "valid_name");
     }
 

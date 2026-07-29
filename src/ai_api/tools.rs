@@ -2595,7 +2595,9 @@ impl AiDataApi {
                 } else if let Some(f) = n.as_f64() {
                     crate::profile::SettingValue::Float(f)
                 } else {
-                    return Err(SimonError::InvalidArgument("unsupported numeric value".into()));
+                    return Err(SimonError::InvalidArgument(
+                        "unsupported numeric value".into(),
+                    ));
                 }
             }
             Some(serde_json::Value::String(s)) => crate::profile::SettingValue::Text(s.clone()),
@@ -2621,10 +2623,7 @@ impl AiDataApi {
         let mut response = serde_json::to_value(&outcome)?;
         if confirm && !agent_allowed {
             if let Some(obj) = response.as_object_mut() {
-                obj.insert(
-                    "agent_write_blocked".to_string(),
-                    json!(true),
-                );
+                obj.insert("agent_write_blocked".to_string(), json!(true));
                 obj.insert(
                     "agent_write_message".to_string(),
                     json!("Agent write was suppressed because SIMON_ALLOW_AGENT_WRITES is not set to 1. Operator must enable this env-var to allow MCP tools to mutate hardware state."),

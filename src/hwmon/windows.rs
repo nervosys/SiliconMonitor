@@ -280,8 +280,17 @@ pub fn read_all_nvidia_sensors() -> Vec<HwSensor> {
 // this functionality is limited. Consider using LibreHardwareMonitor's WMI
 // interface when available, or implement a minimal kernel driver.
 
-/// Placeholder for Super I/O chip reading
-/// Returns empty on Windows without proper driver support
+/// Super I/O chip sensors — always empty on Windows.
+///
+/// This is a hard platform limitation, not an unimplemented stub. Reading a Super
+/// I/O chip means direct I/O port access (0x2E/0x2F, 0x4E/0x4F), which user-mode
+/// code cannot perform on Windows. Tools that manage it ship a signed kernel driver
+/// for the purpose — LibreHardwareMonitor bundles WinRing0.sys.
+///
+/// Shipping such a driver is out of scope: it is a well-known privilege-escalation
+/// vector, and loading one would give simon far more kernel authority than a monitor
+/// warrants. Use [`read_wmi_temperatures`] for what Windows does expose, or run
+/// LibreHardwareMonitor alongside and read its WMI namespace.
 pub fn read_superio_sensors() -> Vec<HwSensor> {
     // Without a kernel driver, we cannot read Super I/O chips
     // LibreHardwareMonitor bundles WinRing0.sys for this purpose

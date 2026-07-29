@@ -1425,6 +1425,10 @@ mod tests {
         let api = ObservabilityApi::new(config);
         // Should create successfully with empty config
         let checker = api.permission_checker();
-        assert!(checker.read().unwrap().rate_limit_status("nonexistent").is_none());
+        assert!(checker
+            .read()
+            .unwrap()
+            .rate_limit_status("nonexistent")
+            .is_none());
     }
 }

@@ -8,8 +8,8 @@
 //! - **Linux**: `/sys/class/watchdog/`, `/dev/watchdog*`
 //! - **Windows / macOS**: Basic detection only
 
-use serde::{Deserialize, Serialize};
 use crate::error::SimonError;
+use serde::{Deserialize, Serialize};
 
 /// Watchdog device type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -163,7 +163,8 @@ impl WatchdogMonitor {
             let path = entry.path();
             let name = entry.file_name().to_string_lossy().to_string();
 
-            let identity = Self::read_sysfs(&path.join("identity")).unwrap_or_else(|| "unknown".into());
+            let identity =
+                Self::read_sysfs(&path.join("identity")).unwrap_or_else(|| "unknown".into());
 
             let watchdog_type = if identity.contains("soft") || identity.contains("Soft") {
                 WatchdogType::Software
@@ -179,16 +180,18 @@ impl WatchdogMonitor {
             let max_timeout_secs = Self::read_sysfs_u32(&path.join("max_timeout")).unwrap_or(0);
             let firmware_version = Self::read_sysfs_u32(&path.join("fw_version")).unwrap_or(0);
 
-            let pretimeout_governor = match Self::read_sysfs(&path.join("pretimeout_governor")).as_deref() {
-                Some("noop") => PreTimeoutGovernor::Noop,
-                Some("panic") => PreTimeoutGovernor::Panic,
-                Some("") | None => PreTimeoutGovernor::None,
-                Some(other) => PreTimeoutGovernor::Custom(other.to_string()),
-            };
+            let pretimeout_governor =
+                match Self::read_sysfs(&path.join("pretimeout_governor")).as_deref() {
+                    Some("noop") => PreTimeoutGovernor::Noop,
+                    Some("panic") => PreTimeoutGovernor::Panic,
+                    Some("") | None => PreTimeoutGovernor::None,
+                    Some(other) => PreTimeoutGovernor::Custom(other.to_string()),
+                };
 
-            let available_governors = Self::read_sysfs(&path.join("pretimeout_available_governors"))
-                .map(|s| s.split_whitespace().map(String::from).collect())
-                .unwrap_or_default();
+            let available_governors =
+                Self::read_sysfs(&path.join("pretimeout_available_governors"))
+                    .map(|s| s.split_whitespace().map(String::from).collect())
+                    .unwrap_or_default();
 
             // Status from state file
             let state_str = Self::read_sysfs(&path.join("state")).unwrap_or_default();
@@ -222,7 +225,10 @@ impl WatchdogMonitor {
 
         let total = devices.len() as u32;
         let active = devices.iter().filter(|d| d.status.active).count() as u32;
-        let hw = devices.iter().filter(|d| d.watchdog_type == WatchdogType::Hardware).count() as u32;
+        let hw = devices
+            .iter()
+            .filter(|d| d.watchdog_type == WatchdogType::Hardware)
+            .count() as u32;
 
         let mut recs = Vec::new();
         if hw == 0 && total > 0 {
@@ -230,7 +236,10 @@ impl WatchdogMonitor {
         }
         for dev in &devices {
             if dev.status.boot_triggered {
-                recs.push(format!("{}: watchdog-triggered reboot detected in boot status", dev.name));
+                recs.push(format!(
+                    "{}: watchdog-triggered reboot detected in boot status",
+                    dev.name
+                ));
             }
         }
 
@@ -245,7 +254,9 @@ impl WatchdogMonitor {
 
     #[cfg(target_os = "linux")]
     fn read_sysfs(path: &std::path::Path) -> Option<String> {
-        std::fs::read_to_string(path).ok().map(|s| s.trim().to_string())
+        std::fs::read_to_string(path)
+            .ok()
+            .map(|s| s.trim().to_string())
     }
 
     #[cfg(target_os = "linux")]
@@ -308,7 +319,11 @@ mod tests {
             min_timeout_secs: 2,
             max_timeout_secs: 614,
             firmware_version: 0,
-            status: WatchdogStatus { active: false, triggered: false, boot_triggered: false },
+            status: WatchdogStatus {
+                active: false,
+                triggered: false,
+                boot_triggered: false,
+            },
             available_governors: Vec::new(),
         };
         assert!(info.is_default_timeout());
@@ -332,7 +347,11 @@ mod tests {
             min_timeout_secs: 1,
             max_timeout_secs: 65535,
             firmware_version: 0,
-            status: WatchdogStatus { active: true, triggered: false, boot_triggered: false },
+            status: WatchdogStatus {
+                active: true,
+                triggered: false,
+                boot_triggered: false,
+            },
             available_governors: vec!["noop".into(), "panic".into()],
         };
         let json = serde_json::to_string(&info).unwrap();

@@ -13,7 +13,7 @@
 //! ## Ping a Host
 //!
 //! ```no_run
-//! use simon::network_tools::{ping, PingResult};
+//! use simonlib::network_tools::{ping, PingResult};
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! let result = ping("8.8.8.8", 4)?;
@@ -30,12 +30,12 @@
 //! ## Traceroute to Host
 //!
 //! ```no_run
-//! use simon::network_tools::{traceroute, TracerouteHop};
+//! use simonlib::network_tools::traceroute;
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! let hops = traceroute("google.com", 30)?;
-//! for hop in hops {
-//!     if let Some(addr) = hop.address {
+//! let result = traceroute("google.com", 30)?;
+//! for hop in &result.hops {
+//!     if let Some(addr) = &hop.address {
 //!         println!("{:>2}  {:15}  {:.2} ms", hop.ttl, addr, hop.rtt_ms.unwrap_or(0.0));
 //!     } else {
 //!         println!("{:>2}  *", hop.ttl);
@@ -48,12 +48,12 @@
 //! ## Scan Ports
 //!
 //! ```no_run
-//! use simon::network_tools::{scan_ports, PortStatus};
+//! use simonlib::network_tools::scan_ports;
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! let results = scan_ports("192.168.1.1", &[22, 80, 443, 8080])?;
-//! for (port, status) in results {
-//!     println!("Port {}: {:?}", port, status);
+//! for result in results {
+//!     println!("Port {}: {:?}", result.port, result.status);
 //! }
 //! # Ok(())
 //! # }
@@ -62,7 +62,7 @@
 //! ## Packet Capture (tcpdump-style)
 //!
 //! ```no_run
-//! use simon::network_tools::{capture_packets, CaptureConfig, CaptureProtocol};
+//! use simonlib::network_tools::{capture_packets, CaptureConfig, CaptureProtocol};
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! let config = CaptureConfig {
@@ -645,12 +645,12 @@ pub fn common_ports() -> Vec<u16> {
 ///
 /// # Example
 /// ```no_run
-/// use simon::network_tools::parallel_scan;
+/// use simonlib::network_tools::parallel_scan;
 /// use std::time::Duration;
 ///
 /// let results = parallel_scan("192.168.1.1", &[22, 80, 443, 8080], Duration::from_secs(1), 50).unwrap();
 /// for result in results {
-///     if result.status == simon::network_tools::PortStatus::Open {
+///     if result.status == simonlib::network_tools::PortStatus::Open {
 ///         println!("Port {} is open ({})", result.port, result.service.unwrap_or_default());
 ///     }
 /// }
@@ -1566,7 +1566,7 @@ fn build_capture_filter(config: &CaptureConfig) -> String {
 ///
 /// # Example
 /// ```no_run
-/// use simon::network_tools::{capture_packets, CaptureConfig, CaptureProtocol};
+/// use simonlib::network_tools::{capture_packets, CaptureConfig, CaptureProtocol};
 ///
 /// let config = CaptureConfig {
 ///     protocol: CaptureProtocol::Tcp,

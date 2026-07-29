@@ -157,8 +157,8 @@ impl RaplMonitor {
                         self.peak_watts = snap.total_package_watts;
                     }
                     self.sample_count += 1;
-                    self.avg_watts += (snap.total_package_watts - self.avg_watts)
-                        / self.sample_count as f64;
+                    self.avg_watts +=
+                        (snap.total_package_watts - self.avg_watts) / self.sample_count as f64;
                 }
             }
         }
@@ -237,7 +237,10 @@ impl RaplMonitor {
 
         for c in curr {
             // Find matching previous reading
-            if let Some(p) = prev.iter().find(|p| p.name == c.name && p.socket == c.socket) {
+            if let Some(p) = prev
+                .iter()
+                .find(|p| p.name == c.name && p.socket == c.socket)
+            {
                 let delta = if c.energy_uj >= p.energy_uj {
                     c.energy_uj - p.energy_uj
                 } else {
@@ -336,10 +339,9 @@ impl RaplMonitor {
             .unwrap_or(true);
 
         // Try to read power limit
-        let power_limit_uw =
-            std::fs::read_to_string(path.join("constraint_0_power_limit_uw"))
-                .ok()
-                .and_then(|s| s.trim().parse::<u64>().ok());
+        let power_limit_uw = std::fs::read_to_string(path.join("constraint_0_power_limit_uw"))
+            .ok()
+            .and_then(|s| s.trim().parse::<u64>().ok());
 
         let domain = match name.as_str() {
             "package-0" | "package-1" | "package-2" | "package-3" => PowerDomain::Package,

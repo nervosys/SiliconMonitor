@@ -4,7 +4,9 @@
 //!
 //! Run: cargo run --release --example power_supply
 
-use simonlib::{BatteryHealth, ChargingStatus, PowerSupplyInfo, PowerSupplyMonitor, PowerSupplyType};
+use simonlib::{
+    BatteryHealth, ChargingStatus, PowerSupplyInfo, PowerSupplyMonitor, PowerSupplyType,
+};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("╔════════════════════════════════════════════════════════════════════╗");

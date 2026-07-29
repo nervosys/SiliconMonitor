@@ -21,8 +21,15 @@ fn bench_process_classify(c: &mut Criterion) {
     use simonlib::process_monitor::ProcessCategory;
 
     let names = [
-        "chrome", "python3", "nvidiagpud", "systemd", "vlc", "code", "postgres",
-        "steam", "unknown_app",
+        "chrome",
+        "python3",
+        "nvidiagpud",
+        "systemd",
+        "vlc",
+        "code",
+        "postgres",
+        "steam",
+        "unknown_app",
     ];
 
     c.bench_function("process_classify", |b| {

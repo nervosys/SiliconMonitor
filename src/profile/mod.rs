@@ -25,7 +25,7 @@
 //! ## Example
 //!
 //! ```no_run
-//! use simon::profile::{ProfileInspector, Subsystem};
+//! use simonlib::profile::{ProfileInspector, Subsystem};
 //!
 //! let mut inspector = ProfileInspector::new();
 //! let snapshot = inspector.snapshot_all();

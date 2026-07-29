@@ -5,6 +5,100 @@ All notable changes to Silicon Monitor will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] - 2026-07-29
+
+### Added — Lock-free snapshot pipeline
+
+Hardware collection moved off the render thread entirely. A dedicated collector
+thread owns every hardware handle and publishes immutable snapshots into an
+`ArcSwap` slot; UI threads do a lock-free atomic load and never touch a driver.
+
+- Independent collectors run **concurrently** within a tick, so tick cost is the
+  slowest single collector rather than the sum of all of them.
+- A **warm-up snapshot** is published from the collectors needing no driver setup
+  (CPU, memory, system stats, disks), so first data no longer waits on GPU
+  enumeration.
+- `Snapshot` carries per-collector timings, making collection cost observable
+  rather than guessed at.
+
+Measured on a 3-GPU Windows host:
+
+| | Before | After |
+|---|---|---|
+| Collection tick | 1184 ms serial | 338 ms concurrent |
+| Process collector | 685 ms | 186 ms |
+| GPU collector | 775 ms | 337 ms |
+| Cold start (first data) | 8–12 s | ~192 ms |
+| Frame data access | blocking driver call | 19 ns |
+
+TUI, GUI and `simon record` all read from the pipeline. TUI and GUI now repaint only
+when a new snapshot arrives instead of on a fixed tick.
+
+### Added — IronWorks as the built-in inference engine
+
+[IronWorks](https://github.com/nervosys/ironworks) is now the default backend and the
+only engine simon ships against, reached over its OpenAI-compatible server. Every
+other backend is an external provider (`BackendType::is_builtin_engine`).
+
+### Added — CLI AI providers
+
+`ollama`, `claude`, `codex` and `gemini` can be driven as subprocesses, detected on
+`PATH`. No API key needed, since the tool is already authenticated.
+
+`BackendType::runs_on_host` distinguishes local *inference* from a local *process*:
+only `ollama` runs the model on your machine; the others relay prompts to their
+vendor. Backend selection prefers on-host inference.
+
+### Fixed — data that was fabricated or silently incomplete
+
+- **Windows per-core CPU was the system average replicated.** `read_cpu_stats` used
+  `GetSystemTimes` (system-wide) and assigned the identical value to every core, so
+  a 24-core machine drew 24 identical bars that looked measured. Now uses real
+  per-processor data via `NtQuerySystemInformation`.
+- **Unelevated process listings omitted every SYSTEM process.** Processes whose
+  `OpenProcess` failed were dropped entirely, and the plausible count hid it. They
+  now emit a reduced row from the Toolhelp snapshot (315 → 439 processes observed).
+- **The TUI invented memory readings** — a hardcoded 32 GB/16 GB fallback rendered
+  identically to measured values.
+- **Windows fan RPM was hardcoded to 1000** whenever `ActiveCooling` was true.
+- **The GUI network chart plotted `(cumulative_bytes / 1MB) % 10000`** — a sawtooth
+  of a running total, labelled as throughput. Now plots actual MB/s.
+- **`simon record` sampled at the wrong rate.** It slept the full interval on top of
+  ~1.2 s collection, so `--interval 1` recorded every ~2.2 s and every derived rate
+  was wrong by that ratio.
+- **macOS audio never classified any device as Input** (`has_output || true` made the
+  flag dead).
+- **vLLM requests all 404'd** — its default endpoint lacked `/v1` while discovery
+  probed a different path, so it reported available but never worked.
+- **GPU snapshots short-circuited on the first error**, blanking all devices when one
+  failed. Now index-preserving, so a failing device keeps its slot.
+- **llama.cpp was never discovered** despite being implemented; availability was
+  hardcoded to `false`.
+
+### Fixed — documentation that contradicted the code
+
+- All 53 doc tests were failing (`use simon::` vs the actual crate name `simonlib`),
+  plus six examples that had drifted from their APIs. All 70 now pass.
+- The agent module documented four "Design Principles" that were each false: it
+  claimed to run in a separate thread (no thread is ever spawned), to offer
+  100M/500M/1B models (none are loaded), to keep all processing local (a backend is
+  required, and hosted ones transmit telemetry), and to be consent-aware (no code
+  path touches the consent module).
+- `ask_with_timeout` ignores its timeout argument; this is now documented rather
+  than implied otherwise.
+- The README and `docs/AI_AGENT.md` described a rule-based offline fallback engine
+  that does not exist, and linked to a missing `LOCAL_AI_BACKENDS.md`.
+
+### Changed
+
+- `GpuCollection::snapshot_all` queries devices concurrently; added
+  `snapshot_all_partial` for index-preserving partial results.
+- New `platform::windows::logical_drives` replaces a 26-letter `fs::metadata` probe
+  that blocked on disconnected network drives.
+- Process enumeration memoizes per-PID usernames on `(pid, creation_time)` and
+  requests only `PROCESS_QUERY_LIMITED_INFORMATION`.
+- Repository formatted with `cargo fmt --all`; `cargo fmt --check` had been failing.
+
 ## [1.4.0] - 2026-05-14
 
 ### Added — Hardware Profile Inspector (NVPI / XTU / Ryzen Master / nvme-cli)

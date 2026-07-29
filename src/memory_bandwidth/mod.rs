@@ -40,7 +40,7 @@ impl MemoryGeneration {
             Self::DDR3 | Self::DDR4 | Self::DDR5 => 64,
             Self::LPDDR4 | Self::LPDDR4X => 32, // per channel
             Self::LPDDR5 | Self::LPDDR5X => 32,
-            Self::HBM2 => 128,  // per channel, 8 channels per stack
+            Self::HBM2 => 128, // per channel, 8 channels per stack
             Self::HBM2E => 128,
             Self::HBM3 => 128,
             Self::HBM3E => 128,
@@ -263,8 +263,7 @@ impl MemoryBandwidthMonitor {
         }
 
         if generation == MemoryGeneration::DDR4 {
-            recommendations
-                .push("DDR5 upgrade could provide ~40-75% more bandwidth".into());
+            recommendations.push("DDR5 upgrade could provide ~40-75% more bandwidth".into());
         }
 
         Ok(BandwidthAnalysis {
@@ -335,10 +334,11 @@ impl MemoryBandwidthMonitor {
             }
 
             if trimmed.starts_with("Speed:") {
-                if let Some(speed_str) = trimmed
-                    .strip_prefix("Speed:")
-                    .and_then(|s| s.trim().strip_suffix("MT/s").or_else(|| s.trim().strip_suffix("MHz")))
-                {
+                if let Some(speed_str) = trimmed.strip_prefix("Speed:").and_then(|s| {
+                    s.trim()
+                        .strip_suffix("MT/s")
+                        .or_else(|| s.trim().strip_suffix("MHz"))
+                }) {
                     if let Ok(speed) = speed_str.trim().parse::<u32>() {
                         if speed > max_speed {
                             max_speed = speed;
@@ -359,7 +359,8 @@ impl MemoryBandwidthMonitor {
             max_speed = generation.typical_speed_mts();
         }
 
-        let (active_channels, max_channels) = Self::infer_channels(populated_count, total_slots, &generation);
+        let (active_channels, max_channels) =
+            Self::infer_channels(populated_count, total_slots, &generation);
 
         Ok((
             generation,
@@ -442,7 +443,12 @@ impl MemoryBandwidthMonitor {
 
         let _total_bytes = output
             .ok()
-            .and_then(|o| String::from_utf8_lossy(&o.stdout).trim().parse::<u64>().ok())
+            .and_then(|o| {
+                String::from_utf8_lossy(&o.stdout)
+                    .trim()
+                    .parse::<u64>()
+                    .ok()
+            })
             .unwrap_or(0);
 
         // Detect Apple Silicon
@@ -509,11 +515,7 @@ impl MemoryBandwidthMonitor {
             total_slots.max(1)
         };
 
-        let active = if populated > 0 {
-            populated.min(max)
-        } else {
-            1
-        };
+        let active = if populated > 0 { populated.min(max) } else { 1 };
 
         (active, max)
     }
@@ -543,11 +545,7 @@ impl MemoryBandwidthMonitor {
         let entries = std::fs::read_dir(imc_path).ok()?;
         let has_imc = entries
             .filter_map(|e| e.ok())
-            .any(|e| {
-                e.file_name()
-                    .to_string_lossy()
-                    .starts_with("uncore_imc")
-            });
+            .any(|e| e.file_name().to_string_lossy().starts_with("uncore_imc"));
 
         if has_imc {
             // IMC counters found but would need perf_event_open() to read
@@ -604,22 +602,14 @@ mod tests {
     #[test]
     fn test_peak_bandwidth_ddr4() {
         // DDR4-3200 dual channel: 3200 × 8 × 2 / 1000 = 51.2 GB/s
-        let bw = MemoryBandwidthMonitor::compute_peak_bandwidth(
-            3200,
-            2,
-            &MemoryGeneration::DDR4,
-        );
+        let bw = MemoryBandwidthMonitor::compute_peak_bandwidth(3200, 2, &MemoryGeneration::DDR4);
         assert!((bw - 51.2).abs() < 0.1);
     }
 
     #[test]
     fn test_peak_bandwidth_ddr5() {
         // DDR5-5600 dual channel: 5600 × 8 × 2 / 1000 = 89.6 GB/s
-        let bw = MemoryBandwidthMonitor::compute_peak_bandwidth(
-            5600,
-            2,
-            &MemoryGeneration::DDR5,
-        );
+        let bw = MemoryBandwidthMonitor::compute_peak_bandwidth(5600, 2, &MemoryGeneration::DDR5);
         assert!((bw - 89.6).abs() < 0.1);
     }
 

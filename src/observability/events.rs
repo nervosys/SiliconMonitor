@@ -168,11 +168,7 @@ impl SystemEvent {
     }
 
     /// Add previous/current values for change events
-    pub fn with_change(
-        mut self,
-        previous: impl Serialize,
-        current: impl Serialize,
-    ) -> Self {
+    pub fn with_change(mut self, previous: impl Serialize, current: impl Serialize) -> Self {
         self.previous_value = serde_json::to_value(previous).ok();
         self.current_value = serde_json::to_value(current).ok();
         self
@@ -185,7 +181,13 @@ impl SystemEvent {
 
     /// Create a warning event
     pub fn warning(category: EventCategory, event_type: &str, message: &str, source: &str) -> Self {
-        Self::new(category, EventSeverity::Warning, event_type, message, source)
+        Self::new(
+            category,
+            EventSeverity::Warning,
+            event_type,
+            message,
+            source,
+        )
     }
 
     /// Create an error event
@@ -194,8 +196,19 @@ impl SystemEvent {
     }
 
     /// Create a critical event
-    pub fn critical(category: EventCategory, event_type: &str, message: &str, source: &str) -> Self {
-        Self::new(category, EventSeverity::Critical, event_type, message, source)
+    pub fn critical(
+        category: EventCategory,
+        event_type: &str,
+        message: &str,
+        source: &str,
+    ) -> Self {
+        Self::new(
+            category,
+            EventSeverity::Critical,
+            event_type,
+            message,
+            source,
+        )
     }
 }
 
@@ -441,7 +454,11 @@ impl EventManager {
     }
 
     /// Get recent events
-    pub fn get_events(&self, filter: Option<&EventFilter>, limit: Option<usize>) -> Vec<SystemEvent> {
+    pub fn get_events(
+        &self,
+        filter: Option<&EventFilter>,
+        limit: Option<usize>,
+    ) -> Vec<SystemEvent> {
         if let Ok(events) = self.events.read() {
             let filtered: Vec<_> = events
                 .iter()
@@ -487,11 +504,7 @@ impl EventManager {
     /// Get unacknowledged events
     pub fn get_unacknowledged(&self) -> Vec<SystemEvent> {
         if let Ok(events) = self.events.read() {
-            events
-                .iter()
-                .filter(|e| !e.acknowledged)
-                .cloned()
-                .collect()
+            events.iter().filter(|e| !e.acknowledged).cloned().collect()
         } else {
             Vec::new()
         }
@@ -623,7 +636,10 @@ impl AlertChecker {
                         SystemEvent::warning(
                             EventCategory::Temperature,
                             event_types::cpu::HIGH_TEMPERATURE,
-                            &format!("CPU temperature at {:.1}°C (threshold: {:.1}°C)", temp, threshold),
+                            &format!(
+                                "CPU temperature at {:.1}°C (threshold: {:.1}°C)",
+                                temp, threshold
+                            ),
                             "cpu",
                         )
                         .with_metadata("temperature_c", temp)
@@ -635,7 +651,13 @@ impl AlertChecker {
     }
 
     /// Check GPU metrics
-    pub fn check_gpu(&self, index: usize, usage: f32, memory_percent: f32, temperature: Option<f32>) {
+    pub fn check_gpu(
+        &self,
+        index: usize,
+        usage: f32,
+        memory_percent: f32,
+        temperature: Option<f32>,
+    ) {
         let source = format!("gpu:{}", index);
 
         if let Some(threshold) = self.thresholds.gpu_high_percent {
@@ -644,7 +666,10 @@ impl AlertChecker {
                     SystemEvent::warning(
                         EventCategory::Gpu,
                         event_types::gpu::HIGH_USAGE,
-                        &format!("GPU {} usage at {:.1}% (threshold: {:.1}%)", index, usage, threshold),
+                        &format!(
+                            "GPU {} usage at {:.1}% (threshold: {:.1}%)",
+                            index, usage, threshold
+                        ),
                         &source,
                     )
                     .with_metadata("usage_percent", usage)
@@ -673,7 +698,10 @@ impl AlertChecker {
                         SystemEvent::warning(
                             EventCategory::Temperature,
                             event_types::gpu::HIGH_TEMPERATURE,
-                            &format!("GPU {} temperature at {:.1}°C (threshold: {:.1}°C)", index, temp, threshold),
+                            &format!(
+                                "GPU {} temperature at {:.1}°C (threshold: {:.1}°C)",
+                                index, temp, threshold
+                            ),
                             &source,
                         )
                         .with_metadata("temperature_c", temp)
@@ -692,7 +720,10 @@ impl AlertChecker {
                     SystemEvent::warning(
                         EventCategory::Memory,
                         event_types::memory::HIGH_USAGE,
-                        &format!("Memory usage at {:.1}% (threshold: {:.1}%)", usage_percent, threshold),
+                        &format!(
+                            "Memory usage at {:.1}% (threshold: {:.1}%)",
+                            usage_percent, threshold
+                        ),
                         "memory",
                     )
                     .with_metadata("usage_percent", usage_percent)
@@ -723,7 +754,10 @@ impl AlertChecker {
                     SystemEvent::warning(
                         EventCategory::Disk,
                         event_types::disk::LOW_SPACE,
-                        &format!("Disk {} usage at {:.1}% (threshold: {:.1}%)", device, usage_percent, threshold),
+                        &format!(
+                            "Disk {} usage at {:.1}% (threshold: {:.1}%)",
+                            device, usage_percent, threshold
+                        ),
                         &format!("disk:{}", device),
                     )
                     .with_metadata("usage_percent", usage_percent)
@@ -744,19 +778,21 @@ impl AlertChecker {
                         EventSeverity::Warning
                     };
 
-                    self.event_manager.emit(SystemEvent::new(
-                        EventCategory::Power,
-                        severity,
-                        if percent < 10.0 {
-                            event_types::power::CRITICAL_BATTERY
-                        } else {
-                            event_types::power::LOW_BATTERY
-                        },
-                        &format!("Battery at {:.1}% (threshold: {:.1}%)", percent, threshold),
-                        "battery",
-                    )
-                    .with_metadata("battery_percent", percent)
-                    .with_metadata("threshold_percent", threshold));
+                    self.event_manager.emit(
+                        SystemEvent::new(
+                            EventCategory::Power,
+                            severity,
+                            if percent < 10.0 {
+                                event_types::power::CRITICAL_BATTERY
+                            } else {
+                                event_types::power::LOW_BATTERY
+                            },
+                            &format!("Battery at {:.1}% (threshold: {:.1}%)", percent, threshold),
+                            "battery",
+                        )
+                        .with_metadata("battery_percent", percent)
+                        .with_metadata("threshold_percent", threshold),
+                    );
                 }
             }
         }

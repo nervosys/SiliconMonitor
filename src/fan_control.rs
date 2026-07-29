@@ -10,7 +10,7 @@
 //! # Example
 //!
 //! ```no_run
-//! use simon::fan_control::{FanMonitor, FanProfile};
+//! use simonlib::fan_control::{FanMonitor, FanProfile};
 //!
 //! let monitor = FanMonitor::new().unwrap();
 //!
@@ -923,12 +923,16 @@ impl FanMonitor {
                     fan.fan_type = FanType::System;
                     fan.controllable = false; // WMI doesn't support control
 
-                    if let Some(active) = wmi_fan.active_cooling {
-                        if active {
-                            fan.rpm = Some(1000); // Placeholder - WMI doesn't give RPM
-                        }
-                    }
-
+                    // Win32_Fan exposes no tachometer reading, so `rpm` stays None.
+                    //
+                    // This previously reported a hardcoded 1000 RPM whenever
+                    // ActiveCooling was true. That is indistinguishable from a real
+                    // measurement on screen, and a fan pinned at exactly 1000 RPM
+                    // while temperatures climb is actively misleading. An unknown
+                    // speed is better represented as unknown.
+                    //
+                    // ActiveCooling only says the fan is participating in cooling,
+                    // which FanInfo has no field to express, so it is not recorded.
                     self.fans.push(fan);
                 }
             }

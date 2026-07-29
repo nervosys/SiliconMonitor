@@ -10,7 +10,9 @@ pub mod containers;
 pub mod detect;
 pub mod guest;
 
-pub use containers::{ContainerEngine, ContainerInfo, ContainerResources, K8sPodInfo, OrchestratorInfo};
+pub use containers::{
+    ContainerEngine, ContainerInfo, ContainerResources, K8sPodInfo, OrchestratorInfo,
+};
 pub use detect::{CpuVirtCapability, Hypervisor, HypervisorInfo, VirtPlatform};
 pub use guest::{BalloonInfo, GuestAgent, GuestResources, VirtCpuTopology, VirtDisk, VirtNic};
 
@@ -47,7 +49,9 @@ pub struct VirtMonitor {
 impl VirtMonitor {
     pub fn new() -> Result<Self, VirtError> {
         let platform = detect::detect_platform();
-        Ok(Self { _platform: platform })
+        Ok(Self {
+            _platform: platform,
+        })
     }
 
     /// Detect hypervisor if running in a VM

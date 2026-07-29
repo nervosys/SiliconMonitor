@@ -4,7 +4,7 @@
 //! It supports various power budgets with different CPU/GPU configurations.
 
 use super::verify_sudo_available;
-use crate::error::{SimonError, Result};
+use crate::error::{Result, SimonError};
 use std::process::Command;
 
 /// Power mode information
@@ -185,9 +185,7 @@ pub fn set_mode_by_name(mode_name: &str, force: bool) -> Result<()> {
         .modes
         .iter()
         .find(|m| m.name.eq_ignore_ascii_case(mode_name))
-        .ok_or_else(|| {
-            SimonError::InvalidValue(format!("Power mode '{}' not found", mode_name))
-        })?;
+        .ok_or_else(|| SimonError::InvalidValue(format!("Power mode '{}' not found", mode_name)))?;
 
     set_mode(mode.id, force)
 }

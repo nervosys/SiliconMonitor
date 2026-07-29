@@ -296,41 +296,34 @@ Cache: 3/100 entries
 
 ## Implementation Notes
 
-### Current Version
+### How inference works
 
-The current implementation uses a **rule-based inference engine** that provides:
-- ✅ Fast responses (10-50ms)
-- ✅ Zero model loading overhead
-- ✅ Deterministic behavior
-- ✅ Full offline operation
-- ✅ Pattern matching for query types
-- ✅ Template-based responses
+A question is parsed into a `Query` to classify intent, the relevant slice of system
+state is extracted, and both are sent to an inference backend which produces the
+answer. Responses are memoized in an LRU cache keyed on the normalized question.
 
-### Future: Real ML Models
+**A backend is required.** `Agent::new` fails with a configuration error when none is
+available — there is no rule-based or template engine to fall back on. Earlier
+revisions of this document described one; it does not exist in the code.
 
-The architecture supports integration with actual ML models:
+### Backends
 
-```rust
-// Future: Real model inference
-pub mod inference {
-    pub mod ggml;    // llama.cpp quantized models
-    pub mod onnx;    // ONNX Runtime
-    pub mod candle;  // Pure Rust ML
-}
-```
+- **IronWorks** — the built-in engine and the default, reached over its
+  OpenAI-compatible server.
+- **External servers** — Ollama, LM Studio, vLLM, TensorRT-LLM, llama.cpp.
+- **CLI tools** — `ollama`, `claude`, `codex`, `gemini`, driven as subprocesses.
+- **Remote APIs** — OpenAI, Anthropic, GitHub Models, Azure OpenAI.
 
-**Planned integrations**:
-- **GGML/llama.cpp**: Quantized LLM inference (Llama 2, Mistral, etc.)
-- **ONNX Runtime**: Cross-platform model execution
-- **candle**: Pure Rust ML inference
-- **burn**: Rust-native deep learning
+Selection prefers backends that infer on the host, so a hosted provider is chosen
+only when nothing local is running. Note that `claude`, `codex` and `gemini` are
+local *processes* but relay prompts to their vendor; `BackendType::runs_on_host`
+distinguishes the two.
 
-**Benefits of current rule-based system**:
-- No external dependencies (no Python, no CUDA)
-- Instant initialization (no model download/loading)
-- Predictable performance
-- Zero network access
-- Works on any platform
+### Threading
+
+`Agent::ask` runs inference on the calling thread and blocks — nothing in the agent
+module spawns a thread, and `ask_with_timeout` does not currently enforce its
+timeout. Call it from a thread you own, never from a render or event loop.
 
 ## Integration with Monitoring
 

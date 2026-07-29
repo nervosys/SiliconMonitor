@@ -13,7 +13,7 @@
 //! ## Basic Process Monitoring
 //!
 //! ```no_run
-//! use simon::{ProcessMonitor, GpuCollection};
+//! use simonlib::{ProcessMonitor, GpuCollection};
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! // Create monitor with GPU attribution
@@ -34,7 +34,7 @@
 //! ## Top GPU Consumers
 //!
 //! ```no_run
-//! use simon::{ProcessMonitor, GpuCollection};
+//! use simonlib::{ProcessMonitor, GpuCollection};
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! let gpus = GpuCollection::auto_detect()?;
@@ -58,7 +58,7 @@
 //! ## Top CPU Consumers
 //!
 //! ```no_run
-//! use simon::{ProcessMonitor, GpuCollection};
+//! use simonlib::{ProcessMonitor, GpuCollection};
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! let gpus = GpuCollection::auto_detect()?;
@@ -81,7 +81,7 @@
 //! ## Monitor Specific Process
 //!
 //! ```no_run
-//! use simon::{ProcessMonitor, GpuCollection};
+//! use simonlib::{ProcessMonitor, GpuCollection};
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! let gpus = GpuCollection::auto_detect()?;
@@ -1261,7 +1261,7 @@ impl ProcessMonitor {
     /// # Examples
     ///
     /// ```no_run
-    /// use simon::{ProcessMonitor, GpuCollection};
+    /// use simonlib::{ProcessMonitor, GpuCollection};
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// let gpus = GpuCollection::auto_detect()?;
@@ -1661,10 +1661,64 @@ mod windows_impl {
     use ::windows::Win32::System::Threading::{
         GetPriorityClass, GetProcessHandleCount, GetProcessIoCounters, GetProcessTimes,
         OpenProcess, OpenProcessToken, QueryFullProcessImageNameW, IO_COUNTERS,
-        PROCESS_QUERY_INFORMATION, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_VM_READ,
+        PROCESS_QUERY_LIMITED_INFORMATION,
     };
     use std::ffi::OsString;
     use std::os::windows::ffi::OsStringExt;
+    use std::sync::{Mutex, OnceLock};
+
+    /// Cache of per-process attributes that cannot change while a process lives.
+    ///
+    /// [`get_process_user`] performs `OpenProcess` + `OpenProcessToken` +
+    /// `GetTokenInformation` twice + `LookupAccountSidW`. The SID lookup is the
+    /// expensive part: it can round-trip to LSA, and on a domain-joined machine to a
+    /// domain controller. It was previously executed for every process on every
+    /// refresh, which dominated enumeration cost.
+    ///
+    /// The key includes the process creation time, so a recycled PID is treated as a
+    /// distinct process and can never inherit another process's username.
+    /// Keyed on (pid, creation_time); the value is the resolved username, or `None`
+    /// when the lookup failed for that process.
+    type UserCache = Mutex<HashMap<(u32, u64), Option<String>>>;
+
+    static PROCESS_USER_CACHE: OnceLock<UserCache> = OnceLock::new();
+
+    /// Upper bound on cached entries before the cache is dropped wholesale.
+    ///
+    /// Processes are created and destroyed constantly, so entries go stale by
+    /// accumulation rather than by mutation. Rather than tracking liveness, the cache
+    /// is simply bounded: the ceiling is far above any realistic process count, so in
+    /// practice a clear is rare and only costs one repopulating scan.
+    const PROCESS_USER_CACHE_CAP: usize = 4096;
+
+    /// Username for `pid`, memoized against the process creation time.
+    fn cached_process_user(pid: u32, creation_100ns: u64) -> Option<String> {
+        // A creation time of 0 means GetProcessTimes failed, so there is no stable key
+        // to memoize against. Fall through uncached rather than risk a wrong answer.
+        if creation_100ns == 0 {
+            return get_process_user(pid);
+        }
+
+        let cache = PROCESS_USER_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+        let key = (pid, creation_100ns);
+
+        if let Ok(map) = cache.lock() {
+            if let Some(hit) = map.get(&key) {
+                return hit.clone();
+            }
+        }
+
+        let user = get_process_user(pid);
+
+        if let Ok(mut map) = cache.lock() {
+            if map.len() >= PROCESS_USER_CACHE_CAP {
+                map.clear();
+            }
+            map.insert(key, user.clone());
+        }
+
+        user
+    }
 
     /// Get the username of a process by PID
     fn get_process_user(pid: u32) -> Option<String> {
@@ -1764,9 +1818,21 @@ mod windows_impl {
             loop {
                 let pid = entry.th32ProcessID;
 
-                // Try to open process for querying
-                let process_handle =
-                    OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, false, pid);
+                // Open with the narrowest right that still satisfies every query
+                // below. On Vista and later PROCESS_QUERY_LIMITED_INFORMATION is
+                // sufficient for GetProcessTimes, GetProcessMemoryInfo,
+                // GetProcessIoCounters, GetPriorityClass, GetProcessHandleCount and
+                // QueryFullProcessImageNameW.
+                //
+                // The previous PROCESS_QUERY_INFORMATION | PROCESS_VM_READ mask asked
+                // for strictly more than was needed. That is both slower to grant and
+                // outright denied for protected and elevated processes, so those
+                // processes were silently dropped from the listing entirely.
+                let process_handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
+
+                // Whether the full, handle-backed path produced a row. When it does
+                // not, a reduced row is emitted from the snapshot entry below.
+                let mut emitted = false;
 
                 if let Ok(handle) = process_handle {
                     if !handle.is_invalid() {
@@ -1843,64 +1909,67 @@ mod windows_impl {
                         let mut kernel_time = Default::default();
                         let mut user_time = Default::default();
 
-                        let (cpu_percent, start_time, cpu_time_us) = if GetProcessTimes(
-                            handle,
-                            &mut creation_time,
-                            &mut exit_time,
-                            &mut kernel_time,
-                            &mut user_time,
-                        )
-                        .is_ok()
-                        {
-                            // Convert FILETIME (100ns units)
-                            let kernel_100ns = (kernel_time.dwHighDateTime as u64) << 32
-                                | (kernel_time.dwLowDateTime as u64);
-                            let user_100ns = (user_time.dwHighDateTime as u64) << 32
-                                | (user_time.dwLowDateTime as u64);
+                        let (cpu_percent, start_time, cpu_time_us, creation_100ns) =
+                            if GetProcessTimes(
+                                handle,
+                                &mut creation_time,
+                                &mut exit_time,
+                                &mut kernel_time,
+                                &mut user_time,
+                            )
+                            .is_ok()
+                            {
+                                // Convert FILETIME (100ns units)
+                                let kernel_100ns = (kernel_time.dwHighDateTime as u64) << 32
+                                    | (kernel_time.dwLowDateTime as u64);
+                                let user_100ns = (user_time.dwHighDateTime as u64) << 32
+                                    | (user_time.dwLowDateTime as u64);
 
-                            // Cumulative CPU time in microseconds for delta-based calculation
-                            let cpu_us = (kernel_100ns + user_100ns) / 10;
+                                // Cumulative CPU time in microseconds for delta-based calculation
+                                let cpu_us = (kernel_100ns + user_100ns) / 10;
 
-                            // Convert creation_time FILETIME to Unix timestamp
-                            // FILETIME is 100ns intervals since Jan 1, 1601
-                            // Unix epoch is Jan 1, 1970 - difference is 116444736000000000 (100ns intervals)
-                            let creation_100ns = (creation_time.dwHighDateTime as u64) << 32
-                                | (creation_time.dwLowDateTime as u64);
-                            let unix_epoch_diff: u64 = 116444736000000000;
-                            let start_unix = if creation_100ns > unix_epoch_diff {
-                                Some((creation_100ns - unix_epoch_diff) / 10_000_000)
-                            } else {
-                                None
-                            };
+                                // Convert creation_time FILETIME to Unix timestamp
+                                // FILETIME is 100ns intervals since Jan 1, 1601
+                                // Unix epoch is Jan 1, 1970 - difference is 116444736000000000 (100ns intervals)
+                                let creation_100ns = (creation_time.dwHighDateTime as u64) << 32
+                                    | (creation_time.dwLowDateTime as u64);
+                                let unix_epoch_diff: u64 = 116444736000000000;
+                                let start_unix = if creation_100ns > unix_epoch_diff {
+                                    Some((creation_100ns - unix_epoch_diff) / 10_000_000)
+                                } else {
+                                    None
+                                };
 
-                            // Calculate CPU% as lifetime average (fallback for first delta sample)
-                            let total_cpu_secs = cpu_us as f64 / 1_000_000.0;
+                                // Calculate CPU% as lifetime average (fallback for first delta sample)
+                                let total_cpu_secs = cpu_us as f64 / 1_000_000.0;
 
-                            // Get current time as FILETIME for uptime calculation
-                            let now_ft =
+                                // Get current time as FILETIME for uptime calculation
+                                let now_ft =
                                 windows::Win32::System::SystemInformation::GetSystemTimeAsFileTime(
                                 );
-                            let now_100ns = (now_ft.dwHighDateTime as u64) << 32
-                                | (now_ft.dwLowDateTime as u64);
-                            let uptime_secs = if now_100ns > creation_100ns {
-                                (now_100ns - creation_100ns) as f64 / 10_000_000.0
+                                let now_100ns = (now_ft.dwHighDateTime as u64) << 32
+                                    | (now_ft.dwLowDateTime as u64);
+                                let uptime_secs = if now_100ns > creation_100ns {
+                                    (now_100ns - creation_100ns) as f64 / 10_000_000.0
+                                } else {
+                                    1.0
+                                };
+
+                                let pct = if uptime_secs > 0.0 {
+                                    ((total_cpu_secs / uptime_secs) * 100.0) as f32
+                                } else {
+                                    0.0
+                                };
+
+                                (pct, start_unix, cpu_us, creation_100ns)
                             } else {
-                                1.0
+                                (0.0, None, 0, 0)
                             };
 
-                            let pct = if uptime_secs > 0.0 {
-                                ((total_cpu_secs / uptime_secs) * 100.0) as f32
-                            } else {
-                                0.0
-                            };
-
-                            (pct, start_unix, cpu_us)
-                        } else {
-                            (0.0, None, 0)
-                        };
-
-                        // Get user
-                        let user = get_process_user(pid);
+                        // Get user (memoized against the process creation time — the
+                        // SID lookup underneath is the single most expensive call in
+                        // this loop).
+                        let user = cached_process_user(pid, creation_100ns);
 
                         // Classify the process
                         let category = ProcessCategory::classify(&name, user.as_deref(), false);
@@ -1939,7 +2008,64 @@ mod windows_impl {
                         });
 
                         let _ = CloseHandle(handle);
+                        emitted = true;
                     }
+                }
+
+                if !emitted {
+                    // The process could not be opened — almost always because it runs
+                    // as SYSTEM or is protected, and simon is not elevated.
+                    //
+                    // Previously such processes were skipped entirely, so an
+                    // unelevated run silently omitted every SYSTEM process (System,
+                    // smss, csrss, wininit, services, lsass, and most svchost
+                    // instances). The process count looked plausible, which made the
+                    // omission easy to miss.
+                    //
+                    // The Toolhelp snapshot entry needs no handle, so emit what is
+                    // genuinely known and leave the privileged metrics at zero rather
+                    // than dropping the row.
+                    let null_pos = entry
+                        .szExeFile
+                        .iter()
+                        .position(|&c| c == 0)
+                        .unwrap_or(entry.szExeFile.len());
+                    let name = String::from_utf16_lossy(&entry.szExeFile[..null_pos]);
+                    let category = ProcessCategory::classify(&name, None, false);
+
+                    processes.push(ProcessMonitorInfo {
+                        pid,
+                        name,
+                        // Unknown rather than a guess: attributing these to the current
+                        // user would be wrong, and they are usually SYSTEM.
+                        user: None,
+                        category,
+                        cpu_percent: 0.0,
+                        memory_bytes: 0,
+                        gpu_indices: Vec::new(),
+                        gpu_memory_per_device: HashMap::new(),
+                        total_gpu_memory_bytes: 0,
+                        state: 'R',
+                        priority: None,
+                        gfx_engine_used: None,
+                        compute_engine_used: None,
+                        enc_engine_used: None,
+                        dec_engine_used: None,
+                        gpu_usage_percent: None,
+                        encoder_usage_percent: None,
+                        decoder_usage_percent: None,
+                        gpu_process_type: ProcessGpuType::Unknown,
+                        gpu_memory_percentage: None,
+                        parent_pid: Some(entry.th32ParentProcessID),
+                        virtual_memory_bytes: 0,
+                        private_bytes: 0,
+                        thread_count: entry.cntThreads,
+                        handle_count: 0,
+                        io_read_bytes: 0,
+                        io_write_bytes: 0,
+                        start_time: None,
+                        cpu_time_us: 0,
+                    });
                 }
 
                 // Move to next process
@@ -2195,6 +2321,88 @@ mod macos {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Protected system processes must appear in the listing.
+    ///
+    /// `csrss.exe` and `wininit.exe` run as protected processes: `OpenProcess` with
+    /// `PROCESS_VM_READ` is denied for them even from an elevated context. The
+    /// enumeration loop only emits a process when the open succeeds, so requesting
+    /// that right silently dropped every protected process from the results.
+    /// Narrowing the mask to `PROCESS_QUERY_LIMITED_INFORMATION` both restores them
+    /// and removes the failed-open cost.
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn enumeration_includes_protected_system_processes() {
+        let mut monitor = match ProcessMonitor::new() {
+            Ok(m) => m,
+            Err(e) => {
+                eprintln!("skipping: ProcessMonitor unavailable: {e}");
+                return;
+            }
+        };
+
+        let processes = monitor.processes().expect("enumeration should succeed");
+        assert!(
+            processes.len() > 20,
+            "implausibly short process listing: {}",
+            processes.len()
+        );
+
+        let names: Vec<String> = processes.iter().map(|p| p.name.to_lowercase()).collect();
+        for protected in ["csrss.exe", "wininit.exe"] {
+            assert!(
+                names.iter().any(|n| n == protected),
+                "protected process {protected} missing; OpenProcess is requesting more \
+                 access than it needs. Present: {} processes",
+                processes.len()
+            );
+        }
+    }
+
+    /// The username memoization must not leak one process's identity to another.
+    ///
+    /// Windows recycles PIDs aggressively, so the cache is keyed on
+    /// (pid, creation_time) rather than pid alone.
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn repeated_enumeration_is_stable_and_consistent() {
+        let mut monitor = match ProcessMonitor::new() {
+            Ok(m) => m,
+            Err(e) => {
+                eprintln!("skipping: ProcessMonitor unavailable: {e}");
+                return;
+            }
+        };
+
+        let first = monitor.processes().expect("first enumeration");
+        let second = monitor
+            .processes()
+            .expect("second enumeration (cache warm)");
+
+        // The invariant under test is that a PID never reports one *identity* and
+        // then a different one — that would mean the memoization handed back another
+        // process's user.
+        //
+        // Some -> None is not that bug: it happens when a process becomes unopenable
+        // between scans (usually because it is exiting), and the reduced
+        // snapshot-only row legitimately carries no user. Only compare when both
+        // scans actually resolved a name.
+        let by_pid: HashMap<u32, Option<String>> =
+            first.iter().map(|p| (p.pid, p.user.clone())).collect();
+
+        for proc in &second {
+            let (Some(Some(previous)), Some(current)) = (by_pid.get(&proc.pid), proc.user.as_ref())
+            else {
+                continue;
+            };
+            assert_eq!(
+                previous, current,
+                "pid {} reported user {:?} then {:?}; the username cache returned \
+                 another process's identity",
+                proc.pid, previous, current
+            );
+        }
+    }
 
     fn make_test_process() -> ProcessMonitorInfo {
         ProcessMonitorInfo {

@@ -415,7 +415,10 @@ impl CryptoAccelMonitor {
         let mut score = 0u32;
 
         // AES-NI: 25 points
-        if features.iter().any(|f| f.cpu_flag == "aes" && f.hardware_accelerated) {
+        if features
+            .iter()
+            .any(|f| f.cpu_flag == "aes" && f.hardware_accelerated)
+        {
             score += 25;
         }
 
@@ -472,10 +475,7 @@ impl CryptoAccelMonitor {
         score.min(100)
     }
 
-    fn generate_recommendations(
-        features: &[CryptoFeature],
-        _rng: &[HardwareRng],
-    ) -> Vec<String> {
+    fn generate_recommendations(features: &[CryptoFeature], _rng: &[HardwareRng]) -> Vec<String> {
         let mut recs = Vec::new();
 
         if !features
@@ -527,7 +527,11 @@ impl CryptoAccelMonitor {
 
         // Try WMI for basic info
         let output = std::process::Command::new("powershell")
-            .args(["-NoProfile", "-Command", "Get-CimInstance Win32_Processor | Select-Object -ExpandProperty Caption"])
+            .args([
+                "-NoProfile",
+                "-Command",
+                "Get-CimInstance Win32_Processor | Select-Object -ExpandProperty Caption",
+            ])
             .output();
 
         if let Ok(out) = output {
@@ -624,7 +628,10 @@ mod tests {
 
     #[test]
     fn test_category_display() {
-        assert_eq!(CryptoCategory::SymmetricEncryption.to_string(), "Symmetric Encryption");
+        assert_eq!(
+            CryptoCategory::SymmetricEncryption.to_string(),
+            "Symmetric Encryption"
+        );
         assert_eq!(CryptoCategory::RandomNumberGen.to_string(), "RNG");
     }
 

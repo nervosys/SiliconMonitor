@@ -382,10 +382,7 @@ impl SiliconMonitor for AppleSiliconMonitor {
         let mut controllers = Vec::new();
 
         // Get disk I/O stats from iostat
-        if let Ok(output) = Command::new("iostat")
-            .args(&["-d", "-c", "1"])
-            .output()
-        {
+        if let Ok(output) = Command::new("iostat").args(&["-d", "-c", "1"]).output() {
             let text = String::from_utf8_lossy(&output.stdout);
             // iostat -d outputs: device, KB/t, tps, MB/s
             for line in text.lines().skip(2) {
@@ -394,7 +391,11 @@ impl SiliconMonitor for AppleSiliconMonitor {
                     let name = parts[0].to_string();
                     let mbps: f64 = parts[3].parse().unwrap_or(0.0);
                     controllers.push(IoController {
-                        controller_type: if name.starts_with("disk") { "NVMe".to_string() } else { "Storage".to_string() },
+                        controller_type: if name.starts_with("disk") {
+                            "NVMe".to_string()
+                        } else {
+                            "Storage".to_string()
+                        },
                         name,
                         bandwidth_mbps: mbps,
                         max_bandwidth_mbps: 7000.0, // Apple Silicon NVMe max ~7 GB/s
@@ -511,20 +512,36 @@ impl Drop for AppleSiliconMonitor {
 
 /// Classify macOS interface name to type
 fn classify_macos_interface(iface: &str) -> String {
-    if iface == "en0" { "WiFi".to_string() }
-    else if iface.starts_with("en") { "Ethernet".to_string() }
-    else if iface.starts_with("bridge") { "Bridge".to_string() }
-    else if iface.starts_with("awdl") { "AirDrop".to_string() }
-    else if iface.starts_with("utun") { "VPN Tunnel".to_string() }
-    else { iface.to_string() }
+    if iface == "en0" {
+        "WiFi".to_string()
+    } else if iface.starts_with("en") {
+        "Ethernet".to_string()
+    } else if iface.starts_with("bridge") {
+        "Bridge".to_string()
+    } else if iface.starts_with("awdl") {
+        "AirDrop".to_string()
+    } else if iface.starts_with("utun") {
+        "VPN Tunnel".to_string()
+    } else {
+        iface.to_string()
+    }
 }
 
 /// Estimate link speed for macOS interface
 fn estimate_link_speed(iface: &str) -> u32 {
-    if iface == "en0" { 1200 }      // WiFi 6 ~1.2 Gbps
-    else if iface.starts_with("en") { 1000 } // Gigabit Ethernet
-    else if iface.starts_with("bridge") { 1000 }
-    else { 100 }
+    if iface == "en0" {
+        1200
+    }
+    // WiFi 6 ~1.2 Gbps
+    else if iface.starts_with("en") {
+        1000
+    }
+    // Gigabit Ethernet
+    else if iface.starts_with("bridge") {
+        1000
+    } else {
+        100
+    }
 }
 
 #[cfg(test)]

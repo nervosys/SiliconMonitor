@@ -590,21 +590,36 @@ println!("{}", response.response);
 - **Natural Language**: Ask questions in plain English
 - **System Aware**: Accesses real-time hardware metrics
 - **Multiple Backends**: Automatic detection of local and remote AI models
-- **Privacy First**: Rule-based fallback when no backends configured
+- **Local by Default**: Prefers backends that keep telemetry on your machine
 - **Smart Caching**: Remembers recent queries for instant responses
 - **Interactive Mode**: Multi-turn conversations about your system
 
+> **A backend is required.** There is no offline fallback: the agent needs an
+> inference backend and reports an error if none is available. Start an IronWorks
+> server, install one of the CLI tools below, or configure an API key.
+
 ### Supported Backends
 
-The AI agent automatically detects and uses available backends in this order:
+**Built-in engine**:
 
-**Local Inference Backends** (✅ Implemented):
+- **[IronWorks](https://github.com/nervosys/ironworks)** — the default. Pure-Rust
+  inference engine, reached over its OpenAI-compatible server on `localhost:8080`.
+  This is the only engine simon ships against; everything below is an external
+  provider you install or sign in to separately.
+
+**External servers**:
 
 - **TensorRT-LLM** - NVIDIA optimized inference (requires Triton server)
 - **vLLM** - High-performance serving with PagedAttention
 - **Ollama** - Easy local model management (recommended for beginners)
 - **LM Studio** - User-friendly GUI for local models
-- **llama.cpp** - Direct GGUF model loading (placeholder, needs bindings)
+- **llama.cpp** - GGUF models via the `llama-cli` executable. Auto-detected on
+  `PATH`, but must be configured with a model path before use.
+
+**Command-line tools** (driven as subprocesses; no API key needed since the tool is
+already authenticated):
+
+- **`ollama`**, **`claude`**, **`codex`**, **`gemini`**
 
 **Remote API Backends**:
 
@@ -613,11 +628,15 @@ The AI agent automatically detects and uses available backends in this order:
 - **GitHub Models** - Free AI models (requires `GITHUB_TOKEN`)
 - **Azure OpenAI** - Enterprise OpenAI (requires `AZURE_OPENAI_API_KEY`)
 
-**Always Available**:
+#### Where your telemetry goes
 
-- **Rule-Based** - Built-in fallback system (no setup required)
+Selection prefers backends that infer on your machine, so a hosted provider is only
+chosen when nothing local is running.
 
-See [LOCAL_AI_BACKENDS.md](LOCAL_AI_BACKENDS.md) for detailed setup instructions.
+Note that a *local process* is not the same as *local inference*: of the CLI tools,
+only `ollama` runs the model on your hardware. `claude`, `codex` and `gemini` relay
+your prompt — including the system metrics embedded in it — to their vendor, exactly
+as the corresponding remote API would.
 
 ### Backend Configuration
 
@@ -625,15 +644,16 @@ See [LOCAL_AI_BACKENDS.md](LOCAL_AI_BACKENDS.md) for detailed setup instructions
 # List available backends
 amon --list-backends
 # [*] Available AI Backends:
-# 1. Rule-Based (Built-in)
+# 1. IronWorks (Built-in Engine) [+] running on localhost:8080
 # 2. Ollama (Local Server) [+] running
-# 3. GitHub Models
+# 3. Claude CLI [+] found on PATH
+# 4. GitHub Models
 #    API Key: GITHUB_TOKEN [+] configured
 #    Endpoint: https://models.inference.ai.azure.com
 
 # Automatic backend detection (default)
 amon query "What's my GPU temperature?"
-# [*] Using backend: Ollama
+# [*] Using backend: IronWorks
 # Question: What's my GPU temperature?
 # ...
 

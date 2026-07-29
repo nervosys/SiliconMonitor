@@ -18,7 +18,7 @@
 //! ### GPU Monitoring
 //!
 //! ```no_run
-//! use simon::gpu::GpuCollection;
+//! use simonlib::gpu::GpuCollection;
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! // Auto-detect all available GPUs
@@ -50,7 +50,7 @@
 //! ### Process Monitoring with GPU Attribution
 //!
 //! ```no_run
-//! use simon::{ProcessMonitor, GpuCollection};
+//! use simonlib::{ProcessMonitor, GpuCollection};
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! let gpus = GpuCollection::auto_detect()?;
@@ -72,7 +72,7 @@
 //! ### Network Monitoring
 //!
 //! ```no_run
-//! use simon::NetworkMonitor;
+//! use simonlib::NetworkMonitor;
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! let mut monitor = NetworkMonitor::new()?;
@@ -96,7 +96,7 @@
 //! to query hardware monitoring data:
 //!
 //! ```no_run
-//! use simon::ai_api::{AiDataApi, ToolCategory};
+//! use simonlib::ai_api::{AiDataApi, ToolCategory};
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! let mut api = AiDataApi::new()?;
@@ -176,9 +176,9 @@ pub mod network_tools; // Network diagnostic tools (ping, traceroute, port scan)
 pub mod observability; // Full system observability API with MCP-like permissions for external AI access
 pub mod platform;
 pub mod power_supply; // Battery and power supply monitoring
-pub mod profile; // Hardware profile inspector (NVPI / XTU / Ryzen Master / nvme-cli style)
 pub mod process_monitor; // Unified process monitoring with GPU attribution
 pub mod process_tree; // Process tree visualization with container/cgroup awareness
+pub mod profile; // Hardware profile inspector (NVPI / XTU / Ryzen Master / nvme-cli style)
 pub mod sandbox; // Sandbox and VM detection for ethical data collection
 pub mod services; // System service monitoring and control
 pub mod silicon; // New: Unified silicon monitoring (CPU, NPU, I/O, network)
@@ -246,6 +246,9 @@ pub mod utils;
 
 // Unified backend for CLI, TUI, and GUI
 pub mod backend;
+
+// Lock-free snapshot pipeline: decouples hardware collection from rendering
+pub mod pipeline;
 
 #[cfg(feature = "cli")]
 pub mod tui; // Terminal UI
@@ -503,13 +506,22 @@ pub use tsdb::{
 };
 
 // Re-export datacenter monitoring
-pub use datacenter::{ChassisInfo, ChassisType, DatacenterError, DatacenterMonitor, DatacenterSnapshot, FormFactor, IpmiController, IpmiSensor, RackInfo};
+pub use datacenter::{
+    ChassisInfo, ChassisType, DatacenterError, DatacenterMonitor, DatacenterSnapshot, FormFactor,
+    IpmiController, IpmiSensor, RackInfo,
+};
 
 // Re-export virtualization detection
-pub use virtualization::{ContainerEngine, ContainerInfo, CpuVirtCapability, GuestResources, Hypervisor, HypervisorInfo, VirtMonitor, VirtPlatform, VirtSnapshot};
+pub use virtualization::{
+    ContainerEngine, ContainerInfo, CpuVirtCapability, GuestResources, Hypervisor, HypervisorInfo,
+    VirtMonitor, VirtPlatform, VirtSnapshot,
+};
 
 // Re-export fleet management
-pub use fleet::{AlertCategory, AlertSeverity, FleetAlert, FleetConfig, FleetManager, FleetSnapshot, FleetThresholds, HostInfo, HostMetrics, HostStatus, HostSummary};
+pub use fleet::{
+    AlertCategory, AlertSeverity, FleetAlert, FleetConfig, FleetManager, FleetSnapshot,
+    FleetThresholds, HostInfo, HostMetrics, HostStatus, HostSummary,
+};
 
 // Re-export daemon
 pub use daemon::{DaemonConfig, DaemonError, MonitoringDaemon};
@@ -518,9 +530,7 @@ pub use daemon::{DaemonConfig, DaemonError, MonitoringDaemon};
 pub use camera::{CameraCapability, CameraConnection, CameraInfo, CameraMonitor};
 
 // Re-export CPU cache topology
-pub use cpu_cache::{
-    CacheLevel, CacheType, CpuCacheInfo, CpuCacheMonitor, CpuCacheTopology,
-};
+pub use cpu_cache::{CacheLevel, CacheType, CpuCacheInfo, CpuCacheMonitor, CpuCacheTopology};
 
 // Re-export input device monitoring
 pub use input::{InputDevice, InputDeviceType, InputInterface, InputMonitor};
@@ -529,9 +539,7 @@ pub use input::{InputDevice, InputDeviceType, InputInterface, InputMonitor};
 pub use os_info::{BootMode, KernelModule, OsFamily, OsInfo, OsInfoMonitor};
 
 // Re-export printer monitoring
-pub use printer::{
-    PrinterConnection, PrinterInfo, PrinterMonitor, PrinterStatus, PrinterType,
-};
+pub use printer::{PrinterConnection, PrinterInfo, PrinterMonitor, PrinterStatus, PrinterType};
 
 // Re-export storage controller monitoring
 pub use storage_controller::{
@@ -553,15 +561,14 @@ pub use firmware::{
 };
 pub use hardware_ai::{
     AnomalySeverity as HwAnomalySeverity, Bottleneck, BottleneckType, HardwareAge,
-    HardwareAnalysisReport, HardwareAnomaly, HardwareInferenceEngine, PerformanceTier,
-    SystemClass, ThermalEnvelope, ThermalHeadroom, UpgradeRecommendation, Workload,
-    WorkloadSuitability,
+    HardwareAnalysisReport, HardwareAnomaly, HardwareInferenceEngine, PerformanceTier, SystemClass,
+    ThermalEnvelope, ThermalHeadroom, UpgradeRecommendation, Workload, WorkloadSuitability,
 };
 pub use numa::{NumaDistanceMatrix, NumaMonitor, NumaNode, NumaSummary};
 pub use pci_devices::{PciClass, PciDeviceInfo, PciDeviceMonitor, PciLinkInfo};
 pub use power_profile::{
-    ChargePolicy, CpuFreqConfig, CpuGovernor, InferredPowerBehavior, PowerPlanInfo,
-    PowerProfile, PowerProfileMonitor,
+    ChargePolicy, CpuFreqConfig, CpuGovernor, InferredPowerBehavior, PowerPlanInfo, PowerProfile,
+    PowerProfileMonitor,
 };
 pub use sensors::{SensorInfo, SensorMonitor, SensorType, SensorValue};
 pub use smart::{DiskHealth, DriveMediaType, SmartAttribute, SmartDiskInfo, SmartMonitor};
@@ -581,13 +588,12 @@ pub use drm_monitor::{
     ConnectorStatus, ConnectorType, DrmClient, DrmConnector, DrmDevice, DrmMonitor, DrmOverview,
 };
 pub use interconnect::{
-    ChipletTopology, CoherenceProtocol, InterconnectLink, InterconnectMonitor, InterconnectTopology,
-    InterconnectType,
+    ChipletTopology, CoherenceProtocol, InterconnectLink, InterconnectMonitor,
+    InterconnectTopology, InterconnectType,
 };
 pub use interrupt_map::{InterruptAnalysis, InterruptInfo, InterruptMapMonitor, InterruptType};
 pub use memory_bandwidth::{
-    BandwidthAnalysis, BandwidthEstimate, ChannelConfig, MemoryBandwidthMonitor,
-    MemoryGeneration,
+    BandwidthAnalysis, BandwidthEstimate, ChannelConfig, MemoryBandwidthMonitor, MemoryGeneration,
 };
 pub use memory_topology::{
     DimmInfo, FormFactor as DimmFormFactor, MemoryAnalysis, MemoryTopologyMonitor,
@@ -595,21 +601,37 @@ pub use memory_topology::{
 };
 pub use rapl::{EnergyReading, PowerDomain, PowerEfficiency, PowerSnapshot, RaplMonitor};
 pub use security_mitigations::{
-    CpuVulnerability, KernelHardening, MitigationStatus, SecurityMitigationsMonitor, SecurityModule,
-    SecurityPosture,
+    CpuVulnerability, KernelHardening, MitigationStatus, SecurityMitigationsMonitor,
+    SecurityModule, SecurityPosture,
 };
 
 // Re-export OS-level, device, and silicon subsystem monitors
-pub use dma_engine::{DmaCapabilities, DmaChannel, DmaController, DmaEngineMonitor, DmaEngineType, DmaOverview};
+pub use dma_engine::{
+    DmaCapabilities, DmaChannel, DmaController, DmaEngineMonitor, DmaEngineType, DmaOverview,
+};
 pub use edac::{EdacCsRow, EdacMemType, EdacMemoryController, EdacMonitor, EdacOverview};
-pub use gpu_topology::{GpuInterconnectType, GpuLink, GpuTopologyMonitor, GpuTopologyNode, GpuTopologyOverview};
-pub use io_scheduler::{BlockDeviceIo, IoSchedulerMonitor, IoSchedulerOverview, IoSchedulerType, IoStats};
+pub use gpu_topology::{
+    GpuInterconnectType, GpuLink, GpuTopologyMonitor, GpuTopologyNode, GpuTopologyOverview,
+};
+pub use io_scheduler::{
+    BlockDeviceIo, IoSchedulerMonitor, IoSchedulerOverview, IoSchedulerType, IoStats,
+};
 pub use iommu::{IommuDevice, IommuGroup, IommuMonitor, IommuOverview, IommuType};
 pub use kernel_params::{KernelParam, KernelParamsMonitor, KernelParamsReport, ParamCategory};
-pub use scheduler::{CpuSchedStats, PressureInfo, SchedPolicy, SchedTuning, SchedulerAnalysis, SchedulerMonitor};
-pub use thermal_zone::{CoolingDeviceInfo, ThermalZoneInfo, ThermalZoneMonitor, ThermalZoneOverview, ThermalZoneType, TripPoint as ThermalTripPoint, TripPointType};
-pub use voltage_regulator::{RegulatorMode, RegulatorState, VoltageRegulatorInfo, VoltageRegulatorMonitor, VoltageRegulatorOverview};
-pub use watchdog::{PreTimeoutGovernor, WatchdogInfo, WatchdogMonitor, WatchdogOverview, WatchdogType};
+pub use scheduler::{
+    CpuSchedStats, PressureInfo, SchedPolicy, SchedTuning, SchedulerAnalysis, SchedulerMonitor,
+};
+pub use thermal_zone::{
+    CoolingDeviceInfo, ThermalZoneInfo, ThermalZoneMonitor, ThermalZoneOverview, ThermalZoneType,
+    TripPoint as ThermalTripPoint, TripPointType,
+};
+pub use voltage_regulator::{
+    RegulatorMode, RegulatorState, VoltageRegulatorInfo, VoltageRegulatorMonitor,
+    VoltageRegulatorOverview,
+};
+pub use watchdog::{
+    PreTimeoutGovernor, WatchdogInfo, WatchdogMonitor, WatchdogOverview, WatchdogType,
+};
 
 /// Main entry point for unified silicon monitoring.
 ///

@@ -1,25 +1,52 @@
 //! Local AI Inference Backends
 //!
-//! This module provides support for running AI models locally without requiring
-//! external API calls. Supports multiple inference engines:
+//! Backends that do not require a hosted API account.
 //!
-//! - **Ollama**: Popular local LLM server with easy model management
-//! - **llama.cpp**: Direct GGUF model loading via llama-cpp bindings
-//! - **vLLM**: High-performance inference server with OpenAI-compatible API
+//! # The built-in engine
+//!
+//! **IronWorks is simon's only built-in inference engine** — the engine simon ships
+//! against, and the default everywhere. See [`ironworks`].
+//!
+//! Everything else here is an **external provider**: software you install, start, or
+//! sign in to separately. They are fully supported, but simon does not embed them.
+//! [`crate::agent::backend::BackendType::is_builtin_engine`] draws the line in code.
+//!
+//! # External providers
+//!
+//! Self-hosted servers:
+//!
+//! - **Ollama**: popular local LLM server with easy model management
+//! - **vLLM**: high-performance inference server with OpenAI-compatible API
 //! - **TensorRT-LLM**: NVIDIA's optimized inference engine
-//! - **LM Studio**: User-friendly local model server
+//! - **LM Studio**: user-friendly local model server
+//! - **llama.cpp**: GGUF models, driven through the `llama-cli` executable
+//!
+//! Command-line tools ([`cli`]), driven as subprocesses:
+//!
+//! - **`ollama`**, **`claude`**, **`codex`**, **`gemini`**
+//!
+//! # Local process is not local inference
+//!
+//! A CLI tool runs on your machine, but that says nothing about where inference
+//! happens. Only `ollama` runs the model locally; `claude`, `codex` and `gemini`
+//! relay the prompt — including any hardware telemetry in it — to their vendor's API.
+//!
+//! [`crate::agent::backend::BackendType::runs_on_host`] is the predicate to check
+//! when the question is "does this leave the machine", and it is what orders
+//! [`crate::agent::backend::BackendDiscovery::recommended`].
 //!
 //! # Feature Flags
 //!
-//! - `local-ollama`: Enable Ollama client (HTTP-based)
-//! - `local-llamacpp`: Enable llama.cpp native bindings
+//! IronWorks, Ollama and the CLI providers are always compiled; the rest are opt-in.
+//!
+//! - `local-llamacpp`: Enable the llama.cpp subprocess client
 //! - `local-vllm`: Enable vLLM client (HTTP-based)
 //! - `local-tensorrt`: Enable TensorRT-LLM support
 //!
 //! # Example - Ollama
 //!
 //! ```no_run
-//! use simon::agent::local::{OllamaClient, LocalInferenceClient, InferenceRequest};
+//! use simonlib::agent::local::{OllamaClient, LocalInferenceClient, InferenceRequest};
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! let client = OllamaClient::new("http://localhost:11434")?;
@@ -43,6 +70,8 @@
 //! # }
 //! ```
 
+pub mod cli;
+pub mod ironworks;
 pub mod ollama;
 
 #[cfg(feature = "local-llamacpp")]
@@ -54,6 +83,8 @@ pub mod vllm;
 #[cfg(feature = "local-tensorrt")]
 pub mod tensorrt;
 
+pub use cli::{CliClient, CliProvider};
+pub use ironworks::IronWorksClient;
 pub use ollama::OllamaClient;
 
 #[cfg(feature = "local-llamacpp")]

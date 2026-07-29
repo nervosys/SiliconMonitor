@@ -514,7 +514,11 @@ pub fn get_pcie_devices() -> Result<Vec<PcieDeviceInfo>, Error> {
             .map(|s| s.trim().to_string())
             .unwrap_or_else(|| {
                 // Fallback: construct from bus_id and class
-                format!("PCI {} ({})", bus_id, device_class.as_deref().unwrap_or("Unknown"))
+                format!(
+                    "PCI {} ({})",
+                    bus_id,
+                    device_class.as_deref().unwrap_or("Unknown")
+                )
             });
 
         devices.push(PcieDeviceInfo {
@@ -583,7 +587,9 @@ pub fn get_sata_devices() -> Result<Vec<SataDeviceInfo>, Error> {
         if name.chars().last().map_or(false, |c| c.is_ascii_digit()) && !name.starts_with("nvme") {
             // Check if it's a partition of sdX type
             let base: String = name.chars().take_while(|c| !c.is_ascii_digit()).collect();
-            if base.len() < name.len() && (base.starts_with("sd") || base.starts_with("hd") || base.starts_with("vd")) {
+            if base.len() < name.len()
+                && (base.starts_with("sd") || base.starts_with("hd") || base.starts_with("vd"))
+            {
                 continue;
             }
         }
@@ -719,7 +725,9 @@ pub fn get_system_temperatures() -> Result<SystemTemperatures, Error> {
                     let hwmon_path = entry.path().join("device/hwmon");
                     if let Ok(mut hwmon_entries) = fs::read_dir(&hwmon_path) {
                         if let Some(Ok(hwmon_entry)) = hwmon_entries.next() {
-                            if let Ok(temp_str) = fs::read_to_string(hwmon_entry.path().join("temp1_input")) {
+                            if let Ok(temp_str) =
+                                fs::read_to_string(hwmon_entry.path().join("temp1_input"))
+                            {
                                 if let Ok(temp_millic) = temp_str.trim().parse::<f32>() {
                                     let temp_c = temp_millic / 1000.0;
                                     if temp_c > 0.0 && temp_c < 150.0 {

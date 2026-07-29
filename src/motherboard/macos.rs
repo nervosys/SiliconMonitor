@@ -23,7 +23,11 @@ impl MacSensor {
         // Read thermal data via powermetrics (requires sudo) or ioreg
         let temperatures = Self::read_thermal_sensors();
         let fans = Self::read_fan_info();
-        Self { name, temperatures, fans }
+        Self {
+            name,
+            temperatures,
+            fans,
+        }
     }
 
     fn read_thermal_sensors() -> Vec<TemperatureSensor> {
@@ -143,7 +147,8 @@ fn run_cmd(cmd: &str, args: &[&str]) -> Option<String> {
 
 /// Extract integer value from ioreg line like `"Key" = 12345`
 fn extract_ioreg_int(line: &str) -> Option<i64> {
-    line.split('=').nth(1)?
+    line.split('=')
+        .nth(1)?
         .trim()
         .trim_end_matches(|c: char| !c.is_ascii_digit() && c != '-')
         .parse::<i64>()
@@ -153,8 +158,14 @@ fn extract_ioreg_int(line: &str) -> Option<i64> {
 /// Get system information via system_profiler and sysctl
 pub fn get_system_info() -> Result<SystemInfo, Error> {
     // macOS version from sw_vers
-    let os_version = run_cmd("sw_vers", &["-productVersion"]).unwrap_or_default().trim().to_string();
-    let os_build = run_cmd("sw_vers", &["-buildVersion"]).unwrap_or_default().trim().to_string();
+    let os_version = run_cmd("sw_vers", &["-productVersion"])
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    let os_build = run_cmd("sw_vers", &["-buildVersion"])
+        .unwrap_or_default()
+        .trim()
+        .to_string();
     let os_version_full = if os_build.is_empty() {
         os_version.clone()
     } else {
@@ -165,7 +176,8 @@ pub fn get_system_info() -> Result<SystemInfo, Error> {
     let kernel_version = run_cmd("uname", &["-r"]).map(|s| s.trim().to_string());
 
     // Architecture
-    let architecture = run_cmd("uname", &["-m"]).map(|s| s.trim().to_string())
+    let architecture = run_cmd("uname", &["-m"])
+        .map(|s| s.trim().to_string())
         .unwrap_or_else(|| std::env::consts::ARCH.to_string());
 
     // Hostname
@@ -180,21 +192,24 @@ pub fn get_system_info() -> Result<SystemInfo, Error> {
     let uuid = extract_profiler_field(&hw_text, "Hardware UUID");
     let cpu_name = extract_profiler_field(&hw_text, "Chip")
         .or_else(|| extract_profiler_field(&hw_text, "Processor Name"));
-    let cpu_cores = extract_profiler_field(&hw_text, "Total Number of Cores")
-        .and_then(|s| s.split_whitespace().next().and_then(|n| n.parse::<u32>().ok()));
-    let cpu_threads = run_cmd("sysctl", &["-n", "hw.logicalcpu"])
-        .and_then(|s| s.trim().parse::<u32>().ok());
+    let cpu_cores = extract_profiler_field(&hw_text, "Total Number of Cores").and_then(|s| {
+        s.split_whitespace()
+            .next()
+            .and_then(|n| n.parse::<u32>().ok())
+    });
+    let cpu_threads =
+        run_cmd("sysctl", &["-n", "hw.logicalcpu"]).and_then(|s| s.trim().parse::<u32>().ok());
 
     // Firmware version from ioreg
     let firmware_version = run_cmd("ioreg", &["-p", "IODeviceTree", "-n", "rom", "-d", "1"])
         .and_then(|text| {
-            text.lines().find(|l| l.contains("version"))
+            text.lines()
+                .find(|l| l.contains("version"))
                 .and_then(|l| l.split('\"').nth(3).map(|s| s.to_string()))
         });
 
     // Boot ROM version
-    let boot_rom = extract_profiler_field(&hw_text, "Boot ROM Version")
-        .or(firmware_version);
+    let boot_rom = extract_profiler_field(&hw_text, "Boot ROM Version").or(firmware_version);
 
     Ok(SystemInfo {
         os_name: "macOS".to_string(),
@@ -280,16 +295,23 @@ pub fn get_driver_versions() -> Result<Vec<DriverInfo>, Error> {
         let mut current_version = String::new();
         for line in text.lines() {
             let trimmed = line.trim();
-            if !trimmed.contains(':') && !trimmed.is_empty() && !trimmed.starts_with("Extensions:") {
+            if !trimmed.contains(':') && !trimmed.is_empty() && !trimmed.starts_with("Extensions:")
+            {
                 current_name = trimmed.trim_end_matches(':').to_string();
             } else if trimmed.starts_with("Version:") {
                 current_version = trimmed.split(':').nth(1).unwrap_or("").trim().to_string();
                 if !current_name.is_empty() && !current_version.is_empty() {
-                    let dt = if current_name.to_lowercase().contains("gpu") || current_name.to_lowercase().contains("graphics") {
+                    let dt = if current_name.to_lowercase().contains("gpu")
+                        || current_name.to_lowercase().contains("graphics")
+                    {
                         DriverType::Gpu
-                    } else if current_name.to_lowercase().contains("network") || current_name.to_lowercase().contains("wifi") {
+                    } else if current_name.to_lowercase().contains("network")
+                        || current_name.to_lowercase().contains("wifi")
+                    {
                         DriverType::Network
-                    } else if current_name.to_lowercase().contains("storage") || current_name.to_lowercase().contains("nvme") {
+                    } else if current_name.to_lowercase().contains("storage")
+                        || current_name.to_lowercase().contains("nvme")
+                    {
                         DriverType::Storage
                     } else if current_name.to_lowercase().contains("audio") {
                         DriverType::Audio
@@ -351,7 +373,9 @@ pub fn get_pcie_devices() -> Result<Vec<PcieDeviceInfo>, Error> {
             } else if trimmed.starts_with("Device ID:") {
                 device_id = trimmed.split(':').nth(1).map(|s| s.trim().to_string());
             } else if trimmed.starts_with("Link Width:") {
-                link_width = trimmed.split(':').nth(1)
+                link_width = trimmed
+                    .split(':')
+                    .nth(1)
                     .and_then(|s| s.trim().trim_start_matches('x').parse().ok());
             } else if trimmed.starts_with("Link Speed:") {
                 link_speed = trimmed.split(':').nth(1).map(|s| s.trim().to_string());
@@ -382,7 +406,11 @@ pub fn get_pcie_devices() -> Result<Vec<PcieDeviceInfo>, Error> {
             if !trimmed.contains(':') && !trimmed.is_empty() {
                 current_name = trimmed.trim_end_matches(':').to_string();
             } else if trimmed.starts_with("Device Name:") {
-                let dev_name = trimmed.split(':').nth(1).map(|s| s.trim().to_string()).unwrap_or_default();
+                let dev_name = trimmed
+                    .split(':')
+                    .nth(1)
+                    .map(|s| s.trim().to_string())
+                    .unwrap_or_default();
                 if !dev_name.is_empty() && !devices.iter().any(|d| d.name == dev_name) {
                     devices.push(PcieDeviceInfo {
                         name: dev_name,
@@ -435,10 +463,16 @@ pub fn get_sata_devices() -> Result<Vec<SataDeviceInfo>, Error> {
                     capacity_str = None;
                 }
                 current_name = trimmed.trim_end_matches(':').to_string();
-            } else if trimmed.starts_with("Physical Drive:") || trimmed.starts_with("Device Name:") {
+            } else if trimmed.starts_with("Physical Drive:") || trimmed.starts_with("Device Name:")
+            {
                 model = trimmed.split(':').nth(1).map(|s| s.trim().to_string());
             } else if trimmed.starts_with("Medium Type:") {
-                let mt = trimmed.split(':').nth(1).unwrap_or("").trim().to_lowercase();
+                let mt = trimmed
+                    .split(':')
+                    .nth(1)
+                    .unwrap_or("")
+                    .trim()
+                    .to_lowercase();
                 media_type = if mt.contains("ssd") || mt.contains("solid") {
                     SataMediaType::Ssd
                 } else if mt.contains("hdd") || mt.contains("rotational") {
@@ -462,7 +496,11 @@ pub fn get_sata_devices() -> Result<Vec<SataDeviceInfo>, Error> {
                 interface_speed: Some("NVMe".to_string()),
                 port: None,
                 temperature: None,
-                media_type: if media_type == SataMediaType::Unknown { SataMediaType::Ssd } else { media_type },
+                media_type: if media_type == SataMediaType::Unknown {
+                    SataMediaType::Ssd
+                } else {
+                    media_type
+                },
             });
         }
     }
@@ -502,8 +540,8 @@ pub fn get_system_temperatures() -> Result<SystemTemperatures, Error> {
     let storage_temps = Vec::new();
 
     Ok(SystemTemperatures {
-        cpu: None,     // Requires IOKit AppleSMC TC0P key
-        gpu: None,     // Requires IOKit AppleSMC TG0P key
+        cpu: None, // Requires IOKit AppleSMC TC0P key
+        gpu: None, // Requires IOKit AppleSMC TG0P key
         motherboard: None,
         storage: storage_temps,
         network: Vec::new(),
@@ -550,13 +588,28 @@ fn get_usb_devices() -> Vec<UsbDeviceInfo> {
                 }
                 current_name = trimmed.trim_end_matches(':').to_string();
             } else if trimmed.starts_with("Vendor ID:") {
-                vendor_id = trimmed.split(':').nth(1).map(|s| s.trim().split_whitespace().next().unwrap_or("").to_string());
+                vendor_id = trimmed
+                    .split(':')
+                    .nth(1)
+                    .map(|s| s.trim().split_whitespace().next().unwrap_or("").to_string());
                 vendor = trimmed.split(':').nth(1).and_then(|s| {
                     let parts: Vec<&str> = s.trim().splitn(2, ' ').collect();
-                    if parts.len() > 1 { Some(parts[1].trim_start_matches('(').trim_end_matches(')').to_string()) } else { None }
+                    if parts.len() > 1 {
+                        Some(
+                            parts[1]
+                                .trim_start_matches('(')
+                                .trim_end_matches(')')
+                                .to_string(),
+                        )
+                    } else {
+                        None
+                    }
                 });
             } else if trimmed.starts_with("Product ID:") {
-                product_id = trimmed.split(':').nth(1).map(|s| s.trim().split_whitespace().next().unwrap_or("").to_string());
+                product_id = trimmed
+                    .split(':')
+                    .nth(1)
+                    .map(|s| s.trim().split_whitespace().next().unwrap_or("").to_string());
             } else if trimmed.starts_with("Speed:") {
                 speed = trimmed.split(':').nth(1).map(|s| s.trim().to_string());
             }
@@ -583,13 +636,21 @@ fn classify_usb_speed(speed: Option<&str>) -> UsbVersion {
     match speed {
         Some(s) => {
             let lower = s.to_lowercase();
-            if lower.contains("40 gb") || lower.contains("usb4") { UsbVersion::Usb4 }
-            else if lower.contains("20 gb") || lower.contains("3.2") { UsbVersion::Usb3_2 }
-            else if lower.contains("10 gb") || lower.contains("3.1") { UsbVersion::Usb3_1 }
-            else if lower.contains("5 gb") || lower.contains("super") { UsbVersion::Usb3_0 }
-            else if lower.contains("480") || lower.contains("high") { UsbVersion::Usb2_0 }
-            else if lower.contains("12") || lower.contains("full") { UsbVersion::Usb1_1 }
-            else { UsbVersion::Unknown }
+            if lower.contains("40 gb") || lower.contains("usb4") {
+                UsbVersion::Usb4
+            } else if lower.contains("20 gb") || lower.contains("3.2") {
+                UsbVersion::Usb3_2
+            } else if lower.contains("10 gb") || lower.contains("3.1") {
+                UsbVersion::Usb3_1
+            } else if lower.contains("5 gb") || lower.contains("super") {
+                UsbVersion::Usb3_0
+            } else if lower.contains("480") || lower.contains("high") {
+                UsbVersion::Usb2_0
+            } else if lower.contains("12") || lower.contains("full") {
+                UsbVersion::Usb1_1
+            } else {
+                UsbVersion::Unknown
+            }
         }
         None => UsbVersion::Unknown,
     }
@@ -604,9 +665,15 @@ fn get_display_outputs() -> Vec<DisplayOutputInfo> {
 
         for line in text.lines() {
             let trimmed = line.trim();
-            if !trimmed.contains(':') && !trimmed.is_empty() && !trimmed.starts_with("Graphics") && !trimmed.starts_with("Displays:") {
+            if !trimmed.contains(':')
+                && !trimmed.is_empty()
+                && !trimmed.starts_with("Graphics")
+                && !trimmed.starts_with("Displays:")
+            {
                 if !current_display.is_empty() && connected {
-                    let output_type = if current_display.to_lowercase().contains("built-in") || current_display.to_lowercase().contains("internal") {
+                    let output_type = if current_display.to_lowercase().contains("built-in")
+                        || current_display.to_lowercase().contains("internal")
+                    {
                         DisplayOutputType::Internal
                     } else if current_display.to_lowercase().contains("thunderbolt") {
                         DisplayOutputType::Thunderbolt
@@ -635,9 +702,13 @@ fn get_display_outputs() -> Vec<DisplayOutputInfo> {
         }
         // Push last display
         if !current_display.is_empty() && connected {
-            let output_type = if current_display.to_lowercase().contains("built-in") || current_display.to_lowercase().contains("internal") {
+            let output_type = if current_display.to_lowercase().contains("built-in")
+                || current_display.to_lowercase().contains("internal")
+            {
                 DisplayOutputType::Internal
-            } else { DisplayOutputType::DisplayPort };
+            } else {
+                DisplayOutputType::DisplayPort
+            };
             outputs.push(DisplayOutputInfo {
                 name: current_display,
                 output_type,
@@ -675,9 +746,17 @@ fn get_audio_devices() -> Vec<AudioDeviceInfo> {
                 }
                 current_name = trimmed.trim_end_matches(':').to_string();
             } else if trimmed.starts_with("Output Channels:") || trimmed.starts_with("Output:") {
-                device_type = if device_type == AudioDeviceType::Input { AudioDeviceType::OutputInput } else { AudioDeviceType::Output };
+                device_type = if device_type == AudioDeviceType::Input {
+                    AudioDeviceType::OutputInput
+                } else {
+                    AudioDeviceType::Output
+                };
             } else if trimmed.starts_with("Input Channels:") || trimmed.starts_with("Input:") {
-                device_type = if device_type == AudioDeviceType::Output { AudioDeviceType::OutputInput } else { AudioDeviceType::Input };
+                device_type = if device_type == AudioDeviceType::Output {
+                    AudioDeviceType::OutputInput
+                } else {
+                    AudioDeviceType::Input
+                };
             } else if trimmed.starts_with("Manufacturer:") {
                 manufacturer = trimmed.split(':').nth(1).map(|s| s.trim().to_string());
             } else if trimmed.starts_with("Default Output Device:") && trimmed.contains("Yes") {
@@ -708,7 +787,8 @@ fn get_bluetooth_devices() -> Vec<BluetoothDeviceInfo> {
 
         for line in text.lines() {
             let trimmed = line.trim();
-            if !trimmed.contains(':') && !trimmed.is_empty()
+            if !trimmed.contains(':')
+                && !trimmed.is_empty()
                 && !trimmed.starts_with("Bluetooth:")
                 && !trimmed.starts_with("Connected:")
                 && !trimmed.starts_with("Not Connected:")
@@ -757,14 +837,20 @@ fn get_network_ports() -> Vec<NetworkPortInfo> {
             if trimmed.starts_with('(') {
                 if let Some(name_part) = trimmed.split(')').nth(1) {
                     let name = name_part.trim().to_string();
-                    if name.is_empty() { continue; }
-                    let port_type = if name.to_lowercase().contains("wi-fi") || name.to_lowercase().contains("airport") {
+                    if name.is_empty() {
+                        continue;
+                    }
+                    let port_type = if name.to_lowercase().contains("wi-fi")
+                        || name.to_lowercase().contains("airport")
+                    {
                         NetworkPortType::WiFi
                     } else if name.to_lowercase().contains("bluetooth") {
                         NetworkPortType::Bluetooth
                     } else if name.to_lowercase().contains("thunderbolt") {
                         NetworkPortType::Thunderbolt
-                    } else if name.to_lowercase().contains("ethernet") || name.to_lowercase().contains("lan") {
+                    } else if name.to_lowercase().contains("ethernet")
+                        || name.to_lowercase().contains("lan")
+                    {
                         NetworkPortType::Ethernet
                     } else {
                         NetworkPortType::Other
@@ -792,11 +878,25 @@ fn get_network_ports() -> Vec<NetworkPortInfo> {
 /// Classify a kext by name
 fn classify_kext(name: &str) -> DriverType {
     let lower = name.to_lowercase();
-    if lower.contains("graphic") || lower.contains("gpu") || lower.contains("agx") || lower.contains("metal") {
+    if lower.contains("graphic")
+        || lower.contains("gpu")
+        || lower.contains("agx")
+        || lower.contains("metal")
+    {
         DriverType::Gpu
-    } else if lower.contains("nvme") || lower.contains("storage") || lower.contains("ahci") || lower.contains("disk") || lower.contains("apfs") {
+    } else if lower.contains("nvme")
+        || lower.contains("storage")
+        || lower.contains("ahci")
+        || lower.contains("disk")
+        || lower.contains("apfs")
+    {
         DriverType::Storage
-    } else if lower.contains("network") || lower.contains("wifi") || lower.contains("ethernet") || lower.contains("80211") || lower.contains("bcm") {
+    } else if lower.contains("network")
+        || lower.contains("wifi")
+        || lower.contains("ethernet")
+        || lower.contains("80211")
+        || lower.contains("bcm")
+    {
         DriverType::Network
     } else if lower.contains("audio") || lower.contains("sound") || lower.contains("coreaudio") {
         DriverType::Audio
@@ -827,15 +927,27 @@ fn should_include_kext(name: &str) -> bool {
 /// Get a brief description for a known kext
 fn kext_description(name: &str) -> String {
     let lower = name.to_lowercase();
-    if lower.contains("agxg") { "Apple GPU Accelerator".to_string() }
-    else if lower.contains("agxmetal") { "Apple Metal GPU Framework".to_string() }
-    else if lower.contains("iographics") { "Graphics Display Framework".to_string() }
-    else if lower.contains("applebcm") || lower.contains("80211") { "Apple WiFi/Bluetooth".to_string() }
-    else if lower.contains("nvme") { "NVMe Storage Controller".to_string() }
-    else if lower.contains("apfs") { "Apple File System".to_string() }
-    else if lower.contains("usb") || lower.contains("xhci") { "USB Host Controller".to_string() }
-    else if lower.contains("thunderbolt") { "Thunderbolt Controller".to_string() }
-    else if lower.contains("audio") || lower.contains("sound") { "Audio Driver".to_string() }
-    else if lower.contains("ethernet") { "Ethernet Controller".to_string() }
-    else { format!("Kernel Extension: {}", name) }
+    if lower.contains("agxg") {
+        "Apple GPU Accelerator".to_string()
+    } else if lower.contains("agxmetal") {
+        "Apple Metal GPU Framework".to_string()
+    } else if lower.contains("iographics") {
+        "Graphics Display Framework".to_string()
+    } else if lower.contains("applebcm") || lower.contains("80211") {
+        "Apple WiFi/Bluetooth".to_string()
+    } else if lower.contains("nvme") {
+        "NVMe Storage Controller".to_string()
+    } else if lower.contains("apfs") {
+        "Apple File System".to_string()
+    } else if lower.contains("usb") || lower.contains("xhci") {
+        "USB Host Controller".to_string()
+    } else if lower.contains("thunderbolt") {
+        "Thunderbolt Controller".to_string()
+    } else if lower.contains("audio") || lower.contains("sound") {
+        "Audio Driver".to_string()
+    } else if lower.contains("ethernet") {
+        "Ethernet Controller".to_string()
+    } else {
+        format!("Kernel Extension: {}", name)
+    }
 }

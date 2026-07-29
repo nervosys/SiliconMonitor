@@ -40,35 +40,22 @@ pub enum StreamMessage {
         channels: Vec<String>,
     },
     /// Unsubscription confirmation
-    Unsubscribed {
-        subscription_id: String,
-    },
+    Unsubscribed { subscription_id: String },
     /// Metric update
     Metrics {
         timestamp: u64,
         data: MetricSnapshot,
     },
     /// System event
-    Event {
-        event: SystemEvent,
-    },
+    Event { event: SystemEvent },
     /// Context update (minimal)
-    ContextUpdate {
-        context: MinimalContext,
-    },
+    ContextUpdate { context: MinimalContext },
     /// Error message
-    Error {
-        code: String,
-        message: String,
-    },
+    Error { code: String, message: String },
     /// Heartbeat/ping
-    Ping {
-        timestamp: u64,
-    },
+    Ping { timestamp: u64 },
     /// Pong response
-    Pong {
-        timestamp: u64,
-    },
+    Pong { timestamp: u64 },
 }
 
 /// Client subscription request
@@ -82,13 +69,9 @@ pub enum ClientMessage {
         event_filter: Option<EventFilter>,
     },
     /// Unsubscribe from channels
-    Unsubscribe {
-        subscription_id: String,
-    },
+    Unsubscribe { subscription_id: String },
     /// Set update interval
-    SetInterval {
-        interval_ms: u64,
-    },
+    SetInterval { interval_ms: u64 },
     /// Request immediate update
     Refresh,
     /// Ping
@@ -226,7 +209,10 @@ impl StreamManager {
         channels: Vec<StreamChannel>,
         event_filter: Option<EventFilter>,
     ) -> Result<Subscription, StreamError> {
-        let mut subs = self.subscriptions.write().map_err(|_| StreamError::Internal)?;
+        let mut subs = self
+            .subscriptions
+            .write()
+            .map_err(|_| StreamError::Internal)?;
 
         // Check subscription limit
         let client_subs = subs.values().filter(|s| s.api_key == api_key).count();
@@ -234,8 +220,8 @@ impl StreamManager {
             return Err(StreamError::TooManySubscriptions);
         }
 
-        let mut subscription = Subscription::new(api_key, channels)
-            .with_interval(self.default_interval);
+        let mut subscription =
+            Subscription::new(api_key, channels).with_interval(self.default_interval);
 
         if let Some(filter) = event_filter {
             subscription = subscription.with_event_filter(filter);

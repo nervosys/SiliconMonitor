@@ -1366,36 +1366,6 @@ fn draw_disk_graph(f: &mut Frame, app: &App, area: Rect) {
     }
 }
 
-/// Draw network information (DEPRECATED - use draw_network_bar)
-#[allow(dead_code)]
-fn draw_network_graph(f: &mut Frame, _app: &App, area: Rect) {
-    let inner_chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Length(25), // Info
-            Constraint::Min(0),     // Stats
-        ])
-        .split(area);
-
-    // Network summary (placeholder for now)
-    let net_text = vec![
-        Line::from("Network: N/A"),
-        Line::from(""),
-        Line::from("(Win: Not impl)"),
-    ];
-    let net_info = Paragraph::new(net_text)
-        .block(Block::default().borders(Borders::ALL).title("Network"))
-        .style(Style::default().fg(Color::White));
-    f.render_widget(net_info, inner_chunks[0]);
-
-    // Network placeholder
-    let net_placeholder = Paragraph::new("Network monitoring requires Linux/macOS")
-        .block(Block::default().borders(Borders::TOP | Borders::RIGHT | Borders::BOTTOM))
-        .style(Style::default().fg(Color::DarkGray))
-        .alignment(Alignment::Center);
-    f.render_widget(net_placeholder, inner_chunks[1]);
-}
-
 /// Draw GPU processes table (nvtop style)
 fn draw_nvtop_processes(f: &mut Frame, app: &App, area: Rect) {
     let mode_name = app.process_mode_name();
@@ -3130,10 +3100,7 @@ fn draw_profiles_tab(f: &mut Frame, app: &App, area: Rect) {
                     Style::default().fg(risk_color),
                 ),
                 Span::raw(" = "),
-                Span::styled(
-                    value_str,
-                    Style::default().add_modifier(Modifier::BOLD),
-                ),
+                Span::styled(value_str, Style::default().add_modifier(Modifier::BOLD)),
             ]));
         }
         for n in &group.notes {
@@ -3215,7 +3182,10 @@ fn draw_profile_deviations_overlay(f: &mut Frame, app: &App, area: Rect) {
                         Style::default().fg(glances_colors::TITLE),
                     ),
                     Span::raw(format!("{} :: ", d.device)),
-                    Span::styled(d.display_name.clone(), Style::default().add_modifier(Modifier::BOLD)),
+                    Span::styled(
+                        d.display_name.clone(),
+                        Style::default().add_modifier(Modifier::BOLD),
+                    ),
                 ]));
                 dev_lines.push(Line::from(vec![
                     Span::raw("      default: "),
@@ -3264,15 +3234,21 @@ fn draw_profile_deviations_overlay(f: &mut Frame, app: &App, area: Rect) {
         )));
     } else {
         for line in tail {
-            if let Ok(o) =
-                serde_json::from_str::<crate::profile::apply::ApplyOutcome>(line)
-            {
+            if let Ok(o) = serde_json::from_str::<crate::profile::apply::ApplyOutcome>(line) {
                 let (status_str, status_color) = match o.status {
                     crate::profile::apply::ApplyStatus::Applied => ("applied", glances_colors::OK),
-                    crate::profile::apply::ApplyStatus::Refused => ("refused", glances_colors::CRITICAL),
-                    crate::profile::apply::ApplyStatus::Failed => ("failed", glances_colors::CRITICAL),
-                    crate::profile::apply::ApplyStatus::NotWritable => ("not-writable", glances_colors::WARNING),
-                    crate::profile::apply::ApplyStatus::NeedsConfirm => ("needs-confirm", glances_colors::WARNING),
+                    crate::profile::apply::ApplyStatus::Refused => {
+                        ("refused", glances_colors::CRITICAL)
+                    }
+                    crate::profile::apply::ApplyStatus::Failed => {
+                        ("failed", glances_colors::CRITICAL)
+                    }
+                    crate::profile::apply::ApplyStatus::NotWritable => {
+                        ("not-writable", glances_colors::WARNING)
+                    }
+                    crate::profile::apply::ApplyStatus::NeedsConfirm => {
+                        ("needs-confirm", glances_colors::WARNING)
+                    }
                 };
                 audit_lines.push(Line::from(vec![
                     Span::styled(

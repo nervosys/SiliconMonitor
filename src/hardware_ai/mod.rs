@@ -40,8 +40,8 @@
 //! }
 //! ```
 
-use serde::{Deserialize, Serialize};
 use crate::error::SimonError;
+use serde::{Deserialize, Serialize};
 
 // ────────────────────────────────────────────────────────────────────
 // Classification types
@@ -79,14 +79,14 @@ pub enum SystemClass {
 /// Performance tier.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum PerformanceTier {
-    UltraLow,    // Raspberry Pi, IoT
-    Low,         // Atom, Celeron, old hardware
-    MidLow,      // i3, Ryzen 3
-    Mid,         // i5, Ryzen 5, mid-range GPU
-    MidHigh,     // i7, Ryzen 7, high-end GPU
-    High,        // i9, Ryzen 9, workstation GPU
-    Ultra,       // Threadripper, EPYC, multi-GPU
-    Datacenter,  // Server-class, 100+ cores
+    UltraLow,   // Raspberry Pi, IoT
+    Low,        // Atom, Celeron, old hardware
+    MidLow,     // i3, Ryzen 3
+    Mid,        // i5, Ryzen 5, mid-range GPU
+    MidHigh,    // i7, Ryzen 7, high-end GPU
+    High,       // i9, Ryzen 9, workstation GPU
+    Ultra,      // Threadripper, EPYC, multi-GPU
+    Datacenter, // Server-class, 100+ cores
 }
 
 /// Bottleneck type — what's limiting performance.
@@ -433,7 +433,11 @@ impl HardwareInferenceEngine {
 
                 self.features.cpu_model = model;
                 self.features.cpu_vendor = vendor;
-                self.features.cpu_cores_physical = if cores.is_empty() { logical } else { cores.len() as u32 };
+                self.features.cpu_cores_physical = if cores.is_empty() {
+                    logical
+                } else {
+                    cores.len() as u32
+                };
                 self.features.cpu_cores_logical = logical;
                 self.features.cpu_max_freq_mhz = max_freq;
             }
@@ -463,19 +467,30 @@ impl HardwareInferenceEngine {
                 .args(["-n", "machdep.cpu.brand_string"])
                 .output()
             {
-                self.features.cpu_model = String::from_utf8(output.stdout).unwrap_or_default().trim().to_string();
+                self.features.cpu_model = String::from_utf8(output.stdout)
+                    .unwrap_or_default()
+                    .trim()
+                    .to_string();
             }
             if let Ok(output) = std::process::Command::new("sysctl")
                 .args(["-n", "hw.physicalcpu"])
                 .output()
             {
-                self.features.cpu_cores_physical = String::from_utf8(output.stdout).unwrap_or_default().trim().parse().unwrap_or(0);
+                self.features.cpu_cores_physical = String::from_utf8(output.stdout)
+                    .unwrap_or_default()
+                    .trim()
+                    .parse()
+                    .unwrap_or(0);
             }
             if let Ok(output) = std::process::Command::new("sysctl")
                 .args(["-n", "hw.logicalcpu"])
                 .output()
             {
-                self.features.cpu_cores_logical = String::from_utf8(output.stdout).unwrap_or_default().trim().parse().unwrap_or(0);
+                self.features.cpu_cores_logical = String::from_utf8(output.stdout)
+                    .unwrap_or_default()
+                    .trim()
+                    .parse()
+                    .unwrap_or(0);
             }
         }
 
@@ -511,8 +526,11 @@ impl HardwareInferenceEngine {
         #[cfg(target_os = "windows")]
         {
             if let Ok(output) = std::process::Command::new("powershell")
-                .args(["-NoProfile", "-Command",
-                    "(Get-CimInstance Win32_OperatingSystem).TotalVisibleMemorySize"])
+                .args([
+                    "-NoProfile",
+                    "-Command",
+                    "(Get-CimInstance Win32_OperatingSystem).TotalVisibleMemorySize",
+                ])
                 .output()
             {
                 let text = String::from_utf8(output.stdout).unwrap_or_default();
@@ -545,15 +563,16 @@ impl HardwareInferenceEngine {
                     let name = entry.file_name().to_string_lossy().to_string();
                     if name.starts_with("card") && !name.contains('-') {
                         // Check if discrete (not integrated)
-                        let boot_vga = std::fs::read_to_string(
-                            entry.path().join("device/boot_vga"),
-                        )
-                        .unwrap_or_default()
-                        .trim()
-                        .to_string();
+                        let boot_vga =
+                            std::fs::read_to_string(entry.path().join("device/boot_vga"))
+                                .unwrap_or_default()
+                                .trim()
+                                .to_string();
 
                         let label = std::fs::read_to_string(entry.path().join("device/label"))
-                            .or_else(|_| std::fs::read_to_string(entry.path().join("device/product_name")))
+                            .or_else(|_| {
+                                std::fs::read_to_string(entry.path().join("device/product_name"))
+                            })
                             .unwrap_or_default()
                             .trim()
                             .to_string();
@@ -564,9 +583,9 @@ impl HardwareInferenceEngine {
                         }
 
                         // Check VRAM
-                        if let Ok(vram) = std::fs::read_to_string(
-                            entry.path().join("device/mem_info_vram_total"),
-                        ) {
+                        if let Ok(vram) =
+                            std::fs::read_to_string(entry.path().join("device/mem_info_vram_total"))
+                        {
                             if let Ok(bytes) = vram.trim().parse::<u64>() {
                                 self.features.gpu_vram_gb = bytes as f32 / 1_073_741_824.0;
                                 self.features.has_discrete_gpu = true;
@@ -623,8 +642,8 @@ impl HardwareInferenceEngine {
             || gpu_lower.contains("h100")
             || gpu_lower.contains("l40")
             || gpu_lower.contains("apple m");
-        self.features.has_rt_cores = gpu_lower.contains("rtx")
-            || gpu_lower.contains("m3") || gpu_lower.contains("m4");
+        self.features.has_rt_cores =
+            gpu_lower.contains("rtx") || gpu_lower.contains("m3") || gpu_lower.contains("m4");
         self.features.gpu_tdp_watts = Self::infer_gpu_tdp(&gpu_lower);
     }
 
@@ -642,12 +661,11 @@ impl HardwareInferenceEngine {
                 for entry in entries.flatten() {
                     let name = entry.file_name().to_string_lossy().to_string();
                     if name.starts_with("sd") || name.starts_with("nvme") {
-                        let rotational = std::fs::read_to_string(
-                            entry.path().join("queue/rotational"),
-                        )
-                        .unwrap_or_default()
-                        .trim()
-                        .to_string();
+                        let rotational =
+                            std::fs::read_to_string(entry.path().join("queue/rotational"))
+                                .unwrap_or_default()
+                                .trim()
+                                .to_string();
 
                         if rotational == "0" {
                             self.features.has_ssd = true;
@@ -676,8 +694,11 @@ impl HardwareInferenceEngine {
         #[cfg(target_os = "windows")]
         {
             if let Ok(output) = std::process::Command::new("powershell")
-                .args(["-NoProfile", "-Command",
-                    "Get-PhysicalDisk | Select-Object MediaType,Size,BusType | ConvertTo-Json"])
+                .args([
+                    "-NoProfile",
+                    "-Command",
+                    "Get-PhysicalDisk | Select-Object MediaType,Size,BusType | ConvertTo-Json",
+                ])
                 .output()
             {
                 let text = String::from_utf8(output.stdout).unwrap_or_default();
@@ -715,7 +736,8 @@ impl HardwareInferenceEngine {
         #[cfg(target_os = "linux")]
         {
             // Battery check
-            self.features.has_battery = std::path::Path::new("/sys/class/power_supply/BAT0").exists()
+            self.features.has_battery = std::path::Path::new("/sys/class/power_supply/BAT0")
+                .exists()
                 || std::path::Path::new("/sys/class/power_supply/BAT1").exists();
 
             // Chassis type from DMI
@@ -746,11 +768,7 @@ impl HardwareInferenceEngine {
             if let Ok(entries) = std::fs::read_dir("/sys/devices/system/node") {
                 self.features.numa_nodes = entries
                     .flatten()
-                    .filter(|e| {
-                        e.file_name()
-                            .to_string_lossy()
-                            .starts_with("node")
-                    })
+                    .filter(|e| e.file_name().to_string_lossy().starts_with("node"))
                     .count() as u32;
             }
         }
@@ -759,21 +777,33 @@ impl HardwareInferenceEngine {
         {
             // Battery
             if let Ok(output) = std::process::Command::new("powershell")
-                .args(["-NoProfile", "-Command",
-                    "(Get-CimInstance Win32_Battery).Status"])
+                .args([
+                    "-NoProfile",
+                    "-Command",
+                    "(Get-CimInstance Win32_Battery).Status",
+                ])
                 .output()
             {
-                let text = String::from_utf8(output.stdout).unwrap_or_default().trim().to_string();
+                let text = String::from_utf8(output.stdout)
+                    .unwrap_or_default()
+                    .trim()
+                    .to_string();
                 self.features.has_battery = !text.is_empty();
             }
 
             // VM detection
             if let Ok(output) = std::process::Command::new("powershell")
-                .args(["-NoProfile", "-Command",
-                    "(Get-CimInstance Win32_ComputerSystem).Model"])
+                .args([
+                    "-NoProfile",
+                    "-Command",
+                    "(Get-CimInstance Win32_ComputerSystem).Model",
+                ])
                 .output()
             {
-                let model = String::from_utf8(output.stdout).unwrap_or_default().trim().to_lowercase();
+                let model = String::from_utf8(output.stdout)
+                    .unwrap_or_default()
+                    .trim()
+                    .to_lowercase();
                 self.features.is_virtual = model.contains("virtual")
                     || model.contains("vmware")
                     || model.contains("hyper-v");
@@ -804,7 +834,8 @@ impl HardwareInferenceEngine {
                     if let Ok(speed) = std::fs::read_to_string(entry.path().join("speed")) {
                         if let Ok(mbps) = speed.trim().parse::<u32>() {
                             let gbps = mbps as f32 / 1000.0;
-                            self.features.max_nic_speed_gbps = self.features.max_nic_speed_gbps.max(gbps);
+                            self.features.max_nic_speed_gbps =
+                                self.features.max_nic_speed_gbps.max(gbps);
                         }
                     }
                 }
@@ -814,8 +845,11 @@ impl HardwareInferenceEngine {
         #[cfg(target_os = "windows")]
         {
             if let Ok(output) = std::process::Command::new("powershell")
-                .args(["-NoProfile", "-Command",
-                    "Get-NetAdapter -Physical | Select-Object LinkSpeed | ConvertTo-Json"])
+                .args([
+                    "-NoProfile",
+                    "-Command",
+                    "Get-NetAdapter -Physical | Select-Object LinkSpeed | ConvertTo-Json",
+                ])
                 .output()
             {
                 let text = String::from_utf8(output.stdout).unwrap_or_default();
@@ -867,14 +901,30 @@ impl HardwareInferenceEngine {
         // Server indicators
         let server_score = {
             let mut s = 0.0f32;
-            if f.is_server_cpu { s += 0.35; }
-            if f.has_ecc { s += 0.2; }
-            if f.cpu_cores_physical >= 16 { s += 0.15; }
-            if f.ram_total_gb >= 64.0 { s += 0.1; }
-            if f.numa_nodes >= 2 { s += 0.15; }
-            if f.chassis_type.contains("Server") { s += 0.3; }
-            if !f.has_battery { s += 0.05; }
-            if f.nic_count >= 2 { s += 0.1; }
+            if f.is_server_cpu {
+                s += 0.35;
+            }
+            if f.has_ecc {
+                s += 0.2;
+            }
+            if f.cpu_cores_physical >= 16 {
+                s += 0.15;
+            }
+            if f.ram_total_gb >= 64.0 {
+                s += 0.1;
+            }
+            if f.numa_nodes >= 2 {
+                s += 0.15;
+            }
+            if f.chassis_type.contains("Server") {
+                s += 0.3;
+            }
+            if !f.has_battery {
+                s += 0.05;
+            }
+            if f.nic_count >= 2 {
+                s += 0.1;
+            }
             s.min(0.95)
         };
         if server_score > 0.3 {
@@ -884,10 +934,18 @@ impl HardwareInferenceEngine {
         // Laptop indicators
         let laptop_score = {
             let mut s = 0.0f32;
-            if f.has_battery { s += 0.4; }
-            if f.chassis_type.contains("Laptop") { s += 0.3; }
-            if f.cpu_cores_physical <= 8 { s += 0.05; }
-            if f.ram_total_gb <= 32.0 { s += 0.05; }
+            if f.has_battery {
+                s += 0.4;
+            }
+            if f.chassis_type.contains("Laptop") {
+                s += 0.3;
+            }
+            if f.cpu_cores_physical <= 8 {
+                s += 0.05;
+            }
+            if f.ram_total_gb <= 32.0 {
+                s += 0.05;
+            }
             s.min(0.95)
         };
         if laptop_score > 0.3 {
@@ -904,8 +962,10 @@ impl HardwareInferenceEngine {
         // Desktop indicators
         if !f.has_battery && !f.is_virtual && !f.chassis_type.contains("Server") {
             let gpu_lower = f.gpu_model.to_lowercase();
-            let is_gaming_gpu = gpu_lower.contains("rtx") || gpu_lower.contains("gtx")
-                || gpu_lower.contains("rx 6") || gpu_lower.contains("rx 7");
+            let is_gaming_gpu = gpu_lower.contains("rtx")
+                || gpu_lower.contains("gtx")
+                || gpu_lower.contains("rx 6")
+                || gpu_lower.contains("rx 7");
 
             if f.is_server_cpu || f.ram_total_gb >= 64.0 {
                 scores.push((SystemClass::Workstation, 0.6));
@@ -1106,7 +1166,8 @@ impl HardwareInferenceEngine {
                 bottleneck_type: BottleneckType::StorageBound,
                 component: "Storage bus".into(),
                 severity: 40,
-                reason: "High-core-count CPU with SATA SSD — NVMe would reduce I/O bottleneck".into(),
+                reason: "High-core-count CPU with SATA SSD — NVMe would reduce I/O bottleneck"
+                    .into(),
                 confidence: 0.6,
             });
         }
@@ -1164,8 +1225,12 @@ impl HardwareInferenceEngine {
             } else {
                 limiting.push("RAM may limit dataset size".into());
             }
-            if f.has_nvme { score += 10; }
-            if f.cpu_cores_physical >= 8 { score += 10; }
+            if f.has_nvme {
+                score += 10;
+            }
+            if f.cpu_cores_physical >= 8 {
+                score += 10;
+            }
             if f.gpu_count > 1 {
                 score += 10;
                 strengths.push("Multi-GPU available".into());
@@ -1186,12 +1251,25 @@ impl HardwareInferenceEngine {
             let mut strengths = Vec::new();
             let mut limiting = Vec::new();
 
-            if f.has_discrete_gpu { score += 30; strengths.push("Discrete GPU".into()); }
-            if f.gpu_vram_gb >= 8.0 { score += 20; }
-            if f.has_tensor_cores { score += 15; }
-            if f.cpu_cores_physical >= 4 { score += 15; }
-            if f.ram_total_gb >= 16.0 { score += 10; }
-            if f.has_nvme { score += 10; }
+            if f.has_discrete_gpu {
+                score += 30;
+                strengths.push("Discrete GPU".into());
+            }
+            if f.gpu_vram_gb >= 8.0 {
+                score += 20;
+            }
+            if f.has_tensor_cores {
+                score += 15;
+            }
+            if f.cpu_cores_physical >= 4 {
+                score += 15;
+            }
+            if f.ram_total_gb >= 16.0 {
+                score += 10;
+            }
+            if f.has_nvme {
+                score += 10;
+            }
             if !f.has_discrete_gpu {
                 limiting.push("No discrete GPU — CPU inference only".into());
             }
@@ -1219,14 +1297,30 @@ impl HardwareInferenceEngine {
             } else {
                 limiting.push("No discrete GPU".into());
             }
-            if f.has_rt_cores { score += 10; strengths.push("Ray tracing support".into()); }
-            if f.cpu_max_freq_mhz >= 4000 { score += 15; strengths.push("High CPU clock speed".into()); }
-            else if f.cpu_max_freq_mhz >= 3000 { score += 10; }
-            if f.ram_total_gb >= 16.0 { score += 10; }
-            else { limiting.push("< 16GB RAM".into()); }
-            if f.has_nvme { score += 10; }
-            if f.cpu_cores_physical >= 6 { score += 10; }
-            if f.has_ssd { score += 10; }
+            if f.has_rt_cores {
+                score += 10;
+                strengths.push("Ray tracing support".into());
+            }
+            if f.cpu_max_freq_mhz >= 4000 {
+                score += 15;
+                strengths.push("High CPU clock speed".into());
+            } else if f.cpu_max_freq_mhz >= 3000 {
+                score += 10;
+            }
+            if f.ram_total_gb >= 16.0 {
+                score += 10;
+            } else {
+                limiting.push("< 16GB RAM".into());
+            }
+            if f.has_nvme {
+                score += 10;
+            }
+            if f.cpu_cores_physical >= 6 {
+                score += 10;
+            }
+            if f.has_ssd {
+                score += 10;
+            }
 
             results.push(WorkloadSuitability {
                 workload: Workload::Gaming,
@@ -1243,16 +1337,35 @@ impl HardwareInferenceEngine {
             let mut strengths = Vec::new();
             let mut limiting = Vec::new();
 
-            if f.has_discrete_gpu { score += 20; }
-            if f.cpu_cores_physical >= 8 { score += 20; strengths.push("Multi-core for rendering".into()); }
-            else if f.cpu_cores_physical >= 6 { score += 15; }
-            if f.ram_total_gb >= 32.0 { score += 20; strengths.push("Plenty of RAM for timelines".into()); }
-            else if f.ram_total_gb >= 16.0 { score += 10; }
-            else { limiting.push("< 16GB RAM limits timeline length".into()); }
-            if f.has_nvme { score += 15; strengths.push("NVMe for fast media reads".into()); }
-            if f.total_storage_gb >= 2000.0 { score += 10; }
-            else { limiting.push("Limited storage for large projects".into()); }
-            if f.gpu_vram_gb >= 8.0 { score += 15; }
+            if f.has_discrete_gpu {
+                score += 20;
+            }
+            if f.cpu_cores_physical >= 8 {
+                score += 20;
+                strengths.push("Multi-core for rendering".into());
+            } else if f.cpu_cores_physical >= 6 {
+                score += 15;
+            }
+            if f.ram_total_gb >= 32.0 {
+                score += 20;
+                strengths.push("Plenty of RAM for timelines".into());
+            } else if f.ram_total_gb >= 16.0 {
+                score += 10;
+            } else {
+                limiting.push("< 16GB RAM limits timeline length".into());
+            }
+            if f.has_nvme {
+                score += 15;
+                strengths.push("NVMe for fast media reads".into());
+            }
+            if f.total_storage_gb >= 2000.0 {
+                score += 10;
+            } else {
+                limiting.push("Limited storage for large projects".into());
+            }
+            if f.gpu_vram_gb >= 8.0 {
+                score += 15;
+            }
 
             results.push(WorkloadSuitability {
                 workload: Workload::VideoEditing,
@@ -1269,16 +1382,33 @@ impl HardwareInferenceEngine {
             let mut strengths = Vec::new();
             let mut limiting = Vec::new();
 
-            if f.cpu_cores_physical >= 16 { score += 35; strengths.push("Many cores for parallel builds".into()); }
-            else if f.cpu_cores_physical >= 8 { score += 25; }
-            else if f.cpu_cores_physical >= 4 { score += 15; }
-            else { limiting.push("Few cores — slow parallel builds".into()); }
-            if f.ram_total_gb >= 32.0 { score += 25; }
-            else if f.ram_total_gb >= 16.0 { score += 15; }
-            if f.has_nvme { score += 20; strengths.push("Fast build I/O with NVMe".into()); }
-            else if f.has_ssd { score += 10; }
-            if f.cpu_max_freq_mhz >= 4000 { score += 10; }
-            if f.total_storage_gb >= 512.0 { score += 10; }
+            if f.cpu_cores_physical >= 16 {
+                score += 35;
+                strengths.push("Many cores for parallel builds".into());
+            } else if f.cpu_cores_physical >= 8 {
+                score += 25;
+            } else if f.cpu_cores_physical >= 4 {
+                score += 15;
+            } else {
+                limiting.push("Few cores — slow parallel builds".into());
+            }
+            if f.ram_total_gb >= 32.0 {
+                score += 25;
+            } else if f.ram_total_gb >= 16.0 {
+                score += 15;
+            }
+            if f.has_nvme {
+                score += 20;
+                strengths.push("Fast build I/O with NVMe".into());
+            } else if f.has_ssd {
+                score += 10;
+            }
+            if f.cpu_max_freq_mhz >= 4000 {
+                score += 10;
+            }
+            if f.total_storage_gb >= 512.0 {
+                score += 10;
+            }
 
             results.push(WorkloadSuitability {
                 workload: Workload::Compilation,
@@ -1295,15 +1425,32 @@ impl HardwareInferenceEngine {
             let mut strengths = Vec::new();
             let mut limiting = Vec::new();
 
-            if f.cpu_cores_physical >= 8 { score += 25; }
-            else if f.cpu_cores_physical >= 4 { score += 15; }
-            if f.ram_total_gb >= 16.0 { score += 20; }
-            if f.max_nic_speed_gbps >= 10.0 { score += 25; strengths.push("10+ GbE networking".into()); }
-            else if f.max_nic_speed_gbps >= 1.0 { score += 10; }
-            else { limiting.push("Slow network".into()); }
-            if f.has_nvme { score += 15; }
-            if f.nic_count >= 2 { score += 10; strengths.push("Multiple NICs for redundancy".into()); }
-            if f.is_server_cpu { score += 5; }
+            if f.cpu_cores_physical >= 8 {
+                score += 25;
+            } else if f.cpu_cores_physical >= 4 {
+                score += 15;
+            }
+            if f.ram_total_gb >= 16.0 {
+                score += 20;
+            }
+            if f.max_nic_speed_gbps >= 10.0 {
+                score += 25;
+                strengths.push("10+ GbE networking".into());
+            } else if f.max_nic_speed_gbps >= 1.0 {
+                score += 10;
+            } else {
+                limiting.push("Slow network".into());
+            }
+            if f.has_nvme {
+                score += 15;
+            }
+            if f.nic_count >= 2 {
+                score += 10;
+                strengths.push("Multiple NICs for redundancy".into());
+            }
+            if f.is_server_cpu {
+                score += 5;
+            }
 
             results.push(WorkloadSuitability {
                 workload: Workload::WebServer,
@@ -1320,15 +1467,32 @@ impl HardwareInferenceEngine {
             let mut strengths = Vec::new();
             let mut limiting = Vec::new();
 
-            if f.ram_total_gb >= 64.0 { score += 30; strengths.push("Large RAM for caching".into()); }
-            else if f.ram_total_gb >= 32.0 { score += 20; }
-            else { limiting.push("RAM limits index caching".into()); }
-            if f.has_nvme { score += 25; strengths.push("NVMe for fast IOPS".into()); }
-            else if f.has_ssd { score += 15; }
-            else { limiting.push("HDD severely limits database IOPS".into()); }
-            if f.cpu_cores_physical >= 8 { score += 20; }
-            if f.total_storage_gb >= 2000.0 { score += 15; }
-            if f.has_ecc { score += 10; strengths.push("ECC memory for data integrity".into()); }
+            if f.ram_total_gb >= 64.0 {
+                score += 30;
+                strengths.push("Large RAM for caching".into());
+            } else if f.ram_total_gb >= 32.0 {
+                score += 20;
+            } else {
+                limiting.push("RAM limits index caching".into());
+            }
+            if f.has_nvme {
+                score += 25;
+                strengths.push("NVMe for fast IOPS".into());
+            } else if f.has_ssd {
+                score += 15;
+            } else {
+                limiting.push("HDD severely limits database IOPS".into());
+            }
+            if f.cpu_cores_physical >= 8 {
+                score += 20;
+            }
+            if f.total_storage_gb >= 2000.0 {
+                score += 15;
+            }
+            if f.has_ecc {
+                score += 10;
+                strengths.push("ECC memory for data integrity".into());
+            }
 
             results.push(WorkloadSuitability {
                 workload: Workload::DatabaseServer,
@@ -1345,17 +1509,37 @@ impl HardwareInferenceEngine {
             let mut strengths = Vec::new();
             let mut limiting = Vec::new();
 
-            if f.cpu_cores_physical >= 16 { score += 30; strengths.push("Many cores for VMs".into()); }
-            else if f.cpu_cores_physical >= 8 { score += 15; }
-            else { limiting.push("Few cores limits VM density".into()); }
-            if f.ram_total_gb >= 128.0 { score += 30; }
-            else if f.ram_total_gb >= 64.0 { score += 20; strengths.push("Good RAM for VMs".into()); }
-            else if f.ram_total_gb >= 32.0 { score += 10; }
-            else { limiting.push("Limited RAM for virtual machines".into()); }
-            if f.has_nvme { score += 15; }
-            if f.numa_nodes >= 2 { score += 10; strengths.push("NUMA for VM pinning".into()); }
-            if f.is_server_cpu { score += 10; }
-            if f.total_storage_gb >= 2000.0 { score += 5; }
+            if f.cpu_cores_physical >= 16 {
+                score += 30;
+                strengths.push("Many cores for VMs".into());
+            } else if f.cpu_cores_physical >= 8 {
+                score += 15;
+            } else {
+                limiting.push("Few cores limits VM density".into());
+            }
+            if f.ram_total_gb >= 128.0 {
+                score += 30;
+            } else if f.ram_total_gb >= 64.0 {
+                score += 20;
+                strengths.push("Good RAM for VMs".into());
+            } else if f.ram_total_gb >= 32.0 {
+                score += 10;
+            } else {
+                limiting.push("Limited RAM for virtual machines".into());
+            }
+            if f.has_nvme {
+                score += 15;
+            }
+            if f.numa_nodes >= 2 {
+                score += 10;
+                strengths.push("NUMA for VM pinning".into());
+            }
+            if f.is_server_cpu {
+                score += 10;
+            }
+            if f.total_storage_gb >= 2000.0 {
+                score += 5;
+            }
 
             results.push(WorkloadSuitability {
                 workload: Workload::Virtualization,
@@ -1372,12 +1556,22 @@ impl HardwareInferenceEngine {
             let strengths = Vec::new();
             let mut limiting = Vec::new();
 
-            if f.cpu_cores_physical >= 4 { score += 15; }
-            if f.ram_total_gb >= 8.0 { score += 15; }
-            else { limiting.push("< 8GB RAM may cause slowdowns".into()); }
-            if f.has_ssd { score += 15; }
-            else { limiting.push("HDD makes boot and app launch slow".into()); }
-            if f.cpu_cores_physical < 2 || f.ram_total_gb < 4.0 { score = score.saturating_sub(30); }
+            if f.cpu_cores_physical >= 4 {
+                score += 15;
+            }
+            if f.ram_total_gb >= 8.0 {
+                score += 15;
+            } else {
+                limiting.push("< 8GB RAM may cause slowdowns".into());
+            }
+            if f.has_ssd {
+                score += 15;
+            } else {
+                limiting.push("HDD makes boot and app launch slow".into());
+            }
+            if f.cpu_cores_physical < 2 || f.ram_total_gb < 4.0 {
+                score = score.saturating_sub(30);
+            }
 
             results.push(WorkloadSuitability {
                 workload: Workload::OfficeProductivity,
@@ -1452,13 +1646,25 @@ impl HardwareInferenceEngine {
 
     fn infer_cpu_year(model: &str) -> Option<u16> {
         // Intel Core generations
-        if model.contains("14th gen") || model.contains("core ultra") || model.contains("14900") || model.contains("14700") {
+        if model.contains("14th gen")
+            || model.contains("core ultra")
+            || model.contains("14900")
+            || model.contains("14700")
+        {
             return Some(2024);
         }
-        if model.contains("13th gen") || model.contains("13900") || model.contains("13700") || model.contains("13600") {
+        if model.contains("13th gen")
+            || model.contains("13900")
+            || model.contains("13700")
+            || model.contains("13600")
+        {
             return Some(2022);
         }
-        if model.contains("12th gen") || model.contains("12900") || model.contains("12700") || model.contains("12600") {
+        if model.contains("12th gen")
+            || model.contains("12900")
+            || model.contains("12700")
+            || model.contains("12600")
+        {
             return Some(2021);
         }
         if model.contains("11th gen") || model.contains("11900") || model.contains("11700") {
@@ -1478,64 +1684,134 @@ impl HardwareInferenceEngine {
         if model.contains("ryzen 9 9") || model.contains("ryzen 7 9") || model.contains("zen 5") {
             return Some(2024);
         }
-        if model.contains("ryzen 9 7") || model.contains("ryzen 7 7") || model.contains("ryzen 5 7") || model.contains("zen 4") {
+        if model.contains("ryzen 9 7")
+            || model.contains("ryzen 7 7")
+            || model.contains("ryzen 5 7")
+            || model.contains("zen 4")
+        {
             return Some(2022);
         }
-        if model.contains("ryzen 9 5") || model.contains("ryzen 7 5") || model.contains("ryzen 5 5") || model.contains("zen 3") {
+        if model.contains("ryzen 9 5")
+            || model.contains("ryzen 7 5")
+            || model.contains("ryzen 5 5")
+            || model.contains("zen 3")
+        {
             return Some(2020);
         }
-        if model.contains("ryzen 9 3") || model.contains("ryzen 7 3") || model.contains("ryzen 5 3") || model.contains("zen 2") {
+        if model.contains("ryzen 9 3")
+            || model.contains("ryzen 7 3")
+            || model.contains("ryzen 5 3")
+            || model.contains("zen 2")
+        {
             return Some(2019);
         }
 
         // AMD EPYC
-        if model.contains("epyc 9") { return Some(2023); }
-        if model.contains("epyc 7") && model.contains("3") { return Some(2022); }
-        if model.contains("epyc 7") { return Some(2019); }
+        if model.contains("epyc 9") {
+            return Some(2023);
+        }
+        if model.contains("epyc 7") && model.contains("3") {
+            return Some(2022);
+        }
+        if model.contains("epyc 7") {
+            return Some(2019);
+        }
 
         // Intel Xeon (simplified)
-        if model.contains("xeon w9") || model.contains("xeon w7") { return Some(2023); }
-        if model.contains("xeon") && model.contains("v5") { return Some(2017); }
-        if model.contains("xeon") && model.contains("v4") { return Some(2016); }
+        if model.contains("xeon w9") || model.contains("xeon w7") {
+            return Some(2023);
+        }
+        if model.contains("xeon") && model.contains("v5") {
+            return Some(2017);
+        }
+        if model.contains("xeon") && model.contains("v4") {
+            return Some(2016);
+        }
 
         // Apple
-        if model.contains("m4") { return Some(2024); }
-        if model.contains("m3") { return Some(2023); }
-        if model.contains("m2") { return Some(2022); }
-        if model.contains("m1") { return Some(2020); }
+        if model.contains("m4") {
+            return Some(2024);
+        }
+        if model.contains("m3") {
+            return Some(2023);
+        }
+        if model.contains("m2") {
+            return Some(2022);
+        }
+        if model.contains("m1") {
+            return Some(2020);
+        }
 
         None
     }
 
     fn infer_gpu_year(model: &str) -> Option<u16> {
         // NVIDIA GeForce
-        if model.contains("rtx 50") || model.contains("5090") || model.contains("5080") { return Some(2025); }
-        if model.contains("rtx 40") || model.contains("4090") || model.contains("4080") { return Some(2022); }
-        if model.contains("rtx 30") || model.contains("3090") || model.contains("3080") { return Some(2020); }
-        if model.contains("rtx 20") || model.contains("2080") || model.contains("2070") { return Some(2018); }
-        if model.contains("gtx 1080") || model.contains("gtx 10") { return Some(2016); }
-        if model.contains("gtx 9") { return Some(2014); }
+        if model.contains("rtx 50") || model.contains("5090") || model.contains("5080") {
+            return Some(2025);
+        }
+        if model.contains("rtx 40") || model.contains("4090") || model.contains("4080") {
+            return Some(2022);
+        }
+        if model.contains("rtx 30") || model.contains("3090") || model.contains("3080") {
+            return Some(2020);
+        }
+        if model.contains("rtx 20") || model.contains("2080") || model.contains("2070") {
+            return Some(2018);
+        }
+        if model.contains("gtx 1080") || model.contains("gtx 10") {
+            return Some(2016);
+        }
+        if model.contains("gtx 9") {
+            return Some(2014);
+        }
 
         // NVIDIA Data Center
-        if model.contains("h100") || model.contains("h200") { return Some(2023); }
-        if model.contains("a100") { return Some(2020); }
-        if model.contains("v100") { return Some(2017); }
+        if model.contains("h100") || model.contains("h200") {
+            return Some(2023);
+        }
+        if model.contains("a100") {
+            return Some(2020);
+        }
+        if model.contains("v100") {
+            return Some(2017);
+        }
 
         // AMD Radeon
-        if model.contains("rx 9") { return Some(2025); }
-        if model.contains("rx 7") { return Some(2022); }
-        if model.contains("rx 6") { return Some(2020); }
-        if model.contains("rx 5") { return Some(2019); }
+        if model.contains("rx 9") {
+            return Some(2025);
+        }
+        if model.contains("rx 7") {
+            return Some(2022);
+        }
+        if model.contains("rx 6") {
+            return Some(2020);
+        }
+        if model.contains("rx 5") {
+            return Some(2019);
+        }
 
         // Intel Arc
-        if model.contains("arc b") { return Some(2024); }
-        if model.contains("arc a") { return Some(2022); }
+        if model.contains("arc b") {
+            return Some(2024);
+        }
+        if model.contains("arc a") {
+            return Some(2022);
+        }
 
         // Apple (same as CPU year for SoC)
-        if model.contains("m4") { return Some(2024); }
-        if model.contains("m3") { return Some(2023); }
-        if model.contains("m2") { return Some(2022); }
-        if model.contains("m1") { return Some(2020); }
+        if model.contains("m4") {
+            return Some(2024);
+        }
+        if model.contains("m3") {
+            return Some(2023);
+        }
+        if model.contains("m2") {
+            return Some(2022);
+        }
+        if model.contains("m1") {
+            return Some(2020);
+        }
 
         None
     }
@@ -1587,10 +1863,15 @@ impl HardwareInferenceEngine {
 
         let mut recommendations = Vec::new();
         if headroom == ThermalHeadroom::Insufficient || headroom == ThermalHeadroom::Marginal {
-            recommendations.push("Consider improving cooling (better fans, repasting, or external cooling)".into());
+            recommendations.push(
+                "Consider improving cooling (better fans, repasting, or external cooling)".into(),
+            );
         }
         if f.has_battery && gpu_tdp > 80.0 {
-            recommendations.push("High GPU TDP in a laptop — may experience thermal throttling under sustained load".into());
+            recommendations.push(
+                "High GPU TDP in a laptop — may experience thermal throttling under sustained load"
+                    .into(),
+            );
         }
 
         ThermalEnvelope {
@@ -1605,43 +1886,109 @@ impl HardwareInferenceEngine {
 
     fn infer_cpu_tdp(model_lower: &str) -> f32 {
         // Known TDP ranges by CPU class
-        if model_lower.contains("i9-14") || model_lower.contains("i9-13") { return 125.0; }
-        if model_lower.contains("i7-14") || model_lower.contains("i7-13") { return 65.0; }
-        if model_lower.contains("i5-14") || model_lower.contains("i5-13") { return 65.0; }
-        if model_lower.contains("i3") { return 35.0; }
-        if model_lower.contains("ryzen 9") { return 120.0; }
-        if model_lower.contains("ryzen 7") { return 65.0; }
-        if model_lower.contains("ryzen 5") { return 65.0; }
-        if model_lower.contains("ryzen 3") { return 35.0; }
-        if model_lower.contains("epyc") { return 225.0; }
-        if model_lower.contains("xeon") { return 150.0; }
-        if model_lower.contains("threadripper") { return 280.0; }
-        if model_lower.contains("celeron") || model_lower.contains("atom") { return 15.0; }
-        if model_lower.contains("m1") || model_lower.contains("m2") { return 20.0; }
-        if model_lower.contains("m3") || model_lower.contains("m4") { return 22.0; }
-        if model_lower.contains("arm") || model_lower.contains("cortex") { return 5.0; }
+        if model_lower.contains("i9-14") || model_lower.contains("i9-13") {
+            return 125.0;
+        }
+        if model_lower.contains("i7-14") || model_lower.contains("i7-13") {
+            return 65.0;
+        }
+        if model_lower.contains("i5-14") || model_lower.contains("i5-13") {
+            return 65.0;
+        }
+        if model_lower.contains("i3") {
+            return 35.0;
+        }
+        if model_lower.contains("ryzen 9") {
+            return 120.0;
+        }
+        if model_lower.contains("ryzen 7") {
+            return 65.0;
+        }
+        if model_lower.contains("ryzen 5") {
+            return 65.0;
+        }
+        if model_lower.contains("ryzen 3") {
+            return 35.0;
+        }
+        if model_lower.contains("epyc") {
+            return 225.0;
+        }
+        if model_lower.contains("xeon") {
+            return 150.0;
+        }
+        if model_lower.contains("threadripper") {
+            return 280.0;
+        }
+        if model_lower.contains("celeron") || model_lower.contains("atom") {
+            return 15.0;
+        }
+        if model_lower.contains("m1") || model_lower.contains("m2") {
+            return 20.0;
+        }
+        if model_lower.contains("m3") || model_lower.contains("m4") {
+            return 22.0;
+        }
+        if model_lower.contains("arm") || model_lower.contains("cortex") {
+            return 5.0;
+        }
         65.0 // default guess
     }
 
     fn infer_gpu_tdp(model_lower: &str) -> f32 {
-        if model_lower.contains("4090") { return 450.0; }
-        if model_lower.contains("4080") { return 320.0; }
-        if model_lower.contains("4070 ti") { return 285.0; }
-        if model_lower.contains("4070") { return 200.0; }
-        if model_lower.contains("4060") { return 115.0; }
-        if model_lower.contains("3090") { return 350.0; }
-        if model_lower.contains("3080") { return 320.0; }
-        if model_lower.contains("3070") { return 220.0; }
-        if model_lower.contains("3060") { return 170.0; }
-        if model_lower.contains("h100") { return 700.0; }
-        if model_lower.contains("a100") { return 300.0; }
-        if model_lower.contains("rx 7900") { return 355.0; }
-        if model_lower.contains("rx 7800") { return 263.0; }
-        if model_lower.contains("rx 7700") { return 245.0; }
-        if model_lower.contains("rx 7600") { return 165.0; }
-        if model_lower.contains("arc a7") { return 225.0; }
-        if model_lower.contains("arc a5") { return 175.0; }
-        if model_lower.is_empty() { return 0.0; }
+        if model_lower.contains("4090") {
+            return 450.0;
+        }
+        if model_lower.contains("4080") {
+            return 320.0;
+        }
+        if model_lower.contains("4070 ti") {
+            return 285.0;
+        }
+        if model_lower.contains("4070") {
+            return 200.0;
+        }
+        if model_lower.contains("4060") {
+            return 115.0;
+        }
+        if model_lower.contains("3090") {
+            return 350.0;
+        }
+        if model_lower.contains("3080") {
+            return 320.0;
+        }
+        if model_lower.contains("3070") {
+            return 220.0;
+        }
+        if model_lower.contains("3060") {
+            return 170.0;
+        }
+        if model_lower.contains("h100") {
+            return 700.0;
+        }
+        if model_lower.contains("a100") {
+            return 300.0;
+        }
+        if model_lower.contains("rx 7900") {
+            return 355.0;
+        }
+        if model_lower.contains("rx 7800") {
+            return 263.0;
+        }
+        if model_lower.contains("rx 7700") {
+            return 245.0;
+        }
+        if model_lower.contains("rx 7600") {
+            return 165.0;
+        }
+        if model_lower.contains("arc a7") {
+            return 225.0;
+        }
+        if model_lower.contains("arc a5") {
+            return 175.0;
+        }
+        if model_lower.is_empty() {
+            return 0.0;
+        }
         100.0 // default for unknown discrete GPU
     }
 
@@ -1760,7 +2107,9 @@ impl HardwareInferenceEngine {
                     f.gpu_vram_gb, f.ram_total_gb
                 ),
                 severity: AnomalySeverity::Warning,
-                explanation: "GPU VRAM exceeds system RAM — data loading will bottleneck GPU workloads".into(),
+                explanation:
+                    "GPU VRAM exceeds system RAM — data loading will bottleneck GPU workloads"
+                        .into(),
             });
         }
 
@@ -1781,7 +2130,9 @@ impl HardwareInferenceEngine {
                     f.gpu_vram_gb, f.ram_total_gb
                 ),
                 severity: AnomalySeverity::Warning,
-                explanation: "System RAM should typically be at least 2x GPU VRAM for optimal performance".into(),
+                explanation:
+                    "System RAM should typically be at least 2x GPU VRAM for optimal performance"
+                        .into(),
             });
         }
 
@@ -1802,7 +2153,8 @@ impl HardwareInferenceEngine {
             anomalies.push(HardwareAnomaly {
                 description: "Powerful CPU and RAM but no discrete GPU".into(),
                 severity: AnomalySeverity::Info,
-                explanation: "System may be optimized for CPU-bound workloads or virtualization".into(),
+                explanation: "System may be optimized for CPU-bound workloads or virtualization"
+                    .into(),
             });
         }
 
@@ -1964,7 +2316,9 @@ mod tests {
         assert_eq!(report.classification, SystemClass::Server);
         assert!(report.performance_tier >= PerformanceTier::High);
         // Virtualization should score highly
-        let virt = report.workload_scores.iter()
+        let virt = report
+            .workload_scores
+            .iter()
             .find(|w| w.workload == Workload::Virtualization)
             .unwrap();
         assert!(virt.score >= 70);
@@ -2015,17 +2369,38 @@ mod tests {
 
     #[test]
     fn test_cpu_year_inference() {
-        assert_eq!(HardwareInferenceEngine::infer_cpu_year("intel core i9-14900k"), Some(2024));
-        assert_eq!(HardwareInferenceEngine::infer_cpu_year("amd ryzen 7 7800x3d"), Some(2022));
-        assert_eq!(HardwareInferenceEngine::infer_cpu_year("apple m3 max"), Some(2023));
-        assert_eq!(HardwareInferenceEngine::infer_cpu_year("amd epyc 9554"), Some(2023));
+        assert_eq!(
+            HardwareInferenceEngine::infer_cpu_year("intel core i9-14900k"),
+            Some(2024)
+        );
+        assert_eq!(
+            HardwareInferenceEngine::infer_cpu_year("amd ryzen 7 7800x3d"),
+            Some(2022)
+        );
+        assert_eq!(
+            HardwareInferenceEngine::infer_cpu_year("apple m3 max"),
+            Some(2023)
+        );
+        assert_eq!(
+            HardwareInferenceEngine::infer_cpu_year("amd epyc 9554"),
+            Some(2023)
+        );
     }
 
     #[test]
     fn test_gpu_year_inference() {
-        assert_eq!(HardwareInferenceEngine::infer_gpu_year("nvidia geforce rtx 4090"), Some(2022));
-        assert_eq!(HardwareInferenceEngine::infer_gpu_year("amd radeon rx 7900 xtx"), Some(2022));
-        assert_eq!(HardwareInferenceEngine::infer_gpu_year("nvidia h100"), Some(2023));
+        assert_eq!(
+            HardwareInferenceEngine::infer_gpu_year("nvidia geforce rtx 4090"),
+            Some(2022)
+        );
+        assert_eq!(
+            HardwareInferenceEngine::infer_gpu_year("amd radeon rx 7900 xtx"),
+            Some(2022)
+        );
+        assert_eq!(
+            HardwareInferenceEngine::infer_gpu_year("nvidia h100"),
+            Some(2023)
+        );
     }
 
     #[test]
@@ -2065,7 +2440,10 @@ mod tests {
             },
         };
         let workloads = engine.score_workloads();
-        let ml = workloads.iter().find(|w| w.workload == Workload::MlTraining).unwrap();
+        let ml = workloads
+            .iter()
+            .find(|w| w.workload == Workload::MlTraining)
+            .unwrap();
         assert!(ml.score >= 60); // Should score well for ML
     }
 

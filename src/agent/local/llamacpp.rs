@@ -19,7 +19,7 @@
 //! # Example
 //!
 //! ```no_run
-//! use simon::agent::local::{LlamaCppClient, InferenceRequest};
+//! use simonlib::agent::local::{LlamaCppClient, InferenceRequest};
 //! use std::path::PathBuf;
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
@@ -41,7 +41,7 @@
 //! ```
 
 use super::{InferenceRequest, InferenceResponse, LocalInferenceClient, ModelInfo};
-use crate::error::{SimonError, Result};
+use crate::error::{Result, SimonError};
 use async_trait::async_trait;
 use std::path::PathBuf;
 use std::process::Command;

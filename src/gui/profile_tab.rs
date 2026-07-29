@@ -122,10 +122,8 @@ impl SiliconMonitorApp {
             });
             return;
         };
-        let deviations: &[crate::profile::deviation::Deviation] = self
-            .profile_deviations_cache
-            .as_deref()
-            .unwrap_or(&[]);
+        let deviations: &[crate::profile::deviation::Deviation] =
+            self.profile_deviations_cache.as_deref().unwrap_or(&[]);
         let audit_tail: &[String] = self.profile_audit_tail_cache.as_slice();
         let filter_lc = self.profile_filter.to_ascii_lowercase();
         let subsystem_filter = self.profile_subsystem_filter;
@@ -135,12 +133,9 @@ impl SiliconMonitorApp {
             RichText::new("▾ Deviations from default · 0 — at stock".to_string())
                 .color(egui::Color32::from_rgb(100, 220, 100))
         } else {
-            RichText::new(format!(
-                "▾ Deviations from default · {}",
-                deviations.len()
-            ))
-            .color(egui::Color32::from_rgb(240, 200, 80))
-            .strong()
+            RichText::new(format!("▾ Deviations from default · {}", deviations.len()))
+                .color(egui::Color32::from_rgb(240, 200, 80))
+                .strong()
         };
         egui::CollapsingHeader::new(heading)
             .default_open(!deviations.is_empty())
@@ -243,26 +238,21 @@ impl SiliconMonitorApp {
                                 >(line)
                                 {
                                     let (status_str, status_color) = match o.status {
-                                        crate::profile::apply::ApplyStatus::Applied => (
-                                            "applied",
-                                            egui::Color32::from_rgb(100, 220, 100),
-                                        ),
-                                        crate::profile::apply::ApplyStatus::Refused => (
-                                            "refused",
-                                            egui::Color32::from_rgb(255, 90, 90),
-                                        ),
-                                        crate::profile::apply::ApplyStatus::Failed => (
-                                            "failed",
-                                            egui::Color32::from_rgb(255, 90, 90),
-                                        ),
-                                        crate::profile::apply::ApplyStatus::NotWritable => (
-                                            "not writable",
-                                            egui::Color32::from_rgb(240, 200, 80),
-                                        ),
-                                        crate::profile::apply::ApplyStatus::NeedsConfirm => (
-                                            "needs confirm",
-                                            egui::Color32::from_rgb(240, 200, 80),
-                                        ),
+                                        crate::profile::apply::ApplyStatus::Applied => {
+                                            ("applied", egui::Color32::from_rgb(100, 220, 100))
+                                        }
+                                        crate::profile::apply::ApplyStatus::Refused => {
+                                            ("refused", egui::Color32::from_rgb(255, 90, 90))
+                                        }
+                                        crate::profile::apply::ApplyStatus::Failed => {
+                                            ("failed", egui::Color32::from_rgb(255, 90, 90))
+                                        }
+                                        crate::profile::apply::ApplyStatus::NotWritable => {
+                                            ("not writable", egui::Color32::from_rgb(240, 200, 80))
+                                        }
+                                        crate::profile::apply::ApplyStatus::NeedsConfirm => {
+                                            ("needs confirm", egui::Color32::from_rgb(240, 200, 80))
+                                        }
                                     };
                                     ui.label(
                                         RichText::new(o.timestamp.to_string())
@@ -351,10 +341,9 @@ impl SiliconMonitorApp {
                                             sub.as_str(),
                                             group.device
                                         );
-                                        egui::Grid::new(grid_id)
-                                            .striped(true)
-                                            .num_columns(3)
-                                            .show(ui, |ui| {
+                                        egui::Grid::new(grid_id).striped(true).num_columns(3).show(
+                                            ui,
+                                            |ui| {
                                                 for s in group.settings.iter().filter(|s| {
                                                     filter_lc.is_empty()
                                                         || setting_matches(s, &filter_lc)
@@ -397,7 +386,8 @@ impl SiliconMonitorApp {
                                                     );
                                                     ui.end_row();
                                                 }
-                                            });
+                                            },
+                                        );
                                         for n in &group.notes {
                                             ui.label(
                                                 RichText::new(format!("• {}", n))

@@ -3,7 +3,7 @@
 //! Create, enable, disable, and manage swap files.
 
 use super::verify_sudo_available;
-use crate::error::{SimonError, Result};
+use crate::error::{Result, SimonError};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;

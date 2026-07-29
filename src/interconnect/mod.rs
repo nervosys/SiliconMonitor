@@ -176,10 +176,15 @@ impl InterconnectMonitor {
 
         // Determine vendor and product family
         let is_intel = upper.contains("INTEL") || upper.contains("CORE") || upper.contains("XEON");
-        let is_amd = upper.contains("AMD") || upper.contains("RYZEN") || upper.contains("EPYC")
+        let is_amd = upper.contains("AMD")
+            || upper.contains("RYZEN")
+            || upper.contains("EPYC")
             || upper.contains("THREADRIPPER");
-        let is_apple = upper.contains("APPLE") || upper.contains("M1") || upper.contains("M2")
-            || upper.contains("M3") || upper.contains("M4");
+        let is_apple = upper.contains("APPLE")
+            || upper.contains("M1")
+            || upper.contains("M2")
+            || upper.contains("M3")
+            || upper.contains("M4");
 
         if is_intel {
             Self::infer_intel(&upper, sockets)
@@ -204,21 +209,74 @@ impl InterconnectMonitor {
         // Determine Intel interconnect generation
         let (link_type, speed_gts, width, gen, on_die, coherence) =
             if name.contains("GRANITE") || name.contains("EMERALD") || name.contains("SIERRA") {
-                (InterconnectType::UPI, 20.0, 3, "UPI 2.0", InterconnectType::MeshInterconnect, CoherenceProtocol::MESIF)
+                (
+                    InterconnectType::UPI,
+                    20.0,
+                    3,
+                    "UPI 2.0",
+                    InterconnectType::MeshInterconnect,
+                    CoherenceProtocol::MESIF,
+                )
             } else if name.contains("SAPPHIRE") || name.contains("W9-3") || name.contains("W7-3") {
-                (InterconnectType::UPI, 16.0, 3, "UPI 1.1", InterconnectType::MeshInterconnect, CoherenceProtocol::MESIF)
+                (
+                    InterconnectType::UPI,
+                    16.0,
+                    3,
+                    "UPI 1.1",
+                    InterconnectType::MeshInterconnect,
+                    CoherenceProtocol::MESIF,
+                )
             } else if name.contains("ICE LAKE") && name.contains("XEON") {
-                (InterconnectType::UPI, 11.2, 3, "UPI 1.0", InterconnectType::MeshInterconnect, CoherenceProtocol::MESIF)
-            } else if name.contains("XEON") && (name.contains("PLATINUM") || name.contains("GOLD")) {
-                (InterconnectType::UPI, 10.4, 3, "UPI 1.0", InterconnectType::MeshInterconnect, CoherenceProtocol::MESIF)
-            } else if name.contains("12TH") || name.contains("13TH") || name.contains("14TH")
-                || name.contains("ALDER") || name.contains("RAPTOR")
+                (
+                    InterconnectType::UPI,
+                    11.2,
+                    3,
+                    "UPI 1.0",
+                    InterconnectType::MeshInterconnect,
+                    CoherenceProtocol::MESIF,
+                )
+            } else if name.contains("XEON") && (name.contains("PLATINUM") || name.contains("GOLD"))
             {
-                (InterconnectType::RingBus, 0.0, 0, "Ring Bus", InterconnectType::RingBus, CoherenceProtocol::MESIF)
+                (
+                    InterconnectType::UPI,
+                    10.4,
+                    3,
+                    "UPI 1.0",
+                    InterconnectType::MeshInterconnect,
+                    CoherenceProtocol::MESIF,
+                )
+            } else if name.contains("12TH")
+                || name.contains("13TH")
+                || name.contains("14TH")
+                || name.contains("ALDER")
+                || name.contains("RAPTOR")
+            {
+                (
+                    InterconnectType::RingBus,
+                    0.0,
+                    0,
+                    "Ring Bus",
+                    InterconnectType::RingBus,
+                    CoherenceProtocol::MESIF,
+                )
             } else if name.contains("ARROW") || name.contains("LUNAR") || name.contains("ULTRA") {
-                (InterconnectType::RingBus, 0.0, 0, "Ring/Foveros", InterconnectType::RingBus, CoherenceProtocol::MESIF)
+                (
+                    InterconnectType::RingBus,
+                    0.0,
+                    0,
+                    "Ring/Foveros",
+                    InterconnectType::RingBus,
+                    CoherenceProtocol::MESIF,
+                )
             } else {
-                (InterconnectType::Unknown, 0.0, 0, "Unknown", InterconnectType::RingBus, CoherenceProtocol::MESIF)
+                (
+                    InterconnectType::Unknown,
+                    0.0,
+                    0,
+                    "Unknown",
+                    InterconnectType::RingBus,
+                    CoherenceProtocol::MESIF,
+                )
             };
 
         // Bandwidth: speed (GT/s) * width (bytes) * links
@@ -277,30 +335,33 @@ impl InterconnectMonitor {
 
     fn infer_amd(name: &str, sockets: u32) -> InterconnectTopology {
         // AMD Infinity Fabric inference
-        let (if_speed_gts, compute_dies, io_dies, cores_per_die, gen, on_pkg_bw) =
-            if name.contains("9950") || name.contains("9900") || name.contains("9700")
-                || name.contains("9600") || name.contains("ZEN 5")
-            {
-                (32.0, 2, 1, 8, "IF 4.0", 64.0)
-            } else if name.contains("7950") || name.contains("7900") {
-                (32.0, 2, 1, 8, "IF 3.5", 36.0)
-            } else if name.contains("7800") || name.contains("7700") || name.contains("7600") {
-                (32.0, 1, 1, 8, "IF 3.5", 36.0)
-            } else if name.contains("5950") || name.contains("5900") {
-                (32.0, 2, 1, 8, "IF 3.0", 32.0)
-            } else if name.contains("5800") || name.contains("5700") || name.contains("5600") {
-                (32.0, 1, 1, 8, "IF 3.0", 32.0)
-            } else if name.contains("EPYC 9") || name.contains("GENOA") || name.contains("TURIN") {
-                (32.0, 12, 1, 8, "IF 4.0", 64.0)
-            } else if name.contains("EPYC 7") {
-                (16.0, 8, 1, 8, "IF 2.0", 32.0)
-            } else if name.contains("THREADRIPPER 7") || name.contains("PRO 7") {
-                (32.0, 8, 1, 8, "IF 3.5", 36.0)
-            } else if name.contains("THREADRIPPER 5") || name.contains("PRO 5") {
-                (32.0, 4, 1, 8, "IF 3.0", 32.0)
-            } else {
-                (16.0, 1, 1, 8, "IF", 16.0)
-            };
+        let (if_speed_gts, compute_dies, io_dies, cores_per_die, gen, on_pkg_bw) = if name
+            .contains("9950")
+            || name.contains("9900")
+            || name.contains("9700")
+            || name.contains("9600")
+            || name.contains("ZEN 5")
+        {
+            (32.0, 2, 1, 8, "IF 4.0", 64.0)
+        } else if name.contains("7950") || name.contains("7900") {
+            (32.0, 2, 1, 8, "IF 3.5", 36.0)
+        } else if name.contains("7800") || name.contains("7700") || name.contains("7600") {
+            (32.0, 1, 1, 8, "IF 3.5", 36.0)
+        } else if name.contains("5950") || name.contains("5900") {
+            (32.0, 2, 1, 8, "IF 3.0", 32.0)
+        } else if name.contains("5800") || name.contains("5700") || name.contains("5600") {
+            (32.0, 1, 1, 8, "IF 3.0", 32.0)
+        } else if name.contains("EPYC 9") || name.contains("GENOA") || name.contains("TURIN") {
+            (32.0, 12, 1, 8, "IF 4.0", 64.0)
+        } else if name.contains("EPYC 7") {
+            (16.0, 8, 1, 8, "IF 2.0", 32.0)
+        } else if name.contains("THREADRIPPER 7") || name.contains("PRO 7") {
+            (32.0, 8, 1, 8, "IF 3.5", 36.0)
+        } else if name.contains("THREADRIPPER 5") || name.contains("PRO 5") {
+            (32.0, 4, 1, 8, "IF 3.0", 32.0)
+        } else {
+            (16.0, 1, 1, 8, "IF", 16.0)
+        };
 
         let mut links = Vec::new();
 
@@ -439,9 +500,7 @@ impl InterconnectMonitor {
             for entry in entries.flatten() {
                 let name = entry.file_name().to_string_lossy().to_string();
                 if name.starts_with("cpu") && name[3..].chars().all(|c| c.is_ascii_digit()) {
-                    let pkg_path = entry
-                        .path()
-                        .join("topology/physical_package_id");
+                    let pkg_path = entry.path().join("topology/physical_package_id");
                     if let Ok(pkg) = std::fs::read_to_string(&pkg_path) {
                         sockets.insert(pkg.trim().to_string());
                     }
@@ -529,10 +588,7 @@ mod tests {
 
     #[test]
     fn test_intel_upi_inference() {
-        let topo = InterconnectMonitor::infer_intel(
-            "INTEL XEON GOLD 6348 SAPPHIRE RAPIDS",
-            2,
-        );
+        let topo = InterconnectMonitor::infer_intel("INTEL XEON GOLD 6348 SAPPHIRE RAPIDS", 2);
         assert!(topo.is_numa);
         assert_eq!(topo.sockets, 2);
         assert!(!topo.links.is_empty());
@@ -563,7 +619,10 @@ mod tests {
     #[test]
     fn test_interconnect_display() {
         assert_eq!(InterconnectType::UPI.to_string(), "Intel UPI");
-        assert_eq!(InterconnectType::InfinityFabric.to_string(), "AMD Infinity Fabric");
+        assert_eq!(
+            InterconnectType::InfinityFabric.to_string(),
+            "AMD Infinity Fabric"
+        );
         assert_eq!(CoherenceProtocol::MOESI.to_string(), "MOESI");
     }
 

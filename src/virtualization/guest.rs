@@ -87,9 +87,13 @@ pub struct GuestResources {
 /// Detect guest resources
 pub fn detect_guest_resources() -> Option<GuestResources> {
     #[cfg(target_os = "linux")]
-    { detect_linux_guest() }
+    {
+        detect_linux_guest()
+    }
     #[cfg(not(target_os = "linux"))]
-    { None }
+    {
+        None
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -128,8 +132,11 @@ fn detect_linux_guest() -> Option<GuestResources> {
         // Check if we are in a VM at all
         if Path::new("/sys/class/dmi/id/product_name").exists() {
             let product = fs::read_to_string("/sys/class/dmi/id/product_name")
-                .unwrap_or_default().trim().to_lowercase();
-            if product.contains("virtual") || product.contains("kvm") || product.contains("vmware") {
+                .unwrap_or_default()
+                .trim()
+                .to_lowercase();
+            if product.contains("virtual") || product.contains("kvm") || product.contains("vmware")
+            {
                 return Some(GuestResources {
                     cpu,
                     memory_bytes,
@@ -150,19 +157,28 @@ fn detect_vcpu_topology() -> Option<VirtCpuTopology> {
     let cpuinfo = fs::read_to_string("/proc/cpuinfo").ok()?;
 
     let vcpus = cpuinfo.matches("processor").count() as u32;
-    if vcpus == 0 { return None; }
+    if vcpus == 0 {
+        return None;
+    }
 
-    let model = cpuinfo.lines()
+    let model = cpuinfo
+        .lines()
         .find(|l| l.starts_with("model name"))
         .and_then(|l| l.split(':').nth(1))
         .unwrap_or("Unknown")
-        .trim().to_string();
+        .trim()
+        .to_string();
 
     // Try to read topology from sysfs
     let sockets = fs::read_to_string("/sys/devices/system/cpu/cpu0/topology/physical_package_id")
-        .ok().and_then(|v| v.trim().parse::<u32>().ok()).map(|v| v + 1).unwrap_or(1);
+        .ok()
+        .and_then(|v| v.trim().parse::<u32>().ok())
+        .map(|v| v + 1)
+        .unwrap_or(1);
     let threads = fs::read_to_string("/sys/devices/system/cpu/cpu0/topology/thread_siblings_list")
-        .ok().map(|v| v.trim().split(',').count() as u32).unwrap_or(1);
+        .ok()
+        .map(|v| v.trim().split(',').count() as u32)
+        .unwrap_or(1);
 
     Some(VirtCpuTopology {
         vcpus,
@@ -179,7 +195,9 @@ fn detect_virt_disks() -> Vec<VirtDisk> {
     use std::fs;
     let mut disks = Vec::new();
 
-    let Ok(entries) = fs::read_dir("/sys/block") else { return disks };
+    let Ok(entries) = fs::read_dir("/sys/block") else {
+        return disks;
+    };
     for entry in entries.flatten() {
         let name = entry.file_name().to_string_lossy().to_string();
         let driver_link = format!("/sys/block/{}/device/driver", name);
@@ -203,9 +221,16 @@ fn detect_virt_disks() -> Vec<VirtDisk> {
         };
 
         let size_bytes = fs::read_to_string(format!("/sys/block/{}/size", name))
-            .ok().and_then(|v| v.trim().parse::<u64>().ok()).map(|s| s * 512);
+            .ok()
+            .and_then(|v| v.trim().parse::<u64>().ok())
+            .map(|s| s * 512);
 
-        disks.push(VirtDisk { name, bus, size_bytes, driver });
+        disks.push(VirtDisk {
+            name,
+            bus,
+            size_bytes,
+            driver,
+        });
     }
     disks
 }
@@ -215,10 +240,14 @@ fn detect_virt_nics() -> Vec<VirtNic> {
     use std::fs;
     let mut nics = Vec::new();
 
-    let Ok(entries) = fs::read_dir("/sys/class/net") else { return nics };
+    let Ok(entries) = fs::read_dir("/sys/class/net") else {
+        return nics;
+    };
     for entry in entries.flatten() {
         let name = entry.file_name().to_string_lossy().to_string();
-        if name == "lo" { continue; }
+        if name == "lo" {
+            continue;
+        }
 
         let driver_link = format!("/sys/class/net/{}/device/driver", name);
         let driver = fs::read_link(&driver_link)
@@ -238,11 +267,18 @@ fn detect_virt_nics() -> Vec<VirtNic> {
         };
 
         let mac = fs::read_to_string(format!("/sys/class/net/{}/address", name))
-            .ok().map(|v| v.trim().to_string());
+            .ok()
+            .map(|v| v.trim().to_string());
         let mtu = fs::read_to_string(format!("/sys/class/net/{}/mtu", name))
-            .ok().and_then(|v| v.trim().parse().ok());
+            .ok()
+            .and_then(|v| v.trim().parse().ok());
 
-        nics.push(VirtNic { name, driver: nic_driver, mac_address: mac, mtu });
+        nics.push(VirtNic {
+            name,
+            driver: nic_driver,
+            mac_address: mac,
+            mtu,
+        });
     }
     nics
 }
@@ -269,7 +305,8 @@ fn detect_guest_agent() -> Option<GuestAgent> {
     // Check for QEMU guest agent
     let status = Command::new("systemctl")
         .args(["is-active", "qemu-guest-agent"])
-        .output().ok()?;
+        .output()
+        .ok()?;
     if status.status.success() {
         return Some(GuestAgent {
             name: "qemu-guest-agent".into(),
@@ -280,7 +317,8 @@ fn detect_guest_agent() -> Option<GuestAgent> {
     // Check for VMware tools
     let status = Command::new("systemctl")
         .args(["is-active", "vmtoolsd"])
-        .output().ok()?;
+        .output()
+        .ok()?;
     if status.status.success() {
         return Some(GuestAgent {
             name: "open-vm-tools".into(),

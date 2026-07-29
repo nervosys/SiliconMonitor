@@ -138,24 +138,23 @@ impl TpmMonitor {
                 let base = entry.path();
 
                 // Read TPM version from tpm_version_major
-                let version = if let Ok(major) =
-                    std::fs::read_to_string(base.join("tpm_version_major"))
-                {
-                    match major.trim() {
-                        "2" => TpmVersion::V2_0,
-                        "1" => TpmVersion::V1_2,
-                        _ => TpmVersion::Unknown,
-                    }
-                } else {
-                    // Fallback: check caps or device path
-                    if std::path::Path::new("/dev/tpmrm0").exists() {
-                        TpmVersion::V2_0
-                    } else if std::path::Path::new("/dev/tpm0").exists() {
-                        TpmVersion::V1_2
+                let version =
+                    if let Ok(major) = std::fs::read_to_string(base.join("tpm_version_major")) {
+                        match major.trim() {
+                            "2" => TpmVersion::V2_0,
+                            "1" => TpmVersion::V1_2,
+                            _ => TpmVersion::Unknown,
+                        }
                     } else {
-                        TpmVersion::Unknown
-                    }
-                };
+                        // Fallback: check caps or device path
+                        if std::path::Path::new("/dev/tpmrm0").exists() {
+                            TpmVersion::V2_0
+                        } else if std::path::Path::new("/dev/tpm0").exists() {
+                            TpmVersion::V1_2
+                        } else {
+                            TpmVersion::Unknown
+                        }
+                    };
 
                 // Read manufacturer from caps
                 let caps = std::fs::read_to_string(base.join("caps")).unwrap_or_default();
@@ -198,7 +197,8 @@ impl TpmMonitor {
                 if algorithms.is_empty() {
                     // Default for TPM 2.0
                     if version == TpmVersion::V2_0 {
-                        algorithms = vec!["SHA-1".into(), "SHA-256".into(), "RSA".into(), "ECC".into()];
+                        algorithms =
+                            vec!["SHA-1".into(), "SHA-256".into(), "RSA".into(), "ECC".into()];
                     } else {
                         algorithms = vec!["SHA-1".into(), "RSA".into()];
                     }

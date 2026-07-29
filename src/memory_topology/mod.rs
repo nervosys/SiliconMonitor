@@ -209,7 +209,11 @@ impl MemoryTopologyMonitor {
 
     /// Get empty slots.
     pub fn empty_slots(&self) -> Vec<&DimmInfo> {
-        self.topology.dimms.iter().filter(|d| !d.populated).collect()
+        self.topology
+            .dimms
+            .iter()
+            .filter(|d| !d.populated)
+            .collect()
     }
 
     /// Analyze memory configuration.
@@ -239,7 +243,10 @@ impl MemoryTopologyMonitor {
         let estimated_bandwidth_gbs = Self::estimate_bandwidth(max_speed, channel_count);
 
         // Max capacity: assume 2x current or 128GB per slot, whichever is more reasonable
-        let max_per_slot: u64 = if populated.iter().any(|d| matches!(d.memory_type, MemoryType::DDR5)) {
+        let max_per_slot: u64 = if populated
+            .iter()
+            .any(|d| matches!(d.memory_type, MemoryType::DDR5))
+        {
             64 * 1024 * 1024 * 1024 // 64 GB per slot for DDR5
         } else {
             32 * 1024 * 1024 * 1024 // 32 GB per slot for DDR4
@@ -287,11 +294,12 @@ impl MemoryTopologyMonitor {
             if loc.contains("CHANNEL") || loc.contains("DIMM_") {
                 // Extract channel letter
                 for c in ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'] {
-                    if loc.contains(c) && (loc.contains(&format!("CHANNEL{}", c))
-                        || loc.contains(&format!("CHANNEL {}", c))
-                        || loc.contains(&format!("DIMM_{}", c))
-                        || loc.contains(&format!("_{}{}", c, '0'))
-                        || loc.contains(&format!("_{}{}", c, '1')))
+                    if loc.contains(c)
+                        && (loc.contains(&format!("CHANNEL{}", c))
+                            || loc.contains(&format!("CHANNEL {}", c))
+                            || loc.contains(&format!("DIMM_{}", c))
+                            || loc.contains(&format!("_{}{}", c, '0'))
+                            || loc.contains(&format!("_{}{}", c, '1')))
                     {
                         channels.insert(c.to_string());
                     }
@@ -349,9 +357,7 @@ impl MemoryTopologyMonitor {
             score += 5;
         } else {
             score -= 10;
-            recommendations.push(
-                "Mismatched DIMM speeds—all modules run at slowest speed".into(),
-            );
+            recommendations.push("Mismatched DIMM speeds—all modules run at slowest speed".into());
         }
 
         // Matched capacities
@@ -359,9 +365,8 @@ impl MemoryTopologyMonitor {
             score += 5;
         } else {
             score -= 5;
-            recommendations.push(
-                "Mismatched DIMM capacities reduce interleaving efficiency".into(),
-            );
+            recommendations
+                .push("Mismatched DIMM capacities reduce interleaving efficiency".into());
         }
 
         // Empty slots = upgrade potential
@@ -658,7 +663,9 @@ impl MemoryTopologyMonitor {
                     .or_else(|| item["Capacity"].as_str().and_then(|s| s.parse().ok()))
                     .unwrap_or(0);
                 let speed = item["Speed"].as_u64().unwrap_or(0) as u32;
-                let conf_speed = item["ConfiguredClockSpeed"].as_u64().unwrap_or(speed as u64) as u32;
+                let conf_speed = item["ConfiguredClockSpeed"]
+                    .as_u64()
+                    .unwrap_or(speed as u64) as u32;
                 let data_width = item["DataWidth"].as_u64().unwrap_or(64) as u32;
                 let total_width = item["TotalWidth"].as_u64().unwrap_or(data_width as u64) as u32;
 
@@ -680,10 +687,7 @@ impl MemoryTopologyMonitor {
                 };
 
                 DimmInfo {
-                    locator: item["DeviceLocator"]
-                        .as_str()
-                        .unwrap_or("")
-                        .to_string(),
+                    locator: item["DeviceLocator"].as_str().unwrap_or("").to_string(),
                     bank: item["BankLabel"].as_str().unwrap_or("").to_string(),
                     capacity_bytes: capacity,
                     speed_mts: speed,
@@ -698,11 +702,7 @@ impl MemoryTopologyMonitor {
                         .unwrap_or("")
                         .trim()
                         .to_string(),
-                    part_number: item["PartNumber"]
-                        .as_str()
-                        .unwrap_or("")
-                        .trim()
-                        .to_string(),
+                    part_number: item["PartNumber"].as_str().unwrap_or("").trim().to_string(),
                     serial_number: item["SerialNumber"]
                         .as_str()
                         .unwrap_or("")

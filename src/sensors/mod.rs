@@ -17,8 +17,8 @@
 //! }
 //! ```
 
-use serde::{Deserialize, Serialize};
 use crate::error::SimonError;
+use serde::{Deserialize, Serialize};
 
 /// Type of environmental sensor
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -133,17 +133,24 @@ impl SensorMonitor {
 
     /// Get sensors by type.
     pub fn sensors_by_type(&self, sensor_type: &SensorType) -> Vec<&SensorInfo> {
-        self.items.iter().filter(|s| &s.sensor_type == sensor_type).collect()
+        self.items
+            .iter()
+            .filter(|s| &s.sensor_type == sensor_type)
+            .collect()
     }
 
     /// Check if accelerometer is present.
     pub fn has_accelerometer(&self) -> bool {
-        self.items.iter().any(|s| s.sensor_type == SensorType::Accelerometer)
+        self.items
+            .iter()
+            .any(|s| s.sensor_type == SensorType::Accelerometer)
     }
 
     /// Check if ambient light sensor is present.
     pub fn has_light_sensor(&self) -> bool {
-        self.items.iter().any(|s| s.sensor_type == SensorType::AmbientLight)
+        self.items
+            .iter()
+            .any(|s| s.sensor_type == SensorType::AmbientLight)
     }
 
     /// Get current ambient light level in lux.
@@ -200,7 +207,8 @@ impl SensorMonitor {
                         }
                     }
                     SensorType::AmbientLight => {
-                        if let Some(val) = Self::read_iio_single(&base, "in_illuminance_raw", "lux") {
+                        if let Some(val) = Self::read_iio_single(&base, "in_illuminance_raw", "lux")
+                        {
                             values.push(val);
                         }
                     }
@@ -215,7 +223,9 @@ impl SensorMonitor {
                         }
                     }
                     SensorType::Humidity => {
-                        if let Some(val) = Self::read_iio_single(&base, "in_humidityrelative_raw", "%RH") {
+                        if let Some(val) =
+                            Self::read_iio_single(&base, "in_humidityrelative_raw", "%RH")
+                        {
                             values.push(val);
                         }
                     }
@@ -255,9 +265,7 @@ impl SensorMonitor {
                     for i in 0..16 {
                         let input_path = base.join(format!("in{}_input", i));
                         if input_path.exists() {
-                            let raw: f64 = Self::read_trimmed(&input_path)
-                                .parse()
-                                .unwrap_or(0.0);
+                            let raw: f64 = Self::read_trimmed(&input_path).parse().unwrap_or(0.0);
                             let label_path = base.join(format!("in{}_label", i));
                             let label = Self::read_trimmed(&label_path);
                             let channel = if label.is_empty() {
@@ -289,9 +297,7 @@ impl SensorMonitor {
                     for i in 0..8 {
                         let input_path = base.join(format!("curr{}_input", i));
                         if input_path.exists() {
-                            let raw: f64 = Self::read_trimmed(&input_path)
-                                .parse()
-                                .unwrap_or(0.0);
+                            let raw: f64 = Self::read_trimmed(&input_path).parse().unwrap_or(0.0);
                             self.items.push(SensorInfo {
                                 name: format!("{} current {}", hwmon_name, i),
                                 sensor_type: SensorType::Current,
@@ -358,18 +364,20 @@ impl SensorMonitor {
             .trim()
             .parse()
             .ok()?;
-        let scale: f64 = std::fs::read_to_string(base.join(format!("in_{}_{}_scale", prefix, axis)))
-            .or_else(|_| std::fs::read_to_string(base.join(format!("in_{}_scale", prefix))))
-            .unwrap_or_else(|_| "1.0".to_string())
-            .trim()
-            .parse()
-            .unwrap_or(1.0);
-        let offset: f64 = std::fs::read_to_string(base.join(format!("in_{}_{}_offset", prefix, axis)))
-            .or_else(|_| std::fs::read_to_string(base.join(format!("in_{}_offset", prefix))))
-            .unwrap_or_else(|_| "0.0".to_string())
-            .trim()
-            .parse()
-            .unwrap_or(0.0);
+        let scale: f64 =
+            std::fs::read_to_string(base.join(format!("in_{}_{}_scale", prefix, axis)))
+                .or_else(|_| std::fs::read_to_string(base.join(format!("in_{}_scale", prefix))))
+                .unwrap_or_else(|_| "1.0".to_string())
+                .trim()
+                .parse()
+                .unwrap_or(1.0);
+        let offset: f64 =
+            std::fs::read_to_string(base.join(format!("in_{}_{}_offset", prefix, axis)))
+                .or_else(|_| std::fs::read_to_string(base.join(format!("in_{}_offset", prefix))))
+                .unwrap_or_else(|_| "0.0".to_string())
+                .trim()
+                .parse()
+                .unwrap_or(0.0);
 
         let unit = match prefix {
             "accel" => "m/s²",

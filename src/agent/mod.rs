@@ -1,19 +1,40 @@
-//! Lightweight AI Agent for System Analysis and Predictions
+//! AI Agent for System Analysis and Predictions
 //!
-//! This module provides a non-blocking AI agent that can answer questions about
-//! system state, predict completion times, estimate energy usage, and perform
-//! calculations based on hardware monitoring data.
+//! Answers natural-language questions about system state by pairing live hardware
+//! telemetry with an LLM backend.
 //!
-//! # Design Principles
+//! # How it works
 //!
-//! - **Zero Latency Impact**: Agent runs in separate thread, never blocks monitoring
-//! - **Small Models**: Offers 100M, 500M, and 1B parameter fine-tuned reasoning models
-//! - **Privacy-First**: All processing local, no data sent to external servers
-//! - **Consent-Aware**: Respects user consent settings for any data collection
+//! A question is parsed into a [`Query`] to classify intent, the relevant slice of
+//! system state is extracted via [`SystemState::from_monitor`], and both are handed
+//! to a configured inference backend which produces the answer. Responses are
+//! memoized in an LRU cache keyed on the normalized question text.
 //!
-//! # Features
+//! # Requirements and limitations
 //!
-//! - **System State Queries**: "What's my GPU utilization?", "Show memory usage"
+//! Read these before building on this module — several are easy to assume otherwise.
+//!
+//! - **A backend is required.** There is no built-in offline inference. [`Agent::new`]
+//!   fails with [`SimonError::Configuration`] when no backend is configured. Set one
+//!   explicitly, or use [`AgentConfig::auto_detect`] to discover a running local
+//!   server.
+//! - **Where your telemetry goes depends on the backend you choose.** A local backend
+//!   (Ollama, vLLM, or TensorRT-LLM on localhost) keeps system state on the machine.
+//!   A hosted backend (OpenAI, Anthropic) transmits the extracted system state to
+//!   that provider. This module does not enforce a policy, and it does not currently
+//!   consult [`crate::consent`].
+//! - **Calls block the calling thread.** [`Agent::ask`] runs inference inline; nothing
+//!   in this module spawns a thread. Never call it from a render or event loop —
+//!   spawn a thread and deliver the result over a channel.
+//!   [`Agent::ask_with_timeout`] does *not* currently enforce its timeout argument.
+//! - **[`ModelSize`] is advisory metadata.** It records an intended model scale, and
+//!   its `latency_estimate_ms` / `memory_mb` are fixed estimates rather than
+//!   measurements. It does not select, download, or load a model — the model in use
+//!   is whatever the configured backend is serving.
+//!
+//! # Question categories
+//!
+//! - **System State**: "What's my GPU utilization?", "Show memory usage"
 //! - **Predictions**: "When will this training complete?", "ETA for disk copy"
 //! - **Energy Analysis**: "How much power am I using?", "Cost per hour estimate"
 //! - **Comparisons**: "Is my GPU faster than X?", "Compare temps across GPUs"
@@ -22,24 +43,21 @@
 //! # Example
 //!
 //! ```no_run
-//! use simon::agent::{Agent, AgentConfig, ModelSize};
-//! use simon::SiliconMonitor;
+//! use simonlib::agent::{Agent, AgentConfig};
+//! use simonlib::SiliconMonitor;
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! // Create agent with 500M model (balanced)
-//! let config = AgentConfig::new(ModelSize::Medium);
+//! // Discover a locally running inference server. Fails if none is available —
+//! // the agent cannot run without a backend.
+//! let config = AgentConfig::auto_detect()?;
 //! let mut agent = Agent::new(config)?;
 //!
-//! // Create monitor for system state
 //! let monitor = SiliconMonitor::new()?;
 //!
-//! // Ask question (non-blocking)
-//! let response = agent.ask(
-//!     "What's my GPU temperature and is it safe?",
-//!     &monitor
-//! )?;
+//! // Blocking call: run this off any UI thread.
+//! let response = agent.ask("What's my GPU temperature and is it safe?", &monitor)?;
 //!
-//! println!("Agent: {}", response);
+//! println!("Agent: {}", response.response);
 //! # Ok(())
 //! # }
 //! ```
@@ -261,6 +279,14 @@ impl AgentConfig {
 
         // Create backend config based on detected type
         let backend_config = match backend_type {
+            BackendType::IronWorks => {
+                // The server decides which model it serves; "default" asks for
+                // whatever is loaded rather than pinning a name simon cannot know.
+                BackendConfig::ironworks("default")
+            }
+            // CLI tools use whatever model they are already configured for;
+            // "default" tells the client not to override it.
+            BackendType::Cli(provider) => BackendConfig::cli(provider, "default"),
             BackendType::RemoteOpenAI => {
                 BackendConfig::openai("gpt-4o-mini", None) // Uses OPENAI_API_KEY from env
             }
@@ -299,6 +325,10 @@ impl AgentConfig {
     /// Create config with specific backend type
     pub fn with_backend_type(backend_type: BackendType) -> Result<Self> {
         let backend_config = match backend_type {
+            BackendType::IronWorks => BackendConfig::ironworks("default"),
+            // CLI tools use whatever model they are configured for; "default" tells
+            // the client not to override it.
+            BackendType::Cli(provider) => BackendConfig::cli(provider, "default"),
             BackendType::RemoteOpenAI => BackendConfig::openai("gpt-4o-mini", None),
             BackendType::RemoteAnthropic => {
                 BackendConfig::anthropic("claude-3-5-haiku-20241022", None)
@@ -439,8 +469,8 @@ impl Agent {
     /// # Example
     ///
     /// ```no_run
-    /// # use simon::agent::{Agent, AgentConfig};
-    /// # use simon::SiliconMonitor;
+    /// # use simonlib::agent::{Agent, AgentConfig};
+    /// # use simonlib::SiliconMonitor;
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// let mut agent = Agent::new(AgentConfig::default())?;
     /// let monitor = SiliconMonitor::new()?;
@@ -517,15 +547,23 @@ impl Agent {
         })
     }
 
-    /// Ask question with timeout (non-blocking with time limit)
+    /// Ask a question, nominally bounded by `timeout`.
+    ///
+    /// # The timeout is not currently enforced
+    ///
+    /// This is equivalent to [`Agent::ask`]: it blocks the calling thread for as long
+    /// as the backend takes, and `timeout` is ignored. Enforcing it requires running
+    /// inference on a separate thread and abandoning the result on expiry, which this
+    /// module does not yet do.
+    ///
+    /// Do not rely on this to bound latency. If you need a hard bound, drive
+    /// [`Agent::ask`] from a thread you own and stop waiting on the channel yourself.
     pub fn ask_with_timeout(
         &mut self,
         question: &str,
         monitor: &SiliconMonitor,
         _timeout: Duration,
     ) -> Result<AgentResponse> {
-        // For now, just use the regular ask with internal timeout
-        // In a full implementation, this would spawn a thread
         self.ask(question, monitor)
     }
 

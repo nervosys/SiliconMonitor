@@ -38,7 +38,11 @@ impl ProfileProvider for DisplayProfileProvider {
             let mut g = ProfileGroup::new(
                 Subsystem::Display,
                 &label,
-                if d.is_primary { "Primary display" } else { "Display" },
+                if d.is_primary {
+                    "Primary display"
+                } else {
+                    "Display"
+                },
                 "DisplayMonitor",
             );
             if let Some(mfg) = &d.manufacturer {
@@ -58,16 +62,28 @@ impl ProfileProvider for DisplayProfileProvider {
                 "Resolution",
                 SettingValue::Text(format!("{}x{}", d.width, d.height)),
             ));
-            g.push(Setting::info("aspect_ratio", "Aspect Ratio", SettingValue::Text(d.aspect_ratio())));
+            g.push(Setting::info(
+                "aspect_ratio",
+                "Aspect Ratio",
+                SettingValue::Text(d.aspect_ratio()),
+            ));
             g.push(
-                Setting::info("refresh_rate_hz", "Refresh Rate", SettingValue::Float(d.refresh_rate as f64))
-                    .with_unit("Hz")
-                    .with_risk(SettingRisk::Safe)
-                    .with_source("DisplayMonitor"),
+                Setting::info(
+                    "refresh_rate_hz",
+                    "Refresh Rate",
+                    SettingValue::Float(d.refresh_rate as f64),
+                )
+                .with_unit("Hz")
+                .with_risk(SettingRisk::Safe)
+                .with_source("DisplayMonitor"),
             );
             g.push(
-                Setting::info("hdr_mode", "HDR Mode", SettingValue::Text(format!("{:?}", d.hdr)))
-                    .with_risk(SettingRisk::Safe),
+                Setting::info(
+                    "hdr_mode",
+                    "HDR Mode",
+                    SettingValue::Text(format!("{:?}", d.hdr)),
+                )
+                .with_risk(SettingRisk::Safe),
             );
             if let Some(b) = d.brightness {
                 g.push(
@@ -83,7 +99,11 @@ impl ProfileProvider for DisplayProfileProvider {
                 );
             }
             if let Some(bpp) = d.bits_per_pixel {
-                g.push(Setting::info("bpp", "Bits Per Pixel", SettingValue::Uint(bpp as u64)));
+                g.push(Setting::info(
+                    "bpp",
+                    "Bits Per Pixel",
+                    SettingValue::Uint(bpp as u64),
+                ));
             }
             if let (Some(w), Some(h)) = (d.physical_width_mm, d.physical_height_mm) {
                 g.push(Setting::info(
@@ -92,7 +112,11 @@ impl ProfileProvider for DisplayProfileProvider {
                     SettingValue::Text(format!("{}×{} mm", w, h)),
                 ));
             }
-            g.push(Setting::info("is_primary", "Primary", SettingValue::Bool(d.is_primary)));
+            g.push(Setting::info(
+                "is_primary",
+                "Primary",
+                SettingValue::Bool(d.is_primary),
+            ));
             groups.push(g);
         }
         groups

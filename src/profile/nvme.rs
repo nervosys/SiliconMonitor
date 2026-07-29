@@ -104,8 +104,16 @@ fn linux_groups() -> Vec<ProfileGroup> {
             }
         };
         g.push(Setting::info("model", "Model", SettingValue::Text(model)));
-        g.push(Setting::info("serial", "Serial", SettingValue::Text(serial)));
-        g.push(Setting::info("firmware_rev", "Firmware", SettingValue::Text(firmware)));
+        g.push(Setting::info(
+            "serial",
+            "Serial",
+            SettingValue::Text(serial),
+        ));
+        g.push(Setting::info(
+            "firmware_rev",
+            "Firmware",
+            SettingValue::Text(firmware),
+        ));
         push_str(&mut g, "transport", "transport", "Transport");
         push_str(&mut g, "state", "state", "Controller State");
         push_str(&mut g, "subsysnqn", "subsysnqn", "Subsystem NQN");
@@ -125,13 +133,48 @@ fn linux_groups() -> Vec<ProfileGroup> {
                     .join(&ns_name)
                     .join("queue");
                 for (file, id, label, risk) in [
-                    ("write_cache", "write_cache", "Write Cache", SettingRisk::Moderate),
-                    ("scheduler", "scheduler", "I/O Scheduler", SettingRisk::Moderate),
-                    ("nr_requests", "nr_requests", "Request Queue Depth", SettingRisk::Moderate),
-                    ("read_ahead_kb", "read_ahead_kb", "Read-Ahead", SettingRisk::Moderate),
-                    ("rotational", "rotational", "Rotational", SettingRisk::Informational),
-                    ("nomerges", "nomerges", "Disable Merges", SettingRisk::Moderate),
-                    ("max_sectors_kb", "max_sectors_kb", "Max I/O Size", SettingRisk::Informational),
+                    (
+                        "write_cache",
+                        "write_cache",
+                        "Write Cache",
+                        SettingRisk::Moderate,
+                    ),
+                    (
+                        "scheduler",
+                        "scheduler",
+                        "I/O Scheduler",
+                        SettingRisk::Moderate,
+                    ),
+                    (
+                        "nr_requests",
+                        "nr_requests",
+                        "Request Queue Depth",
+                        SettingRisk::Moderate,
+                    ),
+                    (
+                        "read_ahead_kb",
+                        "read_ahead_kb",
+                        "Read-Ahead",
+                        SettingRisk::Moderate,
+                    ),
+                    (
+                        "rotational",
+                        "rotational",
+                        "Rotational",
+                        SettingRisk::Informational,
+                    ),
+                    (
+                        "nomerges",
+                        "nomerges",
+                        "Disable Merges",
+                        SettingRisk::Moderate,
+                    ),
+                    (
+                        "max_sectors_kb",
+                        "max_sectors_kb",
+                        "Max I/O Size",
+                        SettingRisk::Informational,
+                    ),
                 ] {
                     if let Ok(v) = fs::read_to_string(queue.join(file)) {
                         let v = v.trim().to_string();
@@ -140,9 +183,13 @@ fn linux_groups() -> Vec<ProfileGroup> {
                             .map(SettingValue::Uint)
                             .unwrap_or_else(|_| SettingValue::Text(v));
                         g.push(
-                            Setting::info(format!("{}.{}", ns_name, id), format!("{}: {}", ns_name, label), value)
-                                .with_risk(risk)
-                                .with_source(queue.join(file).display().to_string()),
+                            Setting::info(
+                                format!("{}.{}", ns_name, id),
+                                format!("{}: {}", ns_name, label),
+                                value,
+                            )
+                            .with_risk(risk)
+                            .with_source(queue.join(file).display().to_string()),
                         );
                     }
                 }
@@ -167,22 +214,46 @@ fn windows_groups() -> Vec<ProfileGroup> {
         }
         let mut g = ProfileGroup::new(
             Subsystem::Nvme,
-            if c.model.is_empty() { c.name.clone() } else { c.model.clone() },
+            if c.model.is_empty() {
+                c.name.clone()
+            } else {
+                c.model.clone()
+            },
             "Controller info",
             "Windows Storage API",
         );
         if !c.vendor.is_empty() {
-            g.push(Setting::info("vendor", "Vendor", SettingValue::Text(c.vendor.clone())));
+            g.push(Setting::info(
+                "vendor",
+                "Vendor",
+                SettingValue::Text(c.vendor.clone()),
+            ));
         }
         if !c.driver.is_empty() {
-            g.push(Setting::info("driver", "Driver", SettingValue::Text(c.driver.clone())));
+            g.push(Setting::info(
+                "driver",
+                "Driver",
+                SettingValue::Text(c.driver.clone()),
+            ));
         }
         if !c.pci_address.is_empty() {
-            g.push(Setting::info("pci_address", "PCI Address", SettingValue::Text(c.pci_address.clone())));
+            g.push(Setting::info(
+                "pci_address",
+                "PCI Address",
+                SettingValue::Text(c.pci_address.clone()),
+            ));
         }
         if let Some(nvme) = &c.nvme_info {
-            g.push(Setting::info("firmware", "Firmware", SettingValue::Text(nvme.firmware.clone())));
-            g.push(Setting::info("serial", "Serial", SettingValue::Text(nvme.serial.clone())));
+            g.push(Setting::info(
+                "firmware",
+                "Firmware",
+                SettingValue::Text(nvme.firmware.clone()),
+            ));
+            g.push(Setting::info(
+                "serial",
+                "Serial",
+                SettingValue::Text(nvme.serial.clone()),
+            ));
         }
         g.push(Setting::info(
             "interface",

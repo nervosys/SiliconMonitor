@@ -10,8 +10,8 @@
 //!              NVLink via `/sys/bus/pci/devices/<bdf>/nvidia/gpu/nvlink*`
 //! - **Windows / macOS**: PCI topology only
 
-use serde::{Deserialize, Serialize};
 use crate::error::SimonError;
+use serde::{Deserialize, Serialize};
 
 /// GPU interconnect type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -157,7 +157,11 @@ impl GpuTopologyMonitor {
 
     /// Get GPUs on a specific NUMA node.
     pub fn gpus_on_numa(&self, node: i32) -> Vec<&GpuTopologyNode> {
-        self.overview.gpus.iter().filter(|g| g.numa_node == node).collect()
+        self.overview
+            .gpus
+            .iter()
+            .filter(|g| g.numa_node == node)
+            .collect()
     }
 
     #[cfg(target_os = "linux")]
@@ -215,7 +219,10 @@ impl GpuTopologyMonitor {
             // IOMMU group
             let iommu_group = std::fs::read_link(path.join("iommu_group"))
                 .ok()
-                .and_then(|p| p.file_name().and_then(|n| n.to_str().and_then(|s| s.parse().ok())));
+                .and_then(|p| {
+                    p.file_name()
+                        .and_then(|n| n.to_str().and_then(|s| s.parse().ok()))
+                });
 
             // Driver
             let driver = std::fs::read_link(path.join("driver"))
@@ -259,10 +266,18 @@ impl GpuTopologyMonitor {
         }
 
         let gpu_count = gpus.len() as u32;
-        let numa_nodes: std::collections::HashSet<i32> = gpus.iter().map(|g| g.numa_node).filter(|n| *n >= 0).collect();
+        let numa_nodes: std::collections::HashSet<i32> = gpus
+            .iter()
+            .map(|g| g.numa_node)
+            .filter(|n| *n >= 0)
+            .collect();
         let numa_node_count = numa_nodes.len() as u32;
-        let has_nvlink = links.iter().any(|l| l.link_type == GpuInterconnectType::NvLink);
-        let has_xgmi = links.iter().any(|l| l.link_type == GpuInterconnectType::XGmi);
+        let has_nvlink = links
+            .iter()
+            .any(|l| l.link_type == GpuInterconnectType::NvLink);
+        let has_xgmi = links
+            .iter()
+            .any(|l| l.link_type == GpuInterconnectType::XGmi);
         let same_numa = numa_nodes.len() <= 1;
 
         let mut recs = Vec::new();
@@ -342,7 +357,10 @@ impl GpuTopologyMonitor {
     }
 
     #[cfg(target_os = "linux")]
-    fn estimate_link_bandwidth(link_type: &GpuInterconnectType, gpu: &GpuTopologyNode) -> (u32, f64) {
+    fn estimate_link_bandwidth(
+        link_type: &GpuInterconnectType,
+        gpu: &GpuTopologyNode,
+    ) -> (u32, f64) {
         match link_type {
             GpuInterconnectType::NvLink => {
                 // NVLink 3.0 ~25 GB/s/link, NVLink 4.0 ~25 GB/s/link
@@ -362,7 +380,9 @@ impl GpuTopologyMonitor {
 
     #[cfg(target_os = "linux")]
     fn read_sysfs(path: &std::path::Path) -> Option<String> {
-        std::fs::read_to_string(path).ok().map(|s| s.trim().to_string())
+        std::fs::read_to_string(path)
+            .ok()
+            .map(|s| s.trim().to_string())
     }
 
     #[cfg(target_os = "linux")]
@@ -414,10 +434,41 @@ mod tests {
     fn test_links_for_gpu() {
         let overview = GpuTopologyOverview {
             gpus: vec![
-                GpuTopologyNode { bdf: "0000:01:00.0".into(), index: 0, name: "GPU0".into(), vendor: "nvidia".into(), numa_node: 0, pcie_gen: 4, pcie_width: 16, pcie_speed_gts: 16.0, pcie_bandwidth_gbs: 31.5, iommu_group: Some(1), driver: "nvidia".into() },
-                GpuTopologyNode { bdf: "0000:41:00.0".into(), index: 1, name: "GPU1".into(), vendor: "nvidia".into(), numa_node: 1, pcie_gen: 4, pcie_width: 16, pcie_speed_gts: 16.0, pcie_bandwidth_gbs: 31.5, iommu_group: Some(2), driver: "nvidia".into() },
+                GpuTopologyNode {
+                    bdf: "0000:01:00.0".into(),
+                    index: 0,
+                    name: "GPU0".into(),
+                    vendor: "nvidia".into(),
+                    numa_node: 0,
+                    pcie_gen: 4,
+                    pcie_width: 16,
+                    pcie_speed_gts: 16.0,
+                    pcie_bandwidth_gbs: 31.5,
+                    iommu_group: Some(1),
+                    driver: "nvidia".into(),
+                },
+                GpuTopologyNode {
+                    bdf: "0000:41:00.0".into(),
+                    index: 1,
+                    name: "GPU1".into(),
+                    vendor: "nvidia".into(),
+                    numa_node: 1,
+                    pcie_gen: 4,
+                    pcie_width: 16,
+                    pcie_speed_gts: 16.0,
+                    pcie_bandwidth_gbs: 31.5,
+                    iommu_group: Some(2),
+                    driver: "nvidia".into(),
+                },
             ],
-            links: vec![GpuLink { from_gpu: 0, to_gpu: 1, link_type: GpuInterconnectType::PcieThroughCpu, num_links: 1, bandwidth_per_link_gbs: 31.5, total_bandwidth_gbs: 31.5 }],
+            links: vec![GpuLink {
+                from_gpu: 0,
+                to_gpu: 1,
+                link_type: GpuInterconnectType::PcieThroughCpu,
+                num_links: 1,
+                bandwidth_per_link_gbs: 31.5,
+                total_bandwidth_gbs: 31.5,
+            }],
             gpu_count: 2,
             numa_node_count: 2,
             has_nvlink: false,
@@ -434,8 +485,32 @@ mod tests {
     fn test_numa_grouping() {
         let overview = GpuTopologyOverview {
             gpus: vec![
-                GpuTopologyNode { bdf: "0000:01:00.0".into(), index: 0, name: "GPU0".into(), vendor: "amd".into(), numa_node: 0, pcie_gen: 4, pcie_width: 16, pcie_speed_gts: 16.0, pcie_bandwidth_gbs: 31.5, iommu_group: None, driver: "amdgpu".into() },
-                GpuTopologyNode { bdf: "0000:02:00.0".into(), index: 1, name: "GPU1".into(), vendor: "amd".into(), numa_node: 0, pcie_gen: 4, pcie_width: 16, pcie_speed_gts: 16.0, pcie_bandwidth_gbs: 31.5, iommu_group: None, driver: "amdgpu".into() },
+                GpuTopologyNode {
+                    bdf: "0000:01:00.0".into(),
+                    index: 0,
+                    name: "GPU0".into(),
+                    vendor: "amd".into(),
+                    numa_node: 0,
+                    pcie_gen: 4,
+                    pcie_width: 16,
+                    pcie_speed_gts: 16.0,
+                    pcie_bandwidth_gbs: 31.5,
+                    iommu_group: None,
+                    driver: "amdgpu".into(),
+                },
+                GpuTopologyNode {
+                    bdf: "0000:02:00.0".into(),
+                    index: 1,
+                    name: "GPU1".into(),
+                    vendor: "amd".into(),
+                    numa_node: 0,
+                    pcie_gen: 4,
+                    pcie_width: 16,
+                    pcie_speed_gts: 16.0,
+                    pcie_bandwidth_gbs: 31.5,
+                    iommu_group: None,
+                    driver: "amdgpu".into(),
+                },
             ],
             links: Vec::new(),
             gpu_count: 2,

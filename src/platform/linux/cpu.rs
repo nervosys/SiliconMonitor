@@ -1,7 +1,7 @@
 //! Linux CPU monitoring
 
 use crate::core::cpu::{CpuCore, CpuFrequency, CpuStats, CpuTotal};
-use crate::error::{SimonError, Result};
+use crate::error::{Result, SimonError};
 use crate::platform::common::*;
 use std::collections::HashMap;
 use std::fs;

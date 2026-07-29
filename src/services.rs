@@ -6,7 +6,7 @@
 //! # Example
 //!
 //! ```no_run
-//! use simon::services::{ServiceMonitor, ServiceStatus};
+//! use simonlib::services::{ServiceMonitor, ServiceStatus};
 //!
 //! let monitor = ServiceMonitor::new().unwrap();
 //!

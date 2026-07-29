@@ -1,6 +1,6 @@
 //! Common platform utilities
 
-use crate::error::{SimonError, Result};
+use crate::error::{Result, SimonError};
 use std::fs;
 use std::path::Path;
 
