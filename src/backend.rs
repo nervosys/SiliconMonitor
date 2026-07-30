@@ -504,8 +504,13 @@ pub struct MonitoringBackend {
     /// System stats (load avg, vmstat, etc.)
     system_stats: Option<SystemStats>,
 
-    /// Driver info
-    driver_info: Vec<DriverInfo>,
+    /// Driver inventory, enumerated on first request.
+    ///
+    /// `motherboard::get_driver_versions` queries `Win32_PnPSignedDriver`, which
+    /// measured 7.1s on this host — more than half the cost of constructing a backend,
+    /// paid by every `simon cli` invocation for a getter no caller in the tree ever
+    /// invokes.
+    driver_info: std::cell::OnceCell<Vec<DriverInfo>>,
 
     // === History buffers ===
     /// CPU utilization history
@@ -530,8 +535,17 @@ pub struct MonitoringBackend {
     network_tx_history: HistoryBuffer<f32>,
 
     // === AI Agent ===
-    /// AI agent for natural language queries
-    agent: Option<Agent>,
+    /// AI agent, detected on first request.
+    ///
+    /// Detection probes five local ports and cost 1.2s at construction — again on
+    /// every invocation — for an agent the CLI frontends never ask anything.
+    agent: std::cell::OnceCell<Option<Agent>>,
+
+    /// Whether an agent may be built at all, from `BackendConfig::enable_agent`.
+    agent_enabled: bool,
+
+    /// Agent request timeout, held for the deferred construction.
+    agent_timeout_secs: u64,
 
     /// SiliconMonitor for agent context
     silicon_monitor: Option<SiliconMonitor>,
@@ -600,8 +614,8 @@ impl MonitoringBackend {
         // Get system info
         let system_info = motherboard::get_system_info().ok();
 
-        // Get driver info
-        let driver_info = motherboard::get_driver_versions().unwrap_or_default();
+        // Driver inventory is deferred; see the field.
+        let driver_info = std::cell::OnceCell::new();
 
         // Get system stats
         let system_stats = SystemStats::new().ok();
@@ -616,25 +630,21 @@ impl MonitoringBackend {
 
         let os_info = std::env::consts::OS.to_string();
 
-        // Initialize AI agent if enabled (uses auto-detect to find available backends)
-        let agent = if config.enable_agent {
-            AgentConfig::auto_detect()
-                .ok()
-                .map(|agent_cfg| {
-                    agent_cfg
-                        .with_caching(true)
-                        .with_cache_size(50)
-                        .with_timeout(Duration::from_secs(config.agent_timeout_secs))
-                })
-                .and_then(|agent_cfg| Agent::new(agent_cfg).ok())
-        } else {
-            None
-        };
+        // Agent detection is deferred; see the field.
+        let agent = std::cell::OnceCell::new();
 
-        // Create SiliconMonitor for agent (uses shared GPU collection)
-        let silicon_monitor = SiliconMonitor::new().ok();
+        // Built on first use by `ask_agent`, not here.
+        //
+        // The comment this replaces claimed it shared the GPU collection above; it
+        // does not. `SiliconMonitor::new` runs its own `GpuCollection::auto_detect`,
+        // so constructing a backend enumerated every GPU twice — measured at 260ms on
+        // an idle three-GPU host and seconds on a busy one — to serve an agent query
+        // that most invocations never make. `simon cli gpu` paid it in full.
+        let silicon_monitor = None;
 
         let mut backend = Self {
+            agent_enabled: config.enable_agent,
+            agent_timeout_secs: config.agent_timeout_secs,
             gpu_collection,
             process_monitor,
             network_monitor,
@@ -1044,8 +1054,10 @@ impl MonitoringBackend {
         self.system_info.as_ref()
     }
 
+    /// Driver inventory. Enumerated on the first call, then cached.
     pub fn driver_info(&self) -> &[DriverInfo] {
-        &self.driver_info
+        self.driver_info
+            .get_or_init(|| motherboard::get_driver_versions().unwrap_or_default())
     }
 
     pub fn motherboard_sensors(&self) -> &[Box<dyn MotherboardDevice>] {
@@ -1068,26 +1080,59 @@ impl MonitoringBackend {
 
     // === AI Agent ===
 
-    /// Check if AI agent is available
+    /// Detect and construct the agent on first use.
+    ///
+    /// Deferred rather than done at construction: the probes take over a second and
+    /// every `simon cli` invocation paid for them, whether or not it asked anything.
+    fn agent_slot(&self) -> &Option<Agent> {
+        self.agent.get_or_init(|| {
+            if !self.agent_enabled {
+                return None;
+            }
+            AgentConfig::auto_detect()
+                .ok()
+                .map(|agent_cfg| {
+                    agent_cfg
+                        .with_caching(true)
+                        .with_cache_size(50)
+                        .with_timeout(Duration::from_secs(self.agent_timeout_secs))
+                })
+                .and_then(|agent_cfg| Agent::new(agent_cfg).ok())
+        })
+    }
+
+    /// Check if AI agent is available.
+    ///
+    /// The first call runs backend detection, which takes about a second.
     pub fn has_agent(&self) -> bool {
-        self.agent.is_some()
+        self.agent_slot().is_some()
     }
 
     /// Get reference to the AI agent
     pub fn agent(&self) -> Option<&Agent> {
-        self.agent.as_ref()
+        self.agent_slot().as_ref()
     }
 
     /// Get mutable reference to the AI agent
     pub fn agent_mut(&mut self) -> Option<&mut Agent> {
-        self.agent.as_mut()
+        // Force detection, then hand out the mutable borrow.
+        let _ = self.agent_slot();
+        self.agent.get_mut().and_then(|slot| slot.as_mut())
     }
 
     /// Query the AI agent with a natural language question
     pub fn ask_agent(&mut self, question: &str) -> Result<AgentResponse> {
+        // Enumerate on first use, then reuse the handles.
+        if self.silicon_monitor.is_none() {
+            self.silicon_monitor = Some(SiliconMonitor::new()?);
+        }
+
+        // Force detection before borrowing mutably.
+        let _ = self.agent_slot();
         let agent = self
             .agent
-            .as_mut()
+            .get_mut()
+            .and_then(|slot| slot.as_mut())
             .ok_or_else(|| SimonError::Other("AI agent not available".to_string()))?;
 
         let monitor = self

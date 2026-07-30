@@ -92,9 +92,6 @@ fn run_app<B: Backend>(
     }
     let mut last_peripheral_sync = Instant::now();
 
-    // Create monitor for agent queries (lazy - only used when agent is active)
-    let monitor = crate::SiliconMonitor::new()?;
-
     // Minimum interval between event-driven renders to avoid overwhelming the terminal
     const MIN_RENDER_INTERVAL_MS: u64 = 16; // ~60 FPS cap
     let mut last_render = Instant::now() - Duration::from_millis(MIN_RENDER_INTERVAL_MS);
@@ -118,7 +115,7 @@ fn run_app<B: Backend>(
                             match key.code {
                                 KeyCode::Char(c) => app.agent_input_char(c),
                                 KeyCode::Backspace => app.agent_input_backspace(),
-                                KeyCode::Enter => app.submit_agent_query(&monitor),
+                                KeyCode::Enter => app.submit_agent_query(),
                                 KeyCode::Esc => app.toggle_agent_input(),
                                 _ => {}
                             }

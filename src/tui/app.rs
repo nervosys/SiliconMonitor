@@ -2270,7 +2270,13 @@ impl App {
         self.agent = Some(ui_agent);
     }
 
-    pub fn submit_agent_query(&mut self, _monitor: &SiliconMonitor) {
+    /// Hand a question to the agent worker thread.
+    ///
+    /// Took a `&SiliconMonitor` it never used. Supplying that argument cost the TUI a
+    /// blocking `GpuCollection::auto_detect` at startup, and it was fallible: a host
+    /// where GPU enumeration errors could not open the terminal dashboard at all,
+    /// over a value no code read.
+    pub fn submit_agent_query(&mut self) {
         if self.agent_input.is_empty() {
             return;
         }
