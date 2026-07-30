@@ -272,6 +272,29 @@ fn process_table_is_plausible() {
         pids.len(),
         "the process table contains duplicate PIDs"
     );
+
+    // State must be a code we actually mean, including 'U' for "this platform does
+    // not tell us".
+    for proc in &snap.processes {
+        assert!(
+            matches!(proc.state, 'R' | 'S' | 'D' | 'Z' | 'T' | 'U'),
+            "process {} ({}) reports unknown state {:?}",
+            proc.pid,
+            proc.name,
+            proc.state
+        );
+    }
+
+    // Windows has no per-process scheduling state — it lives on threads — and the
+    // enumeration used to stamp 'R' on every entry, so the UI claimed several hundred
+    // processes were running and none asleep on an idle desktop.
+    #[cfg(windows)]
+    assert!(
+        !snap.processes.iter().all(|p| p.state == 'R'),
+        "every one of the {} processes is reported as running, which is a default \
+         rather than a reading",
+        snap.processes.len()
+    );
 }
 
 #[test]

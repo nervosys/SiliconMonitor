@@ -1711,10 +1711,19 @@ impl SiliconMonitorApp {
                     RichText::new(format!("Tasks: {}", self.process_list.len()))
                         .color(CyberColors::TEXT_PRIMARY),
                 );
-                ui.label(
-                    RichText::new(format!("{}R", running_count)).color(CyberColors::NEON_GREEN),
-                );
-                ui.label(RichText::new(format!("{}S", sleeping_count)).color(CyberColors::CYAN));
+                // Platforms that do not report per-process scheduling state mark it
+                // 'U'. Showing "0R 0S" there would be as wrong as the "420R 0S" this
+                // replaced — say the breakdown is unavailable instead.
+                if running_count + sleeping_count + zombie_count + disk_wait_count + stopped_count
+                    > 0
+                {
+                    ui.label(
+                        RichText::new(format!("{}R", running_count)).color(CyberColors::NEON_GREEN),
+                    );
+                    ui.label(
+                        RichText::new(format!("{}S", sleeping_count)).color(CyberColors::CYAN),
+                    );
+                }
                 if zombie_count > 0 {
                     ui.label(
                         RichText::new(format!("{}Z", zombie_count)).color(CyberColors::NEON_RED),
@@ -1767,10 +1776,13 @@ impl SiliconMonitorApp {
                 // Memory Card
                 if let Some(ref mem) = self.memory_stats {
                     let usage = mem.ram_usage_percent();
+                    // `RamInfo` is in KiB, so this is gibibytes — the card was
+                    // labelled MB and read "78.6 MB" next to a bar showing 84% of
+                    // 93.6 GB.
                     let used_gb = mem.ram.used as f64 / 1024.0 / 1024.0;
                     ui.add(
                         MetricCard::new("Memory", format!("{:.1}", used_gb))
-                            .unit("MB")
+                            .unit("GB")
                             .color(theme::memory_color(usage)),
                     );
                 }
@@ -1878,7 +1890,9 @@ impl SiliconMonitorApp {
             ui.add_space(16.0);
 
             // Linux/BSD style System Stats (like htop/vmstat)
-            ui.add(SectionHeader::new("System Stats (Linux/BSD Style)").icon("📈"));
+            // Not Linux/BSD-only: uptime and CPU count render on every platform, and
+            // the entries that are Linux-sourced hide themselves when absent.
+            ui.add(SectionHeader::new("System Stats").icon("📈"));
 
             // System info row
             ui.horizontal(|ui| {
@@ -2057,26 +2071,48 @@ impl SiliconMonitorApp {
 
             ui.add_space(8.0);
 
-            // Context Switches and Interrupts charts (vmstat-style)
-            ui.columns(2, |columns| {
-                columns[0].add(
-                    SparklineChart::new(self.context_switches_history.iter().cloned().collect())
+            // Context Switches and Interrupts charts (vmstat-style).
+            //
+            // Only drawn where the counters exist. They come from /proc/stat, so on
+            // Windows and macOS `vm_stats` is None and the histories keep the zeros
+            // they were seeded with — which rendered as two flat lines reading
+            // "0.0/s", asserting the machine performs no context switches and takes
+            // no interrupts.
+            if self
+                .system_stats
+                .as_ref()
+                .is_some_and(|s| s.vm_stats.is_some())
+            {
+                ui.columns(2, |columns| {
+                    columns[0].add(
+                        SparklineChart::new(
+                            self.context_switches_history.iter().cloned().collect(),
+                        )
                         .color(CyberColors::CYAN)
                         .height(70.0)
                         .title("Context Switches")
                         .unit("/s")
                         .show_scale(true),
-                );
+                    );
 
-                columns[1].add(
-                    SparklineChart::new(self.interrupts_history.iter().cloned().collect())
-                        .color(CyberColors::NEON_GREEN)
-                        .height(70.0)
-                        .title("Interrupts")
-                        .unit("/s")
-                        .show_scale(true),
+                    columns[1].add(
+                        SparklineChart::new(self.interrupts_history.iter().cloned().collect())
+                            .color(CyberColors::NEON_GREEN)
+                            .height(70.0)
+                            .title("Interrupts")
+                            .unit("/s")
+                            .show_scale(true),
+                    );
+                });
+            } else {
+                ui.label(
+                    RichText::new(
+                        "Context switch and interrupt counters are not exposed by this platform",
+                    )
+                    .color(CyberColors::TEXT_SECONDARY)
+                    .small(),
                 );
-            });
+            }
 
             ui.add_space(16.0);
 

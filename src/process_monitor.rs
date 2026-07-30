@@ -831,7 +831,13 @@ pub struct ProcessMonitorInfo {
     pub gpu_memory_per_device: HashMap<usize, u64>,
     /// Total GPU memory used across all GPUs
     pub total_gpu_memory_bytes: u64,
-    /// Process state (R=Running, S=Sleeping, D=Disk sleep, Z=Zombie, T=Stopped)
+    /// Process state (R=Running, S=Sleeping, D=Disk sleep, Z=Zombie, T=Stopped,
+    /// U=Unknown).
+    ///
+    /// `U` is not a Linux state code: it means this platform did not tell us. Windows
+    /// has no per-process state — scheduling state lives on threads — and the
+    /// enumeration here used to report `'R'` for every process, which made the UI
+    /// claim all 420 processes on an idle desktop were running and none were asleep.
     pub state: char,
     /// Process priority/nice value
     pub priority: Option<i32>,
@@ -1984,7 +1990,9 @@ mod windows_impl {
                             gpu_indices: Vec::new(),
                             gpu_memory_per_device: HashMap::new(),
                             total_gpu_memory_bytes: 0,
-                            state: 'R', // Windows doesn't expose state easily - assume running
+                            // Windows exposes scheduling state per thread, not per
+                            // process. Reporting 'R' here was a guess, not a reading.
+                            state: 'U',
                             priority: Some(priority_class as i32),
                             gfx_engine_used: None,
                             compute_engine_used: None,
@@ -2045,7 +2053,7 @@ mod windows_impl {
                         gpu_indices: Vec::new(),
                         gpu_memory_per_device: HashMap::new(),
                         total_gpu_memory_bytes: 0,
-                        state: 'R',
+                        state: 'U',
                         priority: None,
                         gfx_engine_used: None,
                         compute_engine_used: None,
