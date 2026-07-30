@@ -428,12 +428,38 @@ pub struct BackendDiscovery {
 
 impl BackendDiscovery {
     /// Discover available backends
+    ///
+    /// The five server probes are HTTP round trips to localhost ports that are
+    /// usually not listening, and each costs up to a 1s connect timeout. Run in
+    /// sequence they took 4.7s on a machine with only Ollama running — long enough
+    /// that the GUI's AI tab, which gave up waiting after 3s, reported "AI backend
+    /// not connected" for a backend that was about to be found. They are independent,
+    /// so they now run concurrently and the whole discovery costs about one probe.
     pub fn discover() -> Self {
         let mut available = Vec::new();
 
-        // IronWorks first: it is the default backend, and probing it before anything
-        // else means a running instance is found without paying for other probes.
-        if Self::check_ironworks_available() {
+        // Order the results deterministically regardless of which probe finishes
+        // first: IronWorks is the default backend and must stay ahead of the others,
+        // because `recommended()` takes the first available entry.
+        let probes: [(BackendType, fn() -> bool); 5] = [
+            (BackendType::IronWorks, Self::check_ironworks_available),
+            (BackendType::RemoteOllama, Self::check_ollama_available),
+            (BackendType::RemoteLMStudio, Self::check_lm_studio_available),
+            (BackendType::RemoteVllm, Self::check_vllm_available),
+            (BackendType::RemoteTensorRT, Self::check_tensorrt_available),
+        ];
+        let server_results: Vec<bool> = std::thread::scope(|scope| {
+            let handles: Vec<_> = probes
+                .iter()
+                .map(|(_, probe)| scope.spawn(move || probe()))
+                .collect();
+            handles
+                .into_iter()
+                .map(|h| h.join().unwrap_or(false))
+                .collect()
+        });
+
+        if server_results[0] {
             available.push(BackendType::IronWorks);
         }
 
@@ -462,18 +488,15 @@ impl BackendDiscovery {
             available.push(BackendType::RemoteAzure);
         }
 
-        // Check for local server backends
-        if Self::check_ollama_available() {
-            available.push(BackendType::RemoteOllama);
-        }
-        if Self::check_lm_studio_available() {
-            available.push(BackendType::RemoteLMStudio);
-        }
-        if Self::check_vllm_available() {
-            available.push(BackendType::RemoteVllm);
-        }
-        if Self::check_tensorrt_available() {
-            available.push(BackendType::RemoteTensorRT);
+        // Local server backends, from the probes run concurrently above.
+        for (backend, _) in probes.iter().skip(1) {
+            let idx = probes
+                .iter()
+                .position(|(b, _)| b == backend)
+                .expect("backend came from this array");
+            if server_results[idx] {
+                available.push(backend.clone());
+            }
         }
 
         // Command-line tools. Detection is a PATH lookup, so unlike the server probes

@@ -27,7 +27,11 @@ use crate::system_stats::SystemStats;
 
 const HISTORY_SIZE: usize = 60;
 const UPDATE_INTERVAL: Duration = Duration::from_millis(100); // Fast UI updates (10 FPS minimum)
-const DATA_POLL_INTERVAL: Duration = Duration::from_millis(500); // Data polling rate
+                                                              // A full collection tick costs ~500ms on a three-GPU Windows box even with the
+                                                              // process table decimated, so a 500ms interval asked for more than the hardware can
+                                                              // deliver and the collector thread never slept. 1s matches what the sources can
+                                                              // actually sustain, and is the cadence htop and nvtop use.
+const DATA_POLL_INTERVAL: Duration = Duration::from_millis(1000); // Data polling rate
 const SLOW_UPDATE_INTERVAL: Duration = Duration::from_secs(2); // Slow updates for heavy ops
 
 /// Cached disk data to avoid blocking I/O calls on every frame
@@ -600,6 +604,14 @@ impl SiliconMonitorApp {
                 crate::pipeline::CollectorConfig {
                     interval: DATA_POLL_INTERVAL,
                     history_size: HISTORY_SIZE,
+                    // The process table costs ~970ms to build (484 processes, each an
+                    // OpenProcess plus a SID lookup) and the connection table is not
+                    // cheap either, while the GUI only reads both every 2s and only
+                    // on their own tabs. Collecting them every tick had the collector
+                    // thread running flat out: a full tick cost more than the tick
+                    // interval, so it never idled.
+                    process_every_n_ticks: 2,
+                    connection_every_n_ticks: 2,
                     ..Default::default()
                 },
             )),
@@ -1267,10 +1279,9 @@ impl eframe::App for SiliconMonitorApp {
             self.applied_color_theme = Some(want);
         }
 
-        // Check alerts if enabled
-        if self.settings.alert_settings.enabled {
-            self.check_alerts();
-        }
+        // Alerts are derived purely from the latest snapshot, so evaluating them per
+        // frame re-derived the same verdict from the same numbers and rebuilt its
+        // message strings each time. Moved below, to run only when data changes.
 
         // Save historical data periodically (every minute)
         if self.last_historical_save.elapsed() >= std::time::Duration::from_secs(60) {
@@ -1286,6 +1297,10 @@ impl eframe::App for SiliconMonitorApp {
         // load and an early return.
         let got_new_data = self.sync_snapshot();
 
+        if got_new_data && self.settings.alert_settings.enabled {
+            self.check_alerts();
+        }
+
         // Slow updates (Processes, Connections, System Stats) - every 2s
         if self.last_slow_update.elapsed() >= SLOW_UPDATE_INTERVAL {
             self.update_data_slow();
@@ -1296,18 +1311,22 @@ impl eframe::App for SiliconMonitorApp {
         // fixed 100ms tick. Waking at 10 FPS to redraw identical pixels burns GPU and
         // battery for nothing; the data only changes when a snapshot lands.
         //
-        // When data did arrive, ask for the next frame around the next expected
-        // publish. Otherwise poll on a coarser interval so a late snapshot is still
-        // picked up promptly without spinning.
-        let next_repaint = if got_new_data {
-            self.collector
-                .as_ref()
-                .map(|c| c.handle().interval())
-                .unwrap_or(UPDATE_INTERVAL)
-        } else {
-            UPDATE_INTERVAL
-        };
-        ctx.request_repaint_after(next_repaint);
+        // Poll at a fixed fraction of the collector's cadence, whether or not this
+        // frame saw new data.
+        //
+        // Scheduling the next wake differently depending on `got_new_data` makes the
+        // wake-ups drift against the publishes: a frame that catches a snapshot waits
+        // a full interval and then arrives just after the next one, so the display
+        // advances twice in quick succession and then appears to stall. Sampling at a
+        // constant rate a few times per interval keeps the visible cadence even, and
+        // is still far below the old fixed 100ms tick. egui repaints immediately on
+        // input regardless, so this only governs how promptly new data is shown.
+        let tick = self
+            .collector
+            .as_ref()
+            .map(|c| c.handle().interval())
+            .unwrap_or(DATA_POLL_INTERVAL);
+        ctx.request_repaint_after((tick / 4).max(UPDATE_INTERVAL));
 
         // Top panel with title and tabs
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
@@ -5465,11 +5484,19 @@ impl SiliconMonitorApp {
             return;
         }
 
-        // If we timed out, mark loading as done
+        // Past the spinner budget, show the controls rather than making the user wait
+        // on a blank tab — but detection is still running, which is not the same thing
+        // as having finished and found nothing.
         if self.agent_loading && self.agent_loading_start.elapsed().as_secs() >= 3 {
             self.agent_loading = false;
         }
 
+        // `agent_receiver` is dropped when the detection thread's result is taken, so
+        // this is the truthful "still looking" signal. Backend discovery probes five
+        // local ports and used to take 4.7s, comfortably past the 3s spinner budget,
+        // so the tab asserted "AI backend not connected" about a backend it was in
+        // the middle of finding — and then connected a second later.
+        let detection_in_flight = self.agent_receiver.is_some();
         let agent_available = self.agent.is_some() && self.silicon_monitor.is_some();
 
         // Wrap content in ScrollArea like other tabs
@@ -5583,22 +5610,33 @@ impl SiliconMonitorApp {
 
         ui.add_space(8.0);
 
-        // Show connection warning if agent not available
+        // Show connection status when no agent is available yet. While detection is
+        // still running this must report that, not a failure it has not established.
         if !agent_available {
             let is_ollama = matches!(self.ai_selected_backend, AiBackendSelection::Ollama);
             let no_models = is_ollama && self.ai_ollama_models.is_empty();
+            let accent = if detection_in_flight {
+                CyberColors::CYAN
+            } else {
+                CyberColors::NEON_YELLOW
+            };
             egui::Frame::none()
                 .fill(CyberColors::SURFACE)
-                .stroke(egui::Stroke::new(1.0, CyberColors::NEON_YELLOW))
+                .stroke(egui::Stroke::new(1.0, accent))
                 .rounding(6.0)
                 .inner_margin(10.0)
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("⚠").color(CyberColors::NEON_YELLOW).size(16.0));
+                        if detection_in_flight {
+                            ui.spinner();
+                            ui.label(RichText::new("Detecting AI backends…").color(accent));
+                            return;
+                        }
+                        ui.label(RichText::new("⚠").color(accent).size(16.0));
                         if no_models {
-                            ui.label(RichText::new("No Ollama models installed. Run: ollama pull llama3.2").color(CyberColors::NEON_YELLOW));
+                            ui.label(RichText::new("No Ollama models installed. Run: ollama pull llama3.2").color(accent));
                         } else {
-                            ui.label(RichText::new("AI backend not connected.").color(CyberColors::NEON_YELLOW));
+                            ui.label(RichText::new("AI backend not connected.").color(accent));
                         }
                         if ui.button(RichText::new("🔄 Retry").color(CyberColors::CYAN)).clicked() {
                             self.refresh_ollama_models_async();

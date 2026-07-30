@@ -286,21 +286,56 @@ struct HwMonSensor {
     parent: String,
 }
 
+/// Namespaces this probe understands, in preference order.
+const HWMON_NAMESPACES: [&str; 2] = ["root\\OpenHardwareMonitor", "root\\LibreHardwareMonitor"];
+
+/// Which hardware-monitor namespace is present, and when that was last determined.
+///
+/// Neither namespace exists unless the user installed OHM or LHM, and connecting to
+/// an absent WMI namespace is not cheap. This probe runs once per GPU per collector
+/// tick, so on the common machine it was paying for two failed namespace connections
+/// every tick, forever, to learn the same thing each time. The answer is cached and
+/// re-probed occasionally, so installing a hardware monitor is still picked up
+/// without restarting simon.
+static HWMON_NAMESPACE: std::sync::Mutex<Option<(std::time::Instant, Option<&'static str>)>> =
+    std::sync::Mutex::new(None);
+
+/// How long a namespace probe result stays good.
+const HWMON_PROBE_TTL: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// Locate an installed OHM/LHM WMI namespace, using the cached answer when fresh.
+fn hwmon_namespace(com: COMLibrary) -> Option<&'static str> {
+    let mut cached = HWMON_NAMESPACE.lock().ok()?;
+    if let Some((probed_at, answer)) = *cached {
+        if probed_at.elapsed() < HWMON_PROBE_TTL {
+            return answer;
+        }
+    }
+
+    let answer = HWMON_NAMESPACES
+        .into_iter()
+        .find(|ns| WMIConnection::with_namespace_path(ns, com).is_ok());
+    *cached = Some((std::time::Instant::now(), answer));
+    answer
+}
+
 /// Query GPU-specific temperature from OpenHardwareMonitor or LibreHardwareMonitor.
 ///
 /// Filters by parent containing the GPU name hint (e.g., "Radeon", "Intel", "Arc").
 /// Falls back to any GPU-tagged temperature sensor if exact match fails.
+///
+/// Returns `None` when no hardware monitor is installed. It used to fall back to an
+/// ACPI thermal zone, but a chassis thermal zone is not this GPU's temperature — it
+/// is a different sensor on a different part of the machine, and reporting it as the
+/// GPU's reading is a guess presented as a measurement.
 pub fn query_gpu_temperature_ohm(gpu_name_hint: &str) -> Option<i32> {
     let com = COMLibrary::new().ok()?;
+    let namespace = hwmon_namespace(com)?;
 
     let hint_lower = gpu_name_hint.to_lowercase();
 
-    // Try OpenHardwareMonitor first
-    for namespace in &["root\\OpenHardwareMonitor", "root\\LibreHardwareMonitor"] {
-        let wmi = match WMIConnection::with_namespace_path(namespace, com.into()) {
-            Ok(w) => w,
-            Err(_) => continue,
-        };
+    {
+        let wmi = WMIConnection::with_namespace_path(namespace, com).ok()?;
 
         let sensors: Vec<HwMonSensor> = wmi
             .raw_query(
@@ -335,21 +370,6 @@ pub fn query_gpu_temperature_ohm(gpu_name_hint: &str) -> Option<i32> {
 
             if is_gpu && sensor.value > 0.0 && sensor.value < 150.0 {
                 return Some(sensor.value as i32);
-            }
-        }
-    }
-
-    // Fallback: ACPI thermal zones (imprecise, but better than nothing)
-    let com2 = COMLibrary::new().ok()?;
-    let wmi_root = WMIConnection::with_namespace_path("root\\WMI", com2).ok()?;
-    let temp_query = "SELECT CurrentTemperature FROM MSAcpi_ThermalZoneTemperature";
-    let results: Vec<HashMap<String, Variant>> = wmi_root.raw_query(temp_query).ok()?;
-
-    for item in &results {
-        if let Some(Variant::UI4(temp_tenths_kelvin)) = item.get("CurrentTemperature") {
-            let temp_c = (*temp_tenths_kelvin as f32 / 10.0) - 273.15;
-            if temp_c > 0.0 && temp_c < 150.0 {
-                return Some(temp_c as i32);
             }
         }
     }

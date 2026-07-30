@@ -330,6 +330,15 @@ pub struct CollectorConfig {
     /// Re-enumerate disks every N ticks. Disk topology changes rarely, so
     /// re-enumerating every tick wastes a comparatively expensive WMI call.
     pub disk_every_n_ticks: u64,
+    /// Re-read the process table every N ticks, reusing the previous table between.
+    ///
+    /// This is the most expensive stage by a wide margin — 970 ms for 484 processes
+    /// on a Windows box, because each entry costs an `OpenProcess` plus a SID lookup.
+    /// Front-ends display it far less often than they display CPU and GPU, so paying
+    /// for it every tick pins a core for data nobody is looking at.
+    pub process_every_n_ticks: u64,
+    /// Re-read the open-connection table every N ticks.
+    pub connection_every_n_ticks: u64,
 }
 
 impl Default for CollectorConfig {
@@ -340,6 +349,8 @@ impl Default for CollectorConfig {
             collect_processes: true,
             collect_connections: true,
             disk_every_n_ticks: 10,
+            process_every_n_ticks: 1,
+            connection_every_n_ticks: 1,
         }
     }
 }
@@ -420,6 +431,10 @@ fn collector_loop(
     let mut histories = Histories::default();
     let mut generation: u64 = 0;
     let mut cached_disks: Vec<DiskSnapshot> = Vec::new();
+    // Carried between ticks so a decimated stage keeps its last reading rather than
+    // publishing an empty table on the ticks it does not run.
+    let mut cached_processes: Vec<ProcessMonitorInfo> = Vec::new();
+    let mut cached_connections: Vec<ConnectionInfo> = Vec::new();
 
     // === Warm-up publish ===
     //
@@ -445,6 +460,8 @@ fn collector_loop(
         &config,
         &mut histories,
         &mut cached_disks,
+        &mut cached_processes,
+        &mut cached_connections,
         &[],
         generation,
     )));
@@ -491,6 +508,8 @@ fn collector_loop(
             &config,
             &mut histories,
             &mut cached_disks,
+            &mut cached_processes,
+            &mut cached_connections,
             &gpu_static,
             generation,
         );
@@ -520,6 +539,8 @@ fn collect_once(
     config: &CollectorConfig,
     histories: &mut Histories,
     cached_disks: &mut Vec<DiskSnapshot>,
+    cached_processes: &mut Vec<ProcessMonitorInfo>,
+    cached_connections: &mut Vec<ConnectionInfo>,
     gpu_static: &[GpuStaticInfo],
     generation: u64,
 ) -> Snapshot {
@@ -533,7 +554,13 @@ fn collect_once(
         connections,
     } = sources;
 
-    let refresh_disks = generation == 1 || generation % config.disk_every_n_ticks.max(1) == 0;
+    // The first tick always collects everything so the UI is populated immediately;
+    // after that each decimated stage runs on its own cadence and the previous value
+    // is reused in between.
+    let due = |every: u64| generation == 1 || generation % every.max(1) == 0;
+    let refresh_disks = due(config.disk_every_n_ticks);
+    let refresh_processes = due(config.process_every_n_ticks);
+    let refresh_connections = due(config.connection_every_n_ticks);
 
     let (cpu, memory, gpu_dynamic, process_list, net_list, conn_list, disk_list, sys_stats) =
         thread::scope(|scope| {
@@ -541,9 +568,13 @@ fn collect_once(
             let mem_h = scope.spawn(timed(collect_memory));
             let sys_h = scope.spawn(timed(collect_system_stats));
             let gpu_h = scope.spawn(timed(move || collect_gpu(gpu.as_ref())));
-            let proc_h = scope.spawn(timed(move || collect_processes(processes.as_mut())));
+            let proc_h = scope.spawn(timed(move || {
+                refresh_processes.then(|| collect_processes(processes.as_mut()))
+            }));
             let net_h = scope.spawn(timed(move || collect_network(network.as_mut())));
-            let conn_h = scope.spawn(timed(move || collect_connections(connections.as_mut())));
+            let conn_h = scope.spawn(timed(move || {
+                refresh_connections.then(|| collect_connections(connections.as_mut()))
+            }));
             let disk_h = scope.spawn(timed(move || {
                 if refresh_disks {
                     Some(collect_disks())
@@ -577,14 +608,20 @@ fn collect_once(
 
     let (cpu, memory) = (cpu.0, memory.0);
     let gpu_dynamic = gpu_dynamic.0;
-    let processes = process_list.0;
     let network = net_list.0;
-    let connections = conn_list.0;
     let system_stats = sys_stats.0;
 
     if let Some(fresh) = disk_list.0 {
         *cached_disks = fresh;
     }
+    if let Some(fresh) = process_list.0 {
+        *cached_processes = fresh;
+    }
+    if let Some(fresh) = conn_list.0 {
+        *cached_connections = fresh;
+    }
+    let processes = cached_processes.clone();
+    let connections = cached_connections.clone();
 
     // === histories ===
     let cap = config.history_size.max(1);

@@ -27,7 +27,12 @@ impl CyberProgressBar {
             label: None,
             show_percentage: true,
             height: 20.0,
-            animated: true,
+            // Off by default. The animation is a scanline sweep and a glow pulse —
+            // decoration that carries no reading — and any visible animated bar keeps
+            // the whole window repainting continuously. On a 3440x1440 display that
+            // cost more CPU than collecting the hardware data it was decorating. Opt
+            // in with `.animated(true)` where it is worth the frames.
+            animated: false,
             use_threshold_color: false,
             trend: None,
         }
@@ -237,9 +242,17 @@ impl Widget for CyberProgressBar {
             }
         }
 
-        // Request repaint for animation
+        // Drive the scanline and glow pulse at a bounded rate.
+        //
+        // This was a bare `request_repaint()`, which means "repaint as soon as
+        // possible" — so a single visible progress bar pinned the whole app at the
+        // display's refresh rate, permanently, to animate decoration. On a 3440x1440
+        // screen that was the single largest consumer in the process, several times
+        // the cost of actually collecting the hardware data. Decoration does not need
+        // more than ~30 FPS, and egui still repaints instantly on input.
         if self.animated {
-            ui.ctx().request_repaint();
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(33));
         }
 
         response
