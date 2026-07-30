@@ -563,7 +563,7 @@ impl BackendDiscovery {
 
     /// Check if an IronWorks server is running.
     fn check_ironworks_available() -> bool {
-        Self::check_http_endpoint("http://localhost:8080/v1/models")
+        Self::check_http_endpoint_shape("http://localhost:8080/v1/models", Some("data"))
     }
 
     /// Check if GGML/llama.cpp is available
@@ -597,30 +597,47 @@ impl BackendDiscovery {
     /// Check if Ollama is running
     fn check_ollama_available() -> bool {
         // Try to connect to Ollama server
-        Self::check_http_endpoint("http://localhost:11434/api/tags")
+        Self::check_http_endpoint_shape("http://localhost:11434/api/tags", Some("models"))
     }
 
     /// Check if LM Studio is running
     fn check_lm_studio_available() -> bool {
         // Try to connect to LM Studio server
-        Self::check_http_endpoint("http://localhost:1234/v1/models")
+        Self::check_http_endpoint_shape("http://localhost:1234/v1/models", Some("data"))
     }
 
     /// Check if vLLM is running
     fn check_vllm_available() -> bool {
         // Try to connect to vLLM server
-        Self::check_http_endpoint("http://localhost:8000/v1/models")
+        Self::check_http_endpoint_shape("http://localhost:8000/v1/models", Some("data"))
     }
 
     /// Check if TensorRT-LLM is running
     fn check_tensorrt_available() -> bool {
         // Try to connect to TensorRT-LLM/Triton server
-        Self::check_http_endpoint("http://localhost:8001/v2/health/ready")
+        // Triton health returns an empty 200 body, so there is no shape to check.
+        Self::check_http_endpoint_shape("http://localhost:8001/v2/health/ready", None)
     }
 
-    /// Check if HTTP endpoint is accessible
-    fn check_http_endpoint(_url: &str) -> bool {
-        // Simple HTTP check with timeout for discovery
+    /// Check that a URL answers, and that the answer looks like the API we want.
+    ///
+    /// `expect_key` names a JSON field the real service always returns — `data` for
+    /// the OpenAI model listing, `models` for Ollama's `/api/tags`. Passing `None`
+    /// accepts any 2xx, which is only appropriate for a health endpoint that returns
+    /// no body.
+    ///
+    /// The shape check is the point. This used to accept any 2xx, so *any* local
+    /// service on the port counted as the backend. On this machine an unrelated web
+    /// app listens on 8080 and serves HTML for every path, so discovery reported
+    /// IronWorks as available, `recommended()` chose it over the Ollama instance that
+    /// was genuinely running, and every query went to a server that speaks no such
+    /// API. Ports 1234, 8000 and 8001 are just as easily occupied by something else.
+    /// Whether a response body carries the array field the real API returns.
+    fn body_has_array(body: &serde_json::Value, key: &str) -> bool {
+        body.get(key).is_some_and(|v| v.is_array())
+    }
+
+    fn check_http_endpoint_shape(_url: &str, _expect_key: Option<&str>) -> bool {
         #[cfg(feature = "remote-backends")]
         {
             use std::time::Duration;
@@ -632,15 +649,19 @@ impl BackendDiscovery {
             if let Ok(client) = client {
                 match client.get(_url).send() {
                     Ok(response) => {
-                        // Check if response is successful (2xx status code)
-                        let success = response.status().is_success();
-                        log::debug!(
-                            "Backend check {}: status={}, success={}",
-                            _url,
-                            response.status(),
-                            success
-                        );
-                        return success;
+                        if !response.status().is_success() {
+                            log::debug!("Backend check {}: status={}", _url, response.status());
+                            return false;
+                        }
+                        let Some(key) = _expect_key else {
+                            return true;
+                        };
+                        let matched = response
+                            .json::<serde_json::Value>()
+                            .ok()
+                            .is_some_and(|body| Self::body_has_array(&body, key));
+                        log::debug!("Backend check {}: has array `{}` = {}", _url, key, matched);
+                        return matched;
                     }
                     Err(e) => {
                         log::debug!("Backend check {} failed: {}", _url, e);
@@ -774,6 +795,47 @@ impl BackendCapabilities {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A 200 from *something* on the port is not evidence of the backend.
+    ///
+    /// Discovery used to accept any 2xx. An unrelated web application listening on
+    /// 8080 and serving HTML for every path therefore registered as IronWorks, and
+    /// because IronWorks is preferred over everything else, `recommended()` chose it
+    /// over the Ollama server that was genuinely running — sending every query to a
+    /// service that speaks no such API. Ports 1234, 8000 and 11434 are equally
+    /// available to unrelated software.
+    #[test]
+    fn discovery_requires_the_shape_of_the_api_not_just_a_response() {
+        let openai_listing = serde_json::json!({
+            "object": "list",
+            "data": [{"id": "some-model", "object": "model"}],
+        });
+        assert!(BackendDiscovery::body_has_array(&openai_listing, "data"));
+
+        let ollama_listing = serde_json::json!({ "models": [{"name": "moondream:latest"}] });
+        assert!(BackendDiscovery::body_has_array(&ollama_listing, "models"));
+
+        // An empty listing is still that API: a server with no models loaded.
+        assert!(BackendDiscovery::body_has_array(
+            &serde_json::json!({"data": []}),
+            "data"
+        ));
+
+        // Anything else on the port is not the backend.
+        for impostor in [
+            serde_json::json!({"message": "Not Found"}),
+            serde_json::json!({"data": "not-an-array"}),
+            serde_json::json!({"models": {"name": "object-not-array"}}),
+            serde_json::json!([]),
+            serde_json::json!("<!doctype html>"),
+        ] {
+            assert!(
+                !BackendDiscovery::body_has_array(&impostor, "data")
+                    && !BackendDiscovery::body_has_array(&impostor, "models"),
+                "accepted a response that is not a model listing: {impostor}"
+            );
+        }
+    }
 
     #[test]
     fn test_backend_type_classification() {

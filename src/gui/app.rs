@@ -168,7 +168,6 @@ pub struct SiliconMonitorApp {
 
     // AI Agent state
     agent: Option<crate::agent::Agent>,
-    silicon_monitor: Option<crate::SiliconMonitor>,
     ai_data_api: Option<AiDataApi>,
     agent_query: String,
     agent_history: VecDeque<AgentChatEntry>,
@@ -181,7 +180,8 @@ pub struct SiliconMonitorApp {
     ai_selected_backend: AiBackendSelection,
     ai_prev_backend: AiBackendSelection,
     ai_selected_model: String,
-    ai_ollama_models: Vec<String>,
+    /// Models each provider reported, keyed by provider. Filled asynchronously.
+    models_by_provider: std::collections::HashMap<AiBackendSelection, Vec<String>>,
     #[allow(dead_code)]
     ai_ollama_starting: bool,
     ai_status_message: Option<(String, bool)>, // (message, is_error)
@@ -195,7 +195,13 @@ pub struct SiliconMonitorApp {
     agent_receiver: Option<Receiver<Option<crate::agent::Agent>>>,
     agent_loading: bool,
     agent_loading_start: Instant,
-    ollama_models_receiver: Option<Receiver<Vec<String>>>,
+    /// Consecutive auto-detection attempts that found nothing.
+    agent_detect_attempts: u32,
+    /// When to re-run auto-detection after it came up empty.
+    agent_detect_next_retry: Option<Instant>,
+    models_receiver: Option<Receiver<(AiBackendSelection, Vec<String>)>>,
+    /// Provider whose model listing is currently in flight.
+    models_loading_for: Option<AiBackendSelection>,
     ai_data_api_receiver: Option<Receiver<Option<AiDataApi>>>,
 
     // Cached disk data (refreshed periodically, not on every frame)
@@ -308,18 +314,128 @@ enum ProcessSortColumn {
     Memory,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum AiBackendSelection {
+    /// simon's own engine, and the reason it is first: inference stays on the host,
+    /// so telemetry never leaves the machine.
+    IronWorks,
     Ollama,
+    LmStudio,
+    Vllm,
+    TensorRt,
     OpenAi,
     Anthropic,
     GitHub,
-    LmStudio,
+    /// A locally installed CLI tool driven as a subprocess.
+    Cli(crate::agent::local::CliProvider),
 }
 
 impl Default for AiBackendSelection {
     fn default() -> Self {
         Self::Ollama
+    }
+}
+
+impl AiBackendSelection {
+    /// Every provider offered in the dropdown, in preference order.
+    ///
+    /// This used to list five, while the library supported IronWorks, vLLM,
+    /// TensorRT-LLM and four CLI tools as well — so the engine simon ships against
+    /// could not be selected from simon's own UI.
+    const ALL: &'static [Self] = &[
+        Self::IronWorks,
+        Self::Ollama,
+        Self::LmStudio,
+        Self::Vllm,
+        Self::TensorRt,
+        Self::OpenAi,
+        Self::Anthropic,
+        Self::GitHub,
+        Self::Cli(crate::agent::local::CliProvider::Claude),
+        Self::Cli(crate::agent::local::CliProvider::Codex),
+        Self::Cli(crate::agent::local::CliProvider::Gemini),
+    ];
+
+    /// Provider name for prose, without the decorative icon.
+    fn display_name(self) -> &'static str {
+        use crate::agent::local::CliProvider;
+        match self {
+            Self::IronWorks => "IronWorks",
+            Self::Ollama => "Ollama",
+            Self::LmStudio => "LM Studio",
+            Self::Vllm => "vLLM",
+            Self::TensorRt => "TensorRT-LLM",
+            Self::OpenAi => "OpenAI",
+            Self::Anthropic => "Anthropic",
+            Self::GitHub => "GitHub Models",
+            Self::Cli(CliProvider::Claude) => "Claude Code CLI",
+            Self::Cli(CliProvider::Codex) => "Codex CLI",
+            Self::Cli(CliProvider::Gemini) => "Gemini CLI",
+            Self::Cli(CliProvider::Ollama) => "Ollama CLI",
+        }
+    }
+
+    /// Label with icon, for the dropdown.
+    fn menu_label(self) -> &'static str {
+        use crate::agent::local::CliProvider;
+        match self {
+            Self::IronWorks => "⚙ IronWorks (built-in)",
+            Self::Ollama => "🦙 Ollama",
+            Self::LmStudio => "📦 LM Studio",
+            Self::Vllm => "🚀 vLLM",
+            Self::TensorRt => "⚡ TensorRT-LLM",
+            Self::OpenAi => "🤖 OpenAI",
+            Self::Anthropic => "🧠 Anthropic",
+            Self::GitHub => "🐙 GitHub Models",
+            Self::Cli(CliProvider::Claude) => "🖥 Claude Code CLI",
+            Self::Cli(CliProvider::Codex) => "🖥 Codex CLI",
+            Self::Cli(CliProvider::Gemini) => "🖥 Gemini CLI",
+            Self::Cli(CliProvider::Ollama) => "🖥 Ollama CLI",
+        }
+    }
+
+    /// Whether this provider needs an API key from the user.
+    fn needs_api_key(self) -> bool {
+        matches!(self, Self::OpenAi | Self::Anthropic | Self::GitHub)
+    }
+
+    /// Base URL whose `/models` endpoint lists what the provider can serve.
+    ///
+    /// `None` means the provider exposes no listing simon can read — a CLI tool
+    /// chooses its own model, so there is nothing to enumerate.
+    fn models_endpoint(self) -> Option<&'static str> {
+        use crate::agent::local::CliProvider;
+        match self {
+            Self::IronWorks => Some("http://localhost:8080/v1/models"),
+            Self::Ollama | Self::Cli(CliProvider::Ollama) => {
+                Some("http://localhost:11434/api/tags")
+            }
+            Self::LmStudio => Some("http://localhost:1234/v1/models"),
+            Self::Vllm => Some("http://localhost:8000/v1/models"),
+            Self::TensorRt => Some("http://localhost:8001/v1/models"),
+            Self::OpenAi => Some("https://api.openai.com/v1/models"),
+            Self::Anthropic => Some("https://api.anthropic.com/v1/models"),
+            Self::GitHub => Some("https://models.github.ai/catalog/models"),
+            Self::Cli(_) => None,
+        }
+    }
+
+    /// Names to offer when the provider could not be asked.
+    ///
+    /// Only reached when a listing is unavailable — the server is down, or a hosted
+    /// provider has no key yet. A live listing is always preferred: a hardcoded list
+    /// is stale the moment a provider ships a model, which is how this tab came to
+    /// offer `gpt-3.5-turbo` and `claude-3-sonnet`.
+    fn fallback_models(self) -> &'static [&'static str] {
+        match self {
+            Self::Anthropic => &["claude-opus-4-5", "claude-sonnet-4-5", "claude-haiku-4-5"],
+            Self::OpenAi => &["gpt-4o", "gpt-4o-mini", "o3-mini"],
+            Self::GitHub => &["gpt-4o", "gpt-4o-mini"],
+            // Local servers name whatever was loaded into them; there is no
+            // meaningful guess, and inventing one would send a request for a model
+            // that does not exist.
+            _ => &[],
+        }
     }
 }
 
@@ -515,13 +631,6 @@ impl SiliconMonitorApp {
             let _ = agent_tx.send(agent);
         });
 
-        // Start background loading for Ollama models (avoid blocking on subprocess)
-        let (ollama_tx, ollama_rx) = channel();
-        std::thread::spawn(move || {
-            let models = SiliconMonitorApp::detect_ollama_models();
-            let _ = ollama_tx.send(models);
-        });
-
         // Start background loading for AI Data API (avoid blocking on GPU/process init)
         let (ai_api_tx, ai_api_rx) = channel();
         std::thread::spawn(move || {
@@ -597,8 +706,7 @@ impl SiliconMonitorApp {
             nettools_dns_results: Vec::new(),
 
             // AI Agent - loading in background
-            agent: None, // Will be populated when background thread completes
-            silicon_monitor: crate::SiliconMonitor::new().ok(),
+            agent: None,       // Will be populated when background thread completes
             ai_data_api: None, // Loading in background
             agent_query: String::new(),
             agent_history: VecDeque::with_capacity(50),
@@ -610,7 +718,7 @@ impl SiliconMonitorApp {
             ai_selected_backend: AiBackendSelection::default(),
             ai_prev_backend: AiBackendSelection::default(),
             ai_selected_model: String::new(), // Will be set when ollama models load
-            ai_ollama_models: Vec::new(),     // Loading in background
+            models_by_provider: std::collections::HashMap::new(),
             ai_ollama_starting: false,
             ai_status_message: None,
 
@@ -623,7 +731,10 @@ impl SiliconMonitorApp {
             agent_receiver: Some(agent_rx),
             agent_loading: true,
             agent_loading_start: Instant::now(),
-            ollama_models_receiver: Some(ollama_rx),
+            agent_detect_attempts: 0,
+            agent_detect_next_retry: None,
+            models_receiver: None,
+            models_loading_for: None,
             ai_data_api_receiver: Some(ai_api_rx),
 
             // Cached disk data (avoid per-frame I/O)
@@ -935,6 +1046,34 @@ impl SiliconMonitorApp {
                 self.agent = agent;
                 self.agent_loading = false;
                 self.agent_receiver = None;
+
+                if self.agent.is_none() {
+                    // Detection is five HTTP probes with a 1s connect timeout each,
+                    // fired during the startup stampede — GPU enumeration, disk
+                    // enumeration and an `ollama list` are all running at that
+                    // moment. A probe that loses that race used to latch the tab into
+                    // "not connected" permanently, because nothing ever looked again.
+                    self.agent_detect_attempts = self.agent_detect_attempts.saturating_add(1);
+                    let backoff = match self.agent_detect_attempts {
+                        1 => Duration::from_secs(15),
+                        2 => Duration::from_secs(30),
+                        _ => Duration::from_secs(60),
+                    };
+                    self.agent_detect_next_retry = Some(Instant::now() + backoff);
+                } else {
+                    self.agent_detect_attempts = 0;
+                    self.agent_detect_next_retry = None;
+                }
+            }
+        }
+
+        // Re-probe on the backoff schedule until something is found.
+        if self.agent_receiver.is_none() && self.agent.is_none() {
+            if let Some(due) = self.agent_detect_next_retry {
+                if Instant::now() >= due {
+                    self.agent_detect_next_retry = None;
+                    self.spawn_agent_detection();
+                }
             }
         }
 
@@ -1009,24 +1148,31 @@ impl SiliconMonitorApp {
             }
         }
 
-        // Check Ollama models background loading
-        if let Some(ref receiver) = self.ollama_models_receiver {
-            if let Ok(models) = receiver.try_recv() {
-                let had_no_model = self.ai_selected_model.is_empty();
-                if had_no_model {
-                    self.ai_selected_model = models.first().cloned().unwrap_or_default();
+        // A provider answered with its model list.
+        if let Some(ref receiver) = self.models_receiver {
+            if let Ok((provider, models)) = receiver.try_recv() {
+                // Pick a default only for the provider the user is actually on, and
+                // only if they have not chosen one.
+                if provider == self.ai_selected_backend && self.ai_selected_model.is_empty() {
+                    if let Some(first) = models.first() {
+                        self.ai_selected_model = first.clone();
+                    }
                 }
-                self.ai_ollama_models = models;
-                self.ollama_models_receiver = None;
-                // Auto-retry agent connection once we know the correct model name
-                if had_no_model
-                    && self.agent.is_none()
-                    && !self.ai_selected_model.is_empty()
-                    && matches!(self.ai_selected_backend, AiBackendSelection::Ollama)
-                {
-                    self.retry_agent_connection();
-                }
+                self.models_by_provider.insert(provider, models);
+                self.models_receiver = None;
+                self.models_loading_for = None;
             }
+        }
+
+        // Load the selected provider's models once, and again whenever the selection
+        // changes. Doing this here rather than in the tab's draw code means the list
+        // is ready before the tab is first opened.
+        if self.models_receiver.is_none()
+            && !self
+                .models_by_provider
+                .contains_key(&self.ai_selected_backend)
+        {
+            self.fetch_models_async(self.ai_selected_backend, ctx.clone());
         }
 
         // Check AI Data API background loading
@@ -5564,14 +5710,43 @@ impl SiliconMonitorApp {
         // so the tab asserted "AI backend not connected" about a backend it was in
         // the middle of finding — and then connected a second later.
         let detection_in_flight = self.agent_receiver.is_some();
-        let agent_available = self.agent.is_some() && self.silicon_monitor.is_some();
+
+        // Whether a question can actually be asked — which is not the same as what
+        // auto-detection found.
+        //
+        // `send_agent_query` builds its own `AgentConfig` from the selections on this
+        // tab and constructs its own `Agent` and `SiliconMonitor` inside the worker
+        // thread. It never read `self.agent`, nor the `SiliconMonitor` the app used to
+        // build synchronously at startup purely to gate this banner. Testing those
+        // announced "AI backend not connected" over a tab that worked perfectly well,
+        // whenever a startup probe missed or that second GPU enumeration failed. The
+        // monitor field is gone; it cost a blocking `GpuCollection::auto_detect` on
+        // the UI thread and was read nowhere else.
+        //
+        // What genuinely prevents a send is having no model to send to.
+        // A CLI tool picks its own model, so an empty selection is fine there.
+        let needs_model = self.ai_selected_model.is_empty()
+            && !matches!(self.ai_selected_backend, AiBackendSelection::Cli(_))
+            && self
+                .models_by_provider
+                .get(&self.ai_selected_backend)
+                .is_some_and(|m| m.is_empty())
+            && self.ai_selected_backend.fallback_models().is_empty();
+        let agent_available = !needs_model;
+
+        // Detection did run, and found nothing. Worth saying — it means the default
+        // selection is a guess rather than something observed — but it does not stop
+        // the user asking a question, and the answer path reports its own failures.
+        let detection_found_nothing =
+            !detection_in_flight && self.agent.is_none() && self.agent_detect_attempts > 0;
 
         // Wrap content in ScrollArea like other tabs
         ScrollArea::vertical().show(ui, |ui| {
             ui.add_space(8.0);
 
             // Header with provider/model selection
-            let mut refresh_ollama = false;
+            let mut refresh_models = false;
+            let mut retry_detection = false;
 
             ui.horizontal(|ui| {
                 ui.add(SectionHeader::new("🤖 AI System Assistant"));
@@ -5584,45 +5759,71 @@ impl SiliconMonitorApp {
                         self.ai_selected_model.clone()
                     };
 
-                // Refresh button for Ollama models
-                if matches!(self.ai_selected_backend, AiBackendSelection::Ollama) {
-                    if ui.button(RichText::new("🔄").size(14.0)).on_hover_text("Refresh model list").clicked() {
-                        refresh_ollama = true;
-                    }
+                // Re-ask the provider what it serves.
+                if ui
+                    .button(RichText::new("🔄").size(14.0))
+                    .on_hover_text("Refresh model list")
+                    .clicked()
+                {
+                    refresh_models = true;
                 }
 
                 egui::ComboBox::from_id_salt("ai_model_select")
                     .selected_text(RichText::new(&display_model).color(CyberColors::NEON_GREEN))
-                    .width(180.0)
+                    .width(220.0)
                     .show_ui(ui, |ui| {
-                        // Models based on selected backend
-                        match self.ai_selected_backend {
-                            AiBackendSelection::Ollama => {
-                                if self.ai_ollama_models.is_empty() {
-                                    ui.label(RichText::new("No models found. Run: ollama pull llama3.2").color(CyberColors::TEXT_MUTED));
+                        let provider = self.ai_selected_backend;
+                        let loading = self.models_loading_for == Some(provider);
+                        let listed = self.models_by_provider.get(&provider);
+
+                        match listed {
+                            Some(models) if !models.is_empty() => {
+                                for model in models.clone() {
+                                    ui.selectable_value(
+                                        &mut self.ai_selected_model,
+                                        model.clone(),
+                                        &model,
+                                    );
+                                }
+                            }
+                            _ if loading => {
+                                ui.horizontal(|ui| {
+                                    ui.spinner();
+                                    ui.label(
+                                        RichText::new("Loading models…")
+                                            .color(CyberColors::TEXT_MUTED),
+                                    );
+                                });
+                            }
+                            _ => {
+                                // The provider could not be asked. Offer known names
+                                // where they exist, and say plainly that these were
+                                // not read from the provider.
+                                let fallback = provider.fallback_models();
+                                if fallback.is_empty() {
+                                    ui.label(
+                                        RichText::new(match provider {
+                                            AiBackendSelection::Cli(_) => {
+                                                "This tool selects its own model"
+                                            }
+                                            _ => "No models listed — is the server running?",
+                                        })
+                                        .color(CyberColors::TEXT_MUTED),
+                                    );
                                 } else {
-                                    for model in &self.ai_ollama_models {
-                                        ui.selectable_value(&mut self.ai_selected_model, model.clone(), model);
+                                    ui.label(
+                                        RichText::new("Not listed by provider:")
+                                            .color(CyberColors::TEXT_MUTED)
+                                            .small(),
+                                    );
+                                    for model in fallback {
+                                        ui.selectable_value(
+                                            &mut self.ai_selected_model,
+                                            model.to_string(),
+                                            *model,
+                                        );
                                     }
                                 }
-                            }
-                            AiBackendSelection::OpenAi => {
-                                for model in ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-4", "gpt-3.5-turbo"] {
-                                    ui.selectable_value(&mut self.ai_selected_model, model.to_string(), model);
-                                }
-                            }
-                            AiBackendSelection::Anthropic => {
-                                for model in ["claude-3-5-sonnet-latest", "claude-3-opus", "claude-3-sonnet", "claude-3-haiku"] {
-                                    ui.selectable_value(&mut self.ai_selected_model, model.to_string(), model);
-                                }
-                            }
-                            AiBackendSelection::GitHub => {
-                                for model in ["gpt-4o", "gpt-4o-mini", "o1-preview", "o1-mini"] {
-                                    ui.selectable_value(&mut self.ai_selected_model, model.to_string(), model);
-                                }
-                            }
-                            AiBackendSelection::LmStudio => {
-                                ui.selectable_value(&mut self.ai_selected_model, "local-model".to_string(), "local-model");
                             }
                         }
                     });
@@ -5632,22 +5833,20 @@ impl SiliconMonitorApp {
                 ui.add_space(12.0);
 
                 // Provider dropdown
-                let provider_name = match self.ai_selected_backend {
-                    AiBackendSelection::Ollama => "🦙 Ollama",
-                    AiBackendSelection::OpenAi => "🤖 OpenAI",
-                    AiBackendSelection::Anthropic => "🧠 Anthropic",
-                    AiBackendSelection::GitHub => "🐙 GitHub",
-                    AiBackendSelection::LmStudio => "📦 LM Studio",
-                };
                 egui::ComboBox::from_id_salt("ai_provider_select")
-                    .selected_text(RichText::new(provider_name).color(CyberColors::CYAN))
-                    .width(120.0)
+                    .selected_text(
+                        RichText::new(self.ai_selected_backend.menu_label())
+                            .color(CyberColors::CYAN),
+                    )
+                    .width(200.0)
                     .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut self.ai_selected_backend, AiBackendSelection::Ollama, "🦙 Ollama");
-                        ui.selectable_value(&mut self.ai_selected_backend, AiBackendSelection::OpenAi, "🤖 OpenAI");
-                        ui.selectable_value(&mut self.ai_selected_backend, AiBackendSelection::Anthropic, "🧠 Anthropic");
-                        ui.selectable_value(&mut self.ai_selected_backend, AiBackendSelection::GitHub, "🐙 GitHub");
-                        ui.selectable_value(&mut self.ai_selected_backend, AiBackendSelection::LmStudio, "📦 LM Studio");
+                        for provider in AiBackendSelection::ALL {
+                            ui.selectable_value(
+                                &mut self.ai_selected_backend,
+                                *provider,
+                                provider.menu_label(),
+                            );
+                        }
                     });
 
                 ui.label(RichText::new("Provider:").color(CyberColors::TEXT_SECONDARY).size(12.0));
@@ -5655,22 +5854,26 @@ impl SiliconMonitorApp {
         });
 
         // Handle deferred refresh after the UI block
-        if refresh_ollama {
-            self.refresh_ollama_models_async();
+        if refresh_models {
+            self.models_by_provider.remove(&self.ai_selected_backend);
+            self.fetch_models_async(self.ai_selected_backend, ui.ctx().clone());
+        }
+        if retry_detection {
+            self.spawn_agent_detection();
         }
 
         // Detect backend change and reset model selection to match new provider
         if self.ai_selected_backend != self.ai_prev_backend {
             self.ai_prev_backend = self.ai_selected_backend;
-            self.ai_selected_model = match self.ai_selected_backend {
-                AiBackendSelection::Ollama => {
-                    self.ai_ollama_models.first().cloned().unwrap_or_else(|| "llama3.2:latest".to_string())
-                }
-                AiBackendSelection::OpenAi => "gpt-4o".to_string(),
-                AiBackendSelection::Anthropic => "claude-3-5-sonnet-latest".to_string(),
-                AiBackendSelection::GitHub => "gpt-4o".to_string(),
-                AiBackendSelection::LmStudio => "local-model".to_string(),
-            };
+            // Adopt whatever the new provider reported. If it has not been asked yet,
+            // leave the model empty: the fetch started by `check_background_loaders`
+            // fills it in, and an empty box is honest about not knowing yet where a
+            // guessed name would produce a request for a model that may not exist.
+            self.ai_selected_model = self
+                .models_by_provider
+                .get(&self.ai_selected_backend)
+                .and_then(|m| m.first().cloned())
+                .unwrap_or_default();
             // Reconnect agent with new backend/model selection
             self.retry_agent_connection();
         }
@@ -5679,10 +5882,8 @@ impl SiliconMonitorApp {
 
         // Show connection status when no agent is available yet. While detection is
         // still running this must report that, not a failure it has not established.
-        if !agent_available {
-            let is_ollama = matches!(self.ai_selected_backend, AiBackendSelection::Ollama);
-            let no_models = is_ollama && self.ai_ollama_models.is_empty();
-            let accent = if detection_in_flight {
+        if !agent_available || detection_in_flight || detection_found_nothing {
+            let accent = if agent_available {
                 CyberColors::CYAN
             } else {
                 CyberColors::NEON_YELLOW
@@ -5699,18 +5900,24 @@ impl SiliconMonitorApp {
                             ui.label(RichText::new("Detecting AI backends…").color(accent));
                             return;
                         }
-                        ui.label(RichText::new("⚠").color(accent).size(16.0));
-                        if no_models {
-                            ui.label(RichText::new("No Ollama models installed. Run: ollama pull llama3.2").color(accent));
+                        if !agent_available {
+                            ui.label(RichText::new("⚠").color(accent).size(16.0));
+                            ui.label(RichText::new(
+                                "No Ollama models installed. Run: ollama pull llama3.2",
+                            ).color(accent));
                         } else {
-                            ui.label(RichText::new("AI backend not connected.").color(accent));
+                            // Detection came up empty, but nothing is broken: sending
+                            // uses the provider selected above and will report its own
+                            // error if that provider is not actually there.
+                            ui.label(RichText::new("ⓘ").color(accent).size(16.0));
+                            ui.label(RichText::new(format!(
+                                "No backend detected on the usual local ports. Sending will still try {}.",
+                                self.ai_selected_backend.display_name(),
+                            )).color(accent));
                         }
                         if ui.button(RichText::new("🔄 Retry").color(CyberColors::CYAN)).clicked() {
-                            self.refresh_ollama_models_async();
-                            self.retry_agent_connection();
-                        }
-                        if ui.button(RichText::new("⚙ Setup").color(CyberColors::TEXT_SECONDARY)).clicked() {
-                            // Show setup panel in a collapsible section
+                            refresh_models = true;
+                            retry_detection = true;
                         }
                     });
                 });
@@ -6311,6 +6518,39 @@ impl SiliconMonitorApp {
                             .small(),
                         );
                     }
+                    // The remaining providers need no walkthrough beyond where they
+                    // listen, or what to install.
+                    other => {
+                        ui.label(
+                            RichText::new(other.display_name())
+                                .color(CyberColors::TEXT_PRIMARY)
+                                .size(14.0),
+                        );
+                        ui.add_space(5.0);
+                        let detail = match other {
+                            AiBackendSelection::IronWorks => {
+                                "simon's built-in engine. Serve a model on \
+                                 http://localhost:8080 and it is used automatically. \
+                                 Inference stays on this machine."
+                            }
+                            AiBackendSelection::Vllm => {
+                                "Start vLLM with an OpenAI-compatible server on \
+                                 http://localhost:8000."
+                            }
+                            AiBackendSelection::TensorRt => {
+                                "Start TensorRT-LLM / Triton on http://localhost:8001."
+                            }
+                            AiBackendSelection::Cli(_) => {
+                                "Driven as a subprocess. Install the tool, sign in with \
+                                 it once, and simon will call it — the tool chooses its \
+                                 own model, so the model list stays empty."
+                            }
+                            _ => "",
+                        };
+                        if !detail.is_empty() {
+                            ui.label(RichText::new(detail).color(CyberColors::TEXT_SECONDARY));
+                        }
+                    }
                 }
             });
     }
@@ -6388,39 +6628,151 @@ impl SiliconMonitorApp {
 
     /// Build a BackendConfig from the current GUI backend/model selection
     fn build_backend_config(&self) -> crate::agent::BackendConfig {
-        let model = if self.ai_selected_model.is_empty() {
-            match self.ai_selected_backend {
-                AiBackendSelection::Ollama => {
-                    // Use first detected model, fall back to llama3.2:latest
-                    self.ai_ollama_models
-                        .first()
-                        .cloned()
-                        .unwrap_or_else(|| "llama3.2:latest".to_string())
-                }
-                AiBackendSelection::OpenAi => "gpt-4o-mini".to_string(),
-                AiBackendSelection::Anthropic => "claude-3-5-sonnet-latest".to_string(),
-                AiBackendSelection::GitHub => "gpt-4o".to_string(),
-                AiBackendSelection::LmStudio => "local-model".to_string(),
-            }
-        } else {
+        use crate::agent::BackendConfig;
+
+        // Prefer the explicit choice; otherwise the first model the provider itself
+        // reported; otherwise a known name for that provider. Nothing is invented for
+        // a local server, because a made-up name there produces a request for a model
+        // that is not loaded.
+        let model = if !self.ai_selected_model.is_empty() {
             self.ai_selected_model.clone()
+        } else {
+            self.models_by_provider
+                .get(&self.ai_selected_backend)
+                .and_then(|m| m.first().cloned())
+                .or_else(|| {
+                    self.ai_selected_backend
+                        .fallback_models()
+                        .first()
+                        .map(|s| s.to_string())
+                })
+                .unwrap_or_default()
         };
+
         let api_key = if self.ai_api_key_input.trim().is_empty() {
             None
         } else {
             Some(self.ai_api_key_input.trim().to_string())
         };
+
         match self.ai_selected_backend {
-            AiBackendSelection::Ollama => crate::agent::BackendConfig::ollama(&model),
-            AiBackendSelection::OpenAi => crate::agent::BackendConfig::openai(&model, api_key),
-            AiBackendSelection::Anthropic => {
-                crate::agent::BackendConfig::anthropic(&model, api_key)
-            }
-            AiBackendSelection::GitHub => {
-                crate::agent::BackendConfig::github_models(&model, api_key)
-            }
-            AiBackendSelection::LmStudio => crate::agent::BackendConfig::lm_studio(&model),
+            AiBackendSelection::IronWorks => BackendConfig::ironworks(&model),
+            AiBackendSelection::Ollama => BackendConfig::ollama(&model),
+            AiBackendSelection::LmStudio => BackendConfig::lm_studio(&model),
+            AiBackendSelection::Vllm => BackendConfig::vllm(&model),
+            AiBackendSelection::TensorRt => BackendConfig::tensorrt(&model),
+            AiBackendSelection::OpenAi => BackendConfig::openai(&model, api_key),
+            AiBackendSelection::Anthropic => BackendConfig::anthropic(&model, api_key),
+            AiBackendSelection::GitHub => BackendConfig::github_models(&model, api_key),
+            AiBackendSelection::Cli(provider) => BackendConfig::cli(provider, &model),
         }
+    }
+
+    /// Ask a provider what models it serves, on a background thread.
+    ///
+    /// Every provider that exposes a listing is read live, so the dropdown shows what
+    /// is actually loadable rather than a list baked in when the file was written.
+    /// Ollama was previously enumerated by spawning `ollama list` and parsing its
+    /// table; this uses the HTTP API instead, which needs no subprocess.
+    ///
+    /// Runs entirely off the UI thread — the request has a timeout and hosted
+    /// providers are a round trip away.
+    fn fetch_models_async(&mut self, provider: AiBackendSelection, ctx: egui::Context) {
+        let Some(endpoint) = provider.models_endpoint() else {
+            // Nothing to enumerate; record that so the UI stops saying "loading".
+            self.models_by_provider.insert(provider, Vec::new());
+            return;
+        };
+
+        let api_key = self.ai_api_key_input.trim().to_string();
+        let (tx, rx) = channel();
+        self.models_receiver = Some(rx);
+        self.models_loading_for = Some(provider);
+
+        std::thread::spawn(move || {
+            let models = Self::fetch_models_blocking(provider, endpoint, &api_key);
+            let _ = tx.send((provider, models));
+            ctx.request_repaint();
+        });
+    }
+
+    /// Perform the model listing request. Runs on a worker thread.
+    fn fetch_models_blocking(
+        provider: AiBackendSelection,
+        endpoint: &str,
+        api_key: &str,
+    ) -> Vec<String> {
+        let Ok(client) = reqwest::blocking::Client::builder()
+            .timeout(Duration::from_secs(5))
+            .connect_timeout(Duration::from_secs(2))
+            .build()
+        else {
+            return Vec::new();
+        };
+
+        let mut request = client.get(endpoint);
+        if !api_key.is_empty() {
+            request = match provider {
+                // Anthropic authenticates with `x-api-key` and requires a version.
+                AiBackendSelection::Anthropic => request
+                    .header("x-api-key", api_key)
+                    .header("anthropic-version", "2023-06-01"),
+                _ => request.bearer_auth(api_key),
+            };
+        }
+
+        let Ok(response) = request.send() else {
+            return Vec::new();
+        };
+        if !response.status().is_success() {
+            return Vec::new();
+        }
+        let Ok(json) = response.json::<serde_json::Value>() else {
+            return Vec::new();
+        };
+
+        // Ollama answers `{"models":[{"name":...}]}`; everything else here speaks the
+        // OpenAI shape, `{"data":[{"id":...}]}`.
+        let mut names: Vec<String> = json
+            .get("models")
+            .and_then(|m| m.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|m| m.get("name").and_then(|n| n.as_str()))
+                    .map(str::to_string)
+                    .collect()
+            })
+            .or_else(|| {
+                json.get("data").and_then(|d| d.as_array()).map(|arr| {
+                    arr.iter()
+                        .filter_map(|m| {
+                            m.get("id")
+                                .or_else(|| m.get("name"))
+                                .and_then(|n| n.as_str())
+                        })
+                        .map(str::to_string)
+                        .collect()
+                })
+            })
+            .unwrap_or_default();
+
+        names.sort();
+        names.dedup();
+        names
+    }
+
+    /// Run backend auto-detection on a background thread.
+    fn spawn_agent_detection(&mut self) {
+        let (tx, rx) = channel();
+        self.agent_receiver = Some(rx);
+        self.agent_loading = true;
+        self.agent_loading_start = Instant::now();
+        std::thread::spawn(move || {
+            let agent = crate::agent::AgentConfig::auto_detect()
+                .ok()
+                .and_then(|config| crate::agent::Agent::new(config).ok());
+            let _ = tx.send(agent);
+        });
     }
 
     /// Retry agent connection with current configuration
@@ -6576,48 +6928,6 @@ impl SiliconMonitorApp {
 
                 ui.add_space(8.0);
             });
-    }
-
-    /// Detect locally installed Ollama models by running `ollama list`
-    fn detect_ollama_models() -> Vec<String> {
-        // Try to run `ollama list` and parse output
-        match std::process::Command::new("ollama").arg("list").output() {
-            Ok(output) if output.status.success() => {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                let mut models = Vec::new();
-
-                // Skip header line (NAME, ID, SIZE, MODIFIED)
-                for line in stdout.lines().skip(1) {
-                    // First column is the model name
-                    if let Some(name) = line.split_whitespace().next() {
-                        if !name.is_empty() {
-                            models.push(name.to_string());
-                        }
-                    }
-                }
-
-                if models.is_empty() {
-                    // No models installed - return empty so UI can prompt user
-                    vec![]
-                } else {
-                    models
-                }
-            }
-            _ => {
-                // Ollama not installed or not running - return empty
-                vec![]
-            }
-        }
-    }
-
-    /// Refresh the list of Ollama models asynchronously (non-blocking)
-    fn refresh_ollama_models_async(&mut self) {
-        let (tx, rx) = channel();
-        self.ollama_models_receiver = Some(rx);
-        std::thread::spawn(move || {
-            let models = SiliconMonitorApp::detect_ollama_models();
-            let _ = tx.send(models);
-        });
     }
 }
 
