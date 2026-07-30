@@ -1015,6 +1015,24 @@ impl AiDataApi {
         }))
     }
 
+    /// Reject an explicit `gpu_index` that names no device.
+    ///
+    /// The tools taking an optional index filtered the snapshot list by it and
+    /// returned whatever survived, so asking about a GPU that does not exist produced
+    /// `{"success": true, "data": []}`. An agent renders that as "nothing to report"
+    /// — silence that reads as reassurance — when the truthful answer is that there
+    /// is no such device. `get_gpu_details`, which takes a required index, already
+    /// errors with this wording; these now match it.
+    fn check_gpu_index(gpu_index: Option<u64>, count: usize) -> Result<()> {
+        match gpu_index {
+            Some(i) if i as usize >= count => Err(SimonError::InvalidArgument(format!(
+                "GPU index {} not found",
+                i
+            ))),
+            _ => Ok(()),
+        }
+    }
+
     pub(crate) fn tool_get_gpu_utilization(
         &mut self,
         params: serde_json::Value,
@@ -1029,6 +1047,7 @@ impl AiDataApi {
         let snapshots = gpus
             .snapshot_all()
             .map_err(|e| SimonError::GpuError(e.to_string()))?;
+        Self::check_gpu_index(gpu_index, snapshots.len())?;
 
         let util: Vec<_> = snapshots
             .iter()
@@ -1060,6 +1079,7 @@ impl AiDataApi {
         let snapshots = gpus
             .snapshot_all()
             .map_err(|e| SimonError::GpuError(e.to_string()))?;
+        Self::check_gpu_index(gpu_index, snapshots.len())?;
 
         let mem: Vec<_> = snapshots
             .iter()
@@ -1099,6 +1119,7 @@ impl AiDataApi {
         let snapshots = gpus
             .snapshot_all()
             .map_err(|e| SimonError::GpuError(e.to_string()))?;
+        Self::check_gpu_index(gpu_index, snapshots.len())?;
 
         let temps: Vec<_> = snapshots
             .iter()
@@ -1134,6 +1155,7 @@ impl AiDataApi {
         let snapshots = gpus
             .snapshot_all()
             .map_err(|e| SimonError::GpuError(e.to_string()))?;
+        Self::check_gpu_index(gpu_index, snapshots.len())?;
 
         let power: Vec<_> = snapshots
             .iter()
@@ -2699,5 +2721,41 @@ impl AiDataApi {
             })
             .collect();
         Ok(json!({"query": query, "match_count": hits.len(), "matches": hits}))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// An index naming no device is an error, not an empty success.
+    ///
+    /// `get_gpu_temperature`, `_memory`, `_power` and `_utilization` take an optional
+    /// index and used to filter the snapshot list by it, so `gpu_index: 99` on a
+    /// three-GPU machine returned `{"success": true, "data": []}`. An agent reports
+    /// that as "nothing to report" rather than "there is no GPU 99". Verified live
+    /// against the MCP server before and after.
+    #[test]
+    fn absent_gpu_index_is_rejected_not_answered_empty() {
+        // Present indices pass, including the last valid one.
+        assert!(AiDataApi::check_gpu_index(Some(0), 3).is_ok());
+        assert!(AiDataApi::check_gpu_index(Some(2), 3).is_ok());
+        // Omitted index means "all GPUs" and stays valid.
+        assert!(AiDataApi::check_gpu_index(None, 3).is_ok());
+        assert!(AiDataApi::check_gpu_index(None, 0).is_ok());
+
+        // One past the end, and far past it.
+        for absent in [3u64, 99] {
+            let err = AiDataApi::check_gpu_index(Some(absent), 3)
+                .expect_err("index {absent} does not exist and must be refused");
+            assert!(
+                err.to_string()
+                    .contains(&format!("GPU index {absent} not found")),
+                "unexpected message for index {absent}: {err}"
+            );
+        }
+
+        // A machine with no GPUs refuses index 0 rather than reporting an empty win.
+        assert!(AiDataApi::check_gpu_index(Some(0), 0).is_err());
     }
 }
