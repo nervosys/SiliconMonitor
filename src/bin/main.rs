@@ -976,7 +976,13 @@ fn print_gpu_info(gpus: &std::collections::HashMap<String, simonlib::core::gpu::
         println!("  {}", "No GPUs detected".yellow());
         return;
     }
-    for (name, gpu) in gpus {
+    // `GpuStats` is a HashMap, whose iteration order changes between calls. In the
+    // interactive monitor that made the device list jump around between frames.
+    let mut names: Vec<&String> = gpus.keys().collect();
+    names.sort();
+
+    for name in names {
+        let gpu = &gpus[name];
         println!(
             "\n  {} {} ({})",
             "▶".green(),
@@ -995,19 +1001,35 @@ fn print_gpu_info(gpus: &std::collections::HashMap<String, simonlib::core::gpu::
         };
         println!("    {} {}", "Load:".white(), load_colored);
 
-        println!(
-            "    {} {} {} ({}-{} MHz)",
-            "Frequency:".white(),
-            format!("{} MHz", gpu.frequency.current).cyan(),
-            "range:".dimmed(),
-            gpu.frequency.min,
-            gpu.frequency.max
-        );
-        println!(
-            "    {} {}",
-            "Governor:".white(),
-            gpu.frequency.governor.blue()
-        );
+        // Clocks are unavailable on several adapters (the Windows AMD path reads
+        // none). Printing "0 MHz (0-0 MHz)" states a clock that was never read.
+        if gpu.frequency.current > 0 || gpu.frequency.max > 0 {
+            println!(
+                "    {} {} {} ({}-{} MHz)",
+                "Frequency:".white(),
+                format!("{} MHz", gpu.frequency.current).cyan(),
+                "range:".dimmed(),
+                gpu.frequency.min,
+                gpu.frequency.max
+            );
+        }
+        // Only Linux DVFS drivers expose a governor.
+        if !gpu.frequency.governor.is_empty() {
+            println!(
+                "    {} {}",
+                "Governor:".white(),
+                gpu.frequency.governor.blue()
+            );
+        }
+
+        if let (Some(used), Some(total)) = (gpu.status.memory_used, gpu.status.memory_total) {
+            println!(
+                "    {} {} / {} MB",
+                "Memory:".white(),
+                (used / 1024 / 1024).to_string().cyan(),
+                total / 1024 / 1024
+            );
+        }
 
         if let Some(temp) = gpu.status.temperature {
             let temp_str = format!("{:.1}°C", temp);
@@ -1180,6 +1202,14 @@ fn print_memory_info(memory: &simonlib::core::memory::MemoryStats) {
 #[cfg(feature = "cli")]
 fn print_power_info(power: &simonlib::core::power::PowerStats) {
     println!("{}", "═══ Power Information ═══".cyan().bold());
+
+    // With no rails the total is a fixed zero, and "Total Power: 0.00W" reads as a
+    // measurement of an idle machine rather than the absence of any power sensor.
+    if power.rails.is_empty() {
+        println!("  {}", "No power rails exposed by this platform".yellow());
+        return;
+    }
+
     let total = power.total_watts();
     let total_str = format!("{:.2}W", total);
     let total_colored = if total > 100.0 {
@@ -1273,7 +1303,9 @@ fn run_interactive_mode(mut stats: simonlib::Simon) -> Result<(), Box<dyn std::e
         let snapshot = stats.snapshot()?;
 
         // Print summary
-        println!("=== Simon - NVIDIA GPU Monitoring ===");
+        // Not NVIDIA-specific: this path reports CPU, memory, thermals and any
+        // detected GPU regardless of vendor.
+        println!("=== Simon - System Monitoring ===");
         println!("Uptime: {:?}\n", snapshot.uptime);
 
         // GPU
@@ -1293,8 +1325,14 @@ fn run_interactive_mode(mut stats: simonlib::Simon) -> Result<(), Box<dyn std::e
             println!("Max Temperature: {:.1}°C", max_temp);
         }
 
-        // Power
-        println!("Total Power: {:.2}W", snapshot.power.total_watts());
+        // Power. Only report a total when power rails were actually read: with no
+        // rails the total is a fixed zero, and "Total Power: 0.00W" reads as a
+        // measurement of an idle machine rather than the absence of a sensor.
+        if snapshot.power.rails.is_empty() {
+            println!("Total Power: not measured (no power rails on this platform)");
+        } else {
+            println!("Total Power: {:.2}W", snapshot.power.total_watts());
+        }
 
         println!("\nPress 'q' to quit");
 

@@ -111,19 +111,19 @@ impl ConsentScope {
     /// Get detailed description of what's collected
     pub fn description(&self) -> &'static str {
         match self {
-            Self::BasicTelemetry => 
+            Self::BasicTelemetry =>
                 "Basic usage statistics and crash reports. Helps improve stability and reliability. \
                  No personally identifiable information is collected.",
-            Self::HardwareInfo => 
+            Self::HardwareInfo =>
                 "Anonymized hardware information (GPU models, CPU types, RAM size). \
                  Helps prioritize hardware support. Serial numbers and MAC addresses are never collected.",
-            Self::PerformanceMetrics => 
+            Self::PerformanceMetrics =>
                 "Aggregated performance metrics (frame rates, GPU utilization averages). \
                  Helps optimize performance. All data is anonymized and aggregated.",
-            Self::DetailedDiagnostics => 
+            Self::DetailedDiagnostics =>
                 "Detailed system information for troubleshooting (driver versions, kernel info). \
                  Only collected when explicitly requested for bug reports.",
-            Self::Analytics => 
+            Self::Analytics =>
                 "Anonymous analytics about feature usage patterns. \
                  Helps understand which features are most valuable. No tracking or profiling.",
         }

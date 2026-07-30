@@ -415,80 +415,182 @@ pub fn get_system_uptime() -> std::time::Duration {
     std::time::Duration::from_millis(ticks)
 }
 
-/// Read GPU stats - deferred to gpu module for proper NVML handling
+/// Detected GPUs, kept alive across calls.
+///
+/// Enumeration opens vendor libraries (NVML, DXGI/WMI) and costs tens to hundreds
+/// of milliseconds; [`read_gpu_stats`] is called once per tick by the interactive
+/// monitor, so re-enumerating every time would dominate the tick. `Gpu` is
+/// `Send + Sync`, so the collection can live in a static behind a mutex.
+static GPU_COLLECTION: std::sync::OnceLock<std::sync::Mutex<crate::gpu::GpuCollection>> =
+    std::sync::OnceLock::new();
+
+/// Read GPU stats via the `gpu` module's vendor adapters.
+///
+/// This used to return `GpuStats::new()` unconditionally, so every consumer of
+/// `Simon::snapshot()` on Windows — including `simon cli monitor` — reported
+/// "No GPUs detected" on machines where `simon cli gpu`, in the same binary,
+/// listed every device.
+///
+/// A device whose per-tick query fails is omitted rather than emitted with zeroed
+/// fields: a GPU reported at 0% load and 0°C is worse than a GPU not reported.
 pub fn read_gpu_stats() -> Result<GpuStats> {
-    // Return empty GPU stats - the gpu module handles this properly with NVML
-    // This avoids breaking snapshot() while keeping the proper recommendation
-    Ok(GpuStats::new())
+    use crate::core::gpu::{GpuFrequency, GpuInfo, GpuStatus, GpuType};
+
+    let mut stats = GpuStats::new();
+
+    let collection = GPU_COLLECTION.get_or_init(|| {
+        std::sync::Mutex::new(crate::gpu::GpuCollection::auto_detect().unwrap_or_default())
+    });
+    let collection = collection
+        .lock()
+        .map_err(|_| SimonError::HardwareError("GPU collection mutex poisoned".to_string()))?;
+
+    let snapshots = collection.snapshot_all_partial();
+    let gpus = stats.gpus_mut();
+
+    for info in snapshots.into_iter().flatten() {
+        let si = &info.static_info;
+        let di = &info.dynamic_info;
+
+        let status = GpuStatus {
+            load: di.utilization as f32,
+            railgate: None,
+            tpc_pg_mask: None,
+            scaling_3d: None,
+            memory_used: (di.memory.total > 0).then_some(di.memory.used),
+            memory_total: (di.memory.total > 0).then_some(di.memory.total),
+            memory_free: (di.memory.total > 0).then_some(di.memory.free),
+            // `GpuThermal::temperature` is already degrees Celsius.
+            temperature: di.thermal.temperature.map(|t| t as f32),
+            // `GpuPower` is milliwatts; `GpuStatus` is watts.
+            power_draw: di.power.draw.map(|mw| mw as f32 / 1000.0),
+            power_limit: di.power.limit.map(|mw| mw as f32 / 1000.0),
+        };
+
+        let frequency = GpuFrequency {
+            current: di.clocks.graphics.or(di.clocks.sm).unwrap_or(0),
+            min: 0, // No vendor adapter reports a minimum clock.
+            max: di.clocks.graphics_max.unwrap_or(0),
+            // `governor` is a Linux DVFS concept; Windows has no equivalent, and
+            // naming the vendor here would present it as one.
+            governor: String::new(),
+            gpc: None,
+        };
+
+        let gpu = GpuInfo {
+            gpu_type: if si.integrated {
+                GpuType::Integrated
+            } else {
+                GpuType::Discrete
+            },
+            status,
+            frequency,
+            power_control: si.vendor.to_string(),
+        };
+
+        // `GpuStats` is keyed by name, and identical cards are common (two
+        // RTX 3090s report the same string). Disambiguate by index so a
+        // second card cannot silently overwrite the first.
+        let key = if gpus.contains_key(&si.name) {
+            format!("{} #{}", si.name, si.index)
+        } else {
+            si.name.clone()
+        };
+        gpus.insert(key, gpu);
+    }
+
+    Ok(stats)
 }
 
+/// Read power rails on Windows.
+///
+/// Windows exposes no general system power telemetry, so the only rail available is
+/// a battery or UPS, and only when its driver publishes a real charge or discharge
+/// rate through `root\WMI\BatteryStatus`.
+///
+/// This previously derived "power" from `Win32_Battery` as
+/// `full_charge_capacity * design_voltage / 1000 / 3` — the pack's total energy
+/// spread over an assumed three-hour discharge. That is not a measurement of
+/// anything: it is a constant for a given battery, unchanged by what the machine is
+/// doing, and it was reported as a live power rail. When those fields were absent (a
+/// USB-attached UPS reports neither) it collapsed to 0, so `simon cli monitor`
+/// displayed "Total Power: 0.00W" on a desktop drawing hundreds of watts.
+///
+/// A rail is now emitted only when a rate was actually read. A machine with no
+/// battery, or a UPS whose driver publishes no rate, reports no rails at all, and
+/// callers should say "not measured" rather than "0 W".
 pub fn read_power_stats() -> Result<PowerStats> {
     use serde::Deserialize;
     use wmi::{COMLibrary, WMIConnection};
 
-    // WMI battery structure
+    /// `root\WMI` battery telemetry. Rates are milliwatts, voltage millivolts.
     #[derive(Deserialize, Debug)]
     #[serde(rename_all = "PascalCase")]
-    #[allow(dead_code)]
-    struct Win32Battery {
-        name: Option<String>,
-        estimated_charge_remaining: Option<u16>,
-        battery_status: Option<u16>,
-        design_capacity: Option<u32>,
-        full_charge_capacity: Option<u32>,
-        design_voltage: Option<u32>,
+    struct BatteryStatus {
+        instance_name: Option<String>,
+        voltage: Option<u32>,
+        discharge_rate: Option<u32>,
+        charge_rate: Option<u32>,
+        discharging: Option<bool>,
     }
 
     let mut power_stats = PowerStats::default();
 
-    // Initialize COM library for WMI access
-    if let Ok(com_con) = COMLibrary::new() {
-        if let Ok(wmi_con) = WMIConnection::with_namespace_path("root\\CIMV2", com_con.into()) {
-            // Query battery info (laptops)
-            let batteries: Vec<Win32Battery> = wmi_con
-                .raw_query("SELECT Name, EstimatedChargeRemaining, BatteryStatus, DesignCapacity, FullChargeCapacity, DesignVoltage FROM Win32_Battery")
-                .unwrap_or_default();
+    let Ok(com_con) = COMLibrary::new() else {
+        return Ok(power_stats);
+    };
+    // `BatteryStatus` lives in root\WMI, not root\CIMV2, and is absent entirely on
+    // desktops and on UPS units attached over USB HID.
+    let Ok(wmi_con) = WMIConnection::with_namespace_path("root\\WMI", com_con.into()) else {
+        return Ok(power_stats);
+    };
 
-            for (idx, battery) in batteries.iter().enumerate() {
-                let name = battery
-                    .name
-                    .clone()
-                    .unwrap_or_else(|| format!("Battery{}", idx));
+    let batteries: Vec<BatteryStatus> = wmi_con
+        .raw_query(
+            "SELECT InstanceName, Voltage, DischargeRate, ChargeRate, Discharging \
+             FROM BatteryStatus",
+        )
+        .unwrap_or_default();
 
-                // Calculate power from design capacity and voltage (mWh to mW approximation)
-                let power_mw = if let (Some(capacity), Some(voltage)) =
-                    (battery.full_charge_capacity, battery.design_voltage)
-                {
-                    // Rough approximation: capacity in mWh, voltage in mV
-                    // Power ~= (capacity * voltage / 1000) / discharge_hours
-                    // Assume ~3 hour discharge for rough estimate
-                    (capacity * voltage / 1000 / 3) as u32
+    for (idx, battery) in batteries.iter().enumerate() {
+        // At most one rate is non-zero at a time; whichever it is, it is measured.
+        // Both present and zero means idle on AC, which is also a real reading.
+        let (rate_mw, sensor_type) = match (battery.discharge_rate, battery.charge_rate) {
+            (Some(d), _) if d > 0 => (d, "Battery (discharging)"),
+            (_, Some(c)) if c > 0 => (c, "Battery (charging)"),
+            (Some(_), _) | (_, Some(_)) => (
+                0,
+                if battery.discharging.unwrap_or(false) {
+                    "Battery (discharging)"
                 } else {
-                    0
-                };
+                    "Battery (idle)"
+                },
+            ),
+            // Neither rate was reported: nothing was measured, so emit nothing.
+            (None, None) => continue,
+        };
 
-                // Determine status from battery_status field
-                // 1 = Discharging, 2 = AC Power, 3 = Fully Charged, etc.
-                let _is_charging = battery.battery_status.map_or(false, |s| s == 2 || s == 3);
+        let name = battery
+            .instance_name
+            .clone()
+            .unwrap_or_else(|| format!("Battery{}", idx));
 
-                power_stats.rails.insert(
-                    name,
-                    crate::core::power::PowerRail {
-                        online: true,
-                        sensor_type: "Battery".to_string(),
-                        voltage: battery.design_voltage.unwrap_or(0),
-                        current: 0, // Not available via WMI
-                        power: power_mw,
-                        average: power_mw,
-                        warn: None,
-                        crit: None,
-                    },
-                );
+        power_stats.rails.insert(
+            name,
+            crate::core::power::PowerRail {
+                online: true,
+                sensor_type: sensor_type.to_string(),
+                voltage: battery.voltage.unwrap_or(0),
+                current: 0, // Not exposed by this class.
+                power: rate_mw,
+                average: rate_mw,
+                warn: None,
+                crit: None,
+            },
+        );
 
-                power_stats.total.power += power_mw;
-                power_stats.total.average += power_mw;
-            }
-        }
+        power_stats.total.power += rate_mw;
+        power_stats.total.average += rate_mw;
     }
 
     Ok(power_stats)

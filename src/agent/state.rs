@@ -87,8 +87,13 @@ pub struct GpuState {
     /// draw conclusions from a temperature that was never measured.
     pub temperature_c: Option<u32>,
 
-    /// Power usage (Watts)
-    pub power_w: f32,
+    /// Power draw (Watts), or `None` when the device reports no power sensor.
+    ///
+    /// Same reason as [`GpuState::temperature_c`]: this was a bare `f32` with a
+    /// missing reading mapped to `0.0`, so an integrated GPU — which reports no
+    /// power at all through DXGI or sysfs — was described to the model as drawing
+    /// zero watts, and counted as zero in the fleet total.
+    pub power_w: Option<f32>,
 
     /// Power limit (Watts)
     pub power_limit_w: Option<f32>,
@@ -290,7 +295,7 @@ impl SystemState {
             memory_used_mb: info.dynamic_info.memory.used / 1024 / 1024,
             memory_total_mb: info.dynamic_info.memory.total / 1024 / 1024,
             temperature_c: info.dynamic_info.thermal.temperature.map(|t| t as u32),
-            power_w: info.dynamic_info.power.draw.unwrap_or(0) as f32 / 1000.0,
+            power_w: info.dynamic_info.power.draw.map(|d| d as f32 / 1000.0),
             power_limit_w: info.dynamic_info.power.limit.map(|l| l as f32 / 1000.0),
             clock_mhz: info.dynamic_info.clocks.graphics,
             memory_clock_mhz: info.dynamic_info.clocks.memory,
@@ -355,11 +360,17 @@ impl SystemState {
                 Some(temp) => context.push_str(&format!("  Temperature: {temp}°C\n")),
                 None => context.push_str("  Temperature: unavailable (no sensor)\n"),
             }
-            context.push_str(&format!("  Power: {:.1}W", gpu.power_w));
-            if let Some(limit) = gpu.power_limit_w {
-                context.push_str(&format!(" / {:.1}W", limit));
+            // As with temperature, say so explicitly rather than dropping the line.
+            match gpu.power_w {
+                Some(power) => {
+                    context.push_str(&format!("  Power: {:.1}W", power));
+                    if let Some(limit) = gpu.power_limit_w {
+                        context.push_str(&format!(" / {:.1}W", limit));
+                    }
+                    context.push('\n');
+                }
+                None => context.push_str("  Power: unavailable (no sensor)\n"),
             }
-            context.push('\n');
 
             if let Some(clock) = gpu.clock_mhz {
                 context.push_str(&format!("  GPU Clock: {} MHz\n", clock));
@@ -385,9 +396,15 @@ impl SystemState {
         &self.gpus
     }
 
-    /// Calculate total power consumption
-    pub fn total_power_w(&self) -> f32 {
-        self.gpus.iter().map(|g| g.power_w).sum()
+    /// Total power draw across every GPU that reports it.
+    ///
+    /// `None` when no GPU exposes a power sensor — a sum of nothing is not 0 W, and
+    /// reporting it as such told the model the machine was drawing no power. Devices
+    /// without a sensor are excluded from the sum, so the result is a lower bound
+    /// when the system mixes reporting and non-reporting GPUs.
+    pub fn total_power_w(&self) -> Option<f32> {
+        let known: Vec<f32> = self.gpus.iter().filter_map(|g| g.power_w).collect();
+        (!known.is_empty()).then(|| known.iter().sum())
     }
 
     /// Get average GPU utilization
@@ -438,10 +455,12 @@ impl GpuState {
         (self.memory_used_mb as f32 / self.memory_total_mb as f32) * 100.0
     }
 
-    /// Get power usage percentage (if limit available)
+    /// Power draw as a percentage of the limit, when both were measured.
     pub fn power_usage_percent(&self) -> Option<f32> {
-        self.power_limit_w
-            .map(|limit| (self.power_w / limit) * 100.0)
+        match (self.power_w, self.power_limit_w) {
+            (Some(power), Some(limit)) if limit > 0.0 => Some((power / limit) * 100.0),
+            _ => None,
+        }
     }
 
     /// Whether the GPU is running hot (at or above 80°C).
@@ -504,7 +523,7 @@ mod tests {
             memory_used_mb: 8000,
             memory_total_mb: 16000,
             temperature_c: Some(65),
-            power_w: 150.0,
+            power_w: Some(150.0),
             power_limit_w: Some(200.0),
             clock_mhz: Some(1500),
             memory_clock_mhz: Some(6000),
@@ -539,7 +558,7 @@ mod tests {
                 memory_used_mb: 0,
                 memory_total_mb: 1024,
                 temperature_c,
-                power_w: 0.0,
+                power_w: None,
                 power_limit_w: None,
                 clock_mhz: None,
                 memory_clock_mhz: None,
@@ -605,7 +624,7 @@ mod tests {
                     memory_used_mb: 4000,
                     memory_total_mb: 8000,
                     temperature_c: Some(60),
-                    power_w: 100.0,
+                    power_w: Some(100.0),
                     power_limit_w: Some(150.0),
                     clock_mhz: None,
                     memory_clock_mhz: None,
@@ -620,7 +639,7 @@ mod tests {
                     memory_used_mb: 6000,
                     memory_total_mb: 8000,
                     temperature_c: Some(75),
-                    power_w: 120.0,
+                    power_w: Some(120.0),
                     power_limit_w: Some(180.0),
                     clock_mhz: None,
                     memory_clock_mhz: None,
@@ -631,7 +650,7 @@ mod tests {
             timestamp: 0,
         };
 
-        assert_eq!(state.total_power_w(), 220.0);
+        assert_eq!(state.total_power_w(), Some(220.0));
         assert_eq!(state.avg_utilization(), 65.0);
         assert_eq!(state.avg_temperature(), Some(67.5));
         assert_eq!(state.hottest_gpu().unwrap().index, 1);

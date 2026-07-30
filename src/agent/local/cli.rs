@@ -544,15 +544,31 @@ mod tests {
         }
     }
 
-    /// Exercise the real subprocess machinery end to end.
+    /// Exercise the real subprocess machinery end to end against a live Ollama.
     ///
     /// `ollama list` is used rather than a generation because it needs no model
-    /// pulled and returns promptly, while still covering spawn, the timeout loop,
-    /// stdout capture, exit-status handling and parsing. Skipped when Ollama is not
-    /// installed, so this is informative on a dev box and inert in CI.
+    /// pulled, while still covering spawn, the timeout loop, stdout capture,
+    /// exit-status handling and parsing.
+    ///
+    /// Opt-in via `SIMON_TEST_EXTERNAL_CLI=1`. It talks to a background service whose
+    /// response time is not under this suite's control: run in parallel with the rest
+    /// of the tests on a loaded machine, `ollama list` has taken anywhere from 0.4s to
+    /// long enough to look like a hang, which made `cargo test` flaky and once wedged
+    /// it for the better part of an hour. A test that fails because another program
+    /// was busy is not testing this crate.
+    ///
+    /// The timeout is also cut from the 120s default to 10s, so an opt-in run that
+    /// does go wrong fails fast rather than idling.
     #[tokio::test]
     async fn ollama_subprocess_round_trip() {
-        let Some(client) = CliClient::detect(CliProvider::Ollama) else {
+        if std::env::var_os("SIMON_TEST_EXTERNAL_CLI").is_none() {
+            eprintln!("skipping: set SIMON_TEST_EXTERNAL_CLI=1 to run against a live ollama");
+            return;
+        }
+
+        let Some(client) = CliClient::detect(CliProvider::Ollama)
+            .map(|client| client.with_timeout(Duration::from_secs(10)))
+        else {
             eprintln!("skipping: ollama not installed");
             return;
         };
