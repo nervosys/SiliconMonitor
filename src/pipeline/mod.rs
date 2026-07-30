@@ -316,8 +316,14 @@ impl SnapshotHandle {
 // Collector
 // ============================================================================
 
+/// Called on the collector thread immediately after each snapshot is published.
+///
+/// Must not block: it runs inline on the collector between the store and the next
+/// tick's sleep. Waking a UI is the intended use.
+pub type PublishHook = Arc<dyn Fn() + Send + Sync>;
+
 /// Collector configuration.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct CollectorConfig {
     /// Interval between ticks.
     pub interval: Duration,
@@ -339,6 +345,40 @@ pub struct CollectorConfig {
     pub process_every_n_ticks: u64,
     /// Re-read the open-connection table every N ticks.
     pub connection_every_n_ticks: u64,
+    /// Largest share of wall-clock time collection may occupy, in `0.05..=1.0`.
+    ///
+    /// The collector sleeps until at least `tick_cost / max_duty_cycle` has passed,
+    /// so a tick that costs more than the interval allows stretches the interval
+    /// instead of pinning a core. At the 0.5 default a 500ms tick still publishes
+    /// every second; a 1.5s tick publishes every three seconds rather than
+    /// continuously.
+    pub max_duty_cycle: f32,
+    /// Invoked after every publish, on the collector thread.
+    ///
+    /// Without this a front-end has to poll: it wakes on a timer, checks the
+    /// generation, and usually finds nothing. Polling at a fraction of the tick makes
+    /// the observed update interval jitter by that fraction — the display advances
+    /// twice in quick succession, then appears to stall — and the jitter is worst
+    /// when tick cost varies, which is exactly when a machine is busy. A hook lets
+    /// the collector wake the reader at the instant data lands, so the visible
+    /// cadence is the collector's cadence.
+    pub on_publish: Option<PublishHook>,
+}
+
+impl std::fmt::Debug for CollectorConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CollectorConfig")
+            .field("interval", &self.interval)
+            .field("history_size", &self.history_size)
+            .field("collect_processes", &self.collect_processes)
+            .field("collect_connections", &self.collect_connections)
+            .field("disk_every_n_ticks", &self.disk_every_n_ticks)
+            .field("process_every_n_ticks", &self.process_every_n_ticks)
+            .field("connection_every_n_ticks", &self.connection_every_n_ticks)
+            .field("max_duty_cycle", &self.max_duty_cycle)
+            .field("on_publish", &self.on_publish.is_some())
+            .finish()
+    }
 }
 
 impl Default for CollectorConfig {
@@ -351,6 +391,8 @@ impl Default for CollectorConfig {
             disk_every_n_ticks: 10,
             process_every_n_ticks: 1,
             connection_every_n_ticks: 1,
+            max_duty_cycle: 0.5,
+            on_publish: None,
         }
     }
 }
@@ -465,6 +507,9 @@ fn collector_loop(
         &[],
         generation,
     )));
+    if let Some(ref hook) = config.on_publish {
+        hook();
+    }
 
     if stop.load(Ordering::Relaxed) {
         return;
@@ -515,13 +560,33 @@ fn collector_loop(
         );
 
         slot.store(Arc::new(snapshot));
+        if let Some(ref hook) = config.on_publish {
+            hook();
+        }
 
         // Sleep the remainder of the interval, re-reading it each tick so the UI can
         // retune cadence live. Waking in short slices keeps shutdown responsive even
         // at long intervals.
         let interval = Duration::from_millis(interval_ms.load(Ordering::Relaxed).max(50));
         let elapsed = tick_start.elapsed();
-        let mut remaining = interval.saturating_sub(elapsed);
+
+        // Never let collection occupy more than `max_duty_cycle` of wall time.
+        //
+        // Collection cost is not a constant of the machine — it is a function of how
+        // busy the machine is. NVML queries against a GPU running sustained compute
+        // took 515ms here versus 1.6ms for an idle card of the same model, and the
+        // WMI GPU counter classes slow down under load the same way. A fixed interval
+        // therefore behaves worst exactly when the user is watching: the collector
+        // takes a larger and larger share of a core, and because each tick overruns
+        // by a different amount the publishes stop being evenly spaced.
+        //
+        // Backing off in proportion to what the last tick actually cost bounds the
+        // load a monitor may impose and keeps the spacing predictable. When
+        // collection is cheap — the common case — the configured interval is
+        // unchanged and this does nothing.
+        let min_period = elapsed.div_f32(config.max_duty_cycle.clamp(0.05, 1.0));
+        let period = interval.max(min_period);
+        let mut remaining = period.saturating_sub(elapsed);
         while remaining > Duration::ZERO && !stop.load(Ordering::Relaxed) {
             let slice = remaining.min(Duration::from_millis(50));
             thread::sleep(slice);
@@ -886,6 +951,49 @@ fn collect_disks() -> Vec<DiskSnapshot> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The sleep must bound collection's share of wall time, and must not shorten
+    /// the configured interval when collection is cheap.
+    ///
+    /// This is the arithmetic from the collector loop. Collection cost rises with how
+    /// busy the machine is — NVML against a loaded GPU measured 515ms versus 1.6ms
+    /// for an idle card — so without a bound the collector takes its largest share of
+    /// the machine exactly when the machine is already struggling.
+    #[test]
+    fn tick_period_bounds_collection_duty_cycle() {
+        // Mirrors `collector_loop`: sleep until at least `elapsed / duty` has passed,
+        // never publishing faster than the configured interval.
+        let period = |elapsed_ms: u64, interval_ms: u64, duty: f32| -> Duration {
+            let elapsed = Duration::from_millis(elapsed_ms);
+            let interval = Duration::from_millis(interval_ms);
+            interval.max(elapsed.div_f32(duty.clamp(0.05, 1.0)))
+        };
+        let ms = |d: Duration| d.as_millis() as u64;
+
+        // Cheap tick: the configured interval is untouched.
+        assert_eq!(ms(period(20, 1000, 0.5)), 1000);
+        // Exactly at the bound: still the configured interval.
+        assert_eq!(ms(period(500, 1000, 0.5)), 1000);
+        // Expensive tick: the period stretches so collection stays at half the wall
+        // clock rather than running back to back.
+        assert_eq!(ms(period(1500, 1000, 0.5)), 3000);
+        // A stricter budget stretches further.
+        assert_eq!(ms(period(1000, 1000, 0.25)), 4000);
+
+        // Whatever the inputs, the resulting duty cycle never exceeds the budget.
+        // Compared in full Duration precision: the collector sleeps on Durations, so
+        // rounding to whole milliseconds here would flag its own truncation.
+        for elapsed_ms in [1u64, 50, 500, 1500, 5000] {
+            for duty in [0.1f32, 0.25, 0.5, 1.0] {
+                let p = period(elapsed_ms, 1000, duty).as_secs_f64();
+                let ratio = Duration::from_millis(elapsed_ms).as_secs_f64() / p;
+                assert!(
+                    ratio <= duty as f64 + 1e-6,
+                    "elapsed {elapsed_ms}ms over period {p}s gives duty {ratio}, over budget {duty}"
+                );
+            }
+        }
+    }
 
     #[test]
     fn push_capped_keeps_newest_samples() {

@@ -3,7 +3,7 @@
 use eframe::egui;
 use egui::{RichText, ScrollArea, Vec2};
 use std::collections::{HashMap, VecDeque};
-use std::sync::mpsc::{channel, Receiver};
+use std::sync::mpsc::{channel, Receiver, Sender};
 use std::time::{Duration, Instant};
 
 use super::theme::{self, threshold_color, trend_indicator, CyberColors, DeviceTitleColors};
@@ -33,14 +33,47 @@ const UPDATE_INTERVAL: Duration = Duration::from_millis(100); // Fast UI updates
                                                               // actually sustain, and is the cadence htop and nvtop use.
 const DATA_POLL_INTERVAL: Duration = Duration::from_millis(1000); // Data polling rate
 const SLOW_UPDATE_INTERVAL: Duration = Duration::from_secs(2); // Slow updates for heavy ops
+/// How often the disk refresher thread re-samples every drive.
+///
+/// SMART and filesystem queries are slow device I/O, but they run on their own
+/// thread now, so the cost is one background thread waking occasionally rather than
+/// a stalled window.
+const DISK_REFRESH_INTERVAL: Duration = Duration::from_secs(2);
+/// Largest share of wall time the disk refresher may spend sampling.
+const DISK_MAX_DUTY_CYCLE: f32 = 0.25;
 
-/// Cached disk data to avoid blocking I/O calls on every frame
-#[derive(Default, Clone)]
+/// A disk row as plain data, produced entirely off the UI thread.
+///
+/// Everything the disk views render lives here, so drawing never calls into a
+/// device. It used to hold only the sampled fields while the identity came from a
+/// `Box<dyn DiskDevice>` the UI thread kept — which meant the UI thread also did the
+/// sampling.
+#[derive(Clone)]
 struct CachedDiskData {
+    /// Device name, carried here so rendering needs no access to the device.
+    name: String,
+    /// Device classification, likewise.
+    disk_type: crate::disk::DiskType,
     info: Option<crate::disk::DiskInfo>,
     io_stats: Option<crate::disk::DiskIoStats>,
     health: Option<crate::disk::DiskHealth>,
     filesystems: Vec<crate::disk::FilesystemInfo>,
+    /// Drive temperature, if the device reports one.
+    temperature: Option<f32>,
+}
+
+impl Default for CachedDiskData {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            disk_type: crate::disk::DiskType::Unknown,
+            info: None,
+            io_stats: None,
+            health: None,
+            filesystems: Vec::new(),
+            temperature: None,
+        }
+    }
 }
 
 /// AI agent response from background thread
@@ -66,7 +99,6 @@ pub struct SiliconMonitorApp {
     process_list: Vec<ProcessMonitorInfo>,
 
     // Disk data
-    disks: Vec<Box<dyn DiskDevice>>,
 
     // Connection data
     connections: Vec<ConnectionInfo>,
@@ -168,7 +200,7 @@ pub struct SiliconMonitorApp {
 
     // Cached disk data (refreshed periodically, not on every frame)
     cached_disk_data: Vec<CachedDiskData>,
-    last_disk_data_refresh: Instant,
+    disk_rows_receiver: Option<Receiver<Vec<CachedDiskData>>>,
 
     // Snapshot pipeline
     //
@@ -506,7 +538,6 @@ impl SiliconMonitorApp {
             gpu_dynamic_info,
             network_monitor: NetworkMonitor::new().ok(),
             process_list: Vec::new(),
-            disks: Vec::new(), // Loaded lazily when Disk tab is visited
             connections: Vec::new(),
             connection_filter: String::new(),
             connection_protocol_filter: None,
@@ -597,7 +628,7 @@ impl SiliconMonitorApp {
 
             // Cached disk data (avoid per-frame I/O)
             cached_disk_data: Vec::new(),
-            last_disk_data_refresh: Instant::now(),
+            disk_rows_receiver: None,
 
             // Snapshot pipeline
             collector: Some(crate::pipeline::Collector::spawn(
@@ -612,6 +643,12 @@ impl SiliconMonitorApp {
                     // interval, so it never idled.
                     process_every_n_ticks: 2,
                     connection_every_n_ticks: 2,
+                    // Let the collector wake the UI the moment a snapshot lands,
+                    // instead of the UI waking on a timer to look for one.
+                    on_publish: Some({
+                        let ctx = cc.egui_ctx.clone();
+                        std::sync::Arc::new(move || ctx.request_repaint())
+                    }),
                     ..Default::default()
                 },
             )),
@@ -865,7 +902,7 @@ impl SiliconMonitorApp {
     }
 
     /// Check for completed background loading operations (non-blocking)
-    fn check_background_loaders(&mut self) {
+    fn check_background_loaders(&mut self, ctx: &egui::Context) {
         // Hardware data no longer arrives through a per-poll channel; it is pulled
         // from the collector's published snapshot in `sync_snapshot`.
 
@@ -901,17 +938,25 @@ impl SiliconMonitorApp {
             }
         }
 
-        // Check disk background loading
+        // Enumeration finished: hand the devices to a refresher thread, which owns
+        // them from here on and publishes rows the UI can draw without touching a
+        // device.
         if let Some(ref receiver) = self.disk_receiver {
             if let Ok(disks) = receiver.try_recv() {
-                // Convert from Send-able to regular DiskDevice
-                self.disks = disks
-                    .into_iter()
-                    .map(|d| d as Box<dyn DiskDevice>)
-                    .collect();
+                let (tx, rx) = channel();
+                self.disk_rows_receiver = Some(rx);
+                Self::spawn_disk_refresher(disks, tx, ctx.clone());
                 self.disk_loading = false;
                 self.disk_loaded = true;
                 self.disk_receiver = None;
+            }
+        }
+
+        // Newest disk sample. `try_iter` drains any backlog so the UI always draws
+        // the most recent rows rather than working through stale ones.
+        if let Some(ref receiver) = self.disk_rows_receiver {
+            if let Some(rows) = receiver.try_iter().last() {
+                self.cached_disk_data = rows;
             }
         }
 
@@ -964,12 +1009,6 @@ impl SiliconMonitorApp {
             }
         }
 
-        // Refresh cached disk data every 2 seconds (only when disks are loaded)
-        if self.disk_loaded && self.last_disk_data_refresh.elapsed() >= Duration::from_secs(2) {
-            self.refresh_cached_disk_data();
-            self.last_disk_data_refresh = Instant::now();
-        }
-
         // Check Ollama models background loading
         if let Some(ref receiver) = self.ollama_models_receiver {
             if let Ok(models) = receiver.try_recv() {
@@ -1000,23 +1039,57 @@ impl SiliconMonitorApp {
     }
 
     /// Refresh cached disk data (called periodically, not every frame)
-    fn refresh_cached_disk_data(&mut self) {
-        // Ensure we have enough cached entries for all disks
-        while self.cached_disk_data.len() < self.disks.len() {
-            self.cached_disk_data.push(CachedDiskData::default());
-        }
+    /// Sample every disk on a worker thread, forever, publishing plain rows.
+    ///
+    /// This work used to run on the UI thread every 2s. `health()` is a SMART query
+    /// and `filesystem_info()` walks volumes — both are device I/O measured in
+    /// hundreds of milliseconds — so the window locked up on a fixed 2s beat. No
+    /// amount of caching fixes that when the cache is filled by the thread that has
+    /// to draw.
+    ///
+    /// The devices are `Send`, so the worker takes ownership of them and the UI never
+    /// holds a `DiskDevice` at all. It cannot block on one by accident again.
+    fn spawn_disk_refresher(
+        disks: Vec<Box<dyn DiskDevice + Send>>,
+        tx: Sender<Vec<CachedDiskData>>,
+        ctx: egui::Context,
+    ) {
+        std::thread::spawn(move || {
+            // Disk paths reach WMI on Windows, which needs COM per thread.
+            let _com = crate::pipeline::com_guard();
 
-        // Update cache for each disk
-        for (i, disk) in self.disks.iter().enumerate() {
-            if i < self.cached_disk_data.len() {
-                self.cached_disk_data[i] = CachedDiskData {
-                    info: disk.info().ok(),
-                    io_stats: disk.io_stats().ok(),
-                    health: disk.health().ok(),
-                    filesystems: disk.filesystem_info().unwrap_or_default(),
-                };
+            loop {
+                let pass_start = Instant::now();
+                let rows: Vec<CachedDiskData> = disks
+                    .iter()
+                    .map(|disk| CachedDiskData {
+                        name: disk.name().to_string(),
+                        disk_type: disk.disk_type(),
+                        info: disk.info().ok(),
+                        io_stats: disk.io_stats().ok(),
+                        health: disk.health().ok(),
+                        filesystems: disk.filesystem_info().unwrap_or_default(),
+                        temperature: disk.temperature().ok().flatten(),
+                    })
+                    .collect();
+
+                // A closed channel means the app is gone.
+                if tx.send(rows).is_err() {
+                    return;
+                }
+                ctx.request_repaint();
+
+                // Sampling every drive measured 1.7s on this machine — `io_stats`
+                // alone is 260-550ms per drive — so a fixed 2s beat would keep this
+                // thread almost permanently busy. Back off in proportion to what the
+                // pass actually cost, so disk polling stays a small fraction of a
+                // core no matter how slow the drives are.
+                let elapsed = pass_start.elapsed();
+                std::thread::sleep(
+                    DISK_REFRESH_INTERVAL.max(elapsed.mul_f32(1.0 / DISK_MAX_DUTY_CYCLE)),
+                );
             }
-        }
+        });
     }
 
     /// Start lazy loading of disk data
@@ -1290,7 +1363,7 @@ impl eframe::App for SiliconMonitorApp {
         }
 
         // Check for background loading completions (non-blocking) - must be first!
-        self.check_background_loaders();
+        self.check_background_loaders(ctx);
 
         // Fold in the newest snapshot. Cheap enough to attempt every frame: when the
         // collector has not published since the last frame this is a single atomic
@@ -1311,22 +1384,24 @@ impl eframe::App for SiliconMonitorApp {
         // fixed 100ms tick. Waking at 10 FPS to redraw identical pixels burns GPU and
         // battery for nothing; the data only changes when a snapshot lands.
         //
-        // Poll at a fixed fraction of the collector's cadence, whether or not this
-        // frame saw new data.
+        // Frames are driven by the collector's publish hook, not by a timer: each
+        // snapshot wakes the UI as it lands, so the displayed cadence is exactly the
+        // collection cadence with no sampling jitter.
         //
-        // Scheduling the next wake differently depending on `got_new_data` makes the
-        // wake-ups drift against the publishes: a frame that catches a snapshot waits
-        // a full interval and then arrives just after the next one, so the display
-        // advances twice in quick succession and then appears to stall. Sampling at a
-        // constant rate a few times per interval keeps the visible cadence even, and
-        // is still far below the old fixed 100ms tick. egui repaints immediately on
-        // input regardless, so this only governs how promptly new data is shown.
+        // Polling was what made updates look uneven. Waking on a fraction of the tick
+        // means a publish is noticed anywhere from immediately to a poll-period late,
+        // and that error changes every tick as collection cost varies — so the
+        // display advanced twice in quick succession, then seemed to stall.
+        //
+        // The timer that remains is a safety net for the case where the collector
+        // thread has stopped or was never started; at several times the tick it costs
+        // nothing when the hook is working.
         let tick = self
             .collector
             .as_ref()
             .map(|c| c.handle().interval())
             .unwrap_or(DATA_POLL_INTERVAL);
-        ctx.request_repaint_after((tick / 4).max(UPDATE_INTERVAL));
+        ctx.request_repaint_after(tick * 3);
 
         // Top panel with title and tabs
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
@@ -3120,7 +3195,7 @@ impl SiliconMonitorApp {
             return;
         }
 
-        if self.disks.is_empty() {
+        if self.cached_disk_data.is_empty() {
             ui.vertical_centered(|ui| {
                 ui.add_space(100.0);
                 ui.label(RichText::new("💿").size(64.0));
@@ -3243,24 +3318,17 @@ impl SiliconMonitorApp {
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                for (i, disk) in self.disks.iter().enumerate() {
-                    // Get cached data for this disk (or empty defaults if not yet cached)
-                    let cached = self.cached_disk_data.get(i).cloned().unwrap_or_default();
-                    Self::draw_disk_row_cached(ui, disk, i, &cached);
+                for (i, cached) in self.cached_disk_data.iter().enumerate() {
+                    Self::draw_disk_row_cached(ui, i, cached);
                     ui.add_space(6.0);
                 }
             });
     }
 
-    fn draw_disk_row_cached(
-        ui: &mut egui::Ui,
-        disk: &Box<dyn DiskDevice>,
-        _index: usize,
-        cached: &CachedDiskData,
-    ) {
+    fn draw_disk_row_cached(ui: &mut egui::Ui, _index: usize, cached: &CachedDiskData) {
         let disk_color = DeviceTitleColors::DISK;
-        let disk_name = disk.name().to_string();
-        let disk_type = disk.disk_type();
+        let disk_name = cached.name.clone();
+        let disk_type = cached.disk_type;
 
         let type_icon = match disk_type {
             crate::disk::DiskType::NvmeSsd => "⚡",
@@ -4030,11 +4098,10 @@ impl SiliconMonitorApp {
                 }
             }
 
-            // Get disk temperatures
-            for disk in &self.disks {
-                if let Ok(Some(temp)) = disk.temperature() {
-                    let disk_name = disk.name().to_string();
-                    all_temps.push((disk_name, temp, "Storage"));
+            // Disk temperatures come from the refresher thread, already sampled.
+            for disk in &self.cached_disk_data {
+                if let Some(temp) = disk.temperature {
+                    all_temps.push((disk.name.clone(), temp, "Storage"));
                 }
             }
 

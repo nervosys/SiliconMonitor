@@ -145,6 +145,107 @@ pub fn format_luid(luid_high: i32, luid_low: u32) -> String {
     format!("0x{:08x}_0x{:08x}", luid_high, luid_low)
 }
 
+/// One WMI sampling of the GPU performance-counter classes, shared by all adapters.
+struct PerfCounterRows {
+    taken: std::time::Instant,
+    /// `(instance name, utilization percent)` from the GPUEngine class.
+    engines: Vec<(String, f64)>,
+    /// `(instance name, dedicated bytes, shared bytes)` from GPUAdapterMemory.
+    memory: Vec<(String, u64, u64)>,
+}
+
+static PERF_ROWS: std::sync::Mutex<Option<std::sync::Arc<PerfCounterRows>>> =
+    std::sync::Mutex::new(None);
+
+/// How long one sampling of the counter classes is reused.
+///
+/// Must stay below the collector's tick so every tick still gets a fresh reading;
+/// its only job is to collapse the calls made by different adapters within a tick.
+const PERF_ROWS_TTL: std::time::Duration = std::time::Duration::from_millis(400);
+
+/// Sample both counter classes once, or reuse a recent sampling.
+///
+/// These classes are not per-adapter: each returns every adapter's instances, and
+/// `GPUEngine` carries one row per process per engine. Every GPU adapter was
+/// separately querying both whole classes, so a three-GPU machine issued six
+/// whole-class queries per tick against a single WMI provider. They do not run in
+/// parallel there — they queue — which is why an NVIDIA card served by NVML in 10ms
+/// was taking 200-475ms, and why the cost swung by a factor of three between ticks.
+/// Sampling once and sharing the rows removes both the duplicated work and the
+/// variance.
+///
+/// Holding the lock across the query is deliberate: a concurrent caller waits for the
+/// sampling already in flight instead of starting a competing one.
+fn perf_counter_rows() -> Option<std::sync::Arc<PerfCounterRows>> {
+    let mut cached = PERF_ROWS.lock().ok()?;
+    if let Some(rows) = cached.as_ref() {
+        if rows.taken.elapsed() < PERF_ROWS_TTL {
+            return Some(std::sync::Arc::clone(rows));
+        }
+    }
+
+    let com = COMLibrary::new().ok()?;
+    let wmi = WMIConnection::with_namespace_path("root\\CIMV2", com).ok()?;
+
+    // A `WHERE Name LIKE` predicate was tried here to make the provider do the
+    // filtering. It made the query four to eight times slower — performance-counter
+    // providers re-enumerate the class to evaluate the predicate — so the rows are
+    // fetched whole and filtered below.
+    let engines = wmi
+        .raw_query::<HashMap<String, Variant>>(
+            "SELECT Name, UtilizationPercentage FROM \
+             Win32_PerfFormattedData_GPUPerformanceCounters_GPUEngine",
+        )
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|item| {
+            let name = match item.get("Name") {
+                Some(Variant::String(s)) => s.to_lowercase(),
+                _ => return None,
+            };
+            let util = match item.get("UtilizationPercentage") {
+                Some(Variant::UI8(v)) => *v as f64,
+                Some(Variant::UI4(v)) => *v as f64,
+                _ => return None,
+            };
+            Some((name, util))
+        })
+        .collect();
+
+    let memory = wmi
+        .raw_query::<HashMap<String, Variant>>(
+            "SELECT Name, DedicatedUsage, SharedUsage FROM \
+             Win32_PerfFormattedData_GPUPerformanceCounters_GPUAdapterMemory",
+        )
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|item| {
+            let name = match item.get("Name") {
+                Some(Variant::String(s)) => s.to_lowercase(),
+                _ => return None,
+            };
+            let as_u64 = |v: Option<&Variant>| match v {
+                Some(Variant::UI8(x)) => *x,
+                Some(Variant::UI4(x)) => *x as u64,
+                _ => 0,
+            };
+            Some((
+                name,
+                as_u64(item.get("DedicatedUsage")),
+                as_u64(item.get("SharedUsage")),
+            ))
+        })
+        .collect();
+
+    let rows = std::sync::Arc::new(PerfCounterRows {
+        taken: std::time::Instant::now(),
+        engines,
+        memory,
+    });
+    *cached = Some(std::sync::Arc::clone(&rows));
+    Some(rows)
+}
+
 /// Query GPU performance counters from WMI, filtered by LUID for correct
 /// per-adapter attribution on multi-GPU systems.
 ///
@@ -152,16 +253,13 @@ pub fn format_luid(luid_high: i32, luid_low: u32) -> String {
 pub fn query_gpu_perf_counters(luid_filter: Option<&str>) -> WinGpuPerfData {
     let mut data = WinGpuPerfData::default();
 
-    let Ok(com) = COMLibrary::new() else {
-        return data;
-    };
-    let Ok(wmi) = WMIConnection::with_namespace_path("root\\CIMV2", com) else {
+    let Some(rows) = perf_counter_rows() else {
         return data;
     };
 
     // ── Engine utilization per type ──────────────────────────────────────
-    let engine_query = "SELECT Name, UtilizationPercentage FROM Win32_PerfFormattedData_GPUPerformanceCounters_GPUEngine";
-    if let Ok(results) = wmi.raw_query::<HashMap<String, Variant>>(engine_query) {
+    {
+        let results = &rows.engines;
         let mut gfx_total: f64 = 0.0;
         let mut gfx_count: u32 = 0;
         let mut compute_total: f64 = 0.0;
@@ -173,11 +271,8 @@ pub fn query_gpu_perf_counters(luid_filter: Option<&str>) -> WinGpuPerfData {
         let mut copy_total: f64 = 0.0;
         let mut copy_count: u32 = 0;
 
-        for item in &results {
-            let name = match item.get("Name") {
-                Some(Variant::String(s)) => s.to_lowercase(),
-                _ => continue,
-            };
+        for (name, util) in results {
+            let (name, util) = (name.as_str(), *util);
 
             // Filter by LUID if provided (ensures correct adapter on multi-GPU)
             if let Some(luid) = luid_filter {
@@ -185,12 +280,6 @@ pub fn query_gpu_perf_counters(luid_filter: Option<&str>) -> WinGpuPerfData {
                     continue;
                 }
             }
-
-            let util = match item.get("UtilizationPercentage") {
-                Some(Variant::UI8(v)) => *v as f64,
-                Some(Variant::UI4(v)) => *v as f64,
-                _ => continue,
-            };
 
             // Classify by engine type
             if name.contains("engtype_3d") {
@@ -240,35 +329,19 @@ pub fn query_gpu_perf_counters(luid_filter: Option<&str>) -> WinGpuPerfData {
     }
 
     // ── Adapter memory usage ────────────────────────────────────────────
-    let mem_query = "SELECT Name, DedicatedUsage, SharedUsage FROM Win32_PerfFormattedData_GPUPerformanceCounters_GPUAdapterMemory";
-    if let Ok(results) = wmi.raw_query::<HashMap<String, Variant>>(mem_query) {
-        for item in &results {
-            // Filter by LUID if provided
-            if let Some(luid) = luid_filter {
-                let name = match item.get("Name") {
-                    Some(Variant::String(s)) => s.to_lowercase(),
-                    _ => continue,
-                };
-                if !name.contains(&luid.to_lowercase()) {
-                    continue;
-                }
+    for (name, dedicated, shared) in &rows.memory {
+        // Filter by LUID if provided
+        if let Some(luid) = luid_filter {
+            if !name.contains(&luid.to_lowercase()) {
+                continue;
             }
+        }
 
-            if let Some(Variant::UI8(dedicated)) = item.get("DedicatedUsage") {
-                data.dedicated_used = *dedicated;
-            } else if let Some(Variant::UI4(dedicated)) = item.get("DedicatedUsage") {
-                data.dedicated_used = *dedicated as u64;
-            }
+        data.dedicated_used = *dedicated;
+        data.shared_used = *shared;
 
-            if let Some(Variant::UI8(shared)) = item.get("SharedUsage") {
-                data.shared_used = *shared;
-            } else if let Some(Variant::UI4(shared)) = item.get("SharedUsage") {
-                data.shared_used = *shared as u64;
-            }
-
-            if data.dedicated_used > 0 || data.shared_used > 0 {
-                break;
-            }
+        if data.dedicated_used > 0 || data.shared_used > 0 {
+            break;
         }
     }
 

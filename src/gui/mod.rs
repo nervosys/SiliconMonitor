@@ -21,6 +21,17 @@ pub fn run() -> Result<(), eframe::Error> {
             .with_min_inner_size([800.0, 600.0])
             .with_title("Silicon Monitor")
             .with_icon(load_icon()),
+        // Painting already goes through the GPU — egui tessellates on the CPU and
+        // submits triangles via glow/OpenGL. Stated explicitly rather than inherited
+        // from a default that can change.
+        //
+        // `Preferred`, not `Required`: simon is expected to run on headless servers
+        // and over remote sessions where no accelerated context exists, and refusing
+        // to open a window there would be worse than falling back to software.
+        hardware_acceleration: eframe::HardwareAcceleration::Preferred,
+        // Cap presentation at the display's refresh rate. Frames are driven by the
+        // collector's publish hook and by input, so this only bounds bursts.
+        vsync: true,
         ..Default::default()
     };
 
