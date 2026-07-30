@@ -10,6 +10,18 @@ use serde::{Deserialize, Serialize};
 
 use super::Query;
 
+/// GPU temperature at or above which simon calls a device hot, in Celsius.
+///
+/// Consumer GPUs run in the 70–85 °C band under sustained load by design, so this is
+/// deliberately well above "warm". It is stated in the agent context because a model
+/// given a bare temperature invents its own threshold: asked "is anything
+/// overheating?" against a 3090 Ti at 52 °C, one answered yes, calling it "above the
+/// typical operating threshold".
+pub const GPU_TEMP_HOT_C: u32 = 80;
+
+/// GPU temperature at or above which simon calls a device critical, in Celsius.
+pub const GPU_TEMP_CRITICAL_C: u32 = 90;
+
 /// Condensed CPU state for agent context
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CpuState {
@@ -383,6 +395,22 @@ impl SystemState {
             }
         }
 
+        // Give the model the same thresholds simon uses for its own warnings. Without
+        // them it substitutes a guess, and the guess runs cold: a 3090 Ti at 52 °C —
+        // an ordinary idle-to-light-load reading — was reported to the user as
+        // overheating. These are the constants behind `GpuState::is_hot` and
+        // `is_critical`, so the answer and the UI cannot disagree.
+        if !self.gpus.is_empty() {
+            context.push_str(&format!(
+                "\nReference thresholds (used by simon's own warnings):\n\
+                 - GPU temperature below {hot}°C is normal, including under sustained load.\n\
+                 - {hot}°C or above is hot; {crit}°C or above is critical.\n\
+                 Do not describe a temperature as high unless it meets these.\n",
+                hot = GPU_TEMP_HOT_C,
+                crit = GPU_TEMP_CRITICAL_C,
+            ));
+        }
+
         context
     }
 
@@ -463,7 +491,7 @@ impl GpuState {
         }
     }
 
-    /// Whether the GPU is running hot (at or above 80°C).
+    /// Whether the GPU is running hot (at or above [`GPU_TEMP_HOT_C`]).
     ///
     /// A device with no readable sensor is not reported as hot: claiming a thermal
     /// condition that was never measured is the failure this type now avoids. Note
@@ -471,14 +499,14 @@ impl GpuState {
     /// be cool". Use [`GpuState::temperature_c`] directly when that distinction
     /// matters.
     pub fn is_hot(&self) -> bool {
-        self.temperature_c.is_some_and(|t| t >= 80)
+        self.temperature_c.is_some_and(|t| t >= GPU_TEMP_HOT_C)
     }
 
-    /// Whether the GPU is critically hot (at or above 90°C).
+    /// Whether the GPU is critically hot (at or above [`GPU_TEMP_CRITICAL_C`]).
     ///
     /// Same caveat as [`GpuState::is_hot`]: an unreadable sensor is not critical.
     pub fn is_critical(&self) -> bool {
-        self.temperature_c.is_some_and(|t| t >= 90)
+        self.temperature_c.is_some_and(|t| t >= GPU_TEMP_CRITICAL_C)
     }
 
     /// Check if GPU is heavily utilized (above 80%)
@@ -539,6 +567,25 @@ mod tests {
         assert_eq!(gpu.health_status(), "HEALTHY: Normal operation");
     }
 
+    /// A GPU carrying only the fields these tests care about.
+    fn gpu(index: usize, temperature_c: Option<u32>) -> GpuState {
+        GpuState {
+            index,
+            name: format!("GPU {index}"),
+            vendor: "Test".to_string(),
+            utilization: 0,
+            memory_used_mb: 0,
+            memory_total_mb: 1024,
+            temperature_c,
+            power_w: None,
+            power_limit_w: None,
+            clock_mhz: None,
+            memory_clock_mhz: None,
+            fan_speed_percent: None,
+            process_count: 0,
+        }
+    }
+
     /// A GPU with no temperature sensor must be excluded from thermal aggregates,
     /// not counted as 0°C.
     ///
@@ -549,24 +596,6 @@ mod tests {
     /// colder than any card in the machine.
     #[test]
     fn sensorless_gpu_is_excluded_from_thermal_aggregates() {
-        fn gpu(index: usize, temperature_c: Option<u32>) -> GpuState {
-            GpuState {
-                index,
-                name: format!("GPU {index}"),
-                vendor: "Test".to_string(),
-                utilization: 0,
-                memory_used_mb: 0,
-                memory_total_mb: 1024,
-                temperature_c,
-                power_w: None,
-                power_limit_w: None,
-                clock_mhz: None,
-                memory_clock_mhz: None,
-                fan_speed_percent: None,
-                process_count: 0,
-            }
-        }
-
         let state = SystemState {
             cpu: None,
             memory: None,
@@ -595,6 +624,41 @@ mod tests {
             !context.contains("Temperature: 0°C"),
             "context reports an unmeasured device as 0°C:\n{context}"
         );
+    }
+
+    /// The context must carry the thresholds simon judges by, not just raw numbers.
+    ///
+    /// Asked "is anything overheating?" with a 3090 Ti at 52 °C in context, a local
+    /// model answered that it was, "above the typical operating threshold" — a
+    /// threshold it invented because it was given none. The numbers here are the same
+    /// constants `is_hot`/`is_critical` use, so the prose and the warnings agree.
+    #[test]
+    fn context_states_the_thresholds_it_judges_by() {
+        let state = SystemState {
+            cpu: None,
+            memory: None,
+            gpus: vec![gpu(0, Some(52))],
+            timestamp: 0,
+        };
+
+        let context = state.to_context_string();
+        assert!(
+            context.contains(&format!("{GPU_TEMP_HOT_C}°C or above is hot")),
+            "context omits the hot threshold:\n{context}"
+        );
+        assert!(
+            context.contains(&format!("{GPU_TEMP_CRITICAL_C}°C or above is critical")),
+            "context omits the critical threshold:\n{context}"
+        );
+
+        // A machine with no GPU should not be handed GPU thresholds.
+        let empty = SystemState {
+            cpu: None,
+            memory: None,
+            gpus: Vec::new(),
+            timestamp: 0,
+        };
+        assert!(!empty.to_context_string().contains("Reference thresholds"));
     }
 
     #[test]

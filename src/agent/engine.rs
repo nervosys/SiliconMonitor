@@ -75,10 +75,11 @@ impl InferenceEngine {
                 .to_string()
         } else {
             // Standard prompt with SystemState context
+            // `to_context_string` already opens with "Current System State:", so this
+            // used to print that header twice.
             format!(
                 "You are a hardware monitoring assistant. Provide concise, factual answers \
-                about system state. Keep responses under 200 words.\n\n\
-                Current System State:\n{}",
+                about system state. Keep responses under 200 words.\n\n{}",
                 state.to_context_string()
             )
         };
