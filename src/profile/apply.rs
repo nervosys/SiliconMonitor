@@ -620,6 +620,9 @@ pub fn writable_setting_ids() -> Vec<String> {
         .collect()
 }
 
+#[allow(dead_code)]
+fn _doctest_anchor(_s: &Setting) {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -666,6 +669,3 @@ mod tests {
         assert!(s.contains("not_writable"));
     }
 }
-
-#[allow(dead_code)]
-fn _doctest_anchor(_s: &Setting) {}

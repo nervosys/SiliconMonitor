@@ -800,11 +800,10 @@ impl AiWorkloadMonitor {
     #[allow(dead_code)]
     fn detect_tpu_config(&self, env_vars: &HashMap<String, String>) -> Option<TpuConfig> {
         // Check for TPU environment variables
-        if let Some(_tpu_name) = env_vars
+        env_vars
             .get("TPU_NAME")
             .or_else(|| env_vars.get("TPU_WORKER_NAME"))
-        {
-            Some(TpuConfig {
+            .map(|_tpu_name| TpuConfig {
                 tpu_type: env_vars
                     .get("TPU_TYPE")
                     .cloned()
@@ -823,9 +822,6 @@ impl AiWorkloadMonitor {
                     .cloned(),
                 project: env_vars.get("GCP_PROJECT").cloned(),
             })
-        } else {
-            None
-        }
     }
 
     #[allow(dead_code)]

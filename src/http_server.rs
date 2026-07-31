@@ -416,8 +416,8 @@ impl HttpServer {
 
             if let Some(ref stats) = snap.system_stats {
                 if let Some(ref load) = stats.load_average {
-                    collector.record("simon_load_average_1m", load.one as f64);
-                    collector.record("simon_load_average_5m", load.five as f64);
+                    collector.record("simon_load_average_1m", load.one);
+                    collector.record("simon_load_average_5m", load.five);
                 }
             }
 

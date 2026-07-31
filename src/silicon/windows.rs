@@ -232,7 +232,7 @@ impl WindowsSiliconMonitor {
         let com = COMLibrary::new().ok()?;
 
         // Connect to root\WMI namespace (not root\cimv2)
-        let wmi = WMIConnection::with_namespace_path("root\\WMI", com.into()).ok()?;
+        let wmi = WMIConnection::with_namespace_path("root\\WMI", com).ok()?;
 
         // Query thermal zones
         let zones: Vec<MsAcpiThermalZoneTemperature> = wmi.query().ok()?;
@@ -293,7 +293,7 @@ impl WindowsSiliconMonitor {
     #[cfg(target_os = "windows")]
     fn query_cpu_model() -> Option<String> {
         let com = COMLibrary::new().ok()?;
-        let wmi = WMIConnection::new(com.into()).ok()?;
+        let wmi = WMIConnection::new(com).ok()?;
         let procs: Vec<Win32Processor> = wmi.query().ok()?;
         procs.first().and_then(|p| p.name.clone())
     }
@@ -497,7 +497,7 @@ impl SiliconMonitor for WindowsSiliconMonitor {
                 }
             }
 
-            return Ok(npus);
+            Ok(npus)
         }
 
         #[cfg(not(target_os = "windows"))]

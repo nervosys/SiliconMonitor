@@ -175,10 +175,8 @@ impl CpuCacheMonitor {
                 (CacheLevel::L2, _) => {
                     self.topology.total_l2_kb += cache.size_kb;
                 }
-                (CacheLevel::L3, _) => {
-                    if seen_l3.insert(cache.shared_cpu_list.clone()) {
-                        self.topology.total_l3_kb += cache.size_kb;
-                    }
+                (CacheLevel::L3, _) if seen_l3.insert(cache.shared_cpu_list.clone()) => {
+                    self.topology.total_l3_kb += cache.size_kb;
                 }
                 _ => {}
             }

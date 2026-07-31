@@ -305,7 +305,7 @@ impl FullSystemState {
                     swap_used_gb, swap_total_gb, mem.swap_usage_percent
                 ));
             }
-            ctx.push_str("\n");
+            ctx.push('\n');
         }
 
         // Accelerators
@@ -1300,7 +1300,7 @@ impl MonitoringBackend {
                 } else {
                     sys.os_version.clone()
                 },
-                kernel: sys.kernel_version.clone().unwrap_or_else(|| String::new()),
+                kernel: sys.kernel_version.clone().unwrap_or_else(String::new),
                 uptime_secs: self.uptime().as_secs(),
             });
         }

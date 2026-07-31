@@ -151,13 +151,13 @@ fn detect_cpuid_hypervisor() -> Option<HypervisorInfo> {
             _ => Hypervisor::Other,
         };
 
-        return Some(HypervisorInfo {
+        Some(HypervisorInfo {
             hypervisor,
             version: None,
             cloud_provider: detect_cloud_provider(),
             instance_type: None,
             detection_method: format!("CPUID: {}", vendor_id),
-        });
+        })
     }
     #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
     {
@@ -251,14 +251,14 @@ pub fn detect_cpu_virt_caps() -> Option<CpuVirtCapability> {
             "None"
         };
 
-        return Some(CpuVirtCapability {
+        Some(CpuVirtCapability {
             hardware_virt: hw_virt,
             ept_npt: false, // Would need deeper CPUID checks
             iommu: false,
             sriov: false,
             nested: false,
             technology: tech.into(),
-        });
+        })
     }
     #[cfg(target_arch = "aarch64")]
     {

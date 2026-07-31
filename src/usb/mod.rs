@@ -413,7 +413,10 @@ impl UsbMonitor {
                             product_id: pid,
                             manufacturer: None,
                             product: Some(
-                                dep.split('\\').last().unwrap_or("USB Device").to_string(),
+                                dep.split('\\')
+                                    .next_back()
+                                    .unwrap_or("USB Device")
+                                    .to_string(),
                             ),
                             description: None,
                             serial_number: None,

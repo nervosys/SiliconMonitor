@@ -273,7 +273,7 @@ impl ServiceMonitor {
 
         #[cfg(target_os = "windows")]
         {
-            return self.windows_start_service(name);
+            self.windows_start_service(name)
         }
 
         #[cfg(not(any(target_os = "linux", target_os = "windows")))]
@@ -294,7 +294,7 @@ impl ServiceMonitor {
 
         #[cfg(target_os = "windows")]
         {
-            return self.windows_stop_service(name);
+            self.windows_stop_service(name)
         }
 
         #[cfg(not(any(target_os = "linux", target_os = "windows")))]
@@ -318,7 +318,7 @@ impl ServiceMonitor {
             // Windows: stop then start
             self.windows_stop_service(name)?;
             std::thread::sleep(std::time::Duration::from_millis(500));
-            return self.windows_start_service(name);
+            self.windows_start_service(name)
         }
 
         #[cfg(not(any(target_os = "linux", target_os = "windows")))]
@@ -339,7 +339,7 @@ impl ServiceMonitor {
 
         #[cfg(target_os = "windows")]
         {
-            return self.windows_set_startup(name, StartupType::Automatic);
+            self.windows_set_startup(name, StartupType::Automatic)
         }
 
         #[cfg(not(any(target_os = "linux", target_os = "windows")))]
@@ -360,7 +360,7 @@ impl ServiceMonitor {
 
         #[cfg(target_os = "windows")]
         {
-            return self.windows_set_startup(name, StartupType::Manual);
+            self.windows_set_startup(name, StartupType::Manual)
         }
 
         #[cfg(not(any(target_os = "linux", target_os = "windows")))]
@@ -381,7 +381,7 @@ impl ServiceMonitor {
 
         #[cfg(target_os = "windows")]
         {
-            return self.windows_discover();
+            self.windows_discover()
         }
 
         #[cfg(target_os = "macos")]

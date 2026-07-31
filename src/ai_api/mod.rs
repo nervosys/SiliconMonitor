@@ -406,8 +406,8 @@ impl AiDataApi {
                         name: snapshot.static_info.name.clone(),
                         vendor: format!("{:?}", snapshot.static_info.vendor),
                         utilization_percent: snapshot.dynamic_info.utilization as f32,
-                        memory_used_mb: (snapshot.dynamic_info.memory.used / 1024 / 1024) as u64,
-                        memory_total_mb: (snapshot.dynamic_info.memory.total / 1024 / 1024) as u64,
+                        memory_used_mb: (snapshot.dynamic_info.memory.used / 1024 / 1024),
+                        memory_total_mb: (snapshot.dynamic_info.memory.total / 1024 / 1024),
                         temperature_c: snapshot.dynamic_info.thermal.temperature,
                         power_watts: snapshot.dynamic_info.power.draw.map(|p| p as f32 / 1000.0),
                     });
@@ -437,8 +437,8 @@ impl AiDataApi {
                         pid: p.pid,
                         name: p.name.clone(),
                         cpu_percent: p.cpu_percent,
-                        memory_mb: (p.memory_bytes / 1024 / 1024) as u64,
-                        gpu_memory_mb: (p.total_gpu_memory_bytes / 1024 / 1024) as u64,
+                        memory_mb: (p.memory_bytes / 1024 / 1024),
+                        gpu_memory_mb: (p.total_gpu_memory_bytes / 1024 / 1024),
                     })
                     .collect();
 
@@ -452,8 +452,8 @@ impl AiDataApi {
                         pid: p.pid,
                         name: p.name.clone(),
                         cpu_percent: p.cpu_percent,
-                        memory_mb: (p.memory_bytes / 1024 / 1024) as u64,
-                        gpu_memory_mb: (p.total_gpu_memory_bytes / 1024 / 1024) as u64,
+                        memory_mb: (p.memory_bytes / 1024 / 1024),
+                        gpu_memory_mb: (p.total_gpu_memory_bytes / 1024 / 1024),
                     })
                     .collect();
             }
@@ -468,8 +468,8 @@ impl AiDataApi {
                         pid: p.pid,
                         name: p.name.clone(),
                         cpu_percent: p.cpu_percent,
-                        memory_mb: (p.memory_bytes / 1024 / 1024) as u64,
-                        gpu_memory_mb: (p.total_gpu_memory_bytes / 1024 / 1024) as u64,
+                        memory_mb: (p.memory_bytes / 1024 / 1024),
+                        gpu_memory_mb: (p.total_gpu_memory_bytes / 1024 / 1024),
                     })
                     .collect();
             }
@@ -485,8 +485,8 @@ impl AiDataApi {
                         name: iface.name.clone(),
                         rx_bytes_per_sec: rx_rate as u64,
                         tx_bytes_per_sec: tx_rate as u64,
-                        rx_total_mb: (iface.rx_bytes / 1024 / 1024) as u64,
-                        tx_total_mb: (iface.tx_bytes / 1024 / 1024) as u64,
+                        rx_total_mb: (iface.rx_bytes / 1024 / 1024),
+                        tx_total_mb: (iface.tx_bytes / 1024 / 1024),
                         is_up: iface.is_up,
                     });
                 }
@@ -522,7 +522,7 @@ impl AiDataApi {
                     summary.disks.push(DiskSummary {
                         name: info.name.clone(),
                         model: info.model.clone(),
-                        size_gb: (info.capacity / 1024 / 1024 / 1024) as u64,
+                        size_gb: (info.capacity / 1024 / 1024 / 1024),
                         disk_type: format!("{:?}", info.disk_type),
                         temperature_c: disk.temperature().ok().flatten(),
                     });

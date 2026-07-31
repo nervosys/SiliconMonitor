@@ -29,36 +29,33 @@ pub fn read_gpu_temperatures() -> Vec<HwSensor> {
 fn read_nvidia_gpu_temps() -> Vec<HwSensor> {
     let mut sensors = Vec::new();
 
-    match Nvml::init() {
-        Ok(nvml) => {
-            if let Ok(count) = nvml.device_count() {
-                for i in 0..count {
-                    if let Ok(device) = nvml.device_by_index(i) {
-                        let name = device.name().unwrap_or_else(|_| format!("GPU {}", i));
+    if let Ok(nvml) = Nvml::init() {
+        if let Ok(count) = nvml.device_count() {
+            for i in 0..count {
+                if let Ok(device) = nvml.device_by_index(i) {
+                    let name = device.name().unwrap_or_else(|_| format!("GPU {}", i));
 
-                        // GPU Core temperature
-                        if let Ok(temp) = device.temperature(TemperatureSensor::Gpu) {
-                            sensors.push(HwSensor {
-                                name: format!("{} Core", name),
-                                value: temp as f32,
-                                min: None,
-                                max: None,
-                                sensor_type: HwSensorType::Temperature,
-                                hardware_type: HwType::Gpu,
-                            });
-                        }
-
-                        // Memory temperature (if available)
-                        // Note: Not all GPUs expose memory temperature
-                        // NVML 11+ has nvmlDeviceGetMemoryInfo_v2 but not direct temp
-
-                        // Hotspot temperature (available on newer GPUs)
-                        // This would require checking NVML version and device capabilities
+                    // GPU Core temperature
+                    if let Ok(temp) = device.temperature(TemperatureSensor::Gpu) {
+                        sensors.push(HwSensor {
+                            name: format!("{} Core", name),
+                            value: temp as f32,
+                            min: None,
+                            max: None,
+                            sensor_type: HwSensorType::Temperature,
+                            hardware_type: HwType::Gpu,
+                        });
                     }
+
+                    // Memory temperature (if available)
+                    // Note: Not all GPUs expose memory temperature
+                    // NVML 11+ has nvmlDeviceGetMemoryInfo_v2 but not direct temp
+
+                    // Hotspot temperature (available on newer GPUs)
+                    // This would require checking NVML version and device capabilities
                 }
             }
         }
-        Err(_) => {}
     }
 
     sensors

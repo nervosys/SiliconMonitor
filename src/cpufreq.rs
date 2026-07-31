@@ -383,7 +383,7 @@ impl CpuFreqMonitor {
 
         #[cfg(target_os = "windows")]
         {
-            return self.windows_set_governor(governor);
+            self.windows_set_governor(governor)
         }
 
         #[cfg(not(any(target_os = "linux", target_os = "windows")))]
@@ -1186,7 +1186,7 @@ fn windows_query_wmi_cpu() -> (Option<String>, Option<u32>, Option<u32>) {
     }
 
     if let Ok(com) = COMLibrary::new() {
-        if let Ok(wmi) = WMIConnection::new(com.into()) {
+        if let Ok(wmi) = WMIConnection::new(com) {
             if let Ok(processors) = wmi.query::<Win32Processor>() {
                 if let Some(p) = processors.first() {
                     return (p.name.clone(), p.current_clock_speed, p.max_clock_speed);

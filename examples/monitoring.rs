@@ -11,7 +11,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let gpus = GpuCollection::auto_detect()?;
 
-    if gpus.len() == 0 {
+    if gpus.is_empty() {
         println!("No GPUs detected!");
         return Ok(());
     }

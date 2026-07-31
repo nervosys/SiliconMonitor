@@ -38,6 +38,7 @@ pub struct BluetoothAdapter {
     pub powered: bool,
 }
 
+#[derive(Default)]
 pub struct BluetoothMonitor {
     adapters: Vec<BluetoothAdapter>,
     devices: Vec<BluetoothDevice>,
@@ -466,15 +467,6 @@ fn classify_bt_device(name: &str) -> BluetoothDeviceType {
         BluetoothDeviceType::Computer
     } else {
         BluetoothDeviceType::Unknown
-    }
-}
-
-impl Default for BluetoothMonitor {
-    fn default() -> Self {
-        Self {
-            adapters: Vec::new(),
-            devices: Vec::new(),
-        }
     }
 }
 

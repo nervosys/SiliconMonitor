@@ -1989,7 +1989,7 @@ impl AiDataApi {
                 procs.sort_by(|a, b| b.total_gpu_memory_bytes.cmp(&a.total_gpu_memory_bytes))
             }
             "name" => procs.sort_by(|a, b| a.name.cmp(&b.name)),
-            "pid" => procs.sort_by(|a, b| a.pid.cmp(&b.pid)),
+            "pid" => procs.sort_by_key(|a| a.pid),
             _ => {}
         }
 

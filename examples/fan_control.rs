@@ -179,7 +179,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n📈 Fan Curves");
     println!("{}", "-".repeat(60));
 
-    let curves = vec![
+    let curves = [
         ("Silent", FanCurve::silent()),
         ("Quiet", FanCurve::quiet()),
         ("Performance", FanCurve::performance()),

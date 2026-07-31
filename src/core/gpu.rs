@@ -114,9 +114,9 @@ impl GpuStats {
         #[cfg(not(target_os = "linux"))]
         {
             let _ = enabled; // Suppress unused warning
-            return Err(SimonError::UnsupportedPlatform(
+            Err(SimonError::UnsupportedPlatform(
                 "3D scaling control only available on Linux Jetson devices".to_string(),
-            ));
+            ))
         }
     }
 
@@ -138,9 +138,9 @@ impl GpuStats {
         #[cfg(not(target_os = "linux"))]
         {
             let _ = enabled; // Suppress unused warning
-            return Err(SimonError::UnsupportedPlatform(
+            Err(SimonError::UnsupportedPlatform(
                 "Railgate control only available on Linux Jetson devices".to_string(),
-            ));
+            ))
         }
     }
 }

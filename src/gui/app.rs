@@ -313,11 +313,12 @@ enum ProcessSortColumn {
     Memory,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 enum AiBackendSelection {
     /// simon's own engine, and the reason it is first: inference stays on the host,
     /// so telemetry never leaves the machine.
     IronWorks,
+    #[default]
     Ollama,
     LmStudio,
     Vllm,
@@ -327,12 +328,6 @@ enum AiBackendSelection {
     GitHub,
     /// A locally installed CLI tool driven as a subprocess.
     Cli(crate::agent::local::CliProvider),
-}
-
-impl Default for AiBackendSelection {
-    fn default() -> Self {
-        Self::Ollama
-    }
 }
 
 impl AiBackendSelection {
@@ -2111,7 +2106,7 @@ impl SiliconMonitorApp {
                                 SparklineChart::new(hist.iter().cloned().collect())
                                     .color(DeviceTitleColors::ACCEL)
                                     .height(80.0)
-                                    .title(&format!("GPU {}", i))
+                                    .title(format!("GPU {}", i))
                                     .unit("%")
                                     .max_value(100.0)
                                     .show_scale(true),
@@ -2431,7 +2426,7 @@ impl SiliconMonitorApp {
                                     SparklineChart::new(hist.iter().cloned().collect())
                                         .color(theme::cpu_color(core_usage))
                                         .height(60.0)
-                                        .title(&format!("Core {}", i))
+                                        .title(format!("Core {}", i))
                                         .unit("%")
                                         .max_value(100.0)
                                         .show_scale(true),

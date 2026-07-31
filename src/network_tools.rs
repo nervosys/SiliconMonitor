@@ -909,7 +909,7 @@ pub fn check_connectivity(hosts: &[&str]) -> HashMap<String, bool> {
 /// Network latency test to a host (similar to mtr)
 pub fn latency_test(host: &str, count: u32) -> Result<Vec<f64>> {
     let result = ping(host, count)?;
-    Ok(result.ping_times.into_iter().filter_map(|t| t).collect())
+    Ok(result.ping_times.into_iter().flatten().collect())
 }
 
 // ============================================================================
@@ -974,7 +974,7 @@ pub fn grab_banner(host: &str, port: u16, timeout: Duration) -> Option<String> {
     use std::io::{Read, Write};
 
     let addr_str = format!("{}:{}", host, port);
-    let addrs: Vec<SocketAddr> = addr_str.to_socket_addrs().ok()?.into_iter().collect();
+    let addrs: Vec<SocketAddr> = addr_str.to_socket_addrs().ok()?.collect();
     let addr = addrs.first()?;
 
     let mut stream = TcpStream::connect_timeout(addr, timeout).ok()?;
@@ -1305,9 +1305,15 @@ fn scan_single_port(host: &str, port: u16, timeout: Duration) -> PortStatus {
                 if err_str.contains("refused") || err_str.contains("reset") {
                     PortStatus::Closed
                 } else if err_str.contains("timed out") || err_str.contains("timeout") {
+                    // Silence with no refusal is the signature of a firewall dropping
+                    // the packet, which is what `Filtered` asserts.
                     PortStatus::Filtered
                 } else {
-                    PortStatus::Filtered
+                    // Anything else — host unreachable, network down, permission
+                    // denied — says nothing about the port. Reporting those as
+                    // `Filtered` claimed a firewall was inferred from an error that
+                    // never reached the host.
+                    PortStatus::Error
                 }
             }
         }
@@ -1912,7 +1918,7 @@ fn parse_windump_output(output: &str) -> Result<Vec<CapturedPacket>> {
                 number: packet_num,
                 timestamp: format!(
                     "{} {}",
-                    parts.get(0).unwrap_or(&""),
+                    parts.first().unwrap_or(&""),
                     parts.get(1).unwrap_or(&"")
                 ),
                 source: String::new(),

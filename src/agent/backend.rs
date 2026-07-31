@@ -449,10 +449,7 @@ impl BackendDiscovery {
             (BackendType::RemoteTensorRT, Self::check_tensorrt_available),
         ];
         let server_results: Vec<bool> = std::thread::scope(|scope| {
-            let handles: Vec<_> = probes
-                .iter()
-                .map(|(_, probe)| scope.spawn(move || probe()))
-                .collect();
+            let handles: Vec<_> = probes.iter().map(|(_, probe)| scope.spawn(probe)).collect();
             handles
                 .into_iter()
                 .map(|h| h.join().unwrap_or(false))

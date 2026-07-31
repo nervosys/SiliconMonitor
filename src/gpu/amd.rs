@@ -617,7 +617,7 @@ fn detect_amd_gpus_wmi(collection: &mut GpuCollection) -> Result<(), Error> {
 
     let com = wmi::COMLibrary::new()
         .map_err(|e| Error::Other(format!("Failed to initialize COM: {}", e)))?;
-    let wmi_con = wmi::WMIConnection::with_namespace_path("root\\CIMV2", com.into())
+    let wmi_con = wmi::WMIConnection::with_namespace_path("root\\CIMV2", com)
         .map_err(|e| Error::Other(format!("Failed to connect to WMI: {}", e)))?;
 
     let controllers: Vec<Win32VideoController> = wmi_con

@@ -79,9 +79,10 @@ fn build_ollama_config() -> Option<AgentConfig> {
 }
 
 /// Type of accelerator device
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum AcceleratorType {
     /// GPU - Graphics Processing Unit
+    #[default]
     Gpu,
     /// NPU - Neural Processing Unit
     Npu,
@@ -167,14 +168,8 @@ pub struct AcceleratorInfo {
     pub pcie_slot: Option<String>,
 }
 
-impl Default for AcceleratorType {
-    fn default() -> Self {
-        AcceleratorType::Gpu
-    }
-}
-
 /// Process display mode - which device's processes to show
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum ProcessDisplayMode {
     /// Show CPU processes
     Cpu,
@@ -185,13 +180,8 @@ pub enum ProcessDisplayMode {
     /// Show accelerator processes (unified, with index)
     Accelerator(usize),
     /// Show all processes
+    #[default]
     All,
-}
-
-impl Default for ProcessDisplayMode {
-    fn default() -> Self {
-        ProcessDisplayMode::All
-    }
 }
 
 /// Current view mode for the TUI
@@ -676,18 +666,13 @@ pub struct App {
 }
 
 /// Background initialization state
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub enum InitState {
     /// Still loading components
+    #[default]
     Loading,
     /// All components ready
     Ready,
-}
-
-impl Default for InitState {
-    fn default() -> Self {
-        InitState::Loading
-    }
 }
 
 #[derive(Clone, Default)]
@@ -1142,11 +1127,13 @@ impl App {
         }
 
         // Update state when all done
-        if all_done && self.agent_init_rx.is_none() && self.process_init_rx.is_none() {
-            if self.init_state != InitState::Ready {
-                self.init_state = InitState::Ready;
-                self.status_message = None; // Clear "Loading..." message
-            }
+        if all_done
+            && self.agent_init_rx.is_none()
+            && self.process_init_rx.is_none()
+            && self.init_state != InitState::Ready
+        {
+            self.init_state = InitState::Ready;
+            self.status_message = None; // Clear "Loading..." message
         }
     }
 

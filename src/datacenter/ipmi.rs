@@ -72,6 +72,12 @@ pub struct IpmiController {
     pass: Option<String>,
 }
 
+impl Default for IpmiController {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl IpmiController {
     pub fn new() -> Self {
         Self {
@@ -254,7 +260,6 @@ impl IpmiController {
             let parts: Vec<&str> = line.split(':').collect();
             if parts.len() >= 2 {
                 let val = parts[1]
-                    .trim()
                     .split_whitespace()
                     .next()
                     .and_then(|v| v.parse::<f64>().ok());

@@ -2712,7 +2712,7 @@ fn draw_agent(f: &mut Frame, app: &App, area: Rect) {
         // per-frame rebuild during typing / sparkline animation.
         thread_local! {
             static CACHE: std::cell::RefCell<(u64, Vec<Line<'static>>)> =
-                std::cell::RefCell::new((u64::MAX, Vec::new()));
+                const { std::cell::RefCell::new((u64::MAX, Vec::new())) };
         }
         let history_paragraph = CACHE.with(|cell| {
             let mut c = cell.borrow_mut();
@@ -2733,7 +2733,6 @@ fn draw_agent(f: &mut Frame, app: &App, area: Rect) {
             .wrap(ratatui::widgets::Wrap { trim: false });
 
         f.render_widget(history, chunks[1]);
-        return;
     }
 }
 

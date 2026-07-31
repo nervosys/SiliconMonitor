@@ -191,7 +191,7 @@ impl FanInfo {
 
     /// Check if fan is running
     pub fn is_running(&self) -> bool {
-        self.speed_percent > 0.0 || self.rpm.map_or(false, |r| r > 0)
+        self.speed_percent > 0.0 || self.rpm.is_some_and(|r| r > 0)
     }
 
     /// Check if fan is at full speed
@@ -450,7 +450,7 @@ impl FanMonitor {
 
     /// Set fan speed (percentage 0-100)
     pub fn set_speed(&self, fan_name: &str, speed_percent: f32) -> Result<()> {
-        if speed_percent < 0.0 || speed_percent > 100.0 {
+        if !(0.0..=100.0).contains(&speed_percent) {
             return Err(SimonError::InvalidValue(format!(
                 "Speed must be 0-100%, got {}",
                 speed_percent
@@ -464,7 +464,7 @@ impl FanMonitor {
 
         #[cfg(target_os = "windows")]
         {
-            return self.windows_set_fan_speed(fan_name, speed_percent);
+            self.windows_set_fan_speed(fan_name, speed_percent)
         }
 
         #[cfg(not(any(target_os = "linux", target_os = "windows")))]
@@ -909,7 +909,7 @@ impl FanMonitor {
 
         // Try to query Win32_Fan
         if let Ok(com) = COMLibrary::new() {
-            if let Ok(wmi) = WMIConnection::new(com.into()) {
+            if let Ok(wmi) = WMIConnection::new(com) {
                 let fans: Vec<Win32Fan> = wmi.query().unwrap_or_default();
 
                 for wmi_fan in fans {
@@ -961,7 +961,7 @@ impl FanMonitor {
         }
 
         if let Ok(com) = COMLibrary::new() {
-            if let Ok(wmi) = WMIConnection::new(com.into()) {
+            if let Ok(wmi) = WMIConnection::new(com) {
                 // Query CIM_Fan
                 let query = "SELECT * FROM CIM_Fan";
                 if let Ok(fans) = wmi.raw_query::<CimFan>(query) {
@@ -1004,7 +1004,7 @@ impl FanMonitor {
 
         if let Ok(com) = COMLibrary::new() {
             // Connect to root\WMI namespace
-            if let Ok(wmi) = WMIConnection::with_namespace_path("root\\WMI", com.into()) {
+            if let Ok(wmi) = WMIConnection::with_namespace_path("root\\WMI", com) {
                 if let Ok(zones) = wmi.query::<MsAcpiThermalZone>() {
                     for (idx, zone) in zones.iter().enumerate() {
                         let name = zone

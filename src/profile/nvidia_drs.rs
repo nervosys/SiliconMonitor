@@ -191,7 +191,7 @@ fn scan_file(path: &Path) -> Option<ProfileGroup> {
 
 fn looks_like_profile_name(s: &str) -> bool {
     let len = s.chars().count();
-    if len < 4 || len > 80 {
+    if !(4..=80).contains(&len) {
         return false;
     }
     // Profile names are usually mixed case with spaces, e.g. "Cyberpunk 2077".

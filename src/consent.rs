@@ -554,7 +554,7 @@ impl ConsentManager {
 /// Format timestamp as human-readable string
 fn format_timestamp(timestamp: u64) -> String {
     let datetime = chrono::DateTime::from_timestamp(timestamp as i64, 0)
-        .unwrap_or_else(|| chrono::DateTime::UNIX_EPOCH);
+        .unwrap_or(chrono::DateTime::UNIX_EPOCH);
     datetime.format("%Y-%m-%d %H:%M:%S UTC").to_string()
 }
 

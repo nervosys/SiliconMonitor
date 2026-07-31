@@ -297,11 +297,7 @@ impl FleetManager {
         if self.hosts.is_empty() {
             return 100.0;
         }
-        let sum: f64 = self
-            .hosts
-            .values()
-            .map(|h| Self::host_health_score(h))
-            .sum();
+        let sum: f64 = self.hosts.values().map(Self::host_health_score).sum();
         sum / self.hosts.len() as f64
     }
 

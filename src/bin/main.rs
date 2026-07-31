@@ -534,7 +534,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 handle_ai_command(question.as_deref())?;
             }
             AiSubcommand::Manifest { format, output } => {
-                handle_ai_manifest(&format, output.as_ref())?;
+                handle_ai_manifest(format, output.as_ref())?;
             }
             AiSubcommand::Server => {
                 handle_mcp_server()?;
@@ -1389,7 +1389,7 @@ fn print_gpu_info_backend(backend: &simonlib::backend::MonitoringBackend) {
         return;
     }
 
-    for (_idx, (si, di)) in static_info.iter().zip(dynamic_info.iter()).enumerate() {
+    for (si, di) in static_info.iter().zip(dynamic_info.iter()) {
         println!(
             "\n  {} {} ({})",
             "▶".green(),
@@ -2014,13 +2014,13 @@ fn print_process_info(processes: &simonlib::core::process::ProcessStats) {
             println!(
                 "{:<8} {:<12} {:<8} {:<8} {:<8} {:<10.1} {:<10} {:<20}",
                 proc.pid,
-                &proc.user,
-                &proc.gpu,
-                &proc.process_type,
+                proc.user,
+                proc.gpu,
+                proc.process_type,
                 proc.state,
                 proc.cpu_percent,
                 format_size(proc.gpu_memory_kb),
-                &proc.name,
+                proc.name,
             );
         }
     }

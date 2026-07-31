@@ -87,11 +87,12 @@ pub use remote::{RemoteClient, RemoteClientBuilder};
 pub use state::SystemState;
 
 /// AI model size options
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum ModelSize {
     /// 100M parameters - Fastest, basic queries (~50-100ms latency)
     Small,
     /// 500M parameters - Balanced, good reasoning (~100-200ms latency)
+    #[default]
     Medium,
     /// 1B parameters - Best reasoning, slower (~200-500ms latency)
     Large,
@@ -123,12 +124,6 @@ impl ModelSize {
             Self::Medium => "500M params - Balanced speed and reasoning",
             Self::Large => "1B params - Advanced reasoning, slower",
         }
-    }
-}
-
-impl Default for ModelSize {
-    fn default() -> Self {
-        Self::Medium // Balanced choice
     }
 }
 

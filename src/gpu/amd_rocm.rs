@@ -215,12 +215,12 @@ impl Device for AmdGpu {
         let hwmon = self.hwmon_dir.as_ref().ok_or(Error::NotSupported)?;
 
         // Read temperature sensors (in millidegrees, convert to Celsius)
-        let edge = self.read_hwmon_temp(&hwmon, "temp1_input");
-        let junction = self.read_hwmon_temp(&hwmon, "temp2_input");
-        let memory = self.read_hwmon_temp(&hwmon, "temp3_input");
+        let edge = self.read_hwmon_temp(hwmon, "temp1_input");
+        let junction = self.read_hwmon_temp(hwmon, "temp2_input");
+        let memory = self.read_hwmon_temp(hwmon, "temp3_input");
 
         // Read temperature thresholds
-        let thresholds = self.get_temperature_thresholds(&hwmon);
+        let thresholds = self.get_temperature_thresholds(hwmon);
 
         Ok(Temperature {
             edge,

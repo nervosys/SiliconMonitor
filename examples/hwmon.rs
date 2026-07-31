@@ -6,7 +6,7 @@
 //! Run with:
 //!   cargo run --release --features nvidia --example hwmon
 
-use simonlib::hwmon::{HardwareMonitor, HwSensorType, HwType};
+use simonlib::hwmon::{HardwareMonitor, HwSensorType};
 
 fn main() {
     println!("=== Silicon Monitor - Hardware Monitor Example ===\n");

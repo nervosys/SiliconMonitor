@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 /// Silicon Monitor configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Config {
     /// General display options
     pub general: GeneralConfig,
@@ -126,17 +126,6 @@ fn default_chart_metrics() -> Vec<String> {
 
 fn default_history_length() -> u32 {
     60 // 60 seconds
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            general: GeneralConfig::default(),
-            gpu: GpuConfig::default(),
-            process: ProcessConfig::default(),
-            chart: ChartConfig::default(),
-        }
-    }
 }
 
 impl Default for GeneralConfig {

@@ -74,7 +74,7 @@ impl AppleSiliconMonitor {
     fn detect_soc_info() -> Result<SocInfo> {
         // Get CPU brand string
         let output = Command::new("sysctl")
-            .args(&["-n", "machdep.cpu.brand_string"])
+            .args(["-n", "machdep.cpu.brand_string"])
             .output()
             .map_err(|e| Error::CommandExecutionFailed(format!("sysctl: {}", e)))?;
 
@@ -119,7 +119,7 @@ impl AppleSiliconMonitor {
 
     /// Get sysctl value as u32
     fn get_sysctl_value(key: &str) -> Option<u32> {
-        let output = Command::new("sysctl").args(&["-n", key]).output().ok()?;
+        let output = Command::new("sysctl").args(["-n", key]).output().ok()?;
 
         String::from_utf8_lossy(&output.stdout).trim().parse().ok()
     }
@@ -127,7 +127,7 @@ impl AppleSiliconMonitor {
     /// Get GPU core count from system_profiler
     fn get_gpu_cores() -> Option<u32> {
         let output = Command::new("system_profiler")
-            .args(&["-detailLevel", "basic", "SPDisplaysDataType"])
+            .args(["-detailLevel", "basic", "SPDisplaysDataType"])
             .output()
             .ok()?;
 
@@ -148,7 +148,7 @@ impl AppleSiliconMonitor {
         let temp_file = format!("/tmp/simon_powermetrics_{}", std::process::id());
 
         let child = Command::new("sudo")
-            .args(&[
+            .args([
                 "powermetrics",
                 "--samplers",
                 "cpu_power,gpu_power,thermal",
@@ -382,7 +382,7 @@ impl SiliconMonitor for AppleSiliconMonitor {
         let mut controllers = Vec::new();
 
         // Get disk I/O stats from iostat
-        if let Ok(output) = Command::new("iostat").args(&["-d", "-c", "1"]).output() {
+        if let Ok(output) = Command::new("iostat").args(["-d", "-c", "1"]).output() {
             let text = String::from_utf8_lossy(&output.stdout);
             // iostat -d outputs: device, KB/t, tps, MB/s
             for line in text.lines().skip(2) {
@@ -407,23 +407,23 @@ impl SiliconMonitor for AppleSiliconMonitor {
 
         // Thunderbolt controllers via system_profiler
         if let Ok(output) = Command::new("system_profiler")
-            .args(&["-detailLevel", "mini", "SPThunderboltDataType"])
+            .args(["-detailLevel", "mini", "SPThunderboltDataType"])
             .output()
         {
             let text = String::from_utf8_lossy(&output.stdout);
             let mut tb_count = 0u32;
             for line in text.lines() {
-                if line.trim().starts_with("Speed:") || line.trim().contains("Thunderbolt") {
-                    if line.contains("Up to") {
-                        tb_count += 1;
-                        controllers.push(IoController {
-                            controller_type: "Thunderbolt".to_string(),
-                            name: format!("Thunderbolt Port {}", tb_count),
-                            bandwidth_mbps: 5000.0, // TB4 = 40 Gbps
-                            max_bandwidth_mbps: 5000.0,
-                            power_watts: None,
-                        });
-                    }
+                if (line.trim().starts_with("Speed:") || line.trim().contains("Thunderbolt"))
+                    && line.contains("Up to")
+                {
+                    tb_count += 1;
+                    controllers.push(IoController {
+                        controller_type: "Thunderbolt".to_string(),
+                        name: format!("Thunderbolt Port {}", tb_count),
+                        bandwidth_mbps: 5000.0, // TB4 = 40 Gbps
+                        max_bandwidth_mbps: 5000.0,
+                        power_watts: None,
+                    });
                 }
             }
         }
@@ -474,7 +474,7 @@ impl SiliconMonitor for AppleSiliconMonitor {
         }
 
         // Get bandwidth from netstat
-        if let Ok(output) = Command::new("netstat").args(&["-ib"]).output() {
+        if let Ok(output) = Command::new("netstat").args(["-ib"]).output() {
             let text = String::from_utf8_lossy(&output.stdout);
             for line in text.lines().skip(1) {
                 let parts: Vec<&str> = line.split_whitespace().collect();

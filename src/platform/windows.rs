@@ -655,7 +655,7 @@ pub fn read_power_stats() -> Result<PowerStats> {
     };
     // `BatteryStatus` lives in root\WMI, not root\CIMV2, and is absent entirely on
     // desktops and on UPS units attached over USB HID.
-    let Ok(wmi_con) = WMIConnection::with_namespace_path("root\\WMI", com_con.into()) else {
+    let Ok(wmi_con) = WMIConnection::with_namespace_path("root\\WMI", com_con) else {
         return Ok(power_stats);
     };
 
@@ -751,9 +751,7 @@ pub fn read_temperature_stats() -> Result<TemperatureStats> {
 
     // Try to get CPU temperature from Open Hardware Monitor if available
     // OHM exposes sensors via WMI in root\OpenHardwareMonitor namespace
-    if let Ok(ohm_con) =
-        WMIConnection::with_namespace_path("root\\OpenHardwareMonitor", com_con.into())
-    {
+    if let Ok(ohm_con) = WMIConnection::with_namespace_path("root\\OpenHardwareMonitor", com_con) {
         let ohm_sensors: Vec<OhmSensor> = ohm_con
             .raw_query("SELECT Name, SensorType, Value, Parent FROM Sensor WHERE SensorType = 'Temperature'")
             .unwrap_or_default();
@@ -781,9 +779,7 @@ pub fn read_temperature_stats() -> Result<TemperatureStats> {
     }
 
     // Try LibreHardwareMonitor as well (fork of OHM with better modern hardware support)
-    if let Ok(lhm_con) =
-        WMIConnection::with_namespace_path("root\\LibreHardwareMonitor", com_con.into())
-    {
+    if let Ok(lhm_con) = WMIConnection::with_namespace_path("root\\LibreHardwareMonitor", com_con) {
         let lhm_sensors: Vec<OhmSensor> = lhm_con
             .raw_query("SELECT Name, SensorType, Value, Parent FROM Sensor WHERE SensorType = 'Temperature'")
             .unwrap_or_default();
@@ -799,22 +795,19 @@ pub fn read_temperature_stats() -> Result<TemperatureStats> {
             };
 
             // Only add if not already present from OHM
-            if !sensors.contains_key(&sensor_name) {
-                sensors.insert(
-                    sensor_name,
-                    crate::core::temperature::TemperatureSensor {
-                        online: true,
-                        temp: sensor.value,
-                        max: Some(95.0),
-                        crit: Some(105.0),
-                    },
-                );
+            if let std::collections::hash_map::Entry::Vacant(e) = sensors.entry(sensor_name) {
+                e.insert(crate::core::temperature::TemperatureSensor {
+                    online: true,
+                    temp: sensor.value,
+                    max: Some(95.0),
+                    crit: Some(105.0),
+                });
             }
         }
     }
 
     // Try CIMV2 performance counters for thermal zone info (more widely available)
-    if let Ok(cimv2_con) = WMIConnection::with_namespace_path("root\\CIMV2", com_con.into()) {
+    if let Ok(cimv2_con) = WMIConnection::with_namespace_path("root\\CIMV2", com_con) {
         let perf_zones: Vec<PerfThermalZone> = cimv2_con
             .raw_query("SELECT Name, Temperature FROM Win32_PerfFormattedData_Counters_ThermalZoneInformation")
             .unwrap_or_default();
@@ -826,23 +819,20 @@ pub fn read_temperature_stats() -> Result<TemperatureStats> {
             // Only add valid temperatures
             if temp_celsius > 0.0 && temp_celsius < 150.0 {
                 let sensor_name = format!("TZ-{}", zone.name.replace("\\_TZ.", ""));
-                if !sensors.contains_key(&sensor_name) {
-                    sensors.insert(
-                        sensor_name,
-                        crate::core::temperature::TemperatureSensor {
-                            online: true,
-                            temp: temp_celsius,
-                            max: Some(100.0),
-                            crit: Some(105.0),
-                        },
-                    );
-                }
+                sensors
+                    .entry(sensor_name)
+                    .or_insert(crate::core::temperature::TemperatureSensor {
+                        online: true,
+                        temp: temp_celsius,
+                        max: Some(100.0),
+                        crit: Some(105.0),
+                    });
             }
         }
     }
 
     // Try ACPI thermal zones in root\WMI (requires admin, but try anyway)
-    if let Ok(wmi_con) = WMIConnection::with_namespace_path("root\\WMI", com_con.into()) {
+    if let Ok(wmi_con) = WMIConnection::with_namespace_path("root\\WMI", com_con) {
         let thermal_zones: Vec<ThermalZone> = wmi_con
             .raw_query("SELECT InstanceName, CurrentTemperature FROM MSAcpi_ThermalZoneTemperature")
             .unwrap_or_default();

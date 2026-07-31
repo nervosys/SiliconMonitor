@@ -464,7 +464,7 @@ mod tests {
 
     #[test]
     fn test_pressure_analysis() {
-        let pressure = vec![PressureInfo {
+        let pressure = [PressureInfo {
             resource: "cpu".into(),
             some_avg10: 55.0,
             some_avg60: 30.0,
@@ -484,7 +484,7 @@ mod tests {
 
     #[test]
     fn test_runqueue_analysis() {
-        let stats = vec![
+        let stats = [
             CpuSchedStats {
                 cpu: 0,
                 running_ns: 100,

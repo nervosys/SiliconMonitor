@@ -74,9 +74,9 @@ impl FanStats {
         #[cfg(not(target_os = "linux"))]
         {
             let _ = index; // Suppress unused warning
-            return Err(SimonError::UnsupportedPlatform(
+            Err(SimonError::UnsupportedPlatform(
                 "Fan control not yet implemented on Windows".to_string(),
-            ));
+            ))
         }
     }
 
@@ -98,9 +98,9 @@ impl FanStats {
         #[cfg(not(target_os = "linux"))]
         {
             let _ = profile; // Suppress unused warning
-            return Err(SimonError::UnsupportedPlatform(
+            Err(SimonError::UnsupportedPlatform(
                 "Fan profile control only available on Linux Jetson devices".to_string(),
-            ));
+            ))
         }
     }
 }

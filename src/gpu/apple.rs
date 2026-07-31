@@ -39,7 +39,7 @@ impl AppleGpu {
     pub fn detect_gpus() -> Result<Vec<AppleGpu>, Error> {
         // Use system_profiler to get GPU info
         let output = std::process::Command::new("system_profiler")
-            .args(&["-detailLevel", "basic", "SPDisplaysDataType"])
+            .args(["-detailLevel", "basic", "SPDisplaysDataType"])
             .output()
             .map_err(|e| Error::CommandExecutionFailed(format!("system_profiler: {}", e)))?;
 
@@ -58,7 +58,7 @@ impl AppleGpu {
 
         // Get SOC name via sysctl
         let output = std::process::Command::new("sysctl")
-            .args(&["-n", "machdep.cpu.brand_string"])
+            .args(["-n", "machdep.cpu.brand_string"])
             .output()
             .map_err(|e| Error::CommandExecutionFailed(format!("sysctl: {}", e)))?;
 

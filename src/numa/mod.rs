@@ -145,7 +145,7 @@ impl NumaMonitor {
         let total_memory: u64 = self.nodes.iter().map(|n| n.memory_total_bytes).sum();
 
         let is_numa =
-            self.nodes.len() > 1 || self.distance_matrix.as_ref().map_or(false, |d| d.is_numa());
+            self.nodes.len() > 1 || self.distance_matrix.as_ref().is_some_and(|d| d.is_numa());
 
         let max_distance = self
             .distance_matrix

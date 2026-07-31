@@ -3,7 +3,7 @@
 //! Demonstrates temperature threshold detection and status monitoring
 //! for NVIDIA, AMD, and Intel GPUs.
 
-use simonlib::gpu::{GpuCollection, TemperatureStatus};
+use simonlib::gpu::GpuCollection;
 use simonlib::SiliconMonitor;
 use std::thread;
 use std::time::Duration;
@@ -13,7 +13,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("============================================================\n");
 
     // Initialize monitor
-    let monitor = SiliconMonitor::new()?;
+    let _monitor = SiliconMonitor::new()?;
 
     // Discover all GPUs
     let gpus = GpuCollection::auto_detect()?;

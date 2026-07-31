@@ -417,7 +417,7 @@ impl EventManager {
     pub fn emit(&self, event: SystemEvent) {
         // Notify subscribers
         if let Ok(subs) = self.subscribers.read() {
-            for (_, (filter, callback)) in subs.iter() {
+            for (filter, callback) in subs.values() {
                 if filter.matches(&event) {
                     callback(&event);
                 }
@@ -787,7 +787,7 @@ impl AlertChecker {
                             } else {
                                 event_types::power::LOW_BATTERY
                             },
-                            &format!("Battery at {:.1}% (threshold: {:.1}%)", percent, threshold),
+                            format!("Battery at {:.1}% (threshold: {:.1}%)", percent, threshold),
                             "battery",
                         )
                         .with_metadata("battery_percent", percent)

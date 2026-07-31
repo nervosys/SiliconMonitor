@@ -82,7 +82,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  ✓ Complete audit trail of your decisions");
     println!("  ✓ Automatic prevention in sandboxed environments\n");
 
-    let mut manager = ConsentManager::load().unwrap_or_else(|_| {
+    let manager = ConsentManager::load().unwrap_or_else(|_| {
         println!("Note: No existing consent configuration found.");
         println!("      This is a demonstration - consent would be requested on first run.\n");
         // Create a default manager for demonstration

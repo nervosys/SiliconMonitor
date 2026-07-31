@@ -401,7 +401,7 @@ impl MetricCollector {
             for (name, series) in metrics.iter() {
                 if let Some(value) = series.latest() {
                     // Convert metric name to Prometheus format
-                    let prom_name = name.replace('.', "_").replace('-', "_");
+                    let prom_name = name.replace(['.', '-'], "_");
                     output.push_str(&format!("{} {}\n", prom_name, value));
                 }
             }

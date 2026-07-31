@@ -461,7 +461,7 @@ mod tests {
         let info = detector.detect();
 
         // Test should work regardless of environment
-        assert!(info.summary().len() > 0);
+        assert!(!info.summary().is_empty());
     }
 
     #[test]

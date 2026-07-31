@@ -113,7 +113,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// Process category for smart classification
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 pub enum ProcessCategory {
     /// System kernel and core OS processes
     System,
@@ -148,6 +148,7 @@ pub enum ProcessCategory {
     /// User applications (uncategorized)
     Application,
     /// Unknown/unclassified processes
+    #[default]
     Unknown,
 }
 
@@ -749,12 +750,6 @@ impl ProcessCategory {
 impl std::fmt::Display for ProcessCategory {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.display_name())
-    }
-}
-
-impl Default for ProcessCategory {
-    fn default() -> Self {
-        Self::Unknown
     }
 }
 

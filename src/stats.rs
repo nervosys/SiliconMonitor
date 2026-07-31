@@ -382,7 +382,7 @@ fn read_fan_stats() -> std::collections::HashMap<String, crate::core::fan::FanIn
 
     // Try WMI fan class
     if let Ok(com_con) = COMLibrary::new() {
-        if let Ok(wmi_con) = WMIConnection::with_namespace_path("root\\CIMV2", com_con.into()) {
+        if let Ok(wmi_con) = WMIConnection::with_namespace_path("root\\CIMV2", com_con) {
             // Try Win32_Fan class (may not be populated on all systems)
             let wmi_fans: Vec<Win32Fan> = wmi_con
                 .raw_query("SELECT Name, ActiveCooling FROM Win32_Fan")
@@ -407,7 +407,7 @@ fn read_fan_stats() -> std::collections::HashMap<String, crate::core::fan::FanIn
 
         // Try OpenHardwareMonitor/LibreHardwareMonitor for detailed fan info
         if let Ok(lhm_con) =
-            WMIConnection::with_namespace_path("root\\LibreHardwareMonitor", com_con.into())
+            WMIConnection::with_namespace_path("root\\LibreHardwareMonitor", com_con)
         {
             #[derive(Deserialize, Debug)]
             #[serde(rename_all = "PascalCase")]
@@ -428,7 +428,7 @@ fn read_fan_stats() -> std::collections::HashMap<String, crate::core::fan::FanIn
             for fan in lhm_fans {
                 let name = format!(
                     "{}-{}",
-                    fan.parent.split('/').last().unwrap_or("MB"),
+                    fan.parent.split('/').next_back().unwrap_or("MB"),
                     fan.name
                 );
                 fans.insert(

@@ -7,7 +7,7 @@
 
 use simonlib::{
     check_connectivity, check_port, common_ports, dns_lookup, get_service_name, latency_test, ping,
-    reverse_dns, scan_port_range, scan_ports, traceroute, PingResult, PortStatus, TracerouteResult,
+    reverse_dns, scan_ports, traceroute, PingResult, PortStatus, TracerouteResult,
 };
 use std::time::Duration;
 
@@ -51,7 +51,7 @@ fn demo_ping(target: &str) {
     println!("│  1. PING - Connectivity Test                                        │");
     println!("└─────────────────────────────────────────────────────────────────────┘");
 
-    print!("Pinging {} with 4 ICMP echo requests...\n", target);
+    println!("Pinging {} with 4 ICMP echo requests...", target);
 
     match ping(target, 4) {
         Ok(result) => {
@@ -185,10 +185,7 @@ fn print_traceroute_result(result: &TracerouteResult) {
         result.target_ip.as_deref().unwrap_or("unknown")
     );
     println!("  over a maximum of {} hops:\n", result.total_hops);
-    println!(
-        "  {:>3}  {:>15}  {:>12}  {}",
-        "Hop", "Address", "RTT", "Hostname"
-    );
+    println!("  {:>3}  {:>15}  {:>12}  Hostname", "Hop", "Address", "RTT");
     println!("  {:─>3}  {:─>15}  {:─>12}  {:─>20}", "", "", "", "");
 
     for hop in &result.hops {
@@ -230,8 +227,8 @@ fn demo_port_scan(target: &str) {
     println!("  (Using TCP connect scan with 2s timeout)\n");
 
     println!(
-        "  {:>6}  {:>10}  {:>12}  {}",
-        "PORT", "STATE", "CONNECT MS", "SERVICE"
+        "  {:>6}  {:>10}  {:>12}  SERVICE",
+        "PORT", "STATE", "CONNECT MS"
     );
     println!("  {:─>6}  {:─>10}  {:─>12}  {:─>15}", "", "", "", "");
 
@@ -308,7 +305,7 @@ fn demo_service_names() {
     println!("└─────────────────────────────────────────────────────────────────────┘");
 
     println!("  Common ports recognized by simon:\n");
-    println!("  {:>6}  {}", "PORT", "SERVICE");
+    println!("  {:>6}  SERVICE", "PORT");
     println!("  {:─>6}  {:─>20}", "", "");
 
     let well_known = [

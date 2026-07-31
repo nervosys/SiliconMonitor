@@ -597,11 +597,11 @@ pub fn get_system_info() -> Result<SystemInfo, Error> {
             .and_then(|b| b.smbios_bios_version.clone()),
         release_date: bios_info.as_ref().and_then(|b| {
             // WMI date format: YYYYMMDDHHMMSS.mmmmmm+UUU
-            b.release_date.as_ref().and_then(|d| {
+            b.release_date.as_ref().map(|d| {
                 if d.len() >= 8 {
-                    Some(format!("{}-{}-{}", &d[0..4], &d[4..6], &d[6..8]))
+                    format!("{}-{}-{}", &d[0..4], &d[4..6], &d[6..8])
                 } else {
-                    Some(d.clone())
+                    d.clone()
                 }
             })
         }),
@@ -763,11 +763,11 @@ pub fn get_driver_versions() -> Result<Vec<DriverInfo>, Error> {
                         };
 
                         // Parse WMI date format to readable format
-                        let date = driver.driver_date.and_then(|d| {
+                        let date = driver.driver_date.map(|d| {
                             if d.len() >= 8 {
-                                Some(format!("{}-{}-{}", &d[0..4], &d[4..6], &d[6..8]))
+                                format!("{}-{}-{}", &d[0..4], &d[4..6], &d[6..8])
                             } else {
-                                Some(d)
+                                d
                             }
                         });
 
@@ -809,11 +809,11 @@ pub fn get_driver_versions() -> Result<Vec<DriverInfo>, Error> {
                     driver_type: DriverType::Gpu,
                     description: None,
                     vendor: driver.manufacturer,
-                    date: driver.driver_date.and_then(|d| {
+                    date: driver.driver_date.map(|d| {
                         if d.len() >= 8 {
-                            Some(format!("{}-{}-{}", &d[0..4], &d[4..6], &d[6..8]))
+                            format!("{}-{}-{}", &d[0..4], &d[4..6], &d[6..8])
                         } else {
-                            Some(d)
+                            d
                         }
                     }),
                 });
@@ -996,10 +996,8 @@ pub fn get_system_temperatures() -> Result<SystemTemperatures, Error> {
             (HwSensorType::Temperature, HwType::Storage) => {
                 storage_temps.push((sensor.name.clone(), sensor.value));
             }
-            (HwSensorType::Temperature, HwType::Motherboard) => {
-                if mb_temp.is_none() {
-                    mb_temp = Some(sensor.value);
-                }
+            (HwSensorType::Temperature, HwType::Motherboard) if mb_temp.is_none() => {
+                mb_temp = Some(sensor.value);
             }
             _ => {}
         }
@@ -1037,17 +1035,14 @@ pub fn get_system_temperatures() -> Result<SystemTemperatures, Error> {
                 SensorType::Storage => {
                     storage_temps.push((sensor.label.clone(), sensor.temperature));
                 }
-                SensorType::Other => {
+                SensorType::Other
                     // Check for motherboard sensor
-                    if sensor.label.to_lowercase().contains("system")
+                    if (sensor.label.to_lowercase().contains("system")
                         || sensor.label.to_lowercase().contains("motherboard")
-                        || sensor.label.to_lowercase().contains("mainboard")
-                    {
-                        if mb_temp.is_none() {
+                        || sensor.label.to_lowercase().contains("mainboard"))
+                        && mb_temp.is_none() => {
                             mb_temp = Some(sensor.temperature);
                         }
-                    }
-                }
                 _ => {}
             }
         }

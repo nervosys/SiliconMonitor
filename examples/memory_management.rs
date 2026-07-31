@@ -147,8 +147,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n🔝 Top Memory Consumers");
     println!("────────────────────────────────────────────────────────────");
     println!(
-        "   {:>6}  {:>10}  {:>10}  {:>6}  {}",
-        "PID", "RSS", "Virtual", "Mem%", "Name"
+        "   {:>6}  {:>10}  {:>10}  {:>6}  Name",
+        "PID", "RSS", "Virtual", "Mem%"
     );
     println!("   {}", "─".repeat(54));
 

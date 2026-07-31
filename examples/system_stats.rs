@@ -5,7 +5,7 @@
 //!
 //! Run with: cargo run --example system_stats
 
-use simonlib::{CpuTime, LoadAverage, SystemStats, VmStats};
+use simonlib::SystemStats;
 use std::thread;
 use std::time::Duration;
 

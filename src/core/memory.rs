@@ -116,7 +116,7 @@ impl MemoryStats {
 
 impl Default for MemoryStats {
     fn default() -> Self {
-        Self::new().unwrap_or_else(|_| Self {
+        Self::new().unwrap_or(Self {
             ram: RamInfo {
                 total: 0,
                 used: 0,

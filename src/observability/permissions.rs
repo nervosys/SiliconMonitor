@@ -236,8 +236,10 @@ impl std::str::FromStr for Capability {
 /// Permission scope within a capability
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum Scope {
     /// Read access only
+    #[default]
     Read,
     /// Write/control access
     Write,
@@ -245,12 +247,6 @@ pub enum Scope {
     All,
     /// Specific resource (e.g., "gpu:0", "process:1234")
     Resource(String),
-}
-
-impl Default for Scope {
-    fn default() -> Self {
-        Scope::Read
-    }
 }
 
 /// A single permission grant

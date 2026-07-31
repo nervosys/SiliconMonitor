@@ -36,7 +36,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 process.user.as_deref().unwrap_or("unknown"),
                 process.total_gpu_memory_bytes / 1024 / 1024,
                 process.cpu_percent,
-                &process.name
+                process.name
             );
         }
     } else {
@@ -62,7 +62,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             process.user.as_deref().unwrap_or("unknown"),
             process.cpu_percent,
             process.memory_bytes / 1024 / 1024,
-            &process.name
+            process.name
         );
     }
 
