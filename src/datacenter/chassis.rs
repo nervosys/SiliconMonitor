@@ -154,26 +154,28 @@ impl ChassisInfo {
 
     #[cfg(target_os = "windows")]
     fn detect_windows() -> Result<Self, super::DatacenterError> {
-        let wmic = |class: &str, prop: &str| -> String {
-            std::process::Command::new("wmic")
-                .args([class, "get", prop, "/value"])
-                .output()
-                .ok()
-                .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
-                .and_then(|s| {
-                    s.lines()
-                        .find(|l| l.contains('='))
-                        .map(|l| l.split('=').nth(1).unwrap_or("").trim().to_string())
-                })
-                .unwrap_or_default()
+        // SMBIOS system identity as the firmware published it at boot. This used to
+        // shell out to `wmic`, which Microsoft removed in Windows 11 24H2 — the
+        // subprocess failed to spawn and every field came back an empty string, so a
+        // named chassis was indistinguishable from an unnamed one.
+        const BIOS_KEY: &str = r"HARDWARE\DESCRIPTION\System\BIOS";
+        let smbios = |value: &str| -> String {
+            crate::platform::windows::read_registry_string(BIOS_KEY, value).unwrap_or_default()
         };
+
+        // The registry carries system make and model but not the serial, which lives
+        // only in SMBIOS as WMI surfaces it.
+        let wmi_info = crate::motherboard::get_system_info().ok();
 
         Ok(ChassisInfo {
             chassis_type: ChassisType::Unknown,
             form_factor: FormFactor::Unknown,
-            manufacturer: wmic("ComputerSystem", "Manufacturer"),
-            product_name: wmic("ComputerSystem", "Model"),
-            serial_number: Some(wmic("BIOS", "SerialNumber")).filter(|s| !s.is_empty()),
+            manufacturer: smbios("SystemManufacturer"),
+            product_name: smbios("SystemProductName"),
+            serial_number: wmi_info
+                .as_ref()
+                .and_then(|i| i.serial_number.clone())
+                .filter(|s| !s.trim().is_empty()),
             asset_tag: None,
             version: None,
             sku: None,

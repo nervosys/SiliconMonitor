@@ -36,10 +36,11 @@ pub fn read_cpu_stats() -> Result<CpuStats> {
     // Get system times for overall CPU utilization
     let (user_percent, system_percent, idle_percent) = get_system_cpu_utilization()?;
 
-    // Cache CPU model name and frequency — these never change at runtime
-    // but are expensive (subprocess spawn via wmic).  Read once per call.
+    // Model name is fixed for the life of the process and cached behind a OnceLock.
+    // Clocks are not: each core boosts and parks independently, so they are sampled
+    // per call and assigned per core rather than broadcast from core 0.
     let model = get_cpu_model_name();
-    let frequency = get_cpu_frequency();
+    let power = query_processor_power(cpu_count);
 
     // Real per-processor times. Falls back to `None` if the query fails, which
     // consumers render as "unavailable" — deliberately not the system average.
@@ -62,7 +63,7 @@ pub fn read_cpu_stats() -> Result<CpuStats> {
             id: cpu_id,
             online: true,
             governor: "windows".to_string(),
-            frequency: frequency.clone(),
+            frequency: get_cpu_frequency(power.as_ref(), cpu_id),
             user: core_user,
             nice: Some(0.0), // Windows doesn't have nice
             system: core_system,
@@ -305,53 +306,111 @@ fn filetime_to_u64(ft: &windows::Win32::Foundation::FILETIME) -> u64 {
     ((ft.dwHighDateTime as u64) << 32) | (ft.dwLowDateTime as u64)
 }
 
-/// Get CPU frequency (approximate from registry or processor info)
-fn get_cpu_frequency() -> Option<CpuFrequency> {
-    use std::process::Command;
-
-    // Try to get CPU frequency from wmic
-    let output = Command::new("wmic")
-        .args(["cpu", "get", "CurrentClockSpeed,MaxClockSpeed"])
-        .output()
-        .ok()?;
-
-    let text = String::from_utf8_lossy(&output.stdout);
-    let lines: Vec<&str> = text.lines().collect();
-
-    if lines.len() >= 2 {
-        let values: Vec<&str> = lines[1].split_whitespace().collect();
-        if values.len() >= 2 {
-            let current = values[0].parse::<u32>().unwrap_or(0);
-            let max = values[1].parse::<u32>().unwrap_or(current);
-            return Some(CpuFrequency {
-                current,
-                min: 0, // Windows doesn't easily provide min freq
-                max,
-            });
-        }
-    }
-
-    None
+/// One entry of the array `CallNtPowerInformation(ProcessorInformation)` writes.
+///
+/// Mirrors `PROCESSOR_POWER_INFORMATION`. `CurrentMhz` is the live clock, which is
+/// the only reason this call is worth making — the registry's `~MHz` is the boot-time
+/// nominal and never moves.
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+struct ProcessorPowerInformation {
+    number: u32,
+    max_mhz: u32,
+    current_mhz: u32,
+    mhz_limit: u32,
+    max_idle_state: u32,
+    current_idle_state: u32,
 }
 
-/// Get CPU model name from registry
-fn get_cpu_model_name() -> String {
-    use std::process::Command;
+/// `ProcessorInformation` power information level.
+const PROCESSOR_INFORMATION_LEVEL: i32 = 11;
 
-    let output = Command::new("wmic")
-        .args(["cpu", "get", "Name"])
-        .output()
-        .ok();
+/// Read per-processor clocks.
+///
+/// Returns one entry per logical processor, or `None` if the query fails — callers
+/// render that as "unavailable" rather than substituting a nominal figure.
+fn query_processor_power(cpu_count: usize) -> Option<Vec<ProcessorPowerInformation>> {
+    use windows::Win32::System::Power::CallNtPowerInformation;
 
-    if let Some(out) = output {
-        let text = String::from_utf8_lossy(&out.stdout);
-        let lines: Vec<&str> = text.lines().collect();
-        if lines.len() >= 2 {
-            return lines[1].trim().to_string();
-        }
+    if cpu_count == 0 {
+        return None;
     }
 
-    "Unknown CPU".to_string()
+    let mut buffer: Vec<ProcessorPowerInformation> =
+        vec![ProcessorPowerInformation::default(); cpu_count];
+    let bytes = std::mem::size_of_val(buffer.as_slice()) as u32;
+
+    let status = unsafe {
+        CallNtPowerInformation(
+            windows::Win32::System::Power::POWER_INFORMATION_LEVEL(PROCESSOR_INFORMATION_LEVEL),
+            None,
+            0,
+            Some(buffer.as_mut_ptr() as *mut core::ffi::c_void),
+            bytes,
+        )
+    };
+
+    status.ok().ok().map(|_| buffer)
+}
+
+/// Get CPU frequency for a specific logical processor.
+///
+/// Reads `CallNtPowerInformation` rather than shelling out to `wmic`, which Microsoft
+/// removed in Windows 11 24H2 — on any current build the subprocess simply failed to
+/// spawn, so this returned `None` and the frontends printed "0 MHz" as if measured.
+fn get_cpu_frequency(
+    power: Option<&Vec<ProcessorPowerInformation>>,
+    index: usize,
+) -> Option<CpuFrequency> {
+    let entry = power?.get(index)?;
+    if entry.current_mhz == 0 && entry.max_mhz == 0 {
+        return None;
+    }
+    Some(CpuFrequency {
+        current: entry.current_mhz,
+        // No Win32 API reports a minimum operating frequency; leaving it at the
+        // measured current would claim a floor that was never read.
+        min: 0,
+        max: entry.max_mhz,
+    })
+}
+
+/// Get CPU model name from the registry.
+///
+/// `HKLM\HARDWARE\DESCRIPTION\System\CentralProcessor\0\ProcessorNameString` is what
+/// the firmware published at boot — the same string WMI reports, without the COM
+/// connection or the (now absent) `wmic` subprocess.
+fn get_cpu_model_name() -> String {
+    static MODEL: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    MODEL
+        .get_or_init(|| {
+            read_registry_string(
+                r"HARDWARE\DESCRIPTION\System\CentralProcessor\0",
+                "ProcessorNameString",
+            )
+            .unwrap_or_else(|| "Unknown CPU".to_string())
+        })
+        .clone()
+}
+
+/// Read one `REG_SZ` value from `HKEY_LOCAL_MACHINE`, trimmed.
+///
+/// Returns `None` when the key, the value, or a non-empty string is missing, so
+/// callers can distinguish "not published by this firmware" from an empty reading.
+pub(crate) fn read_registry_string(subkey: &str, value: &str) -> Option<String> {
+    use winreg::enums::HKEY_LOCAL_MACHINE;
+    use winreg::RegKey;
+
+    let key = RegKey::predef(HKEY_LOCAL_MACHINE)
+        .open_subkey(subkey)
+        .ok()?;
+    let raw: String = key.get_value(value).ok()?;
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
 }
 
 /// Read memory statistics on Windows
@@ -762,26 +821,12 @@ pub fn read_temperature_stats() -> Result<TemperatureStats> {
 }
 
 pub fn detect_platform() -> Result<BoardInfo> {
-    use std::process::Command;
-
-    // Get manufacturer and model from wmic
-    let manufacturer = Command::new("wmic")
-        .args(["baseboard", "get", "Manufacturer"])
-        .output()
-        .ok()
-        .and_then(|o| {
-            let text = String::from_utf8_lossy(&o.stdout);
-            text.lines().nth(1).map(|s| s.trim().to_string())
-        });
-
-    let model = Command::new("wmic")
-        .args(["baseboard", "get", "Product"])
-        .output()
-        .ok()
-        .and_then(|o| {
-            let text = String::from_utf8_lossy(&o.stdout);
-            text.lines().nth(1).map(|s| s.trim().to_string())
-        });
+    // SMBIOS baseboard fields, as the firmware published them at boot. Formerly read
+    // by shelling out to `wmic baseboard`, which no longer exists on Windows 11 24H2
+    // and later — every board there reported itself as "Unknown".
+    const BIOS_KEY: &str = r"HARDWARE\DESCRIPTION\System\BIOS";
+    let manufacturer = read_registry_string(BIOS_KEY, "BaseBoardManufacturer");
+    let model = read_registry_string(BIOS_KEY, "BaseBoardProduct");
 
     Ok(BoardInfo {
         platform: PlatformInfo {

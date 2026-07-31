@@ -767,34 +767,55 @@ impl MemoryMonitor {
         Ok(())
     }
 
+    /// Read configured pagefile paths from the Memory Management registry key.
+    ///
+    /// Returns `None` when the key or value is absent, and an empty vector when the
+    /// machine is configured with no pagefile at all — a real state worth
+    /// distinguishing from a failed read.
+    #[cfg(windows)]
+    fn read_pagefile_paths() -> Option<Vec<String>> {
+        use winreg::enums::HKEY_LOCAL_MACHINE;
+        use winreg::RegKey;
+
+        let key = RegKey::predef(HKEY_LOCAL_MACHINE)
+            .open_subkey(r"SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management")
+            .ok()?;
+        let entries: Vec<String> = key.get_value("PagingFiles").ok()?;
+
+        Some(
+            entries
+                .iter()
+                .filter_map(|entry| entry.split_whitespace().next())
+                .filter(|path| !path.is_empty())
+                .map(|path| path.to_string())
+                .collect(),
+        )
+    }
+
     #[cfg(windows)]
     fn windows_read_pagefile_devices(&mut self) {
         use std::process::Command;
 
         self.swap.devices.clear();
 
-        // Use wmic to get pagefile info
-        let output = Command::new("wmic")
-            .args(["pagefile", "list", "/format:csv"])
-            .output();
-
-        if let Ok(output) = output {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            for line in stdout.lines().skip(1) {
-                let parts: Vec<&str> = line.split(',').collect();
-                if parts.len() >= 3 {
-                    let name = parts.get(1).unwrap_or(&"").to_string();
-                    if !name.is_empty() {
-                        self.swap.devices.push(SwapDevice {
-                            path: name,
-                            swap_type: SwapType::File,
-                            total_bytes: self.swap.total,
-                            used_bytes: self.swap.used,
-                            priority: 0,
-                            active: true,
-                        });
-                    }
-                }
+        // Configured pagefile paths, from the Memory Management key the kernel reads
+        // at boot. This was a `wmic pagefile list` subprocess until Windows 11 24H2
+        // removed the tool; every call then fell through to the PowerShell path
+        // below, paying a ~400 ms shell spawn for data one registry read supplies.
+        //
+        // Values look like "?:\pagefile.sys 0 0" (a system-managed file) or
+        // "C:\pagefile.sys 1024 4096"; only the path is taken, since the sizes here
+        // are the configured limits, not the current usage reported above.
+        if let Some(paths) = Self::read_pagefile_paths() {
+            for path in paths {
+                self.swap.devices.push(SwapDevice {
+                    path,
+                    swap_type: SwapType::File,
+                    total_bytes: self.swap.total,
+                    used_bytes: self.swap.used,
+                    priority: 0,
+                    active: true,
+                });
             }
         }
 

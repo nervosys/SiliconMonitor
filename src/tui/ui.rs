@@ -137,6 +137,30 @@ fn safe_percent(value: f32) -> u16 {
     }
 }
 
+/// Render a measured clock, or an empty string when nothing was measured.
+///
+/// The `sep` prefix is included only alongside a real reading so the separator does
+/// not dangle. Previously every one of these sites was `unwrap_or(0)`, which printed
+/// "0 MHz" — indistinguishable from a genuinely stalled core — for a value the
+/// platform had simply not reported.
+fn opt_mhz(freq: Option<u64>, sep: &str) -> String {
+    match freq {
+        Some(mhz) => format!("{sep}{mhz} MHz"),
+        None => String::new(),
+    }
+}
+
+/// Render a measured temperature, or an empty string when nothing was measured.
+///
+/// Same reasoning as [`opt_mhz`]: "0°C" is a plausible reading, not an obvious
+/// placeholder, so an unmeasured sensor must be omitted rather than zeroed.
+fn opt_celsius(temp: Option<f32>, sep: &str) -> String {
+    match temp {
+        Some(c) => format!("{sep}{c:.0}°C"),
+        None => String::new(),
+    }
+}
+
 /// Get trend indicator arrow based on value change
 /// Returns (arrow, color) tuple
 fn trend_indicator(current: f32, previous: f32) -> (&'static str, Color) {
@@ -361,11 +385,11 @@ fn draw_cpu_tab(f: &mut Frame, app: &App, area: Rect) {
         Span::styled("Name: ", Style::default().fg(glances_colors::CPU_TITLE)),
         Span::raw(&app.cpu_info.name),
         Span::raw(format!(
-            " │ {} cores/{} threads │ {} MHz │ {:.0}°C",
+            " │ {} cores/{} threads{}{}",
             app.cpu_info.cores,
             app.cpu_info.threads,
-            app.cpu_info.frequency.unwrap_or(0),
-            app.cpu_info.temperature.unwrap_or(0.0),
+            opt_mhz(app.cpu_info.frequency, " │ "),
+            opt_celsius(app.cpu_info.temperature, " │ "),
         )),
     ])];
 
@@ -976,12 +1000,12 @@ fn draw_cpu_bar(f: &mut Frame, app: &App, area: Rect) {
     };
 
     let cpu_label = format!(
-        "CPU {} {:.0}% │ {} cores @ {} MHz │ {:.0}°C {}",
+        "CPU {} {:.0}% │ {} cores{}{} {}",
         trend_arrow,
         app.cpu_info.utilization,
         app.cpu_info.cores,
-        app.cpu_info.frequency.unwrap_or(0),
-        app.cpu_info.temperature.unwrap_or(0.0),
+        opt_mhz(app.cpu_info.frequency, " @ "),
+        opt_celsius(app.cpu_info.temperature, " │ "),
         per_core_display
     );
 
@@ -1242,11 +1266,13 @@ fn draw_cpu_graph(f: &mut Frame, app: &App, area: Rect) {
         .split(area);
 
     // CPU info
-    let cpu_text = vec![
+    let mut cpu_text = vec![
         Line::from(format!("CPU: {:.0}%", app.cpu_info.utilization)),
         Line::from(format!("{} cores", app.cpu_info.cores,)),
-        Line::from(format!("@ {} MHz", app.cpu_info.frequency.unwrap_or(0))),
     ];
+    if let Some(mhz) = app.cpu_info.frequency {
+        cpu_text.push(Line::from(format!("@ {mhz} MHz")));
+    }
     let cpu_info = Paragraph::new(cpu_text)
         .block(Block::default().borders(Borders::ALL).title("CPU"))
         .style(Style::default().fg(Color::White));
@@ -2238,10 +2264,10 @@ fn draw_overview(f: &mut Frame, app: &App, area: Rect) {
         )
         .percent(safe_percent(app.cpu_info.utilization))
         .label(format!(
-            "{:.1}% | {} cores | {:.0}°C",
+            "{:.1}% | {} cores{}",
             app.cpu_info.utilization,
             app.cpu_info.cores,
-            app.cpu_info.temperature.unwrap_or(0.0)
+            opt_celsius(app.cpu_info.temperature, " | ")
         ));
 
     f.render_widget(cpu_gauge, chunks[0]);
@@ -2309,22 +2335,24 @@ fn draw_cpu(f: &mut Frame, app: &App, area: Rect) {
         .split(area);
 
     // CPU Info
-    let info_text = vec![
+    let mut info_text = vec![
         Line::from(format!("Name: {}", app.cpu_info.name)),
         Line::from(format!(
             "Cores: {} ({} threads)",
             app.cpu_info.cores, app.cpu_info.threads
         )),
         Line::from(format!("Utilization: {:.1}%", app.cpu_info.utilization)),
-        Line::from(format!(
-            "Temperature: {:.1}°C",
-            app.cpu_info.temperature.unwrap_or(0.0)
-        )),
-        Line::from(format!(
-            "Frequency: {} MHz",
-            app.cpu_info.frequency.unwrap_or(0)
-        )),
     ];
+    // A detail pane is the one place worth naming the absence: "not measured" tells
+    // the reader the sensor was queried, where an omitted line alone would not.
+    info_text.push(Line::from(match app.cpu_info.temperature {
+        Some(c) => format!("Temperature: {c:.1}°C"),
+        None => "Temperature: not measured".to_string(),
+    }));
+    info_text.push(Line::from(match app.cpu_info.frequency {
+        Some(mhz) => format!("Frequency: {mhz} MHz"),
+        None => "Frequency: not measured".to_string(),
+    }));
 
     let info = Paragraph::new(info_text)
         .block(
@@ -3272,4 +3300,40 @@ fn draw_profile_deviations_overlay(f: &mut Frame, app: &App, area: Rect) {
             .title(" Apply audit log (tail) "),
     );
     f.render_widget(audit_para, chunks[1]);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn absent_readings_render_as_nothing_not_as_zero() {
+        // A missing sensor and a genuinely idle one must not produce the same text.
+        // Before these helpers every site was `unwrap_or(0)`, so a CPU whose
+        // frequency the platform never reported was indistinguishable from a core
+        // parked at 0 MHz — and on Windows 11 24H2 that was every CPU, because the
+        // `wmic` subprocess the reader depended on no longer exists.
+        assert_eq!(opt_mhz(None, " @ "), "");
+        assert_eq!(opt_celsius(None, " │ "), "");
+
+        assert_eq!(opt_mhz(Some(4400), " @ "), " @ 4400 MHz");
+        assert_eq!(opt_celsius(Some(61.4), " │ "), " │ 61°C");
+
+        // A measured zero is still a measurement and must be shown.
+        assert_eq!(opt_mhz(Some(0), " @ "), " @ 0 MHz");
+        assert_eq!(opt_celsius(Some(0.0), " │ "), " │ 0°C");
+    }
+
+    #[test]
+    fn separators_do_not_dangle_when_a_reading_is_absent() {
+        // The separator belongs to the value, so omitting the value must omit it
+        // too — otherwise the header renders "24 cores @ │".
+        let label = format!(
+            "{} cores{}{}",
+            24,
+            opt_mhz(None, " @ "),
+            opt_celsius(None, " │ ")
+        );
+        assert_eq!(label, "24 cores");
+    }
 }

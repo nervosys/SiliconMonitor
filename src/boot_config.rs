@@ -542,15 +542,26 @@ impl BootMonitor {
             }
         }
 
-        // Get boot device
-        let output = Command::new("wmic")
-            .args(["os", "get", "SystemDevice", "/value"])
-            .output();
+        // Get boot device.
+        //
+        // Was `wmic os get SystemDevice`, which cannot run on Windows 11 24H2 and
+        // later — Microsoft removed the tool, so this silently left `boot_device` at
+        // `None` on every current build. `GetSystemDirectoryW` is a plain Win32 call
+        // and needs no subprocess.
+        {
+            use windows::Win32::System::SystemInformation::GetSystemWindowsDirectoryW;
 
-        if let Ok(output) = output {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            if let Some(line) = stdout.lines().find(|l| l.starts_with("SystemDevice=")) {
-                self.boot_info.boot_device = Some(line.replace("SystemDevice=", ""));
+            let mut buffer = [0u16; 260];
+            let len = unsafe { GetSystemWindowsDirectoryW(Some(&mut buffer)) } as usize;
+            if len > 0 && len <= buffer.len() {
+                let dir = String::from_utf16_lossy(&buffer[..len]);
+                // "C:\Windows" -> "C:"; anything without a drive letter (a UNC boot,
+                // for instance) is left unreported rather than guessed at.
+                if let Some((drive, _)) = dir.split_once('\\') {
+                    if drive.ends_with(':') {
+                        self.boot_info.boot_device = Some(drive.to_string());
+                    }
+                }
             }
         }
 

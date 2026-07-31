@@ -1052,9 +1052,34 @@ fn print_gpu_info(gpus: &std::collections::HashMap<String, simonlib::core::gpu::
     }
 }
 
+/// Print the CPU's model and clock, skipping either if it was not measured.
+///
+/// Neither line appeared at all while the Windows reader shelled out to `wmic`,
+/// because on any build since 11 24H2 the tool is gone and there was nothing real to
+/// print. Both are read from the registry and `CallNtPowerInformation` now.
+#[cfg(feature = "cli")]
+fn print_cpu_identity(cpu: &simonlib::core::cpu::CpuStats) {
+    let Some(core) = cpu.cores.first() else {
+        return;
+    };
+    if !core.model.is_empty() && core.model != "Unknown CPU" {
+        println!("  {} {}", "Model:".white().bold(), core.model.green());
+    }
+    if let Some(freq) = &core.frequency {
+        let mut clock = format!("{} MHz", freq.current);
+        // Only worth stating a ceiling when it differs from what the core is doing.
+        if freq.max > 0 && freq.max != freq.current {
+            clock.push_str(&format!(" (max {} MHz)", freq.max));
+        }
+        println!("  {} {}", "Clock:".white().bold(), clock.green());
+    }
+}
+
 #[cfg(feature = "cli")]
 fn print_cpu_info(cpu: &simonlib::core::cpu::CpuStats) {
     println!("{}", "═══ CPU Information ═══".cyan().bold());
+
+    print_cpu_identity(cpu);
     println!(
         "  {} {} (Online: {})",
         "Cores:".white().bold(),
@@ -1450,6 +1475,7 @@ fn print_cpu_info_backend(backend: &simonlib::backend::MonitoringBackend) {
     println!("{}", "═══ CPU Information ═══".cyan().bold());
 
     if let Some(cpu) = backend.cpu_stats() {
+        print_cpu_identity(cpu);
         println!(
             "  {} {} (Online: {})",
             "Cores:".white().bold(),

@@ -396,3 +396,71 @@ fn absent_hardware_is_reported_as_absent_not_invented() {
         );
     }
 }
+
+/// `wmic` was removed from Windows in 11 24H2. Any reader that shells out to it
+/// cannot fail loudly — the spawn error is indistinguishable from "no such data" —
+/// so it silently degrades into reporting zeros and empty strings as measurements.
+///
+/// Seven call sites did exactly that: CPU model and clock, baseboard make and model,
+/// system make and model, boot device, and pagefile paths. All were replaced with
+/// registry or Win32 reads. This keeps them replaced.
+#[test]
+fn no_reader_depends_on_the_wmic_tool_windows_removed() {
+    fn walk(dir: &std::path::Path, found: &mut Vec<String>) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                walk(&path, found);
+            } else if path.extension().is_some_and(|e| e == "rs") {
+                let Ok(text) = std::fs::read_to_string(&path) else {
+                    continue;
+                };
+                for (n, line) in text.lines().enumerate() {
+                    // Prose may name the tool to explain why it is gone; only an
+                    // actual invocation is a defect.
+                    if line.contains("Command::new(\"wmic\")") {
+                        found.push(format!("{}:{}", path.display(), n + 1));
+                    }
+                }
+            }
+        }
+    }
+
+    let mut found = Vec::new();
+    walk(std::path::Path::new("src"), &mut found);
+    assert!(
+        found.is_empty(),
+        "these sites spawn `wmic`, which does not exist on Windows 11 24H2 or later, \
+         so they report absent data as if measured: {found:?}"
+    );
+}
+
+/// The CPU reader must produce a real model and a real clock, not the placeholders
+/// it fell back to when its `wmic` subprocess failed to spawn.
+#[test]
+#[cfg(windows)]
+fn windows_cpu_reader_reports_measured_identity_and_clock() {
+    let Ok(stats) = simonlib::platform::windows::read_cpu_stats() else {
+        return; // No CPU data at all is a separate failure, covered elsewhere.
+    };
+    let Some(core) = stats.cores.first() else {
+        return;
+    };
+
+    assert_ne!(
+        core.model, "Unknown CPU",
+        "CPU model fell back to its placeholder; every Windows machine publishes \
+         ProcessorNameString in the registry, so this means the reader failed"
+    );
+
+    if let Some(freq) = &core.frequency {
+        assert!(
+            freq.current > 0 || freq.max > 0,
+            "frequency was reported as present but reads 0/0, which is not a clock \
+             any running processor has — absence must be `None`, not zero"
+        );
+    }
+}
