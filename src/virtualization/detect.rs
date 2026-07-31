@@ -5,6 +5,24 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Read a CPUID leaf.
+///
+/// Selects the module matching the target. Every caller here is gated on
+/// `any(x86, x86_64)` but reached for `core::arch::x86_64` unconditionally, so a
+/// 32-bit x86 build did not compile at all. `__cpuid` is a safe function on current
+/// Rust; the `unsafe` blocks around these calls were no longer doing anything.
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+fn cpuid(leaf: u32) -> core::arch::x86_64::CpuidResult {
+    #[cfg(target_arch = "x86_64")]
+    {
+        core::arch::x86_64::__cpuid(leaf)
+    }
+    #[cfg(target_arch = "x86")]
+    {
+        core::arch::x86::__cpuid(leaf)
+    }
+}
+
 /// Known hypervisors
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Hypervisor {
@@ -105,13 +123,13 @@ fn detect_cpuid_hypervisor() -> Option<HypervisorInfo> {
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     {
         // CPUID leaf 0x40000000 - hypervisor vendor string
-        let result = unsafe { core::arch::x86_64::__cpuid(0x1) };
+        let result = cpuid(0x1);
         let hypervisor_bit = (result.ecx >> 31) & 1;
         if hypervisor_bit == 0 {
             return None;
         }
 
-        let vendor = unsafe { core::arch::x86_64::__cpuid(0x40000000) };
+        let vendor = cpuid(0x40000000);
         let mut vendor_str = [0u8; 12];
         vendor_str[0..4].copy_from_slice(&vendor.ebx.to_le_bytes());
         vendor_str[4..8].copy_from_slice(&vendor.ecx.to_le_bytes());
@@ -218,10 +236,10 @@ fn detect_cloud_provider() -> Option<String> {
 pub fn detect_cpu_virt_caps() -> Option<CpuVirtCapability> {
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     {
-        let result = unsafe { core::arch::x86_64::__cpuid(0x1) };
+        let result = cpuid(0x1);
         let vmx = (result.ecx >> 5) & 1 == 1; // Intel VT-x
         let svm = {
-            let ext = unsafe { core::arch::x86_64::__cpuid(0x80000001) };
+            let ext = cpuid(0x80000001);
             (ext.ecx >> 2) & 1 == 1 // AMD-V
         };
         let hw_virt = vmx || svm;

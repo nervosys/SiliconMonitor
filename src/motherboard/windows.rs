@@ -704,6 +704,37 @@ fn detect_secure_boot() -> Option<bool> {
 }
 
 /// Get driver versions via WMI
+/// Kernel-mode drivers currently in the running state, as `(name, state)` pairs.
+///
+/// One WMI query over the shared COM connection. The caller previously spawned
+/// PowerShell to run the same query and emit JSON, which cost roughly a second.
+pub fn get_running_drivers() -> Result<Vec<(String, String)>, Error> {
+    #[derive(Deserialize, Debug)]
+    #[serde(rename_all = "PascalCase")]
+    struct Win32SystemDriver {
+        name: Option<String>,
+        state: Option<String>,
+    }
+
+    let wmi_conn = create_wmi_connection()?;
+    let rows: Vec<Win32SystemDriver> = wmi_conn
+        .raw_query("SELECT Name, State FROM Win32_SystemDriver WHERE State = 'Running'")
+        .map_err(|e| Error::QueryFailed(e.to_string()))?;
+
+    Ok(rows
+        .into_iter()
+        .filter_map(|d| {
+            let name = d.name?;
+            // A driver with no name identifies nothing, so it is dropped rather than
+            // listed as an empty entry.
+            if name.trim().is_empty() {
+                return None;
+            }
+            Some((name, d.state.unwrap_or_default()))
+        })
+        .collect())
+}
+
 pub fn get_driver_versions() -> Result<Vec<DriverInfo>, Error> {
     let wmi_conn = create_wmi_connection()?;
 

@@ -331,129 +331,101 @@ impl OsInfoMonitor {
 
     #[cfg(target_os = "windows")]
     fn refresh_windows(&mut self) {
+        use crate::platform::windows as plat;
+
         self.info.os_family = OsFamily::Windows;
 
-        if let Ok(output) = std::process::Command::new("powershell")
-            .args(["-NoProfile", "-Command",
-                "Get-CimInstance Win32_OperatingSystem | Select-Object Caption, Version, BuildNumber, CSName, OSArchitecture, LastBootUpTime, NumberOfUsers, Locale, CurrentTimeZone | ConvertTo-Json -Compress"])
-            .output()
-        {
-            if let Ok(text) = String::from_utf8(output.stdout) {
-                if let Ok(val) = serde_json::from_str::<serde_json::Value>(&text) {
-                    self.info.os_name = val["Caption"].as_str().unwrap_or("Windows").trim().to_string();
-                    self.info.os_version = val["Version"].as_str().unwrap_or("").to_string();
-                    self.info.os_build = val["BuildNumber"].as_str().unwrap_or("").to_string();
-                    self.info.hostname = val["CSName"].as_str().unwrap_or("").to_string();
-                    let arch = val["OSArchitecture"].as_str().unwrap_or("");
-                    self.info.architecture = if arch.contains("64") {
-                        "x86_64".to_string()
-                    } else if arch.contains("ARM") {
-                        "aarch64".to_string()
-                    } else {
-                        "x86".to_string()
-                    };
-                    self.info.user_count = val["NumberOfUsers"].as_u64().unwrap_or(0) as u32;
-                    self.info.locale = val["Locale"].as_str().unwrap_or("").to_string();
+        // Every field below was previously read by spawning a subprocess — four
+        // PowerShell invocations plus one `cmd /c ver`. That cost 3.2 s per refresh
+        // and 10.8 s to construct the monitor, for data Windows publishes in the
+        // registry and through plain Win32 calls. Two of those readings were also
+        // wrong; see the boot-mode and Secure Boot notes below.
+        const CURRENT_VERSION: &str = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion";
 
-                    // Parse boot time
-                    if let Some(boot_str) = val["LastBootUpTime"].as_str() {
-                        // "/Date(1234567890000)/" format
-                        if let Some(ts) = boot_str
-                            .strip_prefix("/Date(")
-                            .and_then(|s| s.strip_suffix(")/"))
-                            .and_then(|s| s.parse::<i64>().ok())
-                        {
-                            self.info.boot_timestamp = (ts / 1000) as u64;
-                            let now = std::time::SystemTime::now()
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .unwrap_or_default()
-                                .as_secs();
-                            self.info.uptime_seconds = now.saturating_sub(self.info.boot_timestamp);
-                        }
-                    }
-                }
-            }
-        }
+        let build: u32 = plat::read_registry_string(CURRENT_VERSION, "CurrentBuildNumber")
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
 
-        // Kernel version (Windows kernel)
-        if let Ok(output) = std::process::Command::new("cmd")
-            .args(["/c", "ver"])
-            .output()
-        {
-            let text = String::from_utf8(output.stdout).unwrap_or_default();
-            self.info.kernel_full = text.trim().to_string();
-            // Extract version from "Microsoft Windows [Version 10.0.22631.4037]"
-            if let Some(start) = text.find("Version ") {
-                let rest = &text[start + 8..];
-                if let Some(end) = rest.find(']') {
-                    self.info.kernel_version = rest[..end].to_string();
-                }
-            }
-        }
-
-        // Boot mode (UEFI or BIOS)
-        if let Ok(output) = std::process::Command::new("powershell")
-            .args(["-NoProfile", "-Command", "$env:firmware_type"])
-            .output()
-        {
-            let text = String::from_utf8(output.stdout)
-                .unwrap_or_default()
-                .trim()
-                .to_string();
-            self.info.boot_mode = if text.to_lowercase().contains("uefi") {
-                BootMode::UEFI
-            } else if text.to_lowercase().contains("bios") {
-                BootMode::BIOS
+        if let Some(product) = plat::read_registry_string(CURRENT_VERSION, "ProductName") {
+            // `ProductName` still reads "Windows 10 ..." on Windows 11; Microsoft
+            // never updated it, and the build number is the documented way to tell
+            // the two apart. This is a correction from an authoritative field, not a
+            // guess: 22000 is the first Windows 11 build.
+            self.info.os_name = if build >= 22000 {
+                product.replace("Windows 10", "Windows 11")
             } else {
-                BootMode::Unknown
+                product
             };
         }
 
-        // Secure Boot
-        if let Ok(output) = std::process::Command::new("powershell")
-            .args(["-NoProfile", "-Command", "Confirm-SecureBootUEFI 2>$null"])
-            .output()
-        {
-            let text = String::from_utf8(output.stdout).unwrap_or_default();
-            self.info.secure_boot = text.trim().to_lowercase() == "true";
+        // Major/minor come from the registry as DWORDs on Windows 10 and later.
+        let major = plat::read_registry_u32(CURRENT_VERSION, "CurrentMajorVersionNumber");
+        let minor = plat::read_registry_u32(CURRENT_VERSION, "CurrentMinorVersionNumber");
+        if let (Some(major), Some(minor)) = (major, minor) {
+            self.info.os_version = format!("{major}.{minor}.{build}");
+        }
+        if build > 0 {
+            self.info.os_build = build.to_string();
         }
 
-        // Timezone
-        if let Ok(output) = std::process::Command::new("powershell")
-            .args(["-NoProfile", "-Command", "(Get-TimeZone).Id"])
-            .output()
-        {
-            self.info.timezone = String::from_utf8(output.stdout)
-                .unwrap_or_default()
-                .trim()
-                .to_string();
+        // The kernel version includes the update revision, which is the part that
+        // moves between patch Tuesdays and the reason `cmd /c ver` was being parsed.
+        let ubr = plat::read_registry_u32(CURRENT_VERSION, "UBR");
+        if !self.info.os_version.is_empty() {
+            self.info.kernel_version = match ubr {
+                Some(ubr) => format!("{}.{ubr}", self.info.os_version),
+                None => self.info.os_version.clone(),
+            };
+            self.info.kernel_full =
+                format!("Microsoft Windows [Version {}]", self.info.kernel_version);
         }
 
-        // Loaded drivers (kernel modules equivalent)
-        if let Ok(output) = std::process::Command::new("powershell")
-            .args(["-NoProfile", "-Command",
-                "Get-CimInstance Win32_SystemDriver | Where-Object State -eq 'Running' | Select-Object Name, DisplayName, State -First 200 | ConvertTo-Json -Compress"])
-            .output()
-        {
-            if let Ok(text) = String::from_utf8(output.stdout) {
-                if let Ok(val) = serde_json::from_str::<serde_json::Value>(&text) {
-                    let items = match &val {
-                        serde_json::Value::Array(arr) => arr.clone(),
-                        obj @ serde_json::Value::Object(_) => vec![obj.clone()],
-                        _ => vec![],
-                    };
-                    for item in &items {
-                        self.info.loaded_modules.push(KernelModule {
-                            name: item["Name"].as_str().unwrap_or("").to_string(),
-                            size_bytes: 0,
-                            instances: 1,
-                            used_by: Vec::new(),
-                            state: item["State"].as_str().unwrap_or("").to_string(),
-                        });
-                    }
-                }
-            }
+        if let Some(name) = windows_computer_name() {
+            self.info.hostname = name;
         }
+
+        let (arch, is_64bit) = windows_native_architecture();
+        self.info.architecture = arch;
+        self.info.is_64bit = is_64bit;
+
+        // `GetTickCount64` is milliseconds since boot and does not advance across
+        // sleep, matching what `LastBootUpTime` reported.
+        let uptime_ms = unsafe { windows::Win32::System::SystemInformation::GetTickCount64() };
+        self.info.uptime_seconds = uptime_ms / 1000;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        self.info.boot_timestamp = now.saturating_sub(self.info.uptime_seconds);
+
+        // Boot mode. The old reading spawned PowerShell to test `$env:firmware_type`,
+        // which Windows does not set for a non-interactive child process — so it was
+        // empty on every call and the result was decided by the fallback arm rather
+        // than by the firmware.
+        self.info.boot_mode = match plat::firmware_type() {
+            Some(crate::boot_config::BootType::Uefi) => BootMode::UEFI,
+            Some(crate::boot_config::BootType::Legacy) => BootMode::BIOS,
+            _ => BootMode::Unknown,
+        };
+
+        // Secure Boot. `Confirm-SecureBootUEFI` needs an elevated session and throws
+        // otherwise, and the old code mapped that throw to `false` — reporting Secure
+        // Boot as off for every unelevated run, whatever the firmware was doing.
+        self.info.secure_boot = plat::secure_boot_enabled().unwrap_or(false);
+
+        if let Some(tz) = windows_timezone_key() {
+            self.info.timezone = tz;
+        }
+        if let Some(locale) = windows_user_locale() {
+            self.info.locale = locale;
+        }
+
+        self.info.loaded_modules = windows_running_drivers();
+
+        // `user_count` is deliberately left alone: the only source was
+        // `Win32_OperatingSystem.NumberOfUsers`, and counting sessions properly needs
+        // a WTS enumeration this monitor does not otherwise do. Reporting a fabricated
+        // 0 would be worse than leaving the field at its default.
     }
 
     // ── macOS ──
@@ -627,6 +599,142 @@ impl std::fmt::Display for BootMode {
             Self::Unknown => write!(f, "Unknown"),
         }
     }
+}
+
+// ── Windows native readers ──
+//
+// These replace subprocess spawns. Each returns `None` rather than a placeholder
+// when the platform does not answer, so callers keep the field's default instead of
+// publishing a made-up value.
+
+/// The machine's NetBIOS computer name.
+#[cfg(target_os = "windows")]
+fn windows_computer_name() -> Option<String> {
+    use windows::Win32::System::SystemInformation::{ComputerNameNetBIOS, GetComputerNameExW};
+
+    let mut len: u32 = 0;
+    // First call reports the required length; it is expected to fail with
+    // ERROR_MORE_DATA, so its status is deliberately not checked.
+    let _ =
+        unsafe { GetComputerNameExW(ComputerNameNetBIOS, windows::core::PWSTR::null(), &mut len) };
+    if len == 0 {
+        return None;
+    }
+
+    // The reported length excludes the terminating null, which the second call still
+    // writes — so the buffer needs one more slot than `len` says.
+    let mut buffer = vec![0u16; len as usize + 1];
+    unsafe {
+        GetComputerNameExW(
+            ComputerNameNetBIOS,
+            windows::core::PWSTR(buffer.as_mut_ptr()),
+            &mut len,
+        )
+    }
+    .ok()?;
+    buffer.truncate(len as usize);
+
+    let name = String::from_utf16_lossy(&buffer);
+    let name = name.trim().to_string();
+    if name.is_empty() {
+        None
+    } else {
+        Some(name)
+    }
+}
+
+/// The processor architecture the OS is running on, and whether it is 64-bit.
+///
+/// `GetNativeSystemInfo` reports the machine's architecture even when the caller is a
+/// 32-bit process under WOW64, which `GetSystemInfo` does not.
+#[cfg(target_os = "windows")]
+fn windows_native_architecture() -> (String, bool) {
+    use windows::Win32::System::SystemInformation::{GetNativeSystemInfo, SYSTEM_INFO};
+    use windows::Win32::System::SystemInformation::{
+        PROCESSOR_ARCHITECTURE_AMD64, PROCESSOR_ARCHITECTURE_ARM, PROCESSOR_ARCHITECTURE_ARM64,
+        PROCESSOR_ARCHITECTURE_INTEL,
+    };
+
+    let mut info: SYSTEM_INFO = unsafe { std::mem::zeroed() };
+    unsafe { GetNativeSystemInfo(&mut info) };
+
+    let arch = unsafe { info.Anonymous.Anonymous.wProcessorArchitecture };
+    match arch {
+        PROCESSOR_ARCHITECTURE_AMD64 => ("x86_64".to_string(), true),
+        PROCESSOR_ARCHITECTURE_ARM64 => ("aarch64".to_string(), true),
+        PROCESSOR_ARCHITECTURE_ARM => ("arm".to_string(), false),
+        PROCESSOR_ARCHITECTURE_INTEL => ("x86".to_string(), false),
+        // Compiled-in target as a last resort: it is what this binary was built for,
+        // which is at least a fact about the running process.
+        _ => (
+            std::env::consts::ARCH.to_string(),
+            cfg!(target_pointer_width = "64"),
+        ),
+    }
+}
+
+/// The IANA-equivalent Windows time zone key (e.g. "Pacific Standard Time").
+#[cfg(target_os = "windows")]
+fn windows_timezone_key() -> Option<String> {
+    use windows::Win32::System::Time::{
+        GetDynamicTimeZoneInformation, DYNAMIC_TIME_ZONE_INFORMATION,
+    };
+
+    let mut tz = DYNAMIC_TIME_ZONE_INFORMATION::default();
+    // Returns the daylight-saving state, not a status code; TIME_ZONE_ID_INVALID
+    // (0xFFFFFFFF) is the failure value.
+    if unsafe { GetDynamicTimeZoneInformation(&mut tz) } == u32::MAX {
+        return None;
+    }
+
+    let key: String = String::from_utf16_lossy(&tz.TimeZoneKeyName)
+        .trim_end_matches('\0')
+        .trim()
+        .to_string();
+    if key.is_empty() {
+        None
+    } else {
+        Some(key)
+    }
+}
+
+/// The user's default locale name (e.g. "en-US").
+#[cfg(target_os = "windows")]
+fn windows_user_locale() -> Option<String> {
+    use windows::Win32::Globalization::GetUserDefaultLocaleName;
+
+    let mut buffer = [0u16; 85]; // LOCALE_NAME_MAX_LENGTH
+    let len = unsafe { GetUserDefaultLocaleName(&mut buffer) };
+    if len <= 1 {
+        return None;
+    }
+
+    // The returned length includes the terminating null.
+    Some(String::from_utf16_lossy(&buffer[..(len as usize - 1)]))
+}
+
+/// Currently running kernel-mode drivers, the Windows analogue of kernel modules.
+///
+/// Sourced from WMI over the existing COM connection rather than by spawning
+/// PowerShell to emit JSON, which alone accounted for roughly a second per refresh.
+#[cfg(target_os = "windows")]
+fn windows_running_drivers() -> Vec<KernelModule> {
+    let Ok(drivers) = crate::motherboard::get_running_drivers() else {
+        return Vec::new();
+    };
+
+    drivers
+        .into_iter()
+        .map(|(name, state)| KernelModule {
+            name,
+            // Neither figure is exposed by `Win32_SystemDriver`. They stay at the
+            // values that mean "not reported" rather than being invented.
+            size_bytes: 0,
+            instances: 1,
+            used_by: Vec::new(),
+            state,
+        })
+        .collect()
 }
 
 #[cfg(test)]

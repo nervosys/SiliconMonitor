@@ -464,3 +464,73 @@ fn windows_cpu_reader_reports_measured_identity_and_clock() {
         );
     }
 }
+
+/// Secure Boot must be read from `UEFISecureBootEnabled`, not from whether the key
+/// holding it exists.
+///
+/// `HKLM\SYSTEM\CurrentControlSet\Control\SecureBoot\State` is present on every UEFI
+/// machine regardless of enforcement, so testing for the key reported Secure Boot as
+/// on for every UEFI system. The two fields also have to agree with each other: the
+/// old code could only ever upgrade `boot_type` to `SecureBoot`, never downgrade it,
+/// so it shipped `boot_type: SecureBoot` alongside `secure_boot: false`.
+#[test]
+#[cfg(windows)]
+fn secure_boot_claim_matches_the_firmware_flag() {
+    use simonlib::boot_config::{BootMonitor, BootType};
+
+    let Ok(monitor) = BootMonitor::new() else {
+        return;
+    };
+    let info = &monitor.boot_info;
+
+    assert_eq!(
+        info.boot_type == BootType::SecureBoot,
+        info.secure_boot,
+        "boot_type {:?} and secure_boot {} disagree; one of them was derived from \
+         something other than UEFISecureBootEnabled",
+        info.boot_type,
+        info.secure_boot
+    );
+
+    // Legacy BIOS cannot have Secure Boot at all.
+    assert!(
+        !(info.boot_type == BootType::Legacy && info.secure_boot),
+        "reported a legacy BIOS boot with Secure Boot enabled, which is not a state \
+         that exists"
+    );
+}
+
+/// The Windows OS reader must produce a real build, not the empty defaults it fell
+/// back to whenever a subprocess failed to spawn.
+#[test]
+#[cfg(windows)]
+fn windows_os_info_reports_a_real_build() {
+    let Ok(monitor) = simonlib::os_info::OsInfoMonitor::new() else {
+        return;
+    };
+    let info = monitor.info();
+
+    assert!(
+        !info.os_name.is_empty(),
+        "OS name is empty; the registry publishes ProductName on every Windows install"
+    );
+    assert!(
+        !info.kernel_version.is_empty(),
+        "kernel version is empty, so the build number was never read"
+    );
+    // `ProductName` still says "Windows 10" on Windows 11; the build number is what
+    // distinguishes them, and the reader is supposed to apply that correction.
+    let build: u32 = info.os_build.parse().unwrap_or(0);
+    if build >= 22000 {
+        assert!(
+            !info.os_name.contains("Windows 10"),
+            "build {build} is Windows 11, but the name still reads {:?} — the \
+             registry's stale ProductName was passed through uncorrected",
+            info.os_name
+        );
+    }
+    assert!(
+        info.uptime_seconds > 0,
+        "uptime reads zero, which would mean the machine booted this instant"
+    );
+}

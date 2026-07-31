@@ -505,42 +505,27 @@ impl BootMonitor {
 
     #[cfg(windows)]
     fn windows_read_boot_info(&mut self) -> Result<()> {
-        use std::process::Command;
+        // Firmware type and Secure Boot state.
+        //
+        // Both were read by spawning PowerShell, and both were wrong. The firmware
+        // check tested whether `HKLM\...\Control\SecureBoot\State` *exists* and
+        // reported `SecureBoot` when it did — but that key is present on every UEFI
+        // machine whether or not Secure Boot is enforcing, so every UEFI system was
+        // reported as Secure Boot. The correction below it only ever upgraded
+        // `boot_type`, never downgraded it, so `boot_type: SecureBoot` shipped
+        // alongside `secure_boot: false` on the same struct.
+        //
+        // This host is UEFI with `UEFISecureBootEnabled = 0`, and now reports that.
+        self.boot_info.secure_boot =
+            crate::platform::windows::secure_boot_enabled().unwrap_or(false);
 
-        // Check if running in UEFI mode
-        // UEFI systems have firmware variables accessible
-        let output = Command::new("powershell")
-            .args([
-                "-Command",
-                "if (Test-Path 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\SecureBoot\\State') { 'SecureBoot' } elseif ($env:firmware_type -eq 'UEFI') { 'UEFI' } else { 'Legacy' }"
-            ])
-            .output();
-
-        if let Ok(output) = output {
-            let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            self.boot_info.boot_type = match stdout.as_str() {
-                "SecureBoot" => BootType::SecureBoot,
-                "UEFI" => BootType::Uefi,
-                _ => BootType::Legacy,
-            };
-        }
-
-        // Check Secure Boot state
-        let output = Command::new("powershell")
-            .args([
-                "-Command",
-                "try { (Get-ItemProperty -Path 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\SecureBoot\\State' -Name 'UEFISecureBootEnabled' -ErrorAction Stop).UEFISecureBootEnabled } catch { 0 }"
-            ])
-            .output();
-
-        if let Ok(output) = output {
-            let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            self.boot_info.secure_boot = stdout == "1";
-
-            if self.boot_info.secure_boot {
-                self.boot_info.boot_type = BootType::SecureBoot;
-            }
-        }
+        self.boot_info.boot_type = match crate::platform::windows::firmware_type() {
+            Some(BootType::Uefi) if self.boot_info.secure_boot => BootType::SecureBoot,
+            Some(kind) => kind,
+            // `GetFirmwareType` can fail without telling us which firmware this is;
+            // claiming Legacy on a failed query is how the old code got it wrong.
+            None => BootType::Unknown,
+        };
 
         // Get boot device.
         //

@@ -26,11 +26,10 @@ use crate::process_monitor::ProcessMonitorInfo;
 use crate::system_stats::SystemStats;
 
 const HISTORY_SIZE: usize = 60;
-const UPDATE_INTERVAL: Duration = Duration::from_millis(100); // Fast UI updates (10 FPS minimum)
-                                                              // A full collection tick costs ~500ms on a three-GPU Windows box even with the
-                                                              // process table decimated, so a 500ms interval asked for more than the hardware can
-                                                              // deliver and the collector thread never slept. 1s matches what the sources can
-                                                              // actually sustain, and is the cadence htop and nvtop use.
+// A full collection tick costs ~500ms on a three-GPU Windows box even with the
+// process table decimated, so a 500ms interval asked for more than the hardware can
+// deliver and the collector thread never slept. 1s matches what the sources can
+// actually sustain, and is the cadence htop and nvtop use.
 const DATA_POLL_INTERVAL: Duration = Duration::from_millis(1000); // Data polling rate
 const SLOW_UPDATE_INTERVAL: Duration = Duration::from_secs(2); // Slow updates for heavy ops
 /// How often the disk refresher thread re-samples every drive.
@@ -392,11 +391,6 @@ impl AiBackendSelection {
             Self::Cli(CliProvider::Gemini) => "🖥 Gemini CLI",
             Self::Cli(CliProvider::Ollama) => "🖥 Ollama CLI",
         }
-    }
-
-    /// Whether this provider needs an API key from the user.
-    fn needs_api_key(self) -> bool {
-        matches!(self, Self::OpenAi | Self::Anthropic | Self::GitHub)
     }
 
     /// Base URL whose `/models` endpoint lists what the provider can serve.
@@ -2547,7 +2541,7 @@ impl SiliconMonitorApp {
                 // Device pane frame - compact
                 let frame = egui::Frame::none()
                     .fill(CyberColors::SURFACE)
-                    .stroke(egui::Stroke::new(1.0, CyberColors::BORDER))
+                    .stroke(egui::Stroke::new(1.0_f32, CyberColors::BORDER))
                     .rounding(4.0)
                     .inner_margin(8.0);
 
@@ -3535,7 +3529,7 @@ impl SiliconMonitorApp {
 
         egui::Frame::none()
             .fill(CyberColors::SURFACE)
-            .stroke(egui::Stroke::new(1.0, disk_color.gamma_multiply(0.4)))
+            .stroke(egui::Stroke::new(1.0_f32, disk_color.gamma_multiply(0.4)))
             .rounding(6.0)
             .inner_margin(12.0)
             .show(ui, |ui| {
@@ -5890,7 +5884,7 @@ impl SiliconMonitorApp {
             };
             egui::Frame::none()
                 .fill(CyberColors::SURFACE)
-                .stroke(egui::Stroke::new(1.0, accent))
+                .stroke(egui::Stroke::new(1.0_f32, accent))
                 .rounding(6.0)
                 .inner_margin(10.0)
                 .show(ui, |ui| {
@@ -5929,7 +5923,7 @@ impl SiliconMonitorApp {
 
         egui::Frame::none()
             .fill(CyberColors::BACKGROUND)
-            .stroke(egui::Stroke::new(1.0, CyberColors::BORDER))
+            .stroke(egui::Stroke::new(1.0_f32, CyberColors::BORDER))
             .rounding(6.0)
             .inner_margin(12.0)
             .show(ui, |ui| {
@@ -5996,7 +5990,7 @@ impl SiliconMonitorApp {
 
                         egui::Frame::none()
                             .fill(bg_color)
-                            .stroke(egui::Stroke::new(1.0, border_color))
+                            .stroke(egui::Stroke::new(1.0_f32, border_color))
                             .inner_margin(10.0)
                             .rounding(8.0)
                             .show(ui, |ui| {
@@ -6050,7 +6044,7 @@ impl SiliconMonitorApp {
         // Input area with improved styling
         egui::Frame::none()
             .fill(CyberColors::SURFACE)
-            .stroke(egui::Stroke::new(1.0, CyberColors::BORDER))
+            .stroke(egui::Stroke::new(1.0_f32, CyberColors::BORDER))
             .rounding(6.0)
             .inner_margin(8.0)
             .show(ui, |ui| {

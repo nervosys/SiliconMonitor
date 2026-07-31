@@ -68,7 +68,6 @@ fn run_app<B: Backend>(
     const PROCESS_TICKS: u64 = 4; // Every 4 ticks (1s)
                                   // Disks no longer need their own tick: the collector re-enumerates them on its
                                   // own slow cadence and publishes them with every snapshot.
-    const INIT_CHECK_TICKS: u64 = 1; // Every tick (250ms)
 
     let mut tick_count: u64 = 0;
     let mut last_tick = Instant::now();
@@ -269,10 +268,10 @@ fn run_app<B: Backend>(
             tick_count = tick_count.wrapping_add(1);
             last_tick = Instant::now();
 
-            // Check for background initialization completion
-            if tick_count % INIT_CHECK_TICKS == 0 {
-                app.check_background_init();
-            }
+            // Check for background initialization completion. This is a handful of
+            // `try_recv` calls, so it runs every tick — which it already did, via a
+            // `% 1` that read like a tunable cadence but could never be one.
+            app.check_background_init();
 
             // Fast updates (CPU, GPU, Memory, Network, Disks).
             //

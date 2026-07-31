@@ -76,6 +76,15 @@ pub fn get_system_info() -> Result<SystemInfo, Error> {
     }
 }
 
+/// Get currently running kernel-mode drivers as `(name, state)` pairs.
+///
+/// Windows only — the Linux and macOS equivalents (`/proc/modules`, `kextstat`) are
+/// read directly by [`crate::os_info`], which is this function's only caller.
+#[cfg(target_os = "windows")]
+pub fn get_running_drivers() -> Result<Vec<(String, String)>, Error> {
+    windows::get_running_drivers()
+}
+
 /// Get installed driver versions
 pub fn get_driver_versions() -> Result<Vec<DriverInfo>, Error> {
     #[cfg(target_os = "linux")]

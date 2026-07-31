@@ -413,6 +413,61 @@ pub(crate) fn read_registry_string(subkey: &str, value: &str) -> Option<String> 
     }
 }
 
+/// Read one `REG_DWORD` value from `HKEY_LOCAL_MACHINE`.
+///
+/// `None` means the key or value is absent, which is not the same as a value of 0 —
+/// a distinction that matters for flags like `UEFISecureBootEnabled`, where "no such
+/// setting" and "the setting is off" have different causes.
+pub(crate) fn read_registry_u32(subkey: &str, value: &str) -> Option<u32> {
+    use winreg::enums::HKEY_LOCAL_MACHINE;
+    use winreg::RegKey;
+
+    let key = RegKey::predef(HKEY_LOCAL_MACHINE)
+        .open_subkey(subkey)
+        .ok()?;
+    key.get_value(value).ok()
+}
+
+/// Whether the machine booted via UEFI, legacy BIOS, or something unreported.
+///
+/// `GetFirmwareType` is the documented Win32 answer. The alternative in use before
+/// this — testing `$env:firmware_type` from a spawned PowerShell — reads an
+/// environment variable that Windows does not set for a non-interactive child, so it
+/// was empty on every call and every machine fell through to "Legacy".
+pub(crate) fn firmware_type() -> Option<crate::boot_config::BootType> {
+    use windows::Win32::System::SystemInformation::{
+        FirmwareTypeBios, FirmwareTypeUefi, GetFirmwareType, FIRMWARE_TYPE,
+    };
+
+    let mut kind = FIRMWARE_TYPE::default();
+    unsafe { GetFirmwareType(&mut kind) }.ok()?;
+
+    // Compared rather than matched: these are lowercase constants, and a `match` arm
+    // naming one that failed to resolve would become an irrefutable binding that
+    // silently swallows every other value.
+    if kind == FirmwareTypeUefi {
+        Some(crate::boot_config::BootType::Uefi)
+    } else if kind == FirmwareTypeBios {
+        Some(crate::boot_config::BootType::Legacy)
+    } else {
+        None
+    }
+}
+
+/// Whether UEFI Secure Boot is currently enforcing.
+///
+/// Reads `UEFISecureBootEnabled` rather than testing for the key that contains it:
+/// `SecureBoot\State` exists on every UEFI machine, enabled or not, so its presence
+/// says only that the firmware is UEFI. Callers that tested existence reported Secure
+/// Boot as on for every UEFI system.
+pub(crate) fn secure_boot_enabled() -> Option<bool> {
+    read_registry_u32(
+        r"SYSTEM\CurrentControlSet\Control\SecureBoot\State",
+        "UEFISecureBootEnabled",
+    )
+    .map(|v| v == 1)
+}
+
 /// Read memory statistics on Windows
 pub fn read_memory_stats() -> Result<MemoryStats> {
     let mut mem_status: MEMORYSTATUSEX = unsafe { mem::zeroed() };
@@ -828,12 +883,38 @@ pub fn detect_platform() -> Result<BoardInfo> {
     let manufacturer = read_registry_string(BIOS_KEY, "BaseBoardManufacturer");
     let model = read_registry_string(BIOS_KEY, "BaseBoardProduct");
 
+    const CURRENT_VERSION: &str = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion";
+
+    // `release` is the OS release — the analogue of `uname -r`. It was the constant
+    // "NT", which names the kernel lineage and is the same string on every Windows
+    // since 1993, so `simon cli board` printed "Kernel: NT" as though it had read
+    // something. `distribution` was left empty despite the edition being published
+    // right next to the build number.
+    let build = read_registry_string(CURRENT_VERSION, "CurrentBuildNumber");
+    let release = match (&build, read_registry_u32(CURRENT_VERSION, "UBR")) {
+        (Some(build), Some(ubr)) => format!("{build}.{ubr}"),
+        (Some(build), None) => build.clone(),
+        // Nothing was read, so nothing is claimed.
+        (None, _) => String::new(),
+    };
+
+    let distribution = read_registry_string(CURRENT_VERSION, "ProductName").map(|product| {
+        // The registry still says "Windows 10" on Windows 11; build 22000 is the
+        // documented dividing line.
+        let build: u32 = build.as_deref().and_then(|b| b.parse().ok()).unwrap_or(0);
+        if build >= 22000 {
+            product.replace("Windows 10", "Windows 11")
+        } else {
+            product
+        }
+    });
+
     Ok(BoardInfo {
         platform: PlatformInfo {
             machine: std::env::consts::ARCH.to_string(),
             system: "Windows".to_string(),
-            distribution: None,
-            release: "NT".to_string(),
+            distribution,
+            release,
         },
         hardware: HardwareInfo {
             model: model.unwrap_or_else(|| "Unknown".to_string()),

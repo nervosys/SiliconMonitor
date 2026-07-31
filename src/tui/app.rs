@@ -1431,27 +1431,25 @@ impl App {
 
         let os = format!("{} {}", std::env::consts::OS, std::env::consts::ARCH);
 
-        let kernel = if cfg!(target_os = "windows") {
-            "Windows NT".to_string()
-        } else if cfg!(target_os = "linux") {
-            std::process::Command::new("uname")
-                .arg("-r")
-                .output()
-                .ok()
-                .and_then(|o| String::from_utf8(o.stdout).ok())
-                .map(|s| s.trim().to_string())
-                .unwrap_or_else(|| "Unknown".to_string())
-        } else if cfg!(target_os = "macos") {
-            std::process::Command::new("uname")
-                .arg("-r")
-                .output()
-                .ok()
-                .and_then(|o| String::from_utf8(o.stdout).ok())
-                .map(|s| s.trim().to_string())
-                .unwrap_or_else(|| "Unknown".to_string())
-        } else {
-            "Unknown".to_string()
-        };
+        // Windows publishes the running build in the registry, revision included.
+        // This line used to be the constant "Windows NT", which is not a version of
+        // anything — it named the kernel family and was displayed where the version
+        // belongs, so a machine on 10.0.26200.8875 reported the same string as one
+        // from 1993.
+        #[cfg(target_os = "windows")]
+        let kernel = windows_kernel_version().unwrap_or_else(|| "Windows NT".to_string());
+
+        // Linux and macOS both answer `uname -r`; they had separate, byte-identical
+        // branches here.
+        #[cfg(not(target_os = "windows"))]
+        let kernel = std::process::Command::new("uname")
+            .arg("-r")
+            .output()
+            .ok()
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "Unknown".to_string());
 
         // Get uptime - platform-specific
         #[cfg(target_os = "windows")]
@@ -2314,6 +2312,28 @@ impl App {
             .as_ref()
             .map(|agent| format!("Cache: {} entries", agent.cache_size()))
     }
+}
+
+/// The running Windows build, revision included (e.g. "10.0.26200.8875").
+///
+/// Returns `None` when the registry does not answer, so the caller can fall back
+/// rather than print a partial version as if it were complete.
+#[cfg(target_os = "windows")]
+fn windows_kernel_version() -> Option<String> {
+    use crate::platform::windows as plat;
+
+    const CURRENT_VERSION: &str = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion";
+
+    let major = plat::read_registry_u32(CURRENT_VERSION, "CurrentMajorVersionNumber")?;
+    let minor = plat::read_registry_u32(CURRENT_VERSION, "CurrentMinorVersionNumber")?;
+    let build = plat::read_registry_string(CURRENT_VERSION, "CurrentBuildNumber")?;
+
+    // The update revision moves between patch Tuesdays; it is appended only when
+    // present, rather than defaulted to 0.
+    Some(match plat::read_registry_u32(CURRENT_VERSION, "UBR") {
+        Some(ubr) => format!("{major}.{minor}.{build}.{ubr}"),
+        None => format!("{major}.{minor}.{build}"),
+    })
 }
 
 #[cfg(test)]

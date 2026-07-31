@@ -448,8 +448,6 @@ impl SiliconMonitor for WindowsSiliconMonitor {
                         manufacturer: Option<String>,
                         #[allow(dead_code)]
                         status: Option<String>,
-                        #[serde(rename = "PNPClass")]
-                        pnp_class: Option<String>,
                     }
 
                     // Query specifically for NPU device classes:
@@ -457,7 +455,9 @@ impl SiliconMonitor for WindowsSiliconMonitor {
                     //   - Fall back to "System" class devices with NPU-related names
                     // This excludes USB, HID, Bluetooth, and other unrelated device classes.
                     if let Ok(devices) = wmi_conn.raw_query::<PnpDevice>(
-                        "SELECT Name, Manufacturer, Status, PNPClass FROM Win32_PnPEntity WHERE \
+                        // `PNPClass` is filtered on but not selected: the WHERE clause
+                        // already guarantees which class each row belongs to.
+                        "SELECT Name, Manufacturer, Status FROM Win32_PnPEntity WHERE \
                          PNPClass = 'Processing accelerators' OR \
                          (PNPClass = 'System' AND \
                           (Name LIKE '%NPU%' OR Name LIKE '%Neural%' OR \

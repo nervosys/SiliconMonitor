@@ -955,11 +955,15 @@ fn print_board_info(board: &simonlib::core::platform_info::BoardInfo) {
     if let Some(dist) = &board.platform.distribution {
         println!("  {} {}", "Distribution:".white().bold(), dist.green());
     }
-    println!(
-        "  {} {}",
-        "Kernel:".white().bold(),
-        board.platform.release.green()
-    );
+    // Omitted when the platform reported no release, rather than printing an empty
+    // label that reads as "the kernel version is blank".
+    if !board.platform.release.is_empty() {
+        println!(
+            "  {} {}",
+            "Kernel:".white().bold(),
+            board.platform.release.green()
+        );
+    }
 
     if let Some(l4t) = &board.hardware.l4t {
         println!("  {} {}", "L4T:".white().bold(), l4t.magenta());

@@ -178,27 +178,27 @@ pub fn apply_cyber_theme(ctx: &egui::Context) {
     visuals.extreme_bg_color = CyberColors::BACKGROUND_DARK;
 
     visuals.widgets.noninteractive.bg_fill = CyberColors::SURFACE;
-    visuals.widgets.noninteractive.fg_stroke = Stroke::new(1.0, CyberColors::TEXT_SECONDARY);
-    visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0, CyberColors::BORDER);
+    visuals.widgets.noninteractive.fg_stroke = Stroke::new(1.0_f32, CyberColors::TEXT_SECONDARY);
+    visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0_f32, CyberColors::BORDER);
 
     visuals.widgets.inactive.bg_fill = CyberColors::SURFACE;
-    visuals.widgets.inactive.fg_stroke = Stroke::new(1.0, CyberColors::TEXT_PRIMARY);
-    visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, CyberColors::BORDER);
+    visuals.widgets.inactive.fg_stroke = Stroke::new(1.0_f32, CyberColors::TEXT_PRIMARY);
+    visuals.widgets.inactive.bg_stroke = Stroke::new(1.0_f32, CyberColors::BORDER);
 
     visuals.widgets.hovered.bg_fill = CyberColors::SURFACE_HOVER;
-    visuals.widgets.hovered.fg_stroke = Stroke::new(1.0, CyberColors::CYAN);
-    visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, CyberColors::CYAN_DIM);
+    visuals.widgets.hovered.fg_stroke = Stroke::new(1.0_f32, CyberColors::CYAN);
+    visuals.widgets.hovered.bg_stroke = Stroke::new(1.0_f32, CyberColors::CYAN_DIM);
 
     visuals.widgets.active.bg_fill = CyberColors::CYAN_DIM;
-    visuals.widgets.active.fg_stroke = Stroke::new(1.0, CyberColors::BACKGROUND);
-    visuals.widgets.active.bg_stroke = Stroke::new(1.0, CyberColors::CYAN);
+    visuals.widgets.active.fg_stroke = Stroke::new(1.0_f32, CyberColors::BACKGROUND);
+    visuals.widgets.active.bg_stroke = Stroke::new(1.0_f32, CyberColors::CYAN);
 
     visuals.widgets.open.bg_fill = CyberColors::SURFACE_HOVER;
-    visuals.widgets.open.fg_stroke = Stroke::new(1.0, CyberColors::CYAN);
-    visuals.widgets.open.bg_stroke = Stroke::new(1.0, CyberColors::CYAN_DIM);
+    visuals.widgets.open.fg_stroke = Stroke::new(1.0_f32, CyberColors::CYAN);
+    visuals.widgets.open.bg_stroke = Stroke::new(1.0_f32, CyberColors::CYAN_DIM);
 
     visuals.selection.bg_fill = CyberColors::CYAN_DIM.linear_multiply(0.3);
-    visuals.selection.stroke = Stroke::new(1.0, CyberColors::CYAN);
+    visuals.selection.stroke = Stroke::new(1.0_f32, CyberColors::CYAN);
 
     visuals.hyperlink_color = CyberColors::CYAN;
 
@@ -319,22 +319,22 @@ pub fn apply_light_theme(ctx: &egui::Context) {
     visuals.faint_bg_color = LightColors::SURFACE;
     visuals.extreme_bg_color = Color32::WHITE;
     visuals.widgets.noninteractive.bg_fill = LightColors::SURFACE;
-    visuals.widgets.noninteractive.fg_stroke = Stroke::new(1.0, LightColors::TEXT_SECONDARY);
-    visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0, LightColors::BORDER);
+    visuals.widgets.noninteractive.fg_stroke = Stroke::new(1.0_f32, LightColors::TEXT_SECONDARY);
+    visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0_f32, LightColors::BORDER);
     visuals.widgets.inactive.bg_fill = LightColors::SURFACE;
-    visuals.widgets.inactive.fg_stroke = Stroke::new(1.0, LightColors::TEXT_PRIMARY);
-    visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, LightColors::BORDER);
+    visuals.widgets.inactive.fg_stroke = Stroke::new(1.0_f32, LightColors::TEXT_PRIMARY);
+    visuals.widgets.inactive.bg_stroke = Stroke::new(1.0_f32, LightColors::BORDER);
     visuals.widgets.hovered.bg_fill = LightColors::SURFACE_HOVER;
-    visuals.widgets.hovered.fg_stroke = Stroke::new(1.0, LightColors::ACCENT);
-    visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, LightColors::ACCENT_DIM);
+    visuals.widgets.hovered.fg_stroke = Stroke::new(1.0_f32, LightColors::ACCENT);
+    visuals.widgets.hovered.bg_stroke = Stroke::new(1.0_f32, LightColors::ACCENT_DIM);
     visuals.widgets.active.bg_fill = LightColors::ACCENT_DIM;
-    visuals.widgets.active.fg_stroke = Stroke::new(1.0, Color32::WHITE);
-    visuals.widgets.active.bg_stroke = Stroke::new(1.0, LightColors::ACCENT);
+    visuals.widgets.active.fg_stroke = Stroke::new(1.0_f32, Color32::WHITE);
+    visuals.widgets.active.bg_stroke = Stroke::new(1.0_f32, LightColors::ACCENT);
     visuals.widgets.open.bg_fill = LightColors::SURFACE_HOVER;
-    visuals.widgets.open.fg_stroke = Stroke::new(1.0, LightColors::ACCENT);
-    visuals.widgets.open.bg_stroke = Stroke::new(1.0, LightColors::ACCENT_DIM);
+    visuals.widgets.open.fg_stroke = Stroke::new(1.0_f32, LightColors::ACCENT);
+    visuals.widgets.open.bg_stroke = Stroke::new(1.0_f32, LightColors::ACCENT_DIM);
     visuals.selection.bg_fill = LightColors::ACCENT.linear_multiply(0.2);
-    visuals.selection.stroke = Stroke::new(1.0, LightColors::ACCENT);
+    visuals.selection.stroke = Stroke::new(1.0_f32, LightColors::ACCENT);
     visuals.hyperlink_color = LightColors::ACCENT;
     visuals.window_shadow.color = Color32::from_black_alpha(30);
     visuals.popup_shadow.color = Color32::from_black_alpha(20);

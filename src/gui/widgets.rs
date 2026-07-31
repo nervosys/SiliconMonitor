@@ -177,7 +177,7 @@ impl Widget for CyberProgressBar {
                         painter.vline(
                             glow_x - i as f32,
                             rect.y_range(),
-                            Stroke::new(1.0, glow_color),
+                            Stroke::new(1.0_f32, glow_color),
                         );
                     }
 
@@ -192,7 +192,7 @@ impl Widget for CyberProgressBar {
             }
 
             // Outer border with subtle glow
-            painter.rect_stroke(rect, 4.0, Stroke::new(1.0, CyberColors::BORDER));
+            painter.rect_stroke(rect, 4.0, Stroke::new(1.0_f32, CyberColors::BORDER));
 
             // Label and percentage with trend indicator
             let text_color = CyberColors::TEXT_PRIMARY;
@@ -594,7 +594,7 @@ impl Widget for SparklineChart {
                 // Horizontal grid lines (4 lines = 5 zones for 0%, 25%, 50%, 75%, 100%)
                 for i in 1..4 {
                     let y = chart_rect.min.y + chart_rect.height() * (i as f32 / 4.0);
-                    painter.hline(chart_rect.x_range(), y, Stroke::new(0.5, grid_color));
+                    painter.hline(chart_rect.x_range(), y, Stroke::new(0.5_f32, grid_color));
                 }
 
                 // Vertical grid lines (time markers) - very subtle
@@ -604,7 +604,7 @@ impl Widget for SparklineChart {
                     painter.vline(
                         x,
                         chart_rect.y_range(),
-                        Stroke::new(0.5, grid_color.linear_multiply(0.5)),
+                        Stroke::new(0.5_f32, grid_color.linear_multiply(0.5)),
                     );
                 }
             }
@@ -768,7 +768,7 @@ impl Widget for SparklineChart {
             painter.rect_stroke(
                 rect,
                 4.0,
-                Stroke::new(1.0, Color32::from_rgba_unmultiplied(60, 70, 80, 80)),
+                Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(60, 70, 80, 80)),
             );
         }
 
@@ -876,7 +876,7 @@ impl Widget for SectionHeader<'_> {
             painter.hline(
                 line_start..=rect.max.x,
                 rect.center().y,
-                Stroke::new(1.0, CyberColors::BORDER),
+                Stroke::new(1.0_f32, CyberColors::BORDER),
             );
         }
 
@@ -987,7 +987,7 @@ impl Widget for QuickLookPanel {
             }
 
             // Border
-            painter.rect_stroke(rect, 4.0, Stroke::new(1.0, CyberColors::BORDER));
+            painter.rect_stroke(rect, 4.0, Stroke::new(1.0_f32, CyberColors::BORDER));
         }
 
         response
