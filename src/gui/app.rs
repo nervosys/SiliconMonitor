@@ -2213,7 +2213,8 @@ impl SiliconMonitorApp {
 
             // GPU Charts
             if !self.gpu_history.is_empty() {
-                ui.add(SectionHeader::new("GPU Utilization").icon("🎮"));
+                let gpu_title = super::widgets::domain_section_title("gpu", "Utilization");
+                ui.add(SectionHeader::new(&gpu_title).icon("🎮"));
                 let num_cols = self.gpu_history.len().min(4);
                 ui.columns(num_cols.max(1), |columns| {
                     for (i, hist) in self.gpu_history.iter().enumerate() {
@@ -2462,7 +2463,8 @@ impl SiliconMonitorApp {
             ui.add_space(16.0);
 
             // Network Charts
-            ui.add(SectionHeader::new("Network I/O").icon("🌐"));
+            let net_title = super::widgets::domain_section_title("network", "I/O");
+            ui.add(SectionHeader::new(&net_title).icon("🌐"));
             ui.columns(2, |columns| {
                 columns[0].add(
                     SparklineChart::new(self.network_rx_history.iter().cloned().collect())
@@ -2487,7 +2489,8 @@ impl SiliconMonitorApp {
 
     fn draw_cpu_tab(&mut self, ui: &mut egui::Ui) {
         ScrollArea::vertical().show(ui, |ui| {
-            ui.add(SectionHeader::new("CPU Overview").icon("🔲"));
+            let cpu_title = super::widgets::domain_section_title("cpu", "Overview");
+            ui.add(SectionHeader::new(&cpu_title).icon("🔲"));
 
             if let Some(ref cpu) = self.cpu_stats {
                 // Overall utilization with Glances-style threshold colors

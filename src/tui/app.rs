@@ -2510,3 +2510,56 @@ mod tests {
         assert!(info.power.is_none());
     }
 }
+
+#[cfg(test)]
+mod ontology_vocabulary_tests {
+    /// Tabs that name an ontology domain must use the ontology's spelling.
+    ///
+    /// Not every tab is a domain — "Overview", "Processes" and "Agent" are views,
+    /// not entity namespaces — but the ones that are have to match, or the three
+    /// surfaces drift apart on whether it is "Cpu", "cpu" or "CPU" and an agent
+    /// cannot map a tab a user is describing onto ids it can query.
+    #[test]
+    fn tab_names_that_are_domains_use_the_ontology_spelling() {
+        use crate::ontology::labels;
+
+        // Mirrors the `tabs` vec in `TuiApp::new`.
+        let tabs = [
+            "Overview",
+            "Processes",
+            "CPU",
+            "Accelerators",
+            "Memory",
+            "System",
+            "Peripherals",
+            "Profiles",
+            "Agent",
+        ];
+
+        for tab in tabs {
+            let lowered = tab.to_ascii_lowercase();
+            if labels::is_known_domain(&lowered) {
+                assert_eq!(
+                    tab,
+                    labels::domain_label(&lowered),
+                    "TUI tab {tab:?} names an ontology domain but spells it \
+                     differently from the ontology"
+                );
+            }
+        }
+    }
+
+    /// At least some tabs must be domains, or the assertion above is vacuous.
+    #[test]
+    fn the_vocabulary_check_is_not_vacuous() {
+        use crate::ontology::labels;
+        let domain_tabs = ["CPU", "Memory", "System"]
+            .iter()
+            .filter(|t| labels::is_known_domain(&t.to_ascii_lowercase()))
+            .count();
+        assert!(
+            domain_tabs >= 2,
+            "expected several TUI tabs to name ontology domains; found {domain_tabs}"
+        );
+    }
+}

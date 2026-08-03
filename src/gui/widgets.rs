@@ -1048,3 +1048,51 @@ impl Widget for ThresholdLegend {
         response
     }
 }
+
+/// Section heading whose domain word comes from the ontology rather than a literal.
+///
+/// The three surfaces used to spell the same domain three ways — the CLI said
+/// `cpu`, the GUI said `CPU`, the JSON said `Cpu` — which is what stops an agent
+/// correlating a heading a user is looking at with an id it can query. Routing the
+/// domain word through [`crate::ontology::labels::domain_label`] makes the ontology
+/// the single naming authority, so a heading cannot drift from the id space.
+///
+/// `domain` must be a domain the ontology knows; unknown domains are returned
+/// title-cased rather than silently dropped, because a blank heading is worse than
+/// an imperfect one.
+pub fn domain_section_title(domain: &str, suffix: &str) -> String {
+    let label = crate::ontology::labels::domain_label(domain);
+    if suffix.is_empty() {
+        label
+    } else {
+        format!("{label} {suffix}")
+    }
+}
+
+#[cfg(test)]
+mod section_title_tests {
+    use super::*;
+
+    #[test]
+    fn domain_titles_use_the_ontology_spelling() {
+        assert_eq!(
+            domain_section_title("gpu", "Utilization"),
+            "GPU Utilization"
+        );
+        assert_eq!(domain_section_title("cpu", "Overview"), "CPU Overview");
+        assert_eq!(domain_section_title("network", "I/O"), "Network I/O");
+        assert_eq!(domain_section_title("memory", ""), "Memory");
+    }
+
+    /// Whatever the surfaces render, the domain word has to be one the ontology
+    /// recognises — otherwise the heading names something unqueryable.
+    #[test]
+    fn every_title_domain_is_queryable() {
+        for domain in ["cpu", "gpu", "memory", "network", "disk", "thermal"] {
+            assert!(
+                crate::ontology::labels::is_known_domain(domain),
+                "{domain} is used in a section title but is not an ontology domain"
+            );
+        }
+    }
+}

@@ -7,9 +7,10 @@
 use eframe::egui;
 
 mod app;
+mod headless;
 mod profile_tab;
 mod theme;
-mod widgets;
+pub mod widgets;
 
 pub use app::SiliconMonitorApp;
 
