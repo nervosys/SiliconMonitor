@@ -98,14 +98,27 @@ pub fn snapshot() -> Vec<Reading> {
     resolve_system(&mut out);
     resolve_board(&mut out);
     resolve_gpu(&mut out);
+    resolve_disk(&mut out);
+    resolve_network(&mut out);
+    resolve_process(&mut out);
+    resolve_thermal(&mut out);
+    resolve_power(&mut out);
 
-    // Anything the ontology names but nothing above produced. Templates are skipped:
-    // an unexpanded `gpu.{n}.name` is not a fact about this machine.
+    // Anything the ontology names but nothing above produced.
     let produced: std::collections::HashSet<&str> = out.iter().map(|r| r.id.as_str()).collect();
     let mut unbound: Vec<Reading> = ontology
         .entities
         .values()
-        .filter(|e| !Ontology::is_template(&e.id) && !produced.contains(e.id.as_str()))
+        .filter(|e| {
+            // Diagnostics are claims about the reading process, and a resolver emits
+            // one only when its condition actually holds. Sweeping them in here
+            // asserted the opposite of the truth: `network.<none>` appeared saying
+            // "no resolver bound" in a snapshot where the network resolver had just
+            // enumerated forty-five readings.
+            e.kind != super::EntityKind::Diagnostic
+                && !Ontology::is_template(&e.id)
+                && !produced.contains(e.id.as_str())
+        })
         .map(|e| {
             Reading::unavailable(
                 e.id.clone(),
@@ -116,6 +129,32 @@ pub fn snapshot() -> Vec<Reading> {
         })
         .collect();
     out.append(&mut unbound);
+
+    // Templated entities need the same treatment, and used to be skipped entirely on
+    // the grounds that an unexpanded `disk.{n}.model` is not a fact about a machine.
+    // That reasoning was wrong in a way this module exists to prevent: a domain whose
+    // entities are *all* templates simply vanished from the snapshot, so an agent
+    // could not tell "this machine has no disks" from "simon does not read disks".
+    // Silence is the one answer a resolver must never give. A domain that produced
+    // nothing gets one row saying so, keyed on the template so the id stays traceable
+    // back to the schema.
+    let mut missing_domains: Vec<Reading> = Vec::new();
+    for domain in super::Domain::ALL {
+        let prefix = format!("{}.", domain.as_str());
+        if out.iter().any(|r| r.id.starts_with(&prefix)) {
+            continue;
+        }
+        let declares_any = ontology.entities.values().any(|e| e.domain == *domain);
+        if declares_any {
+            missing_domains.push(Reading::unavailable(
+                format!("{}.<none>", domain.as_str()),
+                None,
+                "no instance of this domain was found and no resolver reported why; \
+                 the ontology declares entities here but nothing was enumerated",
+            ));
+        }
+    }
+    out.append(&mut missing_domains);
 
     out.sort_by(|a, b| a.id.cmp(&b.id));
     out
@@ -494,6 +533,48 @@ fn resolve_gpu(out: &mut Vec<Reading>) {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
+/// Make a device name safe to use as one segment of a dotted id.
+///
+/// Device names are chosen by vendors and drivers, not by simon: Windows hands back
+/// "Bluetooth Network Connection", and VLAN interfaces carry dots. Both break the id
+/// contract — a dot creates a spurious path segment, and whitespace makes the id
+/// impossible to pass to `simon get` without quoting. Substitution is lossy but
+/// total, which matters more here than being reversible: an id an agent cannot type
+/// is not an id.
+fn id_segment(raw: &str) -> String {
+    let cleaned: String = raw
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    // Collapse runs so "Bluetooth Network Connection" does not become a thicket of
+    // underscores, and trim the edges.
+    let mut out = String::with_capacity(cleaned.len());
+    let mut last_underscore = false;
+    for c in cleaned.chars() {
+        if c == '_' {
+            if !last_underscore {
+                out.push(c);
+            }
+            last_underscore = true;
+        } else {
+            out.push(c);
+            last_underscore = false;
+        }
+    }
+    let trimmed = out.trim_matches('_').to_string();
+    if trimmed.is_empty() {
+        "unnamed".to_string()
+    } else {
+        trimmed
+    }
+}
+
 fn push_text(out: &mut Vec<Reading>, id: impl Into<String>, value: &str) {
     let id = id.into();
     if value.trim().is_empty() {
@@ -619,6 +700,306 @@ fn lookup_template<'a>(ontology: &'a Ontology, concrete: &str) -> Option<&'a Ent
     })
 }
 
+/// Number of processes reported. Enumerating every process would make a snapshot
+/// dominated by transient noise, so the list is capped — and the cap is announced as
+/// a reading rather than applied silently, because a truncated list that looks
+/// complete is its own kind of wrong answer.
+const PROCESS_LIMIT: usize = 10;
+
+fn resolve_disk(out: &mut Vec<Reading>) {
+    let disks = match crate::disk::enumerate_disks() {
+        Ok(d) => d,
+        Err(e) => {
+            out.push(Reading::unavailable(
+                "disk.<none>",
+                None,
+                format!("disk enumeration failed: {e}"),
+            ));
+            return;
+        }
+    };
+    if disks.is_empty() {
+        out.push(Reading::unavailable(
+            "disk.<none>",
+            None,
+            "no block devices enumerated on this machine",
+        ));
+        return;
+    }
+
+    for (i, disk) in disks.iter().enumerate() {
+        let base = format!("disk.{i}");
+        match disk.info() {
+            Ok(info) => {
+                push_text(out, format!("{base}.model"), &info.model);
+                if info.capacity > 0 {
+                    out.push(Reading::measured(
+                        format!("{base}.capacity"),
+                        serde_json::json!(info.capacity),
+                        Some(Unit::Bytes),
+                    ));
+                } else {
+                    out.push(Reading::unavailable(
+                        format!("{base}.capacity"),
+                        Some(Unit::Bytes),
+                        "device reported zero capacity",
+                    ));
+                }
+            }
+            Err(e) => {
+                for suffix in ["model", "capacity"] {
+                    out.push(Reading::unavailable(
+                        format!("{base}.{suffix}"),
+                        None,
+                        format!("device info read failed: {e}"),
+                    ));
+                }
+            }
+        }
+
+        // Throughput is documented as calculated from recent samples. One sample is
+        // not two, so a single-shot query legitimately has none.
+        match disk.io_stats() {
+            Ok(io) => {
+                push_opt(
+                    out,
+                    format!("{base}.read_rate"),
+                    io.read_throughput.map(|v| serde_json::json!(v)),
+                    Some(Unit::BytesPerSecond),
+                    "a throughput needs two samples; this query took one",
+                );
+                push_opt(
+                    out,
+                    format!("{base}.write_rate"),
+                    io.write_throughput.map(|v| serde_json::json!(v)),
+                    Some(Unit::BytesPerSecond),
+                    "a throughput needs two samples; this query took one",
+                );
+            }
+            Err(e) => {
+                for suffix in ["read_rate", "write_rate"] {
+                    out.push(Reading::unavailable(
+                        format!("{base}.{suffix}"),
+                        Some(Unit::BytesPerSecond),
+                        format!("I/O statistics read failed: {e}"),
+                    ));
+                }
+            }
+        }
+    }
+}
+
+fn resolve_network(out: &mut Vec<Reading>) {
+    let mut monitor = match crate::network_monitor::NetworkMonitor::new() {
+        Ok(m) => m,
+        Err(e) => {
+            out.push(Reading::unavailable(
+                "network.<none>",
+                None,
+                format!("network monitor unavailable: {e}"),
+            ));
+            return;
+        }
+    };
+    let interfaces = match monitor.interfaces() {
+        Ok(i) => i,
+        Err(e) => {
+            out.push(Reading::unavailable(
+                "network.<none>",
+                None,
+                format!("interface enumeration failed: {e}"),
+            ));
+            return;
+        }
+    };
+    if interfaces.is_empty() {
+        out.push(Reading::unavailable(
+            "network.<none>",
+            None,
+            "no network interfaces enumerated",
+        ));
+        return;
+    }
+
+    for iface in &interfaces {
+        let base = format!("network.{}", id_segment(&iface.name));
+
+        out.push(Reading::measured(
+            format!("{base}.rx_bytes"),
+            serde_json::json!(iface.rx_bytes),
+            Some(Unit::Bytes),
+        ));
+        out.push(Reading::measured(
+            format!("{base}.tx_bytes"),
+            serde_json::json!(iface.tx_bytes),
+            Some(Unit::Bytes),
+        ));
+
+        // The counters above are cumulative. Reporting them as a rate would be the
+        // same category of error as calling a spec constant a measurement.
+        for dir in ["rx", "tx"] {
+            out.push(Reading::unavailable(
+                format!("{base}.{dir}_rate"),
+                Some(Unit::BytesPerSecond),
+                "a rate needs two samples; this query took one — differentiate \
+                 rx_bytes/tx_bytes across two snapshots",
+            ));
+        }
+
+        push_opt(
+            out,
+            format!("{base}.link_speed"),
+            iface.speed_mbps.map(|s| serde_json::json!(s)),
+            Some(Unit::Count),
+            "driver reports no negotiated link rate for this interface",
+        );
+    }
+}
+
+fn resolve_process(out: &mut Vec<Reading>) {
+    let mut monitor = match crate::process_monitor::ProcessMonitor::new() {
+        Ok(m) => m,
+        Err(e) => {
+            out.push(Reading::unavailable(
+                "process.<none>",
+                None,
+                format!("process monitor unavailable: {e}"),
+            ));
+            return;
+        }
+    };
+    let procs = match monitor.processes_by_memory() {
+        Ok(p) => p,
+        Err(e) => {
+            out.push(Reading::unavailable(
+                "process.<none>",
+                None,
+                format!("process enumeration failed: {e}"),
+            ));
+            return;
+        }
+    };
+    if procs.is_empty() {
+        out.push(Reading::unavailable(
+            "process.<none>",
+            None,
+            "no processes enumerated",
+        ));
+        return;
+    }
+
+    let total = procs.len();
+    for p in procs.iter().take(PROCESS_LIMIT) {
+        let base = format!("process.{}", p.pid);
+        push_text(out, format!("{base}.name"), &p.name);
+        out.push(Reading::measured(
+            format!("{base}.cpu"),
+            serde_json::json!(p.cpu_percent),
+            Some(Unit::Percent),
+        ));
+        out.push(Reading::measured(
+            format!("{base}.memory"),
+            serde_json::json!(p.memory_bytes),
+            Some(Unit::Bytes),
+        ));
+    }
+
+    // Announce the truncation. A capped list presented as complete would let an agent
+    // conclude a process is absent when it was merely ranked eleventh.
+    if total > PROCESS_LIMIT {
+        out.push(Reading::unavailable(
+            "process.<truncated>",
+            Some(Unit::Count),
+            format!(
+                "{total} processes exist; this snapshot reports the {PROCESS_LIMIT} \
+                 largest by memory. Absence from this list is not absence from the \
+                 machine — use `simon cli processes` for the full table"
+            ),
+        ));
+    }
+}
+
+fn resolve_thermal(out: &mut Vec<Reading>) {
+    let temps = match crate::motherboard::get_system_temperatures() {
+        Ok(t) => t,
+        Err(e) => {
+            out.push(Reading::unavailable(
+                "thermal.<none>",
+                Some(Unit::Celsius),
+                format!("temperature read failed: {e}"),
+            ));
+            return;
+        }
+    };
+
+    let mut any = false;
+    for (name, value) in [
+        ("cpu", temps.cpu),
+        ("gpu", temps.gpu),
+        ("motherboard", temps.motherboard),
+    ] {
+        match value {
+            Some(v) => {
+                any = true;
+                out.push(Reading::measured(
+                    format!("thermal.{name}.temperature"),
+                    serde_json::json!(v),
+                    Some(Unit::Celsius),
+                ));
+            }
+            None => out.push(Reading::unavailable(
+                format!("thermal.{name}.temperature"),
+                Some(Unit::Celsius),
+                "no sensor exposed for this component",
+            )),
+        }
+    }
+
+    for (device, value) in temps.storage.iter().chain(temps.network.iter()) {
+        any = true;
+        out.push(Reading::measured(
+            format!("thermal.{}.temperature", id_segment(device)),
+            serde_json::json!(value),
+            Some(Unit::Celsius),
+        ));
+    }
+
+    if !any {
+        out.push(Reading::unavailable(
+            "thermal.<none>",
+            Some(Unit::Celsius),
+            "no thermal sensors readable on this machine — on Windows most board \
+             sensors require a signed kernel driver",
+        ));
+    }
+}
+
+fn resolve_power(out: &mut Vec<Reading>) {
+    match crate::battery::BatteryMonitor::new() {
+        Ok(monitor) => {
+            let batteries = monitor.batteries();
+            if batteries.is_empty() {
+                out.push(Reading::unavailable(
+                    "power.battery.percentage",
+                    Some(Unit::Percent),
+                    "no battery present (desktop or always-AC machine)",
+                ));
+            } else {
+                out.push(Reading::measured(
+                    "power.battery.percentage",
+                    serde_json::json!(batteries[0].charge_percent),
+                    Some(Unit::Percent),
+                ));
+            }
+        }
+        Err(e) => out.push(Reading::unavailable(
+            "power.battery.percentage",
+            Some(Unit::Percent),
+            format!("battery monitor unavailable: {e}"),
+        )),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -684,6 +1065,91 @@ mod tests {
     fn live_readings_are_physically_possible() {
         let problems = validate(&snapshot());
         assert!(problems.is_empty(), "impossible readings: {problems:#?}");
+    }
+
+    /// An id an agent cannot type is not an id.
+    ///
+    /// Device names come from vendors, not from simon: the first version of the
+    /// network resolver emitted `network.Bluetooth Network Connection.rx_bytes`,
+    /// which cannot be passed to `simon get` without quoting and whose spaces make
+    /// the dotted structure ambiguous. Segments are sanitised at construction; this
+    /// asserts the whole snapshot honours it.
+    #[test]
+    fn every_id_is_shell_safe_and_well_structured() {
+        for r in snapshot() {
+            assert!(
+                !r.id.contains(char::is_whitespace),
+                "{} contains whitespace, so it cannot be passed as a bare argument",
+                r.id
+            );
+            assert!(
+                !r.id.contains("..") && !r.id.starts_with('.') && !r.id.ends_with('.'),
+                "malformed id: {}",
+                r.id
+            );
+            for segment in r.id.split('.') {
+                assert!(!segment.is_empty(), "{} has an empty path segment", r.id);
+            }
+        }
+    }
+
+    #[test]
+    fn id_segments_are_sanitised_without_collapsing_distinct_names() {
+        assert_eq!(
+            id_segment("Bluetooth Network Connection"),
+            "Bluetooth_Network_Connection"
+        );
+        assert_eq!(id_segment("eth0.100"), "eth0_100");
+        assert_eq!(id_segment("  spaced  "), "spaced");
+        // A name made entirely of separators still has to yield a usable segment.
+        assert_eq!(id_segment("///"), "unnamed");
+        // Distinct names must not collide into one id.
+        assert_ne!(id_segment("eth0"), id_segment("eth1"));
+    }
+
+    /// A diagnostic must only appear when its condition holds. `disk.<none>` in a
+    /// snapshot that also lists eight disk readings is a contradiction, and one that
+    /// would teach an agent to distrust the diagnostics generally.
+    #[test]
+    fn diagnostics_do_not_contradict_the_readings_beside_them() {
+        let readings = snapshot();
+        for domain in crate::ontology::Domain::ALL {
+            let none_id = format!("{}.<none>", domain.as_str());
+            let has_none = readings.iter().any(|r| r.id == none_id);
+            if !has_none {
+                continue;
+            }
+            let real_rows = readings
+                .iter()
+                .filter(|r| {
+                    r.id.starts_with(&format!("{}.", domain.as_str())) && !r.id.contains('<')
+                })
+                .count();
+            assert_eq!(
+                real_rows,
+                0,
+                "{none_id} claims the domain enumerated nothing, but {real_rows} \
+                 {} rows are present alongside it",
+                domain.as_str()
+            );
+        }
+    }
+
+    /// Every domain the ontology declares must appear in a snapshot, even when the
+    /// machine has no such device. Silence would leave an agent unable to tell "no
+    /// disks here" from "simon does not read disks".
+    #[test]
+    fn no_declared_domain_is_silently_absent() {
+        let readings = snapshot();
+        for domain in crate::ontology::Domain::ALL {
+            let prefix = format!("{}.", domain.as_str());
+            assert!(
+                readings.iter().any(|r| r.id.starts_with(&prefix)),
+                "domain {} produced no rows at all — an agent cannot distinguish an \
+                 absent device from an unimplemented reader",
+                domain.as_str()
+            );
+        }
     }
 
     #[test]

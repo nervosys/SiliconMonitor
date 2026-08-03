@@ -136,6 +136,13 @@ pub enum EntityKind {
     Setting,
     /// A limit or threshold the hardware declares.
     Limit,
+    /// Not a property of the hardware but a statement about the reading process
+    /// itself — that a domain enumerated nothing, or that a list was truncated.
+    /// These exist because silence is the one answer a resolver must never give: an
+    /// agent that receives no `disk.*` rows cannot tell an absent device from an
+    /// unimplemented reader, and a capped list presented as complete invites the
+    /// conclusion that a process is absent when it was merely ranked eleventh.
+    Diagnostic,
 }
 
 impl EntityKind {
@@ -145,6 +152,7 @@ impl EntityKind {
             Self::Identity => "identity",
             Self::Setting => "setting",
             Self::Limit => "limit",
+            Self::Diagnostic => "diagnostic",
         }
     }
 }
@@ -631,6 +639,29 @@ impl Ontology {
             true,
             "Transmit throughput on this interface.",
         ));
+        // Cumulative counters exist because a rate does not: a single-shot query has
+        // one sample, and a rate needs two. Declaring only `rx_rate` forced a
+        // resolver to either return nothing useful or to pass a counter off as a
+        // rate. These are what a one-shot read can honestly produce.
+        add(Entity::new(
+            "network.{iface}.rx_bytes",
+            D::Network,
+            K::Measurement,
+            Some(U::Bytes),
+            P::Measured,
+            true,
+            "Bytes received since the interface came up. A counter, not a rate — \
+             differentiate two samples to obtain throughput.",
+        ));
+        add(Entity::new(
+            "network.{iface}.tx_bytes",
+            D::Network,
+            K::Measurement,
+            Some(U::Bytes),
+            P::Measured,
+            true,
+            "Bytes transmitted since the interface came up. A counter, not a rate.",
+        ));
         add(Entity::new(
             "network.{iface}.link_speed",
             D::Network,
@@ -767,6 +798,37 @@ impl Ontology {
             P::Measured,
             true,
             "Baseboard manufacturer from SMBIOS.",
+        ));
+
+        // ── Diagnostics ──────────────────────────────────────────────────────
+        //
+        // Declared, not synthesised at read time, because everything the resolver
+        // emits has to be findable in the schema an agent fetched beforehand. These
+        // were the one class of row that violated that: emitting an undeclared
+        // `disk.<none>` told an agent something true in a vocabulary it had no way
+        // to look up.
+        for domain in Domain::ALL {
+            add(Entity::new(
+                &format!("{}.<none>", domain.as_str()),
+                *domain,
+                K::Diagnostic,
+                None,
+                P::Unavailable,
+                true,
+                "Present only when this domain enumerated nothing. Carries the \
+                 reason, so an absent device stays distinguishable from a reader \
+                 that is not implemented here.",
+            ));
+        }
+        add(Entity::new(
+            "process.<truncated>",
+            D::Process,
+            K::Diagnostic,
+            Some(U::Count),
+            P::Unavailable,
+            true,
+            "Present when the process list was capped. Absence from a truncated \
+             list is not absence from the machine.",
         ));
 
         Self {
