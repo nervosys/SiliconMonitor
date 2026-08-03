@@ -26,6 +26,8 @@
 //! [`Provenance`] makes the distinction explicit and machine-checkable, so an agent
 //! can refuse to reason about a specification constant as though it were a sample.
 
+pub mod resolve;
+
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -941,5 +943,149 @@ mod tests {
         let a = serde_json::to_string(&Ontology::build()).unwrap();
         let b = serde_json::to_string(&Ontology::build()).unwrap();
         assert_eq!(a, b);
+    }
+}
+
+/// Human-facing labels, derived from the ontology rather than retyped per surface.
+///
+/// The CLI printed `Kernel:`, the GUI printed `Kernel Version`, and the JSON emitted
+/// `kernel_version` — three names for one reading, which is exactly what stops an
+/// agent correlating what a user reports seeing with what it can query. These
+/// helpers give the TUI and GUI the same source the CLI and `simon describe` use, so
+/// a label shown on screen can be turned back into an id.
+pub mod labels {
+    use super::{Domain, Ontology};
+
+    /// Title-cased label for an entity id, e.g. `gpu.0.thermal.temperature` ->
+    /// "Temperature". Falls back to the last path segment for ids the ontology does
+    /// not declare, so a surface never renders a raw dotted id at a user.
+    pub fn short_label(id: &str) -> String {
+        let leaf = id.rsplit('.').next().unwrap_or(id);
+        title_case(leaf)
+    }
+
+    /// Fully qualified label including the domain and instance, e.g.
+    /// "GPU 0 — Temperature". Used where a surface shows readings from several
+    /// devices in one list.
+    pub fn qualified_label(id: &str) -> String {
+        let parts: Vec<&str> = id.split('.').collect();
+        let short = short_label(id);
+        match parts.as_slice() {
+            [domain, instance, ..] if instance.chars().all(|c| c.is_ascii_digit()) => {
+                format!("{} {} — {}", domain_label(domain), instance, short)
+            }
+            [domain, ..] => format!("{} — {}", domain_label(domain), short),
+            [] => short,
+        }
+    }
+
+    /// Display name for a domain, preserving the acronyms users expect to see.
+    pub fn domain_label(domain: &str) -> String {
+        match domain {
+            "cpu" => "CPU".to_string(),
+            "gpu" => "GPU".to_string(),
+            _ => title_case(domain),
+        }
+    }
+
+    /// The id a label came from, if the ontology declares exactly one match.
+    ///
+    /// The inverse direction, and the reason the labels live here: an agent handed
+    /// "Temperature" by a user looking at the GUI can ask which ids that could mean
+    /// instead of guessing.
+    pub fn ids_for_label(label: &str) -> Vec<String> {
+        let ontology = Ontology::build();
+        let needle = label.trim().to_ascii_lowercase();
+        ontology
+            .entities
+            .keys()
+            .filter(|id| short_label(id).to_ascii_lowercase() == needle)
+            .cloned()
+            .collect()
+    }
+
+    /// Whether a domain name is one the ontology knows, so a surface can assert its
+    /// section headings correspond to real domains.
+    pub fn is_known_domain(domain: &str) -> bool {
+        Domain::parse(domain).is_some()
+    }
+
+    fn title_case(s: &str) -> String {
+        s.split('_')
+            .map(|word| {
+                let mut chars = word.chars();
+                match chars.next() {
+                    Some(first) => {
+                        first.to_uppercase().collect::<String>() + &chars.as_str().to_lowercase()
+                    }
+                    None => String::new(),
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn labels_are_derived_from_ids() {
+            assert_eq!(short_label("gpu.0.thermal.temperature"), "Temperature");
+            assert_eq!(short_label("memory.total"), "Total");
+            assert_eq!(short_label("system.os.name"), "Name");
+            // Underscores become spaces, not run-together words.
+            assert_eq!(
+                short_label("gpu.0.thermal.critical_temperature"),
+                "Critical Temperature"
+            );
+        }
+
+        #[test]
+        fn qualified_labels_name_the_device() {
+            assert_eq!(
+                qualified_label("gpu.0.thermal.temperature"),
+                "GPU 0 — Temperature"
+            );
+            assert_eq!(qualified_label("memory.total"), "Memory — Total");
+            // Acronyms survive title-casing.
+            assert_eq!(domain_label("cpu"), "CPU");
+            assert_eq!(domain_label("memory"), "Memory");
+        }
+
+        /// The inverse direction has to actually work, or the label layer is
+        /// decoration rather than a mapping.
+        #[test]
+        fn labels_map_back_to_ids() {
+            let ids = ids_for_label("Total");
+            assert!(
+                ids.contains(&"memory.total".to_string()),
+                "expected memory.total among {ids:?}"
+            );
+            assert!(ids_for_label("no such label").is_empty());
+        }
+
+        #[test]
+        fn every_ontology_domain_is_a_known_domain() {
+            for d in Domain::ALL {
+                assert!(is_known_domain(d.as_str()));
+            }
+            assert!(!is_known_domain("nonsense"));
+        }
+
+        /// No entity may produce an empty label — a surface would render a blank.
+        #[test]
+        fn no_entity_yields_an_empty_label() {
+            for id in Ontology::build().entities.keys() {
+                assert!(
+                    !short_label(id).trim().is_empty(),
+                    "{id} produced an empty label"
+                );
+                assert!(
+                    !qualified_label(id).trim().is_empty(),
+                    "{id} produced an empty qualified label"
+                );
+            }
+        }
     }
 }

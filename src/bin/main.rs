@@ -1,7 +1,7 @@
 //! CLI tool for Silicon Monitor (simon)
 
 #[cfg(feature = "cli")]
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
 #[cfg(feature = "cli")]
 use colored::Colorize;
 use std::path::PathBuf;
@@ -77,6 +77,12 @@ enum Commands {
     /// hardware, so the output is identical on every machine and can be fetched
     /// ahead of time. `--format json` is the machine-facing form.
     Describe {
+        /// Emit the command surface instead of the entity surface: every
+        /// subcommand, its arguments and its help, generated from the parser so it
+        /// cannot drift from what the binary actually accepts
+        #[arg(long)]
+        commands: bool,
+
         /// Restrict to one domain (cpu, gpu, memory, disk, network, power, thermal,
         /// process, system, board)
         #[arg(long)]
@@ -89,6 +95,42 @@ enum Commands {
         /// Look up a single entity by exact id
         #[arg(long)]
         id: Option<String>,
+
+        /// Output format (json or text)
+        #[arg(short, long, default_value = "text")]
+        format: String,
+    },
+    /// Read one ontology entity by id
+    ///
+    /// `simon get gpu.0.thermal.temperature`. Exits 1 when the id is unknown and 2
+    /// when it is known but unavailable here, so a caller can tell "no such thing"
+    /// from "nothing to report".
+    Get {
+        /// Entity id, e.g. `memory.total` or `gpu.0.power.draw`
+        id: String,
+
+        /// Output format (json or text)
+        #[arg(short, long, default_value = "text")]
+        format: String,
+    },
+    /// Read every resolvable entity at once, with provenance
+    ///
+    /// The bulk form of `get`. Entities simon cannot read here are still listed,
+    /// each with the reason, so an absent device stays distinguishable from an
+    /// unimplemented reader.
+    Snapshot {
+        /// Restrict to one domain
+        #[arg(long)]
+        domain: Option<String>,
+
+        /// Omit entities that could not be read
+        #[arg(long)]
+        resolved_only: bool,
+
+        /// Check every reading against the ontology's declared ranges; exit
+        /// non-zero if any is physically impossible
+        #[arg(long)]
+        validate: bool,
 
         /// Output format (json or text)
         #[arg(short, long, default_value = "text")]
@@ -580,12 +622,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             handle_profile_command(action)?;
         }
         Some(Commands::Describe {
+            commands,
             domain,
             search,
             id,
             format,
         }) => {
-            handle_describe_command(domain.as_deref(), search.as_deref(), id.as_deref(), format)?;
+            handle_describe_command(
+                *commands,
+                domain.as_deref(),
+                search.as_deref(),
+                id.as_deref(),
+                format,
+            )?;
+        }
+        Some(Commands::Get { id, format }) => {
+            handle_get_command(id, format)?;
+        }
+        Some(Commands::Snapshot {
+            domain,
+            resolved_only,
+            validate,
+            format,
+        }) => {
+            handle_snapshot_command(domain.as_deref(), *resolved_only, *validate, format)?;
         }
         Some(Commands::Daemon {
             config,
@@ -3168,13 +3228,233 @@ fn format_duration(secs: u64) -> String {
 /// Deliberately hardware-free: this is the schema, not a reading. An agent fetches
 /// it once to learn the id space, the units, and — the part that matters — which
 /// values are measurements and which are constants wearing a measurement's clothes.
+/// Read one entity by id.
+///
+/// The exit codes carry information a caller needs: 1 means simon has never heard
+/// of this id, 2 means it knows the id and could not read it here. Collapsing those
+/// into a single failure would lose the distinction the ontology exists to preserve.
+fn handle_get_command(id: &str, format: &str) -> Result<(), Box<dyn std::error::Error>> {
+    use simonlib::ontology::resolve;
+
+    let Some(reading) = resolve::get(id) else {
+        eprintln!("Unknown entity id: {id}");
+        eprintln!(
+            "Try `simon describe --search {}`.",
+            id.split('.').next().unwrap_or(id)
+        );
+        std::process::exit(1);
+    };
+
+    if format.eq_ignore_ascii_case("json") {
+        println!("{}", serde_json::to_string_pretty(&reading)?);
+    } else {
+        match &reading.value {
+            Some(v) => {
+                let rendered = v
+                    .as_str()
+                    .map(str::to_string)
+                    .unwrap_or_else(|| v.to_string());
+                let unit = reading
+                    .unit
+                    .map(|u| format!(" {}", u.as_str()))
+                    .unwrap_or_default();
+                println!("{rendered}{unit}  [{}]", reading.provenance.as_str());
+            }
+            None => {
+                println!("unavailable");
+                if let Some(note) = &reading.note {
+                    println!("  {note}");
+                }
+            }
+        }
+    }
+
+    if reading.value.is_none() {
+        std::process::exit(2);
+    }
+    Ok(())
+}
+
+/// Read every resolvable entity.
+fn handle_snapshot_command(
+    domain: Option<&str>,
+    resolved_only: bool,
+    validate: bool,
+    format: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use simonlib::ontology::{resolve, Domain};
+
+    let mut readings = resolve::snapshot();
+
+    if let Some(d) = domain {
+        let Some(parsed) = Domain::parse(d) else {
+            eprintln!("Unknown domain {d:?}. Known domains:");
+            for known in Domain::ALL {
+                eprintln!("  {}", known.as_str());
+            }
+            std::process::exit(1);
+        };
+        let prefix = format!("{}.", parsed.as_str());
+        readings.retain(|r| r.id.starts_with(&prefix));
+    }
+    if resolved_only {
+        readings.retain(|r| r.value.is_some());
+    }
+
+    let problems = if validate {
+        resolve::validate(&readings)
+    } else {
+        Vec::new()
+    };
+
+    if format.eq_ignore_ascii_case("json") {
+        let resolved = readings.iter().filter(|r| r.value.is_some()).count();
+        let doc = serde_json::json!({
+            "ontology_version": simonlib::ontology::ONTOLOGY_VERSION,
+            "resolved": resolved,
+            "unavailable": readings.len() - resolved,
+            "impossible": problems,
+            "readings": readings,
+        });
+        println!("{}", serde_json::to_string_pretty(&doc)?);
+    } else {
+        for r in &readings {
+            match &r.value {
+                Some(v) => {
+                    let rendered = v
+                        .as_str()
+                        .map(str::to_string)
+                        .unwrap_or_else(|| v.to_string());
+                    let unit = r
+                        .unit
+                        .map(|u| format!(" {}", u.as_str()))
+                        .unwrap_or_default();
+                    println!(
+                        "{:<44} {:<14} {rendered}{unit}",
+                        r.id,
+                        r.provenance.as_str()
+                    );
+                }
+                None => println!(
+                    "{:<44} {:<14} — {}",
+                    r.id,
+                    "unavailable",
+                    r.note.as_deref().unwrap_or("no reason given")
+                ),
+            }
+        }
+        let resolved = readings.iter().filter(|r| r.value.is_some()).count();
+        println!();
+        println!(
+            "{resolved} resolved, {} unavailable",
+            readings.len() - resolved
+        );
+    }
+
+    if !problems.is_empty() {
+        eprintln!("\n{} impossible reading(s):", problems.len());
+        for p in &problems {
+            eprintln!("  {p}");
+        }
+        std::process::exit(3);
+    }
+    Ok(())
+}
+
+/// Emit the command surface as data.
+///
+/// Generated by walking clap's own parse tree rather than by maintaining a list, so
+/// it describes what the binary actually accepts. A hand-written catalogue would be
+/// wrong the first time a flag was added and nobody remembered this function.
+///
+/// This is the operation half of the ontology: `simon describe` names what can be
+/// read, this names what can be run. An agent needs both to drive simon without
+/// guessing at argv.
+fn emit_command_catalog(format: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let root = Cli::command();
+
+    fn describe(cmd: &clap::Command) -> serde_json::Value {
+        let args: Vec<serde_json::Value> = cmd
+            .get_arguments()
+            .filter(|a| a.get_id() != "help" && a.get_id() != "version")
+            .map(|a| {
+                serde_json::json!({
+                    "name": a.get_id().as_str(),
+                    "long": a.get_long(),
+                    "short": a.get_short().map(|c| c.to_string()),
+                    "help": a.get_help().map(|h| h.to_string()),
+                    "required": a.is_required_set(),
+                    // A flag takes no value; anything else consumes one.
+                    "takes_value": a.get_num_args().map(|n| n.takes_values()).unwrap_or(false),
+                    "default": a.get_default_values()
+                        .first()
+                        .map(|v| v.to_string_lossy().to_string()),
+                })
+            })
+            .collect();
+
+        let subcommands: Vec<serde_json::Value> = cmd
+            .get_subcommands()
+            .filter(|s| s.get_name() != "help")
+            .map(describe)
+            .collect();
+
+        serde_json::json!({
+            "name": cmd.get_name(),
+            "about": cmd.get_about().map(|a| a.to_string()),
+            "args": args,
+            "subcommands": subcommands,
+        })
+    }
+
+    let catalog = describe(&root);
+
+    if format.eq_ignore_ascii_case("json") {
+        println!("{}", serde_json::to_string_pretty(&catalog)?);
+        return Ok(());
+    }
+
+    fn print_tree(node: &serde_json::Value, depth: usize) {
+        let indent = "  ".repeat(depth);
+        let name = node["name"].as_str().unwrap_or("?");
+        let about = node["about"].as_str().unwrap_or("");
+        println!("{indent}{name}  {about}");
+        for arg in node["args"].as_array().into_iter().flatten() {
+            let long = arg["long"]
+                .as_str()
+                .map(|l| format!("--{l}"))
+                .unwrap_or_default();
+            let takes = if arg["takes_value"].as_bool().unwrap_or(false) {
+                " <value>"
+            } else {
+                ""
+            };
+            let help = arg["help"].as_str().unwrap_or("");
+            if !long.is_empty() {
+                println!("{indent}    {long}{takes}  {help}");
+            }
+        }
+        for sub in node["subcommands"].as_array().into_iter().flatten() {
+            print_tree(sub, depth + 1);
+        }
+    }
+
+    print_tree(&catalog, 0);
+    Ok(())
+}
+
 fn handle_describe_command(
+    commands: bool,
     domain: Option<&str>,
     search: Option<&str>,
     id: Option<&str>,
     format: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use simonlib::ontology::{Domain, Ontology};
+
+    if commands {
+        return emit_command_catalog(format);
+    }
 
     let ontology = Ontology::build();
 
