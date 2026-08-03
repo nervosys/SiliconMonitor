@@ -189,8 +189,18 @@ pub fn apply_cyber_theme(ctx: &egui::Context) {
     visuals.widgets.hovered.fg_stroke = Stroke::new(1.0_f32, CyberColors::CYAN);
     visuals.widgets.hovered.bg_stroke = Stroke::new(1.0_f32, CyberColors::CYAN_DIM);
 
-    visuals.widgets.active.bg_fill = CyberColors::CYAN_DIM;
-    visuals.widgets.active.fg_stroke = Stroke::new(1.0_f32, CyberColors::BACKGROUND);
+    // `widgets.active` is not only the pressed-widget style: egui derives the global
+    // strong-text colour from it (`Visuals::strong_text_color` -> `widgets.active
+    // .text_color()`). This used to be a bright CYAN_DIM fill with BACKGROUND-coloured
+    // text, which reads well on a pressed button and is invisible everywhere else —
+    // every `RichText::strong()` in the app was drawn in rgb(13,17,23) on the
+    // rgb(13,17,23) panel. That is what made the Profiles tab look empty: it rendered
+    // all 19 groups, each with an unreadable heading.
+    //
+    // A dark fill with bright text satisfies both roles: legible when pressed, legible
+    // as strong body text. The cyan identity moves to the border.
+    visuals.widgets.active.bg_fill = CyberColors::SURFACE_HOVER;
+    visuals.widgets.active.fg_stroke = Stroke::new(1.0_f32, CyberColors::TEXT_PRIMARY);
     visuals.widgets.active.bg_stroke = Stroke::new(1.0_f32, CyberColors::CYAN);
 
     visuals.widgets.open.bg_fill = CyberColors::SURFACE_HOVER;
@@ -327,8 +337,11 @@ pub fn apply_light_theme(ctx: &egui::Context) {
     visuals.widgets.hovered.bg_fill = LightColors::SURFACE_HOVER;
     visuals.widgets.hovered.fg_stroke = Stroke::new(1.0_f32, LightColors::ACCENT);
     visuals.widgets.hovered.bg_stroke = Stroke::new(1.0_f32, LightColors::ACCENT_DIM);
-    visuals.widgets.active.bg_fill = LightColors::ACCENT_DIM;
-    visuals.widgets.active.fg_stroke = Stroke::new(1.0_f32, Color32::WHITE);
+    // Same constraint as the dark theme: this stroke doubles as the global strong-text
+    // colour, so white here made every `strong()` label invisible on the near-white
+    // panel. Dark text on a light fill satisfies both roles.
+    visuals.widgets.active.bg_fill = LightColors::SURFACE_HOVER;
+    visuals.widgets.active.fg_stroke = Stroke::new(1.0_f32, LightColors::TEXT_PRIMARY);
     visuals.widgets.active.bg_stroke = Stroke::new(1.0_f32, LightColors::ACCENT);
     visuals.widgets.open.bg_fill = LightColors::SURFACE_HOVER;
     visuals.widgets.open.fg_stroke = Stroke::new(1.0_f32, LightColors::ACCENT);
@@ -365,4 +378,64 @@ pub fn apply_light_theme(ctx: &egui::Context) {
     style.spacing.window_margin = egui::Margin::same(12.0);
     style.spacing.button_padding = egui::vec2(10.0, 4.0);
     ctx.set_style(style);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Perceptual distance between two colours, as a rough sum of channel deltas.
+    /// Good enough to catch "text drawn in the background colour"; not a WCAG metric.
+    fn channel_distance(a: Color32, b: Color32) -> i32 {
+        (a.r() as i32 - b.r() as i32).abs()
+            + (a.g() as i32 - b.g() as i32).abs()
+            + (a.b() as i32 - b.b() as i32).abs()
+    }
+
+    /// Every text role must be legible against the surface it is drawn on.
+    ///
+    /// `RichText::strong()` does not carry its own colour — egui resolves it through
+    /// `Visuals::strong_text_color()`, which returns `widgets.active.text_color()`.
+    /// That same stroke styles a pressed widget, so it is tempting to set it to the
+    /// background colour for dark-on-accent buttons. Doing so silently paints every
+    /// strong label in the app the same colour as the panel: the Profiles tab rendered
+    /// all 19 of its groups with headings that could not be seen, which read as the
+    /// tab being broken rather than as a contrast bug.
+    #[test]
+    fn strong_text_is_legible_on_the_panel_it_is_drawn_on() {
+        for (name, apply) in [
+            ("cyber", apply_cyber_theme as fn(&egui::Context)),
+            ("light", apply_light_theme as fn(&egui::Context)),
+        ] {
+            let ctx = egui::Context::default();
+            apply(&ctx);
+            let visuals = ctx.style().visuals.clone();
+
+            let panel = visuals.panel_fill;
+            let strong = visuals.strong_text_color();
+            let body = visuals.text_color();
+
+            assert!(
+                channel_distance(strong, panel) > 60,
+                "{name}: strong text {strong:?} is indistinguishable from the panel \
+                 fill {panel:?} — every RichText::strong() would be invisible"
+            );
+            assert!(
+                channel_distance(body, panel) > 60,
+                "{name}: body text {body:?} is indistinguishable from the panel fill \
+                 {panel:?}"
+            );
+
+            // A pressed widget draws its own label on `active.bg_fill`, so that pair
+            // has to hold up too — this is the constraint that motivated the original
+            // background-coloured stroke.
+            let active_fill = visuals.widgets.active.bg_fill;
+            let active_text = visuals.widgets.active.text_color();
+            assert!(
+                channel_distance(active_text, active_fill) > 60,
+                "{name}: pressed-widget text {active_text:?} is indistinguishable from \
+                 its own fill {active_fill:?}"
+            );
+        }
+    }
 }

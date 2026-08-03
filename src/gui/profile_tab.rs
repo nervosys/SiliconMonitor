@@ -130,10 +130,10 @@ impl SiliconMonitorApp {
 
         // ── Deviations panel ──────────────────────────────────────────────
         let heading = if deviations.is_empty() {
-            RichText::new("▾ Deviations from default · 0 — at stock".to_string())
+            RichText::new("Deviations from default · 0 — at stock".to_string())
                 .color(egui::Color32::from_rgb(100, 220, 100))
         } else {
-            RichText::new(format!("▾ Deviations from default · {}", deviations.len()))
+            RichText::new(format!("Deviations from default · {}", deviations.len()))
                 .color(egui::Color32::from_rgb(240, 200, 80))
                 .strong()
         };
@@ -202,7 +202,7 @@ impl SiliconMonitorApp {
         // ── Audit log tail panel ─────────────────────────────────────────
         let audit_path = crate::profile::apply::audit_log_path();
         let audit_heading = RichText::new(format!(
-            "▾ Apply audit log · last {} entr{}",
+            "Apply audit log · last {} entr{}",
             audit_tail.len(),
             if audit_tail.len() == 1 { "y" } else { "ies" }
         ))
@@ -286,7 +286,7 @@ impl SiliconMonitorApp {
                     if groups.is_empty() {
                         continue;
                     }
-                    let heading = RichText::new(format!("▾ {}", sub.as_str().to_uppercase()))
+                    let heading = RichText::new(sub.as_str().to_uppercase())
                         .color(CyberColors::CYAN)
                         .strong();
                     egui::CollapsingHeader::new(heading)
@@ -319,7 +319,7 @@ impl SiliconMonitorApp {
                                 }
 
                                 let group_heading = RichText::new(format!(
-                                    "  ▸ {}  —  {}",
+                                    "{}  —  {}",
                                     group.device, group.display_name
                                 ))
                                 .strong();
