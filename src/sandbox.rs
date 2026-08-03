@@ -473,9 +473,11 @@ mod tests {
 
     #[test]
     fn test_sandbox_info_vm() {
-        let mut info = SandboxInfo::default();
-        info.is_vm = true;
-        info.environment = Some("VirtualBox".to_string());
+        let info = SandboxInfo {
+            is_vm: true,
+            environment: Some("VirtualBox".to_string()),
+            ..Default::default()
+        };
 
         assert!(info.is_sandboxed());
         assert!(info.summary().contains("Virtual Machine"));

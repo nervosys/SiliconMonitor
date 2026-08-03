@@ -383,9 +383,12 @@ impl InputMonitor {
                     for item in &items {
                         let name = item["Name"].as_str().unwrap_or("Unknown Keyboard").to_string();
                         let device_id = item["DeviceID"].as_str().unwrap_or("").to_string();
-                        let iface = if device_id.to_lowercase().contains("usb") {
-                            InputInterface::USB
-                        } else if device_id.to_lowercase().contains("hid") {
+                        // NOTE: a bare `HID\` instance names the device class, not the
+                        // transport — it may be Bluetooth or I2C rather than USB. This
+                        // reports USB for both, which is a guess for the non-USB cases.
+                        let iface = if device_id.to_lowercase().contains("usb")
+                            || device_id.to_lowercase().contains("hid")
+                        {
                             InputInterface::USB
                         } else if device_id.contains("PS2") || device_id.contains("ACPI") {
                             InputInterface::PS2

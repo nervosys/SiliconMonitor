@@ -7,7 +7,7 @@
 //! ## Platform Support
 //!
 //! - **Linux**: `/sys/bus/pci/devices/`, NUMA info from `/sys/devices/system/node/`,
-//!              NVLink via `/sys/bus/pci/devices/<bdf>/nvidia/gpu/nvlink*`
+//!   NVLink via `/sys/bus/pci/devices/<bdf>/nvidia/gpu/nvlink*`
 //! - **Windows / macOS**: PCI topology only
 
 use crate::error::SimonError;

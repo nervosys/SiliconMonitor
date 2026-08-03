@@ -26,7 +26,7 @@ fn main() -> Result<()> {
 
     // Sort by thread count to show interesting processes
     let mut procs: Vec<_> = processes.iter().collect();
-    procs.sort_by(|a, b| b.thread_count.cmp(&a.thread_count));
+    procs.sort_by_key(|p| std::cmp::Reverse(p.thread_count));
 
     println!("Top 20 processes by thread count:");
     println!("{:-<110}", "");

@@ -77,6 +77,10 @@ impl OllamaClient {
     }
 
     /// Create default Ollama client (localhost:11434)
+    ///
+    /// Not `Default::default`: constructing a client can fail, and that trait has no
+    /// way to report it. Renaming would break callers for no gain.
+    #[allow(clippy::should_implement_trait)]
     pub fn default() -> Result<Self> {
         Self::new("http://localhost:11434")
     }

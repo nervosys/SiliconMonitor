@@ -105,13 +105,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("║  🔧 Custom Thresholds Example                                      ║");
     println!("╠════════════════════════════════════════════════════════════════════╣");
 
-    let mut strict_thresholds = HealthThresholds::default();
-    strict_thresholds.cpu_warning = 70.0;
-    strict_thresholds.cpu_critical = 85.0;
-    strict_thresholds.memory_warning = 70.0;
-    strict_thresholds.memory_critical = 85.0;
-    strict_thresholds.gpu_temp_warning = 75;
-    strict_thresholds.gpu_temp_critical = 85;
+    let strict_thresholds = HealthThresholds {
+        cpu_warning: 70.0,
+        cpu_critical: 85.0,
+        memory_warning: 70.0,
+        memory_critical: 85.0,
+        gpu_temp_warning: 75,
+        gpu_temp_critical: 85,
+        ..Default::default()
+    };
 
     println!("║  Using stricter thresholds:                                        ║");
     println!("║    CPU: Warning at 70%, Critical at 85%                            ║");

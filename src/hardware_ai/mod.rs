@@ -868,15 +868,21 @@ impl HardwareInferenceEngine {
                         let parts: Vec<&str> = speed.split_whitespace().collect();
                         if parts.len() >= 2 {
                             if let Ok(val) = parts[0].parse::<f32>() {
-                                let gbps = if parts[1].starts_with('G') {
-                                    val
-                                } else if parts[1].starts_with('M') {
-                                    val / 1000.0
-                                } else {
-                                    val / 1000.0
+                                // Only units we can actually convert. The fallback
+                                // used to divide by 1000 for *any* unrecognized unit,
+                                // so a "10 Tbps" or "900 Kbps" link was silently
+                                // recorded as though it read megabits.
+                                let gbps = match parts[1].chars().next() {
+                                    Some('G') => Some(val),
+                                    Some('M') => Some(val / 1000.0),
+                                    Some('K') => Some(val / 1_000_000.0),
+                                    Some('T') => Some(val * 1000.0),
+                                    _ => None,
                                 };
-                                self.features.max_nic_speed_gbps =
-                                    self.features.max_nic_speed_gbps.max(gbps);
+                                if let Some(gbps) = gbps {
+                                    self.features.max_nic_speed_gbps =
+                                        self.features.max_nic_speed_gbps.max(gbps);
+                                }
                             }
                         }
                     }
@@ -1583,7 +1589,7 @@ impl HardwareInferenceEngine {
         }
 
         // Sort by score descending
-        results.sort_by(|a, b| b.score.cmp(&a.score));
+        results.sort_by_key(|p| std::cmp::Reverse(p.score));
         results
     }
 
@@ -2087,7 +2093,7 @@ impl HardwareInferenceEngine {
         }
 
         // Sort by priority descending
-        recs.sort_by(|a, b| b.priority.cmp(&a.priority));
+        recs.sort_by_key(|p| std::cmp::Reverse(p.priority));
         recs
     }
 

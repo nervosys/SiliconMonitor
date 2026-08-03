@@ -444,7 +444,7 @@ impl AiDataApi {
 
                 // Get top memory consumers
                 let mut by_mem = procs.clone();
-                by_mem.sort_by(|a, b| b.memory_bytes.cmp(&a.memory_bytes));
+                by_mem.sort_by_key(|p| std::cmp::Reverse(p.memory_bytes));
                 summary.top_memory_processes = by_mem
                     .iter()
                     .take(5)

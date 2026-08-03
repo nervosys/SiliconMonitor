@@ -332,7 +332,7 @@ impl MaintenanceEngine {
         self.predict_fan_failure(&mut alerts);
         self.predict_memory_failure(&mut alerts);
 
-        alerts.sort_by(|a, b| b.urgency.cmp(&a.urgency));
+        alerts.sort_by_key(|p| std::cmp::Reverse(p.urgency));
         alerts
     }
 
@@ -351,7 +351,7 @@ impl MaintenanceEngine {
                 let (slope, _) = ts.linear_regression().unwrap_or((0.0, 0.0));
                 if slope > 0.1 {
                     // Temperature is rising
-                    let confidence = ts.r_squared().min(1.0).max(0.0);
+                    let confidence = ts.r_squared().clamp(0.0, 1.0);
                     let urgency = if eta < 10.0 {
                         Urgency::Critical
                     } else if eta < 50.0 {
@@ -398,7 +398,7 @@ impl MaintenanceEngine {
                 if slope < -1.0 {
                     let decline = slope.abs() * ts.len() as f64;
                     if decline > self.config.clock_degradation_mhz {
-                        let confidence = ts.r_squared().min(1.0).max(0.0);
+                        let confidence = ts.r_squared().clamp(0.0, 1.0);
                         alerts.push(MaintenanceAlert {
                             component: format!("GPU {}", gpu_idx),
                             issue_type: IssueType::GpuDegradation,
@@ -482,7 +482,7 @@ impl MaintenanceEngine {
             if let Some((slope, _)) = ts.linear_regression() {
                 if slope < -self.config.fan_degradation_rate / ts.len() as f64 {
                     let eta = ts.steps_until_threshold(self.config.fan_min_rpm);
-                    let confidence = ts.r_squared().min(1.0).max(0.0);
+                    let confidence = ts.r_squared().clamp(0.0, 1.0);
 
                     let urgency = if current < self.config.fan_min_rpm {
                         Urgency::Critical

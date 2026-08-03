@@ -481,10 +481,8 @@ impl AiWorkloadMonitor {
 
             if is_ai_candidate {
                 // Try to get full command line (requires opening process)
-                if let Ok(workload) = self.analyze_process_windows(pid, &exe_name) {
-                    if let Some(w) = workload {
-                        self.workloads.push(w);
-                    }
+                if let Ok(Some(w)) = self.analyze_process_windows(pid, &exe_name) {
+                    self.workloads.push(w);
                 }
             }
 

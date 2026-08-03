@@ -1048,7 +1048,7 @@ pub fn read_process_stats() -> Result<crate::core::process::ProcessStats> {
     // Sort by memory usage (descending)
     stats
         .processes
-        .sort_by(|a, b| b.memory_kb.cmp(&a.memory_kb));
+        .sort_by_key(|p| std::cmp::Reverse(p.memory_kb));
 
     // Keep top 50 processes
     stats.processes.truncate(50);

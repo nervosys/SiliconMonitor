@@ -291,7 +291,7 @@ enum ChatRole {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Tab {
     Overview,
-    CPU,
+    Cpu,
     Accelerators,
     Memory,
     Disk,
@@ -1563,8 +1563,8 @@ impl eframe::App for SiliconMonitorApp {
                 );
                 ui.selectable_value(
                     &mut self.current_tab,
-                    Tab::CPU,
-                    RichText::new("🔲 CPU").color(tab_color(Tab::CPU)),
+                    Tab::Cpu,
+                    RichText::new("🔲 CPU").color(tab_color(Tab::Cpu)),
                 );
                 ui.selectable_value(
                     &mut self.current_tab,
@@ -1706,7 +1706,7 @@ impl eframe::App for SiliconMonitorApp {
         // Main content area
         egui::CentralPanel::default().show(ctx, |ui| match self.current_tab {
             Tab::Overview => self.draw_overview(ui),
-            Tab::CPU => self.draw_cpu_tab(ui),
+            Tab::Cpu => self.draw_cpu_tab(ui),
             Tab::Accelerators => self.draw_accelerators_tab(ui),
             Tab::Memory => self.draw_memory_tab(ui),
             Tab::Disk => self.draw_disk_tab(ui),
@@ -2415,7 +2415,7 @@ impl SiliconMonitorApp {
 
                     let num_cols =
                         (self.per_core_history.len().min(8) as f32).sqrt().ceil() as usize;
-                    let num_cols = num_cols.max(2).min(4);
+                    let num_cols = num_cols.clamp(2, 4);
 
                     ui.columns(num_cols, |columns| {
                         for (i, hist) in self.per_core_history.iter().enumerate() {
@@ -6563,7 +6563,11 @@ impl SiliconMonitorApp {
             ];
 
             for path in ollama_paths.into_iter().flatten() {
-                if let Ok(_) = std::process::Command::new(&path).arg("serve").spawn() {
+                if std::process::Command::new(&path)
+                    .arg("serve")
+                    .spawn()
+                    .is_ok()
+                {
                     self.ai_status_message = Some((
                         "Ollama started! Wait a few seconds and click 'Retry Connection'."
                             .to_string(),

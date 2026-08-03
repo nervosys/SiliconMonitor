@@ -105,8 +105,10 @@ mod tests {
 
     #[test]
     fn test_engine_with_backend() {
-        let mut config = AgentConfig::default();
-        config.backend = Some(BackendConfig::ollama("test-model"));
+        let config = AgentConfig {
+            backend: Some(BackendConfig::ollama("test-model")),
+            ..Default::default()
+        };
         // Note: This will still fail without Ollama running, but validates structure
         let _result = InferenceEngine::new(&config);
     }

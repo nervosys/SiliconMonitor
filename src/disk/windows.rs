@@ -49,6 +49,8 @@ pub struct WindowsDisk {
 }
 
 impl WindowsDisk {
+    // Mirrors the fields the Win32 disk enumeration hands back in one shot.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         name: String,
         device_path: PathBuf,

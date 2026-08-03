@@ -528,17 +528,16 @@ fn classify_macos_interface(iface: &str) -> String {
 }
 
 /// Estimate link speed for macOS interface
+///
+/// These are guesses keyed off the interface name, not measurements: `en0` is assumed
+/// to be Wi-Fi 6 and anything else `en*`/`bridge*` gigabit Ethernet. Callers must not
+/// present the result as a read link rate. Reading the real value means querying
+/// `IOKit` for the interface's active media type.
 fn estimate_link_speed(iface: &str) -> u32 {
     if iface == "en0" {
-        1200
-    }
-    // WiFi 6 ~1.2 Gbps
-    else if iface.starts_with("en") {
-        1000
-    }
-    // Gigabit Ethernet
-    else if iface.starts_with("bridge") {
-        1000
+        1200 // WiFi 6 ~1.2 Gbps
+    } else if iface.starts_with("en") || iface.starts_with("bridge") {
+        1000 // Gigabit Ethernet
     } else {
         100
     }

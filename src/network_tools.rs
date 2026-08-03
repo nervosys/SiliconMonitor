@@ -684,7 +684,6 @@ pub fn parallel_scan(
 
         for port in chunk {
             let results = Arc::clone(&results);
-            let ip = ip;
 
             let handle = thread::spawn(move || {
                 let socket_addr = SocketAddr::new(ip, port);
@@ -1977,11 +1976,11 @@ fn finalize_capture_result(
 
     // Sort top talkers
     let mut top_sources: Vec<(String, u32)> = source_counts.into_iter().collect();
-    top_sources.sort_by(|a, b| b.1.cmp(&a.1));
+    top_sources.sort_by_key(|p| std::cmp::Reverse(p.1));
     top_sources.truncate(10);
 
     let mut top_destinations: Vec<(String, u32)> = dest_counts.into_iter().collect();
-    top_destinations.sort_by(|a, b| b.1.cmp(&a.1));
+    top_destinations.sort_by_key(|p| std::cmp::Reverse(p.1));
     top_destinations.truncate(10);
 
     Ok(CaptureResult {

@@ -432,13 +432,13 @@ impl InterconnectMonitor {
             800.0
         } else if name.contains("M4 MAX") || name.contains("M3 ULTRA") {
             546.0
-        } else if name.contains("M4 PRO") || name.contains("M3 MAX") {
+        } else if name.contains("M4 PRO")
+            || name.contains("M3 MAX")
+            || name.contains("M3 PRO")
+            || name.contains("M2 MAX")
+        {
             400.0
-        } else if name.contains("M3 PRO") || name.contains("M2 MAX") {
-            400.0
-        } else if name.contains("M2 PRO") || name.contains("M2") {
-            200.0
-        } else if name.contains("M1") {
+        } else if name.contains("M2 PRO") || name.contains("M2") || name.contains("M1") {
             200.0
         } else {
             100.0

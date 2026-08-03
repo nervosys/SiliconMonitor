@@ -954,7 +954,7 @@ impl MonitoringBackend {
 
     pub fn processes_by_memory(&self) -> Vec<&ProcessMonitorInfo> {
         let mut procs: Vec<_> = self.processes.iter().collect();
-        procs.sort_by(|a, b| b.memory_bytes.cmp(&a.memory_bytes));
+        procs.sort_by_key(|p| std::cmp::Reverse(p.memory_bytes));
         procs
     }
 

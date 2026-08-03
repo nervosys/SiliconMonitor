@@ -838,36 +838,39 @@ impl GpuCollection {
     }
 
     /// Get GPU by index
-    pub fn get(&self, index: usize) -> Option<&Box<dyn Gpu>> {
-        self.gpus.get(index)
+    pub fn get(&self, index: usize) -> Option<&dyn Gpu> {
+        self.gpus.get(index).map(|gpu| gpu.as_ref())
     }
 
     /// Get mutable GPU by index
-    pub fn get_mut(&mut self, index: usize) -> Option<&mut Box<dyn Gpu>> {
-        self.gpus.get_mut(index)
+    pub fn get_mut(&mut self, index: usize) -> Option<&mut (dyn Gpu + 'static)> {
+        self.gpus.get_mut(index).map(|gpu| gpu.as_mut())
     }
 
     /// Get all NVIDIA GPUs
-    pub fn nvidia_gpus(&self) -> Vec<&Box<dyn Gpu>> {
+    pub fn nvidia_gpus(&self) -> Vec<&dyn Gpu> {
         self.gpus
             .iter()
             .filter(|gpu| gpu.vendor() == GpuVendor::Nvidia)
+            .map(|gpu| gpu.as_ref())
             .collect()
     }
 
     /// Get all AMD GPUs
-    pub fn amd_gpus(&self) -> Vec<&Box<dyn Gpu>> {
+    pub fn amd_gpus(&self) -> Vec<&dyn Gpu> {
         self.gpus
             .iter()
             .filter(|gpu| gpu.vendor() == GpuVendor::Amd)
+            .map(|gpu| gpu.as_ref())
             .collect()
     }
 
     /// Get all Intel GPUs
-    pub fn intel_gpus(&self) -> Vec<&Box<dyn Gpu>> {
+    pub fn intel_gpus(&self) -> Vec<&dyn Gpu> {
         self.gpus
             .iter()
             .filter(|gpu| gpu.vendor() == GpuVendor::Intel)
+            .map(|gpu| gpu.as_ref())
             .collect()
     }
 

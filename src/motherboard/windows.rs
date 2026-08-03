@@ -1204,21 +1204,13 @@ struct Win32NetworkAdapterConfig {
 pub fn get_peripherals() -> Result<PeripheralsInfo, Error> {
     let wmi_conn = create_wmi_connection()?;
 
-    let mut peripherals = PeripheralsInfo::default();
-
-    // Get USB devices
-    peripherals.usb_devices = get_usb_devices(&wmi_conn);
-
-    // Get display outputs
-    peripherals.display_outputs = get_display_outputs(&wmi_conn);
-
-    // Get audio devices
-    peripherals.audio_devices = get_audio_devices(&wmi_conn);
-
-    // Get network ports
-    peripherals.network_ports = get_network_ports(&wmi_conn);
-
-    Ok(peripherals)
+    Ok(PeripheralsInfo {
+        usb_devices: get_usb_devices(&wmi_conn),
+        display_outputs: get_display_outputs(&wmi_conn),
+        audio_devices: get_audio_devices(&wmi_conn),
+        network_ports: get_network_ports(&wmi_conn),
+        ..Default::default()
+    })
 }
 
 /// Get USB devices from WMI

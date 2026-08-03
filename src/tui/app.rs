@@ -1281,11 +1281,9 @@ impl App {
             swap_used: stats.swap.used * 1024,
         };
 
-        let used_percent = if self.memory_info.total > 0 {
-            (self.memory_info.used * 100) / self.memory_info.total
-        } else {
-            0
-        };
+        let used_percent = (self.memory_info.used * 100)
+            .checked_div(self.memory_info.total)
+            .unwrap_or(0);
         self.memory_history.push_back(used_percent);
         if self.memory_history.len() > MAX_HISTORY {
             self.memory_history.pop_front();
@@ -1607,7 +1605,7 @@ impl App {
                     }
                 }
                 // Sort descending - GPU processes first (due to boost), then by CPU
-                indexed.sort_by(|a, b| b.1.cmp(&a.1));
+                indexed.sort_by_key(|p| std::cmp::Reverse(p.1));
             }
             Gpu(gpu_idx) | Accelerator(gpu_idx) => {
                 for (i, p) in self.processes.iter().enumerate() {
@@ -1617,7 +1615,7 @@ impl App {
                     }
                 }
                 // Sort descending by GPU memory
-                indexed.sort_by(|a, b| b.1.cmp(&a.1));
+                indexed.sort_by_key(|p| std::cmp::Reverse(p.1));
             }
             Npu(_) => {
                 // No NPU support yet
@@ -1735,7 +1733,7 @@ impl App {
                     });
                 } else {
                     // No CPU data available (e.g., on Windows), sort by memory instead
-                    procs.sort_by(|a, b| b.memory_bytes.cmp(&a.memory_bytes));
+                    procs.sort_by_key(|p| std::cmp::Reverse(p.memory_bytes));
                 }
                 procs
             }

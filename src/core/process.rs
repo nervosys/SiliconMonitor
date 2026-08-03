@@ -54,7 +54,7 @@ impl ProcessStats {
     /// Get processes sorted by GPU memory usage
     pub fn sorted_by_gpu_memory(&self) -> Vec<&ProcessInfo> {
         let mut procs: Vec<&ProcessInfo> = self.processes.iter().collect();
-        procs.sort_by(|a, b| b.gpu_memory_kb.cmp(&a.gpu_memory_kb));
+        procs.sort_by_key(|p| std::cmp::Reverse(p.gpu_memory_kb));
         procs
     }
 

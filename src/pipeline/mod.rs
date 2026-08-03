@@ -599,6 +599,9 @@ fn collector_loop(
 ///
 /// Each closure borrows a *disjoint* field of [`Sources`], which is what makes
 /// concurrent `&mut` access sound here. Every scoped thread takes its own COM guard.
+// Each argument is a distinct borrowed subsystem; bundling them into a struct would
+// reintroduce the aliasing the disjoint-field borrows exist to avoid.
+#[allow(clippy::too_many_arguments)]
 fn collect_once(
     sources: &mut Sources,
     config: &CollectorConfig,

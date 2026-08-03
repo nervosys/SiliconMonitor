@@ -541,9 +541,9 @@ impl Widget for SparklineChart {
                 let font = egui::FontId::proportional(10.0);
 
                 // Max value at top
-                let max_text = if max_val >= 1000.0 {
-                    format!("{:.0}{}", max_val, unit_str)
-                } else if max_val >= 100.0 {
+                // Three digits or more reads fine without a decimal; below that the
+                // tenth is the only thing distinguishing adjacent samples.
+                let max_text = if max_val >= 100.0 {
                     format!("{:.0}{}", max_val, unit_str)
                 } else {
                     format!("{:.1}{}", max_val, unit_str)

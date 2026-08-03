@@ -113,7 +113,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
         println!("└─────────────────────────────────────────────────────────┘");
 
-        print_gpu_info(device)?;
+        print_gpu_info(device.as_ref())?;
         println!();
     }
 
@@ -133,7 +133,7 @@ fn vendor_name(vendor: Vendor) -> &'static str {
     }
 }
 
-fn print_gpu_info(device: &Box<dyn Device>) -> Result<(), Box<dyn std::error::Error>> {
+fn print_gpu_info(device: &dyn Device) -> Result<(), Box<dyn std::error::Error>> {
     // Basic info
     println!("\n[MB] Device Information:");
     println!("  Vendor:  {}", vendor_name(device.vendor()));

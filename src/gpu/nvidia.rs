@@ -114,7 +114,7 @@ impl Gpu for NvidiaGpu {
             .ok()
             .map(|cap| (cap.major as u32, cap.minor as u32));
 
-        let shader_cores = self.device.num_cores().ok().map(|n| n);
+        let shader_cores = self.device.num_cores().ok();
 
         let l2_cache = None; // Not available in nvml-wrapper 0.10
 
@@ -170,12 +170,12 @@ impl Gpu for NvidiaGpu {
 
         // Clocks
         let clocks = GpuClocks {
-            graphics: self.device.clock_info(Clock::Graphics).ok().map(|c| c),
-            graphics_max: self.device.max_clock_info(Clock::Graphics).ok().map(|c| c),
-            memory: self.device.clock_info(Clock::Memory).ok().map(|c| c),
-            memory_max: self.device.max_clock_info(Clock::Memory).ok().map(|c| c),
-            sm: self.device.clock_info(Clock::SM).ok().map(|c| c),
-            video: self.device.clock_info(Clock::Video).ok().map(|c| c),
+            graphics: self.device.clock_info(Clock::Graphics).ok(),
+            graphics_max: self.device.max_clock_info(Clock::Graphics).ok(),
+            memory: self.device.clock_info(Clock::Memory).ok(),
+            memory_max: self.device.max_clock_info(Clock::Memory).ok(),
+            sm: self.device.clock_info(Clock::SM).ok(),
+            video: self.device.clock_info(Clock::Video).ok(),
         };
 
         // Power

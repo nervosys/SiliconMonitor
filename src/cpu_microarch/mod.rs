@@ -14,6 +14,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::SimonError;
 
+/// What each platform's `read_cpu_info` returns:
+/// `(model_name, family, model, stepping, flags, cores, threads)`.
+type CpuInfoFields = (String, u32, u32, u32, Vec<String>, u32, u32);
+
 /// CPU vendor/designer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CpuVendor {
@@ -887,7 +891,7 @@ impl CpuMicroarchMonitor {
         } else if upper.contains("LAPTOP") || upper.contains("U)") || upper.contains("P)") {
             tdp.min(28)
         } else if upper.contains("H)") || upper.contains("HX)") {
-            tdp.min(55).max(45)
+            tdp.clamp(45, 55)
         } else {
             tdp
         };
@@ -946,7 +950,7 @@ impl CpuMicroarchMonitor {
     }
 
     #[cfg(target_os = "linux")]
-    fn read_cpu_info() -> Result<(String, u32, u32, u32, Vec<String>, u32, u32), SimonError> {
+    fn read_cpu_info() -> Result<CpuInfoFields, SimonError> {
         let cpuinfo = std::fs::read_to_string("/proc/cpuinfo").map_err(|e| SimonError::Io(e))?;
 
         let mut model_name = String::new();
@@ -994,7 +998,7 @@ impl CpuMicroarchMonitor {
     }
 
     #[cfg(target_os = "windows")]
-    fn read_cpu_info() -> Result<(String, u32, u32, u32, Vec<String>, u32, u32), SimonError> {
+    fn read_cpu_info() -> Result<CpuInfoFields, SimonError> {
         let output = std::process::Command::new("powershell")
             .args([
                 "-NoProfile",
@@ -1045,7 +1049,7 @@ impl CpuMicroarchMonitor {
     }
 
     #[cfg(target_os = "macos")]
-    fn read_cpu_info() -> Result<(String, u32, u32, u32, Vec<String>, u32, u32), SimonError> {
+    fn read_cpu_info() -> Result<CpuInfoFields, SimonError> {
         let brand = std::process::Command::new("sysctl")
             .args(["-n", "machdep.cpu.brand_string"])
             .output()
@@ -1104,7 +1108,7 @@ impl CpuMicroarchMonitor {
     }
 
     #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
-    fn read_cpu_info() -> Result<(String, u32, u32, u32, Vec<String>, u32, u32), SimonError> {
+    fn read_cpu_info() -> Result<CpuInfoFields, SimonError> {
         Ok((String::new(), 0, 0, 0, Vec::new(), 1, 1))
     }
 }

@@ -1052,14 +1052,14 @@ impl ProcessMonitor {
     /// Get processes sorted by memory usage (descending)
     pub fn processes_by_memory(&mut self) -> Result<Vec<ProcessMonitorInfo>> {
         let mut procs = self.processes()?;
-        procs.sort_by(|a, b| b.memory_bytes.cmp(&a.memory_bytes));
+        procs.sort_by_key(|p| std::cmp::Reverse(p.memory_bytes));
         Ok(procs)
     }
 
     /// Get processes sorted by GPU memory usage (descending)
     pub fn processes_by_gpu_memory(&mut self) -> Result<Vec<ProcessMonitorInfo>> {
         let mut procs = self.processes()?;
-        procs.sort_by(|a, b| b.total_gpu_memory_bytes.cmp(&a.total_gpu_memory_bytes));
+        procs.sort_by_key(|p| std::cmp::Reverse(p.total_gpu_memory_bytes));
         Ok(procs)
     }
 

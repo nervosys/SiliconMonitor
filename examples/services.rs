@@ -19,11 +19,9 @@ fn main() {
             println!(
                 "├─ Running: {} ({}%)",
                 summary.running,
-                if summary.total > 0 {
-                    summary.running * 100 / summary.total
-                } else {
-                    0
-                }
+                (summary.running * 100)
+                    .checked_div(summary.total)
+                    .unwrap_or(0)
             );
             println!("├─ Stopped: {}", summary.stopped);
             println!("├─ Failed: {}", summary.failed);

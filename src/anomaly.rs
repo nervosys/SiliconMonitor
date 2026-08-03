@@ -463,6 +463,9 @@ impl AnomalyDetector {
         anomalies
     }
 
+    // Threshold, severity, and message plumbing for one alert; splitting into a
+    // struct here would only move the same eight values behind a constructor.
+    #[allow(clippy::too_many_arguments)]
     fn maybe_alert(
         &mut self,
         anomalies: &mut Vec<Anomaly>,

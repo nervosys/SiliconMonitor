@@ -66,6 +66,9 @@ pub trait ApplyHandler: Send + Sync {
 
 /// Built-in handler registry. New handlers register themselves by appearing
 /// in [`builtin_handlers`].
+// Not a vec! literal: which handlers exist depends on `cfg`, and those attributes
+// apply to statements, not to elements of an expression.
+#[allow(clippy::vec_init_then_push)]
 pub fn builtin_handlers() -> Vec<Box<dyn ApplyHandler>> {
     let mut out: Vec<Box<dyn ApplyHandler>> = Vec::new();
     #[cfg(all(feature = "nvidia", target_os = "linux"))]

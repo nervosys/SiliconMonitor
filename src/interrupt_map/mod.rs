@@ -210,7 +210,7 @@ impl InterruptMapMonitor {
                 (label, i.total_count)
             })
             .collect();
-        sources.sort_by(|a, b| b.1.cmp(&a.1));
+        sources.sort_by_key(|p| std::cmp::Reverse(p.1));
         sources.truncate(10);
 
         let mut recommendations = Vec::new();

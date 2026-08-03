@@ -451,9 +451,11 @@ fn classify_usb_device(name: &str, description: &str) -> UsbDeviceClass {
     let combined = format!("{} {}", name, description).to_lowercase();
     if combined.contains("hub") {
         UsbDeviceClass::Hub
-    } else if combined.contains("keyboard") || combined.contains("hid") {
-        UsbDeviceClass::Hid
-    } else if combined.contains("mouse") || combined.contains("pointing") {
+    } else if combined.contains("keyboard")
+        || combined.contains("hid")
+        || combined.contains("mouse")
+        || combined.contains("pointing")
+    {
         UsbDeviceClass::Hid
     } else if combined.contains("mass storage") || combined.contains("disk") {
         UsbDeviceClass::MassStorage
