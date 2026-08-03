@@ -11,28 +11,18 @@ pub struct AppleGpu {
     index: u32,
     name: String,
     cores: u32,
-    max_frequency: u32,
-    max_power: u32,
 }
 
 impl AppleGpu {
     /// Create new Apple GPU instance
+    ///
+    /// Formerly also derived a `max_frequency` and `max_power` from a core-count
+    /// bucket (1400–1550 MHz, 20–130 W). Neither was read from the hardware, and both
+    /// escaped as though they were: `max_frequency` was reported as the GPU's
+    /// `graphics_max` clock, and `max_power` was the denominator of a power
+    /// `usage_percent`. Apple exposes neither figure, so both are now `None`.
     pub fn new(index: u32, name: String, cores: u32) -> Self {
-        // Estimate max frequency and power based on core count
-        let (max_frequency, max_power) = match cores {
-            0..=10 => (1400, 20000),  // M1/M2/M3/M4 base
-            11..=20 => (1450, 40000), // M1/M2/M3/M4 Pro
-            21..=40 => (1500, 75000), // M1/M2/M3/M4 Max
-            _ => (1550, 130000),      // M1/M2 Ultra
-        };
-
-        Self {
-            index,
-            name,
-            cores,
-            max_frequency,
-            max_power,
-        }
+        Self { index, name, cores }
     }
 
     /// Detect Apple GPUs
@@ -119,8 +109,8 @@ impl Gpu for AppleGpu {
             },
             clocks: GpuClocks {
                 graphics: Some(data.gpu_freq_mhz),
-                graphics_max: Some(self.max_frequency),
-                memory: None, // Unified memory, no separate memory clock
+                graphics_max: None, // Apple does not publish a GPU clock ceiling
+                memory: None,       // Unified memory, no separate memory clock
                 memory_max: None,
                 sm: None,
                 video: None,
@@ -129,16 +119,24 @@ impl Gpu for AppleGpu {
                 draw: Some(data.gpu_power_mw),
                 limit: None, // Not available
                 default_limit: None,
-                usage_percent: if data.gpu_power_mw > 0 && self.max_power > 0 {
-                    Some(((data.gpu_power_mw as f32 / self.max_power as f32) * 100.0) as u8)
-                } else {
-                    None
-                },
+                // A real draw divided by a guessed ceiling is not a measurement. This
+                // used to divide by a `max_power` picked from a core-count bucket, so
+                // the percentage looked derived from a measurement while its
+                // denominator was invented. `limit` above is already `None` for the
+                // same reason; reporting a percentage of a limit we admit we do not
+                // know contradicted it.
+                usage_percent: None,
             },
             thermal: GpuThermal {
-                temperature: None,               // Not available from powermetrics
-                max_temperature: Some(100),      // Conservative estimate
-                critical_temperature: Some(110), // Conservative estimate
+                temperature: None, // Not available from powermetrics
+                // Apple publishes no GPU thermal limits and powermetrics reports
+                // none. These were 100/110 with a "conservative estimate" comment,
+                // which reached callers as read thresholds — `ai_api` forwards them
+                // verbatim as `max_temperature_c` and `critical_temperature_c`. Every
+                // other backend reports `None` when the limit is unknown; AMD reads
+                // the real value from hwmon.
+                max_temperature: None,
+                critical_temperature: None,
                 fan_speed: None,
                 fan_rpm: None,
             },

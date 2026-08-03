@@ -607,11 +607,10 @@ impl BootMonitor {
             }
         }
 
-        // Fallback: estimate boot time from Event Viewer
-        if self.boot_time.total == Duration::ZERO {
-            // Assume typical boot time of 30-60 seconds if we can't measure
-            self.boot_time.total = Duration::from_secs(45);
-        }
+        // No fallback. This used to assign 45 seconds — a number chosen as a "typical"
+        // boot time — whenever the real duration could not be read, so a failed
+        // measurement was indistinguishable from a machine that genuinely took 45s.
+        // `Duration::ZERO` is what the code above already tests for as "not measured".
 
         Ok(())
     }

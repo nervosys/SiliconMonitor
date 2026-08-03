@@ -1065,7 +1065,10 @@ impl CpuFreqMonitor {
                 cpu.current_freq_mhz = current;
                 cpu.max_freq_khz = (max_mhz.unwrap_or(current) as u64) * 1000;
                 cpu.current_freq_khz = (cpu.current_freq_mhz as u64) * 1000;
-                cpu.min_freq_khz = cpu.max_freq_khz / 4; // Rough estimate
+                // Windows exposes no minimum core frequency here. This was
+                // `max_freq_khz / 4`, which is not a property of any CPU — it just
+                // produced a plausible-looking number. Zero means "not read".
+                cpu.min_freq_khz = 0;
                 cpu.scaling_driver = Some("windows-wmi".to_string());
                 cpu.available_governors.push(governor.clone());
             } else if base_freq_mhz > 0 {
@@ -1073,7 +1076,7 @@ impl CpuFreqMonitor {
                 cpu.current_freq_mhz = base_freq_mhz;
                 cpu.current_freq_khz = (base_freq_mhz as u64) * 1000;
                 cpu.max_freq_khz = cpu.current_freq_khz;
-                cpu.min_freq_khz = cpu.current_freq_khz / 4;
+                cpu.min_freq_khz = 0; // Not read — see above
             }
 
             self.cpus.push(cpu);

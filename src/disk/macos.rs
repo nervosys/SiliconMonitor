@@ -103,8 +103,13 @@ impl DiskDevice for MacDisk {
                     write_ios: 0,
                     read_bytes: 0,
                     write_bytes: 0,
-                    read_bytes_per_sec: (mb_per_s * 1024.0 * 1024.0 / 2.0) as u64, // Approximate
-                    write_bytes_per_sec: (mb_per_s * 1024.0 * 1024.0 / 2.0) as u64,
+                    // `iostat` reports one combined throughput figure and gives no
+                    // way to attribute it. This used to halve that number into both
+                    // directions, so a pure-read workload was reported as 50% writes
+                    // — a split that was never measured. Zero here means "unknown",
+                    // matching the ops counters above.
+                    read_bytes_per_sec: 0,
+                    write_bytes_per_sec: 0,
                     iops: tps as u64,
                     avg_latency_us: None,
                     queue_depth: None,
