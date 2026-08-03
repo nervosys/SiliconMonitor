@@ -567,8 +567,21 @@ impl Default for AppSettings {
 
 impl SiliconMonitorApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        Self::with_context(&cc.egui_ctx)
+    }
+
+    /// Build the app from a bare [`egui::Context`].
+    ///
+    /// `CreationContext` was only ever consulted for its context, and requiring one
+    /// meant the app could not be constructed without a window — which left every
+    /// tab verifiable only by screenshot. That is what made "the AI tab does not
+    /// work" impossible to check: on a multi-monitor setup the captures kept
+    /// catching other applications, and a capture cannot distinguish a tab that
+    /// rendered nothing from one that rendered in an unreadable colour anyway.
+    pub fn with_context(egui_ctx: &egui::Context) -> Self {
+        let cc = egui_ctx;
         // Apply cyber theme
-        theme::apply_cyber_theme(&cc.egui_ctx);
+        theme::apply_cyber_theme(cc);
 
         // Initialize monitors
         let gpu_collection = GpuCollection::auto_detect().ok();
@@ -746,7 +759,7 @@ impl SiliconMonitorApp {
                     // Let the collector wake the UI the moment a snapshot lands,
                     // instead of the UI waking on a timer to look for one.
                     on_publish: Some({
-                        let ctx = cc.egui_ctx.clone();
+                        let ctx = cc.clone();
                         std::sync::Arc::new(move || ctx.request_repaint())
                     }),
                     ..Default::default()
@@ -1864,7 +1877,7 @@ impl SiliconMonitorApp {
     /// Mirrors the AI tab's gate: what stops a send is having no model to send to,
     /// not what auto-detection happened to find. A CLI provider picks its own model,
     /// so an empty selection is fine there.
-    fn agent_can_answer(&self) -> bool {
+    pub(super) fn agent_can_answer(&self) -> bool {
         if matches!(self.ai_selected_backend, AiBackendSelection::Cli(_)) {
             return true;
         }
@@ -1883,7 +1896,7 @@ impl SiliconMonitorApp {
     /// so this is a second entry point into one conversation rather than a second
     /// assistant: a question asked here appears in the AI tab's transcript and vice
     /// versa, and both honour the backend and model selected there.
-    fn draw_overview_chat_bar(&mut self, ui: &mut egui::Ui) {
+    pub(super) fn draw_overview_chat_bar(&mut self, ui: &mut egui::Ui) {
         let can_answer = self.agent_can_answer();
         let mut submit = false;
 
@@ -5780,7 +5793,7 @@ impl SiliconMonitorApp {
             });
     }
 
-    fn draw_ai_assistant_tab(&mut self, ui: &mut egui::Ui) {
+    pub(super) fn draw_ai_assistant_tab(&mut self, ui: &mut egui::Ui) {
         // Show loading state while agent is being initialized in background
         // But timeout after 3 seconds to show the UI anyway
         let loading_timeout =

@@ -6,7 +6,7 @@
 
 use eframe::egui;
 
-mod app;
+pub(crate) mod app;
 // Test-only: the harness exists to verify rendering, and must not be compiled
 // into a shipped binary.
 #[cfg(test)]

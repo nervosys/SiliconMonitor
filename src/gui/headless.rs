@@ -130,6 +130,153 @@ mod tests {
     }
 }
 
+/// Tests that build the real application and render real tabs.
+///
+/// These are the ones that can answer "does tab X work", which the colour and
+/// harness tests above cannot: they exercise the actual widget code with the
+/// actual application state.
+#[cfg(test)]
+mod app_tab_tests {
+    use super::*;
+    use crate::gui::app::SiliconMonitorApp;
+
+    /// Constructing the app enumerates GPUs and spawns collectors. That is slow but
+    /// real, and a mock would defeat the purpose of the test.
+    fn app_and_ctx() -> (SiliconMonitorApp, egui::Context) {
+        let ctx = egui::Context::default();
+        let app = SiliconMonitorApp::with_context(&ctx);
+        (app, ctx)
+    }
+
+    /// The reported bug was "AI backends do not work". The CLI path answered a
+    /// question correctly against Ollama, which located the fault in the GUI — but
+    /// screenshots could never confirm what the tab actually drew.
+    ///
+    /// This renders the real tab and asserts it emits its own furniture. It does not
+    /// assert a backend is reachable: that depends on whether a model server happens
+    /// to be running, which is not a property of the code.
+    #[test]
+    fn the_ai_tab_renders_its_controls() {
+        let (mut app, ctx) = app_and_ctx();
+
+        // First frame lands inside the detection window and paints a spinner. That
+        // is a working state, but asserting on it proves nothing about the tab the
+        // user actually sits in front of — an accept-either assertion here passed
+        // while never once exercising the post-detection UI.
+        let first = painted_blob(&ctx, |ui| {
+            app.draw_ai_assistant_tab(ui);
+        });
+        assert!(
+            first.contains("Detecting AI backends"),
+            "expected the detection notice on the first frame, got: {first}"
+        );
+
+        // The tab gives detection a three-second budget and then shows the controls
+        // regardless. Waiting it out is slower than mocking the clock but exercises
+        // the real branch.
+        std::thread::sleep(std::time::Duration::from_millis(3200));
+
+        let settled = painted_blob(&ctx, |ui| {
+            app.draw_ai_assistant_tab(ui);
+        });
+        assert!(
+            settled.contains("AI System Assistant"),
+            "past the detection budget the AI tab should paint its header and \
+             controls, got: {settled}"
+        );
+        // The controls themselves, not just the header — a tab that painted a title
+        // over an empty body is the failure being guarded against.
+        assert!(
+            settled.contains("Model:") || settled.contains("Select model"),
+            "the AI tab painted its header but not its model selector: {settled}"
+        );
+        // A concurrent "still probing" note is *not* a failure and must not be
+        // asserted against: backend discovery outlives the three-second spinner
+        // budget by design, and saying so while the controls are usable is the
+        // honest state. An earlier version of this test forbade it and failed
+        // against a tab that was working correctly.
+        assert!(
+            settled
+                .lines()
+                .any(|l| l.contains("Ollama") || l.contains("IronWorks") || l.contains("backend")),
+            "the AI tab offered no backend at all: {settled}"
+        );
+    }
+
+    /// The Overview ask bar shares state with the AI tab, so it has to render even
+    /// when no model has been selected — and say which condition is unmet rather
+    /// than reporting the backend dead.
+    #[test]
+    fn the_overview_ask_bar_renders_and_explains_itself() {
+        let (mut app, ctx) = app_and_ctx();
+        let blob = painted_blob(&ctx, |ui| {
+            app.draw_overview_chat_bar(ui);
+        });
+
+        assert!(
+            blob.contains("Ask"),
+            "the ask bar is missing its label: {blob}"
+        );
+        // When no model is chosen the bar must name that specific condition. The
+        // backend is usually reachable and merely has nothing selected, which is why
+        // this says "no model" rather than "unavailable".
+        if !app.agent_can_answer() {
+            assert!(
+                blob.contains("no model selected"),
+                "with no model available the bar should say so, got: {blob}"
+            );
+        }
+    }
+
+    /// The failure this whole thread began with: a tab that rendered every one of
+    /// its rows while all of them were invisible. Asserted against the real tab.
+    #[test]
+    fn the_profiles_tab_paints_readable_headings() {
+        let (mut app, ctx) = app_and_ctx();
+        let blob = painted_blob(&ctx, |ui| {
+            app.draw_profiles_tab(ui);
+        });
+
+        assert!(
+            blob.contains("Hardware Profile Inspector"),
+            "the Profiles tab did not paint its header: {blob}"
+        );
+
+        // Painted is necessary but not sufficient — the original bug painted
+        // everything. Legibility is the other half.
+        let visuals = ctx.style().visuals.clone();
+        let strong = visuals.strong_text_color();
+        let panel = visuals.panel_fill;
+        let distance = (strong.r() as i32 - panel.r() as i32).abs()
+            + (strong.g() as i32 - panel.g() as i32).abs()
+            + (strong.b() as i32 - panel.b() as i32).abs();
+        assert!(
+            distance > 60,
+            "Profiles headings are painted in {strong:?} on a {panel:?} panel — the \
+             original failure, where all 19 groups rendered and none could be read"
+        );
+    }
+
+    /// Tofu regression: the geometric-shape triangles the bundled emoji font cannot
+    /// cover must not come back into headings that already draw their own arrow.
+    #[test]
+    fn tabs_do_not_paint_glyphs_the_bundled_fonts_lack() {
+        let (mut app, ctx) = app_and_ctx();
+        let blob = painted_blob(&ctx, |ui| {
+            app.draw_profiles_tab(ui);
+        });
+
+        for glyph in ['\u{25BE}', '\u{25B8}'] {
+            assert!(
+                !blob.contains(glyph),
+                "U+{:04X} is back in the Profiles tab; NotoEmoji does not cover \
+                 Geometric Shapes, so it renders as a tofu box",
+                glyph as u32
+            );
+        }
+    }
+}
+
 #[cfg(test)]
 mod ontology_binding_tests {
     use super::*;
