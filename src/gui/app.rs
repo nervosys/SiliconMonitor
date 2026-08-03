@@ -1859,8 +1859,124 @@ impl SiliconMonitorApp {
         None
     }
 
+    /// Whether a question can actually be sent right now.
+    ///
+    /// Mirrors the AI tab's gate: what stops a send is having no model to send to,
+    /// not what auto-detection happened to find. A CLI provider picks its own model,
+    /// so an empty selection is fine there.
+    fn agent_can_answer(&self) -> bool {
+        if matches!(self.ai_selected_backend, AiBackendSelection::Cli(_)) {
+            return true;
+        }
+        if !self.ai_selected_model.is_empty() {
+            return true;
+        }
+        self.models_by_provider
+            .get(&self.ai_selected_backend)
+            .is_some_and(|m| !m.is_empty())
+            || !self.ai_selected_backend.fallback_models().is_empty()
+    }
+
+    /// Compact "ask about this machine" bar pinned to the top of the Overview tab.
+    ///
+    /// Shares `agent_query`, `agent_history` and `send_agent_query` with the AI tab,
+    /// so this is a second entry point into one conversation rather than a second
+    /// assistant: a question asked here appears in the AI tab's transcript and vice
+    /// versa, and both honour the backend and model selected there.
+    fn draw_overview_chat_bar(&mut self, ui: &mut egui::Ui) {
+        let can_answer = self.agent_can_answer();
+        let mut submit = false;
+
+        egui::Frame::none()
+            .fill(CyberColors::SURFACE)
+            .rounding(6.0)
+            .inner_margin(egui::Margin::symmetric(10.0, 8.0))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Ask").color(CyberColors::CYAN).strong());
+
+                    // Leave room for the button and status text on the right.
+                    let field_width = (ui.available_width() - 190.0).max(160.0);
+                    let response = ui.add_sized(
+                        [field_width, 22.0],
+                        egui::TextEdit::singleline(&mut self.agent_query)
+                            .hint_text("e.g. why is my GPU hot?")
+                            .interactive(can_answer && !self.agent_is_processing),
+                    );
+                    submit = response.lost_focus()
+                        && ui.input(|i| i.key_pressed(egui::Key::Enter))
+                        && !self.agent_query.trim().is_empty();
+
+                    let button_enabled = can_answer
+                        && !self.agent_is_processing
+                        && !self.agent_query.trim().is_empty();
+                    if ui
+                        .add_enabled(button_enabled, egui::Button::new("Send"))
+                        .clicked()
+                    {
+                        submit = true;
+                    }
+
+                    if self.agent_is_processing {
+                        ui.spinner();
+                    } else if !can_answer {
+                        // Say which condition is unmet rather than "unavailable":
+                        // the backend may be perfectly reachable and simply have no
+                        // model chosen yet.
+                        ui.label(
+                            RichText::new("no model selected — see the AI tab")
+                                .small()
+                                .color(CyberColors::TEXT_SECONDARY),
+                        );
+                    }
+                });
+
+                // Most recent exchange, so an answer is visible without leaving the
+                // tab. The full transcript stays in the AI tab.
+                let last_answer = self
+                    .agent_history
+                    .iter()
+                    .rev()
+                    .find(|e| e.role == ChatRole::Assistant);
+                if let Some(entry) = last_answer {
+                    ui.add_space(4.0);
+                    ui.separator();
+                    let text = entry.content.trim();
+                    // Keep the bar a bar: long answers are truncated here and read in
+                    // full on the AI tab.
+                    const MAX: usize = 400;
+                    let shown: String = if text.chars().count() > MAX {
+                        let mut s: String = text.chars().take(MAX).collect();
+                        s.push('…');
+                        s
+                    } else {
+                        text.to_string()
+                    };
+                    ui.label(RichText::new(shown).color(CyberColors::TEXT_PRIMARY));
+                    if let Some(ms) = entry.inference_time_ms {
+                        ui.label(
+                            RichText::new(format!(
+                                "{}ms{}",
+                                ms,
+                                if entry.from_cache { " · cached" } else { "" }
+                            ))
+                            .small()
+                            .color(CyberColors::TEXT_SECONDARY),
+                        );
+                    }
+                }
+            });
+
+        if submit {
+            self.send_agent_query();
+        }
+    }
+
     fn draw_overview(&mut self, ui: &mut egui::Ui) {
         ScrollArea::vertical().show(ui, |ui| {
+            self.draw_overview_chat_bar(ui);
+            ui.add_space(6.0);
+
             // Glances-style QuickLook panel at the top
             let cpu_usage = self.cpu_usage();
             let mem_usage = self

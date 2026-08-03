@@ -70,6 +70,30 @@ enum Commands {
         #[command(subcommand)]
         action: ProfileSubcommand,
     },
+    /// Print the entity ontology: every value simon can report, with its unit and
+    /// provenance
+    ///
+    /// The schema an agent reads before querying anything. Pure — touches no
+    /// hardware, so the output is identical on every machine and can be fetched
+    /// ahead of time. `--format json` is the machine-facing form.
+    Describe {
+        /// Restrict to one domain (cpu, gpu, memory, disk, network, power, thermal,
+        /// process, system, board)
+        #[arg(long)]
+        domain: Option<String>,
+
+        /// Substring match against ids and descriptions
+        #[arg(long)]
+        search: Option<String>,
+
+        /// Look up a single entity by exact id
+        #[arg(long)]
+        id: Option<String>,
+
+        /// Output format (json or text)
+        #[arg(short, long, default_value = "text")]
+        format: String,
+    },
     /// Run as a headless daemon configured from a TOML file
     ///
     /// Like `serve`, but reads host/port/interval from config and writes a PID
@@ -554,6 +578,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Profile command - hardware profile inspector
         Some(Commands::Profile { action }) => {
             handle_profile_command(action)?;
+        }
+        Some(Commands::Describe {
+            domain,
+            search,
+            id,
+            format,
+        }) => {
+            handle_describe_command(domain.as_deref(), search.as_deref(), id.as_deref(), format)?;
         }
         Some(Commands::Daemon {
             config,
@@ -3131,6 +3163,99 @@ fn format_duration(secs: u64) -> String {
 
 /// Handle `simon profile ...` — hardware profile inspector
 #[cfg(feature = "cli")]
+/// Print the entity ontology.
+///
+/// Deliberately hardware-free: this is the schema, not a reading. An agent fetches
+/// it once to learn the id space, the units, and — the part that matters — which
+/// values are measurements and which are constants wearing a measurement's clothes.
+fn handle_describe_command(
+    domain: Option<&str>,
+    search: Option<&str>,
+    id: Option<&str>,
+    format: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use simonlib::ontology::{Domain, Ontology};
+
+    let ontology = Ontology::build();
+
+    // Narrow by the most specific filter given.
+    let selected: Vec<&simonlib::ontology::Entity> = if let Some(id) = id {
+        match ontology.get(id) {
+            Some(e) => vec![e],
+            None => {
+                eprintln!("No entity with id {id:?}.");
+                eprintln!(
+                    "Try `simon describe --search {}`.",
+                    id.split('.').next().unwrap_or(id)
+                );
+                std::process::exit(1);
+            }
+        }
+    } else if let Some(needle) = search {
+        ontology.search(needle)
+    } else if let Some(d) = domain {
+        let Some(parsed) = Domain::parse(d) else {
+            eprintln!("Unknown domain {d:?}. Known domains:");
+            for known in Domain::ALL {
+                eprintln!("  {}", known.as_str());
+            }
+            std::process::exit(1);
+        };
+        ontology.in_domain(parsed)
+    } else {
+        ontology.entities.values().collect()
+    };
+
+    if format.eq_ignore_ascii_case("json") {
+        // Re-wrap so the JSON always carries the version, even when filtered — a
+        // consumer holding a fragment still needs to know which schema it speaks.
+        let filtered: std::collections::BTreeMap<&str, &simonlib::ontology::Entity> =
+            selected.iter().map(|e| (e.id.as_str(), *e)).collect();
+        let doc = serde_json::json!({
+            "version": ontology.version,
+            "entity_count": filtered.len(),
+            "entities": filtered,
+        });
+        println!("{}", serde_json::to_string_pretty(&doc)?);
+        return Ok(());
+    }
+
+    println!("simon ontology v{}", ontology.version);
+    println!(
+        "{} entit{}\n",
+        selected.len(),
+        if selected.len() == 1 { "y" } else { "ies" }
+    );
+
+    let mut current_domain = None;
+    for e in &selected {
+        if current_domain != Some(e.domain) {
+            println!("== {} ==", e.domain.as_str());
+            current_domain = Some(e.domain);
+        }
+        let unit = e.unit.map(|u| u.as_str()).unwrap_or("-");
+        println!(
+            "  {:<40} {:<12} {:<10} {:<14}{}",
+            e.id,
+            e.kind.as_str(),
+            unit,
+            e.provenance.as_str(),
+            if e.nullable { " nullable" } else { "" }
+        );
+        println!("      {}", e.description);
+        if !e.derived_from.is_empty() {
+            println!("      derived from: {}", e.derived_from.join(", "));
+        }
+    }
+
+    println!();
+    println!("provenance: measured = sampled now | specification = published constant");
+    println!("            derived  = computed     | unavailable   = not obtainable here");
+    println!("Only `measured` values may be treated as live observations.");
+
+    Ok(())
+}
+
 fn handle_profile_command(action: &ProfileSubcommand) -> Result<(), Box<dyn std::error::Error>> {
     use simonlib::profile::{ProfileInspector, Subsystem};
     let mut inspector = ProfileInspector::new();
