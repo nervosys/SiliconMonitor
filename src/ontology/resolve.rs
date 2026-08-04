@@ -156,6 +156,32 @@ pub fn snapshot() -> Vec<Reading> {
     }
     out.append(&mut missing_domains);
 
+    // Last gate: a resolver must not hand an agent a number its own schema calls
+    // impossible. Anything outside the declared range becomes unavailable, with the
+    // offending value quoted in the note — surfaced, not swallowed, and never
+    // clamped. Clamping would turn a 103% core into a plausible 100% and destroy the
+    // evidence that the sampling was wrong.
+    //
+    // This exists because the derivation above got it wrong under load and shipped
+    // an impossible percentage. The specific bug is fixed; the gate means the next
+    // one degrades to "unknown, and here is why" instead of to a confident lie.
+    for reading in out.iter_mut() {
+        let Some(value) = reading.value.as_ref().and_then(|v| v.as_f64()) else {
+            continue;
+        };
+        let Some(entity) = lookup_template(&ontology, &reading.id) else {
+            continue;
+        };
+        if let Some(problem) = entity.validate_range(value) {
+            reading.value = None;
+            reading.provenance = Provenance::Unavailable;
+            reading.note = Some(format!(
+                "reader produced a value the ontology rejects, so it is withheld \
+                 rather than reported: {problem}"
+            ));
+        }
+    }
+
     out.sort_by(|a, b| a.id.cmp(&b.id));
     out
 }
@@ -236,10 +262,15 @@ fn resolve_cpu(out: &mut Vec<Reading>) {
 
     for core in &stats.cores {
         let base = format!("cpu.core.{}", core.id);
-        match (core.user, core.system) {
-            (Some(user), Some(system)) => out.push(Reading::derived(
+        // Derived as `100 - idle`, matching how `cpu.total.utilization` is computed.
+        // Summing user and system instead let sampling jitter push the result past
+        // 100 — the per-core deltas are taken across a boundary and need not add up
+        // — which produced an impossible percentage under heavy load. Deriving from
+        // idle is bounded by the same value the total already trusts.
+        match core.idle {
+            Some(idle) => out.push(Reading::derived(
                 format!("{base}.utilization"),
-                serde_json::json!(user + system),
+                serde_json::json!(100.0 - idle),
                 Some(Unit::Percent),
             )),
             // The platform exposes no per-processor times. Reporting the system
@@ -1059,12 +1090,42 @@ mod tests {
         }
     }
 
-    /// Live values must satisfy the ranges the ontology declares. This is the
-    /// plausibility tier applied to the resolver's own output.
+    /// Live values must satisfy the ranges the ontology declares.
+    ///
+    /// This held at rest and failed under the load of the full test suite, when a
+    /// per-core utilization derived as `user + system` drifted past 100 percent.
+    /// Two things changed: the derivation now uses `100 - idle`, and `snapshot`
+    /// withholds anything the ontology rejects. The assertion is therefore now
+    /// structural rather than a matter of timing.
     #[test]
     fn live_readings_are_physically_possible() {
         let problems = validate(&snapshot());
         assert!(problems.is_empty(), "impossible readings: {problems:#?}");
+    }
+
+    /// The gate must withhold rather than clamp. A clamped value looks like a
+    /// reading and is not one, which is the failure mode this module exists to
+    /// prevent — and it would destroy the evidence that sampling went wrong.
+    #[test]
+    fn out_of_range_values_are_withheld_with_the_offending_value_named() {
+        use crate::ontology::{Domain, EntityKind};
+
+        let ontology = Ontology::build();
+        let entity = ontology.get("cpu.total.utilization").unwrap();
+        assert_eq!(entity.domain, Domain::Cpu);
+        assert_eq!(entity.kind, EntityKind::Measurement);
+
+        // The range check the gate relies on, exercised directly: an impossible
+        // percentage must be reported as a problem, not silently corrected.
+        let problem = entity
+            .validate_range(103.0)
+            .expect("103 percent should be rejected");
+        assert!(
+            problem.contains("103"),
+            "the rejection must name the offending value so it can be diagnosed, \
+             got: {problem}"
+        );
+        assert!(entity.validate_range(99.9).is_none());
     }
 
     /// An id an agent cannot type is not an id.

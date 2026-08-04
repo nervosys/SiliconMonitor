@@ -2251,7 +2251,8 @@ impl SiliconMonitorApp {
             // Linux/BSD style System Stats (like htop/vmstat)
             // Not Linux/BSD-only: uptime and CPU count render on every platform, and
             // the entries that are Linux-sourced hide themselves when absent.
-            ui.add(SectionHeader::new("System Stats").icon("📈"));
+            let t = super::widgets::domain_section_title("system", "Stats");
+            ui.add(SectionHeader::new(&t).icon("📈"));
 
             // System info row
             ui.horizontal(|ui| {
@@ -2570,7 +2571,8 @@ impl SiliconMonitorApp {
 
                 // CPU Info
                 ui.add_space(16.0);
-                ui.add(SectionHeader::new("CPU Information").icon("ℹ️"));
+                let t = super::widgets::domain_section_title("cpu", "Information");
+                ui.add(SectionHeader::new(&t).icon("ℹ️"));
 
                 let cores = &cpu.cores;
                 egui::Grid::new("cpu_info_grid")
@@ -2847,7 +2849,8 @@ impl SiliconMonitorApp {
                 ui.add_space(8.0);
 
                 // Memory breakdown like `free -h` output
-                ui.add(SectionHeader::new("Memory Breakdown (free -h style)").icon("📈"));
+                let t = super::widgets::domain_section_title("memory", "Breakdown (free -h style)");
+                ui.add(SectionHeader::new(&t).icon("📈"));
 
                 // Main row: total, used, free, shared, buff/cache, available
                 ui.horizontal(|ui| {
@@ -3290,7 +3293,8 @@ impl SiliconMonitorApp {
         let rates = self.network_rates.clone();
 
         ScrollArea::vertical().show(ui, |ui| {
-            ui.add(SectionHeader::new("Network Interfaces").icon("🌐"));
+            let t = super::widgets::domain_section_title("network", "Interfaces");
+            ui.add(SectionHeader::new(&t).icon("🌐"));
 
             // Show total bandwidth rates at the top
             let total_rx_rate: f64 = rates.values().map(|(rx, _)| rx).sum();
@@ -3893,7 +3897,8 @@ impl SiliconMonitorApp {
     }
 
     fn draw_connections_tab(&mut self, ui: &mut egui::Ui) {
-        ui.add(SectionHeader::new("Network Connections (netstat)").icon("📡"));
+        let t = super::widgets::domain_section_title("network", "Connections (netstat)");
+        ui.add(SectionHeader::new(&t).icon("📡"));
 
         // Filter bar
         ui.horizontal(|ui| {
@@ -4137,7 +4142,8 @@ impl SiliconMonitorApp {
         self.start_system_info_loading();
 
         ScrollArea::vertical().show(ui, |ui| {
-            ui.add(SectionHeader::new("System Information"));
+            let t = super::widgets::domain_section_title("system", "Information");
+            ui.add(SectionHeader::new(&t));
 
             // Show loading indicator if still loading
             if self.system_info_loading {

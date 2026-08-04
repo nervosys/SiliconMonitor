@@ -1096,3 +1096,72 @@ mod section_title_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod section_header_source_tests {
+    use crate::ontology::labels;
+
+    /// The GUI's own source, scanned for hardcoded section headings.
+    ///
+    /// Scanning the source is unusual in a test, but the alternative is worse: the
+    /// headings are string literals scattered across five thousand lines, and there
+    /// is no runtime registry to enumerate. Converting each by hand and trusting
+    /// future edits to follow suit is exactly how the three surfaces drifted apart
+    /// in the first place — the CLI saying `cpu`, the GUI `CPU`, the JSON `Cpu`.
+    const GUI_SOURCE: &str = include_str!("app.rs");
+
+    fn literal_headings() -> Vec<String> {
+        let mut out = Vec::new();
+        let needle = "SectionHeader::new(\"";
+        let mut rest = GUI_SOURCE;
+        while let Some(start) = rest.find(needle) {
+            rest = &rest[start + needle.len()..];
+            if let Some(end) = rest.find('"') {
+                out.push(rest[..end].to_string());
+            }
+        }
+        out
+    }
+
+    /// Any heading beginning with a word the ontology owns must spell it the
+    /// ontology's way.
+    ///
+    /// Headings that are not entity namespaces — "Physical Memory", "Installed
+    /// Drivers", "Nmap-Style Scan Results" — are deliberately untouched. Forcing
+    /// those through the ontology would assert a correspondence that does not
+    /// exist, which is its own kind of dishonesty.
+    #[test]
+    fn hardcoded_headings_do_not_contradict_the_ontology() {
+        for heading in literal_headings() {
+            // Strip a leading emoji or symbol so the first *word* is examined.
+            let first_word = heading
+                .split_whitespace()
+                .find(|w| w.chars().any(|c| c.is_ascii_alphabetic()))
+                .unwrap_or("");
+            let lowered = first_word.to_ascii_lowercase();
+
+            if labels::is_known_domain(&lowered) {
+                assert_eq!(
+                    first_word,
+                    labels::domain_label(&lowered),
+                    "the heading {heading:?} starts with the ontology domain \
+                     {lowered:?} but spells it {first_word:?}; route it through \
+                     `domain_section_title` so the surfaces cannot drift"
+                );
+            }
+        }
+    }
+
+    /// The scan must actually find headings, or the assertion above is vacuous —
+    /// a refactor that renamed the constructor would silently disable this test.
+    #[test]
+    fn the_source_scan_finds_headings() {
+        let found = literal_headings();
+        assert!(
+            found.len() > 10,
+            "expected the GUI to contain many section headings; the scan found \
+             {} — has `SectionHeader::new` been renamed?",
+            found.len()
+        );
+    }
+}
