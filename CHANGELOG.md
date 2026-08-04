@@ -5,7 +5,31 @@ All notable changes to Silicon Monitor will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.1] - 2026-08-04
+
+The first 2.x published to crates.io. 2.0.0 was tagged but never published: these
+two fixes landed after the tag, and shipping them as 2.0.0 would have made the tag
+point at code that was not what was released.
+
+### Fixed
+
+- **`--offline` announced a guarantee it did not enforce.** The flag is documented
+  as disabling all network features; it set two environment variables and stopped.
+  `consent::is_offline_mode` had no callers anywhere. A hosted backend received
+  this machine's hardware inventory — including GPU UUIDs and PCI bus ids, which
+  are stable device identifiers — while the tool reported that it would not.
+  `Agent::ask` now refuses any backend whose `runs_on_host` is false when offline
+  mode is set. The predicate is egress rather than "makes a network call", so a
+  model served over loopback stays usable.
+- **Two README links did not resolve.** `docs/AI_AGENT.md` was dropped by an
+  earlier correction whose check only looked at the repository root, so any target
+  in a subdirectory read as missing. The link checker now resolves each target
+  relative to the file containing it and walks every tracked markdown file; three
+  further broken links in CLI.md were found and fixed the same way.
+
 ## [2.0.0] - 2026-08-04
+
+Tagged, not published. See 2.0.1.
 
 A major version because five public signatures changed, not because the release is
 larger than most. Under SemVer that is a major bump regardless of how unlikely the
