@@ -350,6 +350,60 @@ fn every_gui_tab_paints_text() {
     }
 }
 
+/// The GUI script surface mirrors the TUI's, minus the key step it has no use for.
+/// Exit codes must match so a caller can treat both surfaces the same way.
+#[test]
+fn the_gui_can_be_inspected_by_a_script() {
+    use std::io::Write;
+    use std::process::Stdio;
+
+    fn run_script(script: &str) -> (String, String, i32) {
+        let mut child = simon()
+            .args(["gui", "--script", "-"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn simon gui --script");
+        child
+            .stdin
+            .as_mut()
+            .expect("stdin")
+            .write_all(script.as_bytes())
+            .expect("write script");
+        let out = child.wait_with_output().expect("wait");
+        (
+            String::from_utf8_lossy(&out.stdout).to_string(),
+            String::from_utf8_lossy(&out.stderr).to_string(),
+            out.status.code().unwrap_or(-1),
+        )
+    }
+
+    let (stdout, stderr, code) =
+        run_script("goto profiles\nassert Hardware Profile Inspector\ncapture\n");
+    assert_eq!(code, 0, "script should pass.\nstderr: {stderr}");
+    assert!(
+        stdout.contains("Hardware Profile Inspector"),
+        "the capture should hold the painted text:\n{stdout}"
+    );
+
+    let (_, stderr, code) = run_script("assert absolutely-not-painted\n");
+    assert_eq!(code, 1, "a failed assertion must exit 1, matching the TUI");
+    assert!(stderr.contains("absolutely-not-painted"), "got: {stderr}");
+
+    // The absent `key` step is a decision, and the error says so rather than
+    // reading as an oversight.
+    let (_, stderr, code) = run_script("key 3\n");
+    assert_eq!(
+        code, 2,
+        "an unparseable script must exit 2, matching the TUI"
+    );
+    assert!(
+        stderr.contains("addressable by name"),
+        "the rejection should explain why there is no key step, got: {stderr}"
+    );
+}
+
 /// Driving the TUI is the other half of operability: an agent must be able to
 /// navigate and assert, not only observe a frame it did not choose.
 #[test]

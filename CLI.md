@@ -39,6 +39,7 @@ The interactive surfaces render headlessly for callers with no terminal or displ
 ```bash
 simon tui --frame --tab CPU       # one TUI frame as text
 simon tui --script script.txt     # drive the TUI and assert on what it shows
+simon gui --script script.txt     # navigate GUI tabs and assert on painted text
 simon gui --frame --tab profiles  # the text a GUI tab paints
 ```
 

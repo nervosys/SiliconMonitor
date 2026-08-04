@@ -45,6 +45,15 @@ enum Commands {
         /// network, system, peripherals, profiles, ai, ...)
         #[arg(long, default_value = "overview")]
         tab: String,
+
+        /// Inspect the GUI from a script and report the result; `-` reads stdin
+        ///
+        /// Steps: `goto <tab>`, `capture`, `assert <text>`, `refute <text>`. There is
+        /// no `key` step: GUI tabs are addressable by name, so unlike the TUI there
+        /// is no navigation state to drive. Exits 1 if any assertion fails, 2 if the
+        /// script does not parse.
+        #[arg(long)]
+        script: Option<String>,
     },
     /// Launch Terminal User Interface (TUI) - interactive dashboard
     Tui {
@@ -624,8 +633,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     match &cli.command {
         // GUI command - Graphical User Interface (default if no command given)
         #[cfg(feature = "gui")]
-        Some(Commands::Gui { frame, tab }) => {
-            if *frame {
+        Some(Commands::Gui { frame, tab, script }) => {
+            if let Some(source) = script {
+                handle_gui_script_command(source)?;
+            } else if *frame {
                 handle_gui_frame_command(tab)?;
             } else {
                 simonlib::gui::run().map_err(|e| format!("GUI error: {}", e))?;
@@ -3519,6 +3530,58 @@ fn emit_command_catalog(format: &str) -> Result<(), Box<dyn std::error::Error>> 
 /// loop driven by key events. None of that is reachable by an agent without a TTY,
 /// which left the TUI the one surface that could be neither read nor asserted on.
 /// This renders the identical frame into an in-memory buffer and prints it.
+/// Inspect the GUI from a script and report what happened.
+///
+/// Mirrors `tui --script` minus the `key` step, which the GUI has no use for: its
+/// tabs are addressable by name, so `goto` covers navigation and there is no
+/// keystroke state to drive. Exit codes match the TUI's so a caller can treat both
+/// surfaces the same way — 1 for a failed assertion, 2 for a script that does not
+/// parse, which keeps "the GUI is wrong" separable from "my script is wrong".
+fn handle_gui_script_command(source: &str) -> Result<(), Box<dyn std::error::Error>> {
+    use simonlib::gui::headless;
+
+    let text = if source == "-" {
+        use std::io::Read;
+        let mut buf = String::new();
+        std::io::stdin().read_to_string(&mut buf)?;
+        buf
+    } else {
+        std::fs::read_to_string(source)
+            .map_err(|e| format!("could not read script {source:?}: {e}"))?
+    };
+
+    let steps = match headless::parse_script(&text) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("{e}");
+            std::process::exit(2);
+        }
+    };
+    if steps.is_empty() {
+        eprintln!("the script contains no steps");
+        std::process::exit(2);
+    }
+
+    let ctx = headless::themed_context();
+    let mut app = simonlib::gui::app::SiliconMonitorApp::with_context(&ctx);
+    let result = headless::run_script(&mut app, &ctx, &steps);
+
+    for capture in &result.captures {
+        println!("{capture}");
+        println!();
+    }
+
+    if result.failures.is_empty() {
+        eprintln!("{} step(s) ok", steps.len());
+        return Ok(());
+    }
+    eprintln!("{} assertion(s) failed:", result.failures.len());
+    for failure in &result.failures {
+        eprintln!("  {failure}");
+    }
+    std::process::exit(1);
+}
+
 /// Render one GUI tab headlessly and print the text it painted.
 ///
 /// The GUI was the last surface with no non-visual representation. Reading the

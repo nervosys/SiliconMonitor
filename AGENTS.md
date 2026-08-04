@@ -180,8 +180,25 @@ implementation of its bindings.
 | 1 | An assertion failed — the message names the step and what was missing |
 | 2 | The script did not parse |
 
-The GUI has no `--script`: `--frame --tab` already selects any tab directly, so
-there is no navigation state to drive.
+### Inspecting the GUI
+
+The GUI takes the same shape, minus `key`. Its tabs are addressable by name, so
+`goto` covers navigation and there is no keystroke state to drive:
+
+```bash
+simon gui --script - <<'EOF'
+goto profiles
+assert Hardware Profile Inspector
+refute Traceback
+capture
+EOF
+```
+
+A `key` step is rejected rather than ignored, and the error says why, so the
+omission reads as a decision rather than an oversight.
+
+Exit codes match the TUI's — 0 all passed, 1 an assertion failed, 2 the script did
+not parse — so a caller can treat both surfaces the same way.
 
 ## Vocabulary is shared
 

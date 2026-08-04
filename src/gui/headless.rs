@@ -377,3 +377,187 @@ mod ontology_binding_tests {
         );
     }
 }
+
+// ── Scripted inspection ──────────────────────────────────────────────────────
+
+/// One step in a GUI script.
+///
+/// Deliberately smaller than the TUI's step set. The TUI needs `key` because its
+/// navigation is key-driven and stateful — you press keys to get somewhere. A GUI
+/// tab is addressable directly, so `goto` covers navigation entirely and there is
+/// no keystroke state to drive.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Step {
+    /// Select a tab by name.
+    Goto(String),
+    /// Record the text currently painted.
+    Capture,
+    /// Fail unless the current frame contains this text.
+    Assert(String),
+    /// Fail if the current frame contains this text.
+    Refute(String),
+}
+
+/// Outcome of running a GUI script.
+#[derive(Debug, Default)]
+pub struct ScriptResult {
+    pub captures: Vec<String>,
+    pub failures: Vec<String>,
+}
+
+/// Parse a GUI script. One step per line; `#` comments; blank lines ignored.
+pub fn parse_script(text: &str) -> Result<Vec<Step>, String> {
+    let mut steps = Vec::new();
+    for (n, raw) in text.lines().enumerate() {
+        let line = raw.split('#').next().unwrap_or("").trim();
+        if line.is_empty() {
+            continue;
+        }
+        let (verb, rest) = match line.split_once(char::is_whitespace) {
+            Some((v, r)) => (v, r.trim()),
+            None => (line, ""),
+        };
+        let step = match verb.to_ascii_lowercase().as_str() {
+            "goto" if !rest.is_empty() => Step::Goto(rest.to_string()),
+            "capture" => Step::Capture,
+            "assert" if !rest.is_empty() => Step::Assert(rest.to_string()),
+            "refute" if !rest.is_empty() => Step::Refute(rest.to_string()),
+            other => {
+                return Err(format!(
+                    "line {}: unknown or incomplete step {other:?}. Steps: goto <tab>, \
+                     capture, assert <text>, refute <text>. The GUI has no `key` step \
+                     — tabs are addressable by name, so there is no navigation state \
+                     to drive.",
+                    n + 1
+                ))
+            }
+        };
+        steps.push(step);
+    }
+    Ok(steps)
+}
+
+/// Run a GUI script against `app`.
+pub fn run_script(
+    app: &mut super::app::SiliconMonitorApp,
+    ctx: &Context,
+    steps: &[Step],
+) -> ScriptResult {
+    let mut result = ScriptResult::default();
+    let mut frame = painted_text(ctx, |ui| app.draw_current_tab(ui)).join("\n");
+
+    for (i, step) in steps.iter().enumerate() {
+        match step {
+            Step::Goto(target) => match app.select_tab_by_name(target) {
+                Ok(()) => {
+                    frame = painted_text(ctx, |ui| app.draw_current_tab(ui)).join("\n");
+                }
+                Err(available) => result.failures.push(format!(
+                    "step {}: unknown tab {target:?}; available: {available:?}",
+                    i + 1
+                )),
+            },
+            Step::Capture => result.captures.push(frame.clone()),
+            Step::Assert(needle) => {
+                if !frame.contains(needle.as_str()) {
+                    result.failures.push(format!(
+                        "step {}: expected {needle:?} in the painted text, not found",
+                        i + 1
+                    ));
+                }
+            }
+            Step::Refute(needle) => {
+                if frame.contains(needle.as_str()) {
+                    result.failures.push(format!(
+                        "step {}: {needle:?} should not be painted, but is",
+                        i + 1
+                    ));
+                }
+            }
+        }
+    }
+
+    result
+}
+
+#[cfg(test)]
+mod script_tests {
+    use super::*;
+    use crate::gui::app::SiliconMonitorApp;
+
+    fn app_and_ctx() -> (SiliconMonitorApp, Context) {
+        let ctx = themed_context();
+        let app = SiliconMonitorApp::with_context(&ctx);
+        (app, ctx)
+    }
+
+    #[test]
+    fn scripts_parse_with_comments_and_blank_lines() {
+        let steps = parse_script("# go\ngoto profiles\n\ncapture  # snap\nassert Inspector\n")
+            .expect("should parse");
+        assert_eq!(
+            steps,
+            vec![
+                Step::Goto("profiles".into()),
+                Step::Capture,
+                Step::Assert("Inspector".into()),
+            ]
+        );
+    }
+
+    /// The rejection must explain why there is no `key` step, or the omission reads
+    /// as an oversight rather than a decision.
+    #[test]
+    fn a_key_step_is_rejected_with_the_reason() {
+        let err = parse_script("key 3").expect_err("the GUI has no key step");
+        assert!(err.contains("key"), "got: {err}");
+        assert!(
+            err.contains("addressable by name"),
+            "the error should say why, got: {err}"
+        );
+    }
+
+    #[test]
+    fn goto_changes_what_is_painted() {
+        let (mut app, ctx) = app_and_ctx();
+        let steps = parse_script("goto profiles\nassert Hardware Profile Inspector").unwrap();
+        let result = run_script(&mut app, &ctx, &steps);
+        assert!(result.failures.is_empty(), "{:?}", result.failures);
+    }
+
+    #[test]
+    fn assertions_and_refutations_report_rather_than_panic() {
+        let (mut app, ctx) = app_and_ctx();
+        let steps =
+            parse_script("goto profiles\nassert not-painted-anywhere\nrefute Inspector").unwrap();
+        let result = run_script(&mut app, &ctx, &steps);
+        assert_eq!(
+            result.failures.len(),
+            2,
+            "both the failed assert and the failed refute should report: {:?}",
+            result.failures
+        );
+    }
+
+    #[test]
+    fn an_unknown_tab_lists_the_available_ones() {
+        let (mut app, ctx) = app_and_ctx();
+        let steps = parse_script("goto nonsense").unwrap();
+        let result = run_script(&mut app, &ctx, &steps);
+        assert_eq!(result.failures.len(), 1);
+        assert!(
+            result.failures[0].contains("overview"),
+            "should name the alternatives: {:?}",
+            result.failures
+        );
+    }
+
+    #[test]
+    fn capture_records_the_frame_after_navigation() {
+        let (mut app, ctx) = app_and_ctx();
+        let steps = parse_script("goto profiles\ncapture").unwrap();
+        let result = run_script(&mut app, &ctx, &steps);
+        assert_eq!(result.captures.len(), 1);
+        assert!(result.captures[0].contains("Hardware Profile Inspector"));
+    }
+}
