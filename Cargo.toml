@@ -223,6 +223,26 @@ nvml = ["nvidia"]
 
 [profile.release]
 opt-level = 3
-lto = true
+# Thin rather than fat LTO.
+#
+# Fat LTO (`lto = true`) reliably triggers a compiler ICE on rustc 1.97.1 for this
+# crate: an unwrap in lint-level sorting, reached only under `-C lto
+# -C codegen-units=1`.
+#
+#   error: the compiler unexpectedly panicked. This is a bug
+#   core::slice::sort::unstable::heapsort::<(rustc_lint_defs::Level, &str), usize)>
+#   compiler flags: -C opt-level=3 -C lto -C codegen-units=1
+#
+# It struck six times in one session, on the lib-test, bin, and lib targets, always
+# succeeding on retry. That intermittency is what makes it worth avoiding rather
+# than tolerating: a build that fails one run in five is indistinguishable from a
+# flaky test suite to anyone who does not read the stack trace, and CI will retry
+# it away rather than report it.
+#
+# Thin LTO still optimises across crate boundaries; it partitions the work instead
+# of merging every module into one unit, which is both why it avoids the ICE and
+# why it costs a little runtime performance. Restore `lto = true` once the
+# toolchain is fixed — the change is one word.
+lto = "thin"
 codegen-units = 1
 strip = true
