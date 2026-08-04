@@ -148,7 +148,7 @@ let response = agent.ask("How much power am I using?", &monitor)?;
 - Multiple model sizes (100M, 500M, 1B parameters)
 - Zero latency impact on monitoring (non-blocking)
 - Response caching for instant repeated queries
-- See [AI_AGENT.md](AI_AGENT.md) for details
+- See [AI_INTEGRATION.md](AI_INTEGRATION.md) for model providers, and [AGENTS.md](AGENTS.md) for driving simon programmatically
 
 
 ### AI Agent Discoverability & Hardware Ontology
@@ -781,7 +781,7 @@ amon    # AI Monitor alias
 - Response caching for instant repeated queries
 - Zero impact on monitoring performance
 
-See [TUI_AGENT_GUIDE.md](TUI_AGENT_GUIDE.md) for complete agent usage guide.
+See [AGENTS.md](AGENTS.md) for driving the TUI from an agent, including reading frames without a terminal and scripting navigation.
 
 <details>
 <summary><strong>📸 TUI Screenshots</strong> (click to expand)</summary>

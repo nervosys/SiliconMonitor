@@ -5,6 +5,74 @@ All notable changes to Silicon Monitor will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added — Machine-readable ontology over every reading
+
+Every value simon reports now has a stable dotted id, a unit, and a **provenance**
+saying where it came from. The three interfaces share one vocabulary rather than
+three.
+
+- `simon describe` — the schema: ids, units, provenance, descriptions. Touches no
+  hardware, so it is identical on every machine and can be fetched and cached
+  ahead of time.
+- `simon describe --commands` — the command surface, walked out of the argument
+  parser so it cannot drift from what the binary accepts.
+- `simon describe --writable` — settings backed by a registered apply handler.
+  Generated from the handler registry, so the schema cannot advertise a write the
+  binary will reject.
+- `simon get <id>` — one reading. Exits 1 for an unknown id, 2 for a known id
+  with no value here, so a caller can tell "no such thing" from "nothing to
+  report".
+- `simon snapshot [--validate]` — every resolvable entity, across all ten domains.
+  The count varies with the hardware present and the process table, so it is not
+  quoted here.
+
+`provenance` is the point: `measured` was sampled now, `specification` is a
+published constant true of the hardware but not observed here, `derived` names its
+inputs, and `unavailable` carries the reason it could not be read. Only `measured`
+may be treated as a live observation. Nothing substitutes zero or a plausible
+constant for a value it could not obtain, and a reading outside its declared range
+is withheld rather than clamped.
+
+### Added — Headless inspection of the TUI and GUI
+
+Both interactive surfaces can now be read and driven without a terminal or a
+display.
+
+- `simon tui --frame [--tab NAME]` and `simon gui --frame [--tab NAME]`
+- `simon tui --script` — `goto`, `key`, `refresh`, `capture`, `assert`, `refute`.
+  Key steps go through the same handler the interactive loop calls.
+- `simon gui --script` — the same minus `key`, since GUI tabs are addressable by
+  name.
+
+### Fixed
+
+- The Profiles tab appeared dead. It was rendering all 19 groups; `RichText::strong()`
+  resolved to the panel colour, so every `strong()` label in the GUI was invisible. The
+  light theme had the same bug in white. The AI tab's reported failure has the same
+  cause.
+- Collapsing-header triangles (U+25BE/U+25B8) rendered as tofu — Geometric Shapes
+  are not covered by the bundled emoji font — and duplicated the arrow the widget
+  already draws.
+- Numerous readings were constants presented as measurements: a boot time of exactly
+  45 seconds whenever the real one could not be read, `min_freq = max_freq / 4`,
+  Secure Boot inferred from a registry key's existence rather than its value, Apple
+  GPU clock and power ceilings from a core-count table, macOS disk throughput halved
+  into a fabricated read/write split, and NIC link speed divided by 1000 for any
+  unrecognised unit.
+- The port scanner reported `Filtered` — a specific claim that a firewall dropped
+  the packet — for host-unreachable and permission-denied errors that never reached
+  the host.
+
+### Changed
+
+- `lto = "thin"` in the release profile. Fat LTO triggers a compiler ICE on rustc
+  1.97.1 for this crate, in lint-level sorting under `-C lto -C codegen-units=1`.
+  Binary grows 3.6%. Restore `lto = true` once the toolchain is fixed.
+- `ai_api::HardwareOntology` is superseded by `crate::ontology`. It carries no
+  provenance, cannot resolve an id to a value, and no command exposes it.
+
 ## [1.5.0] - 2026-07-29
 
 ### Added — Lock-free snapshot pipeline
