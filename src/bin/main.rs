@@ -32,7 +32,27 @@ enum Commands {
     #[cfg(feature = "gui")]
     Gui,
     /// Launch Terminal User Interface (TUI) - interactive dashboard
-    Tui,
+    Tui {
+        /// Render one frame to stdout and exit, instead of taking over the terminal
+        ///
+        /// The TUI normally draws into an alternate screen under raw mode, which an
+        /// agent with no TTY cannot read. This renders the same frame into a buffer
+        /// and prints it, so what a human would see is inspectable and diffable.
+        #[arg(long)]
+        frame: bool,
+
+        /// Tab to render with --frame, by name (case-insensitive) or index
+        #[arg(long)]
+        tab: Option<String>,
+
+        /// Frame width in columns for --frame
+        #[arg(long, default_value = "200")]
+        width: u16,
+
+        /// Frame height in rows for --frame
+        #[arg(long, default_value = "50")]
+        height: u16,
+    },
     /// Command-line interface for monitoring hardware
     Cli {
         #[command(subcommand)]
@@ -585,8 +605,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         // TUI command - Terminal User Interface
-        Some(Commands::Tui) => {
-            simonlib::tui::run()?;
+        Some(Commands::Tui {
+            frame,
+            tab,
+            width,
+            height,
+        }) => {
+            if *frame {
+                handle_tui_frame_command(tab.as_deref(), *width, *height)?;
+            } else {
+                simonlib::tui::run()?;
+            }
         }
 
         // CLI commands - use shared MonitoringBackend
@@ -3447,6 +3476,77 @@ fn emit_command_catalog(format: &str) -> Result<(), Box<dyn std::error::Error>> 
     }
 
     print_tree(&catalog, 0);
+    Ok(())
+}
+
+/// Render one TUI frame to stdout and exit.
+///
+/// The TUI normally takes over the terminal: alternate screen, raw mode, a redraw
+/// loop driven by key events. None of that is reachable by an agent without a TTY,
+/// which left the TUI the one surface that could be neither read nor asserted on.
+/// This renders the identical frame into an in-memory buffer and prints it.
+fn handle_tui_frame_command(
+    tab: Option<&str>,
+    width: u16,
+    height: u16,
+) -> Result<(), Box<dyn std::error::Error>> {
+    // `new_fast` defers collection to a background thread, which is right for an
+    // interactive session that repaints continuously — but a one-shot frame rendered
+    // from it shows "CPU 0% | 0 cores", zeros that look like readings and are not.
+    // `new` waits for initialisation, so the single frame an agent gets carries real
+    // data or nothing.
+    let mut app = simonlib::tui::App::new()?;
+    app.update()?;
+
+    // The collector publishes asynchronously. An interactive session repaints until
+    // the first snapshot lands and nobody notices the gap; a single frame rendered
+    // during it shows "CPU:0% MEM:0%" — zeros indistinguishable from an idle
+    // machine. Wait for real data, bounded, and say plainly if it never arrives
+    // rather than printing the defaults as though they were a reading.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let mut have_snapshot = false;
+    while std::time::Instant::now() < deadline {
+        if app.sync_snapshot() {
+            have_snapshot = true;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    if !have_snapshot {
+        eprintln!(
+            "warning: no snapshot arrived within 5s. The frame below shows zeroed \
+             defaults, not readings — do not interpret them as an idle machine."
+        );
+    }
+
+    if let Some(requested) = tab {
+        // Accept an index or a name, because an agent reading the tab bar has the
+        // name and an agent iterating has the index.
+        let resolved = requested
+            .parse::<usize>()
+            .ok()
+            .filter(|i| *i < app.tabs.len())
+            .or_else(|| {
+                app.tabs
+                    .iter()
+                    .position(|t| t.eq_ignore_ascii_case(requested))
+            });
+
+        match resolved {
+            Some(index) => app.selected_tab = index,
+            None => {
+                eprintln!("Unknown tab {requested:?}. Available tabs:");
+                for (i, name) in app.tabs.iter().enumerate() {
+                    eprintln!("  {i}  {name}");
+                }
+                std::process::exit(1);
+            }
+        }
+    }
+
+    for line in simonlib::tui::headless::render_rows(&app, width, height) {
+        println!("{line}");
+    }
     Ok(())
 }
 

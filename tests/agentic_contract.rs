@@ -240,6 +240,66 @@ fn the_write_surface_agrees_with_what_the_binary_accepts() {
     }
 }
 
+/// The TUI must be readable without a terminal, or it is the one surface an agent
+/// cannot inspect at all.
+#[test]
+fn the_tui_renders_a_frame_headlessly() {
+    let (stdout, _, code) = run(&["tui", "--frame", "--width", "160", "--height", "24"]);
+    assert_eq!(code, 0, "rendering a frame should succeed");
+    assert!(
+        stdout.contains("Overview"),
+        "the frame is missing the tab bar:\n{stdout}"
+    );
+    let rows = stdout.lines().count();
+    assert!(
+        rows >= 20,
+        "expected roughly the requested 24 rows, got {rows}"
+    );
+}
+
+/// A frame rendered before the collector publishes shows zeroed defaults that look
+/// exactly like an idle machine. The command waits for real data; this asserts it,
+/// because the failure is silent and an agent would read the zeros as fact.
+#[test]
+fn a_rendered_frame_carries_readings_not_zeroed_defaults() {
+    let (stdout, stderr, _) = run(&["tui", "--frame", "--width", "160", "--height", "24"]);
+
+    // The command says so on stderr if it gave up waiting. If it did, that is a
+    // legitimate outcome on a slow machine and the warning is the contract.
+    if stderr.contains("no snapshot arrived") {
+        return;
+    }
+
+    // The header carries CPU and MEM. Both reading exactly zero is the signature of
+    // the un-populated state rather than of an idle machine: memory is never 0%.
+    let header = stdout.lines().next().unwrap_or_default();
+    assert!(
+        header.contains("MEM:"),
+        "the header does not report memory at all:\n{header}"
+    );
+    assert!(
+        !header.contains("MEM:0%"),
+        "memory reads 0%, which no running machine does — the frame was rendered \
+         before the collector published and is showing defaults:\n{header}"
+    );
+}
+
+/// Tab selection has to work by name, since an agent reading the tab bar has names
+/// rather than indices — and an unknown name must not silently render the default.
+#[test]
+fn tui_frame_selects_tabs_by_name_and_rejects_unknown_ones() {
+    let (stdout, _, code) = run(&["tui", "--frame", "--tab", "Memory", "--width", "160"]);
+    assert_eq!(code, 0, "selecting a known tab by name should succeed");
+    assert!(stdout.contains("Overview"), "tab bar missing");
+
+    let (_, stderr, code) = run(&["tui", "--frame", "--tab", "not-a-tab"]);
+    assert_eq!(code, 1, "an unknown tab must exit 1");
+    assert!(
+        stderr.contains("Unknown tab") && stderr.contains("Overview"),
+        "an unknown tab should list the available ones, got: {stderr}"
+    );
+}
+
 /// The schema must be a fact about simon, not about the machine it ran on —
 /// otherwise an agent cannot fetch it ahead of time or cache it across hosts.
 #[test]

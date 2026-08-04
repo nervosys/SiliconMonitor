@@ -14,7 +14,10 @@ use ratatui::{backend::CrosstermBackend, prelude::Backend, Terminal};
 use std::io;
 use std::time::{Duration, Instant};
 
-mod app;
+pub mod app;
+// Renders frames into an in-memory buffer, so the TUI is inspectable without a
+// terminal — by tests, and by `simon tui --frame` for an agent that has no TTY.
+pub mod headless;
 mod ui;
 
 use app::PeripheralCache;
