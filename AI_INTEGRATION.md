@@ -196,6 +196,28 @@ response = client.chat.completions.create(
 )
 ```
 
+## Driving simon directly
+
+The tool surface below is for handing simon's data to a model. If instead you are
+writing an agent that drives simon itself, use the ontology: a stable id space with
+units and provenance, readable from the command line without a model in the loop.
+
+```bash
+simon describe --format json      # the schema: what exists, in what unit
+simon get gpu.0.thermal.temperature
+simon snapshot --validate
+```
+
+The distinction that matters when feeding hardware data to a model is `provenance`.
+A value marked `measured` was sampled now; `specification` is a published constant
+that is true of the hardware but was not observed here; `unavailable` means it could
+not be read and carries the reason. Passing a specification constant to a model as
+though it were a live reading is how an assistant ends up asserting a GPU is at a
+temperature nothing measured.
+
+See [AGENTS.md](AGENTS.md) for the full contract, including exit codes, the write
+surface, and how to read the TUI and GUI without a terminal or display.
+
 ## Available Tools (35+)
 
 ### System Tools

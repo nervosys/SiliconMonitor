@@ -15,6 +15,33 @@ sudo cp target/release/simon /usr/local/bin/
 simon [OPTIONS] [COMMAND]
 ```
 
+## Agent-facing commands
+
+These describe and read the machine through a stable, machine-readable schema. Each
+value carries a provenance saying whether it was measured, taken from a
+specification, derived, or is unavailable here — see [AGENTS.md](AGENTS.md) for the
+full contract.
+
+```bash
+simon describe                    # every reportable value: id, unit, provenance
+simon describe --commands         # the command surface, generated from the parser
+simon describe --writable         # only what can be written back
+simon describe --search thermal   # find ids without knowing the namespace
+simon get memory.total            # read one value by id
+simon snapshot --validate         # read everything, range-checked
+```
+
+`simon get` exits 1 for an unknown id and 2 for a known id with no value here, so a
+caller can tell "no such thing" from "nothing to report".
+
+The interactive surfaces render headlessly for callers with no terminal or display:
+
+```bash
+simon tui --frame --tab CPU       # one TUI frame as text
+simon tui --script script.txt     # drive the TUI and assert on what it shows
+simon gui --frame --tab profiles  # the text a GUI tab paints
+```
+
 ## Global Options
 
 - `-i, --interval <SECONDS>` - Update interval in seconds (default: 1.0)

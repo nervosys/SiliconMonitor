@@ -1,4 +1,18 @@
 //! Hardware Ontology for AI Agent Discoverability
+//!
+//! # Superseded by [`crate::ontology`]
+//!
+//! This module describes six domains and twenty-four properties. It has no
+//! provenance, so a consumer cannot tell a measured value from a published
+//! constant; no resolver, so an id here cannot be turned into a reading; and no
+//! command exposes it, so an agent cannot reach it without linking the library.
+//!
+//! [`crate::ontology`] covers the same ground with all three, and is what
+//! `simon describe`, `simon get` and `simon snapshot` speak. Two things called
+//! "ontology" in one crate is the naming drift the new module exists to end, so
+//! this one is deprecated rather than left as a second answer to the same
+//! question. A test asserts every domain named here is present there, so nothing
+//! is lost by moving.
 
 use serde::{Deserialize, Serialize};
 
@@ -102,5 +116,48 @@ impl HardwareOntology {
                 },
             ],
         }
+    }
+}
+
+#[cfg(test)]
+mod supersession_tests {
+    use super::*;
+    use crate::ontology::{Domain, Ontology};
+
+    /// Deprecating this module is only safe if its successor covers it. Every domain
+    /// named here must exist in `crate::ontology`, or moving would lose something.
+    #[test]
+    fn every_legacy_domain_exists_in_the_current_ontology() {
+        let legacy = HardwareOntology::complete();
+        assert!(
+            !legacy.domains.is_empty(),
+            "an empty legacy ontology would make this assertion vacuous"
+        );
+
+        // Every legacy domain name is also a name in the current ontology, so no
+        // translation table is needed — and inventing one would be asserting a
+        // correspondence rather than checking it.
+        for domain in &legacy.domains {
+            assert!(
+                Domain::parse(domain.id).is_some(),
+                "legacy domain {:?} has no counterpart in crate::ontology, so \
+                 deprecating this module would lose it",
+                domain.id
+            );
+        }
+    }
+
+    /// The successor must be the larger of the two, or "superseded" is the wrong
+    /// word for it.
+    #[test]
+    fn the_current_ontology_is_not_smaller_than_the_one_it_replaces() {
+        let legacy = HardwareOntology::complete();
+        let legacy_properties: usize = legacy.domains.iter().map(|d| d.properties.len()).sum();
+        let current = Ontology::build().entities.len();
+        assert!(
+            current > legacy_properties,
+            "crate::ontology declares {current} entities against the legacy \
+             {legacy_properties} properties; it should be a superset"
+        );
     }
 }

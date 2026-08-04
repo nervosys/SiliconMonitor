@@ -157,7 +157,46 @@ Silicon Monitor is designed from the ground up to be **discoverable by AI agents
 
 #### Hardware Ontology
 
-The library exposes a machine-readable ontology describing hardware domains, properties, and their data types:
+Every value simon can report has a stable dotted id, a unit, and — the part that
+matters — a **provenance** saying whether it was measured, taken from a
+specification, derived, or is unavailable here. No model or library linkage is
+needed; it is a command:
+
+```bash
+simon describe --format json          # the schema: ids, units, provenance
+simon get gpu.0.thermal.temperature   # read one value
+simon snapshot --validate             # read everything, range-checked
+```
+
+```json
+{
+  "id": "gpu.0.power.limit",
+  "value": 450000,
+  "provenance": "measured",
+  "unit": "milliwatts"
+}
+```
+
+A value that could not be read carries no `value` at all, and always says why —
+so an agent can tell an absent device from an unimplemented reader, and never
+mistakes a plausible constant for a live reading:
+
+```json
+{
+  "id": "gpu.2.clocks.graphics",
+  "provenance": "unavailable",
+  "note": "driver reports no graphics clock"
+}
+```
+
+See **[AGENTS.md](AGENTS.md)** for the full contract: exit codes, the write
+surface, and how to read the TUI and GUI without a terminal or display.
+
+> The older `simonlib::ai_api::HardwareOntology` is superseded. It carries no
+> provenance, cannot resolve an id to a value, and no command exposes it.
+
+<details>
+<summary>Legacy library-only ontology (superseded)</summary>
 
 ```rust
 use simonlib::ai_api::HardwareOntology;
@@ -188,6 +227,8 @@ println!("{}", serde_json::to_string_pretty(&ontology)?);
   ]
 }
 ```
+
+</details>
 
 #### Tool Discovery
 
