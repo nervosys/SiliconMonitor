@@ -5,7 +5,29 @@ All notable changes to Silicon Monitor will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.0.0] - 2026-08-04
+
+A major version because five public signatures changed, not because the release is
+larger than most. Under SemVer that is a major bump regardless of how unlikely the
+breakage is, and this project states it adheres to SemVer — calling it 1.6.0 would
+be a claim contradicted by the artifact.
+
+### Breaking
+
+`GpuCollection` no longer hands out references to the `Box` holding a GPU. Five
+methods return the trait object directly:
+
+| Before | After |
+|---|---|
+| `get(i) -> Option<&Box<dyn Gpu>>` | `get(i) -> Option<&dyn Gpu>` |
+| `get_mut(i) -> Option<&mut Box<dyn Gpu>>` | `get_mut(i) -> Option<&mut (dyn Gpu + 'static)>` |
+| `nvidia_gpus() -> Vec<&Box<dyn Gpu>>` | `nvidia_gpus() -> Vec<&dyn Gpu>` |
+| `amd_gpus() -> Vec<&Box<dyn Gpu>>` | `amd_gpus() -> Vec<&dyn Gpu>` |
+| `intel_gpus() -> Vec<&Box<dyn Gpu>>` | `intel_gpus() -> Vec<&dyn Gpu>` |
+
+Callers that stored the result as `&Box<dyn Gpu>` need the type updated; call sites
+that immediately invoke a trait method need no change, since `&Box<T>` already
+auto-dereferenced. Migration is `.as_ref()` where a `Box` is genuinely wanted.
 
 ### Added — Machine-readable ontology over every reading
 
