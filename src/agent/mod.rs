@@ -21,8 +21,13 @@
 //! - **Where your telemetry goes depends on the backend you choose.** A local backend
 //!   (Ollama, vLLM, or TensorRT-LLM on localhost) keeps system state on the machine.
 //!   A hosted backend (OpenAI, Anthropic) transmits the extracted system state to
-//!   that provider. This module does not enforce a policy, and it does not currently
-//!   consult [`crate::consent`].
+//!   that provider — which includes hardware identifiers such as GPU UUIDs and PCI
+//!   bus ids.
+//! - **`--offline` is enforced here.** [`Agent::ask`] refuses any backend whose
+//!   [`BackendType::runs_on_host`] is false when [`crate::consent::is_offline_mode`]
+//!   is set. The check is on egress rather than on "makes a network call": a model
+//!   served over loopback keeps data on the machine, while a local CLI tool that
+//!   relays the prompt to its vendor does not.
 //! - **Calls block the calling thread.** [`Agent::ask`] runs inference inline; nothing
 //!   in this module spawns a thread. Never call it from a render or event loop —
 //!   spawn a thread and deliver the result over a channel.
@@ -476,6 +481,8 @@ impl Agent {
     /// # }
     /// ```
     pub fn ask(&mut self, question: &str, monitor: &SiliconMonitor) -> Result<AgentResponse> {
+        self.refuse_if_offline_and_offhost()?;
+
         let start = Instant::now();
         let query_normalized = question.trim().to_lowercase();
 
@@ -553,6 +560,37 @@ impl Agent {
     ///
     /// Do not rely on this to bound latency. If you need a hard bound, drive
     /// [`Agent::ask`] from a thread you own and stop waiting on the channel yourself.
+    /// Refuse to answer if `--offline` is set and the backend would send the
+    /// question off this machine.
+    ///
+    /// `--offline` set an environment variable, printed that all network features
+    /// were disabled, and enforced nothing: `is_offline_mode` had no callers outside
+    /// its own module. A user who passed the flag and asked a hosted provider about
+    /// their machine had their hardware inventory — GPU UUIDs and PCI bus ids
+    /// included — sent to that vendor, while the tool told them it would not be.
+    ///
+    /// The check is on `runs_on_host` rather than on "is a network call", because
+    /// the distinction that matters for privacy is whether data leaves the machine.
+    /// A model served over loopback is not egress; a CLI tool that relays the prompt
+    /// to its vendor is, even though it is a local process.
+    fn refuse_if_offline_and_offhost(&self) -> Result<()> {
+        if !crate::consent::is_offline_mode() {
+            return Ok(());
+        }
+        let Some(backend) = self.config.backend.as_ref() else {
+            return Ok(());
+        };
+        if backend.backend_type.runs_on_host() {
+            return Ok(());
+        }
+        Err(crate::error::SimonError::Other(format!(
+            "refusing to query {:?} in offline mode: it would send this machine's \
+             hardware details off-host. Use a backend that runs locally (IronWorks, \
+             Ollama), or drop --offline if you intend the data to leave.",
+            backend.backend_type
+        )))
+    }
+
     pub fn ask_with_timeout(
         &mut self,
         question: &str,
@@ -621,5 +659,77 @@ mod tests {
         assert_eq!(config.temperature, 0.7);
         assert_eq!(config.max_response_tokens, 512);
         assert!(!config.enable_caching);
+    }
+}
+
+#[cfg(test)]
+mod offline_enforcement_tests {
+    use super::*;
+    use crate::agent::backend::BackendConfig;
+
+    /// Serialised because these mutate a process-wide environment variable.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn agent_with(backend: BackendConfig) -> Agent {
+        let config = AgentConfig::with_backend(backend);
+        Agent::new(config).expect("agent construction should not require a live backend")
+    }
+
+    /// The flag has to actually stop the send. It previously set an environment
+    /// variable, announced that all network features were disabled, and enforced
+    /// nothing — `is_offline_mode` had no callers.
+    #[test]
+    fn offline_refuses_a_backend_that_would_send_data_off_host() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::set_var("SIMON_OFFLINE", "1");
+
+        let agent = agent_with(BackendConfig::anthropic(
+            "claude-sonnet-4-5",
+            Some("test".into()),
+        ));
+        let err = agent
+            .refuse_if_offline_and_offhost()
+            .expect_err("a hosted provider must be refused in offline mode");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("offline mode"),
+            "the refusal should say why: {msg}"
+        );
+        assert!(
+            msg.contains("locally") || msg.contains("Ollama"),
+            "the refusal should name a way forward: {msg}"
+        );
+
+        std::env::remove_var("SIMON_OFFLINE");
+    }
+
+    /// Over-blocking would make the flag useless for the private path it exists to
+    /// protect: a model served over loopback is not egress.
+    #[test]
+    fn offline_permits_a_backend_that_runs_on_this_machine() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::set_var("SIMON_OFFLINE", "1");
+
+        let agent = agent_with(BackendConfig::ironworks("test-model"));
+        assert!(
+            agent.refuse_if_offline_and_offhost().is_ok(),
+            "on-host inference must remain usable in offline mode, or the flag \
+             pushes users toward the hosted path it is meant to avoid"
+        );
+
+        std::env::remove_var("SIMON_OFFLINE");
+    }
+
+    /// Without the flag nothing changes; the guard must not alter default behaviour.
+    #[test]
+    fn without_offline_a_hosted_backend_is_permitted() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::remove_var("SIMON_OFFLINE");
+
+        let agent = agent_with(BackendConfig::anthropic(
+            "claude-sonnet-4-5",
+            Some("test".into()),
+        ));
+        assert!(agent.refuse_if_offline_and_offhost().is_ok());
     }
 }
