@@ -515,8 +515,8 @@ RUST_LOG=debug simon all
 
 ## See Also
 
-- [README-RUST.md](README-RUST.md) - Main documentation
-- [UTILITIES.md](UTILITIES.md) - Detailed utility documentation
-- [MIGRATION.md](MIGRATION.md) - Migration guide from Python
+- [README.md](README.md) - Main documentation
+- [docs/UTILITIES.md](docs/UTILITIES.md) - Detailed utility documentation
+- [AGENTS.md](AGENTS.md) - Driving simon from an AI agent
 - [BUILD.md](BUILD.md) - Build instructions
 

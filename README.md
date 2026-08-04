@@ -148,7 +148,7 @@ let response = agent.ask("How much power am I using?", &monitor)?;
 - Multiple model sizes (100M, 500M, 1B parameters)
 - Zero latency impact on monitoring (non-blocking)
 - Response caching for instant repeated queries
-- See [AI_INTEGRATION.md](AI_INTEGRATION.md) for model providers, and [AGENTS.md](AGENTS.md) for driving simon programmatically
+- See [docs/AI_AGENT.md](docs/AI_AGENT.md) for the agent itself, [AI_INTEGRATION.md](AI_INTEGRATION.md) for model providers, and [AGENTS.md](AGENTS.md) for driving simon programmatically
 
 
 ### AI Agent Discoverability & Hardware Ontology
