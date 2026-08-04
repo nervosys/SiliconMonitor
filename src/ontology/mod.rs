@@ -800,6 +800,44 @@ impl Ontology {
             "Baseboard manufacturer from SMBIOS.",
         ));
 
+        // ── Writable settings ────────────────────────────────────────────────
+        //
+        // Generated from the apply-handler registry rather than listed here, for the
+        // same reason the command catalogue is walked out of clap: a hand-maintained
+        // list would claim a write the binary cannot perform the first time a
+        // handler was removed and nobody remembered this function. An agent reading
+        // `writable_via` is being told it can change something, which is a promise
+        // that has to be backed by a registered handler.
+        //
+        // Until this existed, `EntityKind::Setting` and `Entity::writable_via` were
+        // declared and populated by nothing: the ontology described a machine an
+        // agent could only read, while `simon profile set` could write.
+        for handler in crate::profile::apply::builtin_handlers() {
+            let setting_id = handler.setting_id();
+            let domain = match handler.subsystem() {
+                crate::profile::Subsystem::Gpu => D::Gpu,
+                crate::profile::Subsystem::Cpu => D::Cpu,
+                crate::profile::Subsystem::Memory => D::Memory,
+                // NVMe parameters are disk-level; display has no ontology domain of
+                // its own and its settings are board-level firmware state.
+                crate::profile::Subsystem::Nvme => D::Disk,
+                crate::profile::Subsystem::Display => D::Board,
+            };
+            let mut entity = Entity::new(
+                &format!("{}.setting.{}", domain.as_str(), setting_id),
+                domain,
+                K::Setting,
+                Some(U::Identifier),
+                P::Measured,
+                true,
+                "A driver or firmware setting with a registered write handler. \
+                 Writing requires explicit confirmation and is recorded in the \
+                 apply audit log.",
+            );
+            entity.writable_via = Some(setting_id.to_string());
+            add(entity);
+        }
+
         // ── Diagnostics ──────────────────────────────────────────────────────
         //
         // Declared, not synthesised at read time, because everything the resolver
@@ -914,6 +952,81 @@ mod tests {
                 e.id
             );
         }
+    }
+
+    /// `writable_via` tells an agent it may change something. That is a promise, and
+    /// it must be backed by a handler that actually exists — a schema claiming a
+    /// write the binary cannot perform is worse than one claiming nothing, because
+    /// the agent will try.
+    #[test]
+    fn every_writable_entity_has_a_registered_handler() {
+        let ont = Ontology::build();
+        let registered: Vec<String> = crate::profile::apply::builtin_handlers()
+            .iter()
+            .map(|h| h.setting_id().to_string())
+            .collect();
+
+        for e in ont.entities.values() {
+            let Some(setting_id) = &e.writable_via else {
+                continue;
+            };
+            assert_eq!(
+                e.kind,
+                EntityKind::Setting,
+                "{} declares writable_via but is not a Setting",
+                e.id
+            );
+            assert!(
+                registered.contains(setting_id),
+                "{} claims it can be written via {setting_id:?}, but no such apply \
+                 handler is registered on this build; an agent told this would \
+                 attempt a write that cannot succeed. Registered: {registered:?}",
+                e.id
+            );
+        }
+    }
+
+    /// The converse: a handler the binary exposes but the schema hides is a
+    /// capability an agent cannot discover. Reading `simon profile writable` should
+    /// not reveal anything `simon describe` omits.
+    #[test]
+    fn every_registered_handler_is_discoverable_in_the_schema() {
+        let ont = Ontology::build();
+        let declared: Vec<&String> = ont
+            .entities
+            .values()
+            .filter_map(|e| e.writable_via.as_ref())
+            .collect();
+
+        for handler in crate::profile::apply::builtin_handlers() {
+            let id = handler.setting_id().to_string();
+            assert!(
+                declared.contains(&&id),
+                "the apply registry exposes {id:?} but no ontology entity declares \
+                 it, so an agent reading the schema cannot discover it"
+            );
+        }
+    }
+
+    /// Settings are only meaningful if the kind is used at all — an assertion over
+    /// an empty set would pass while the write surface was entirely undeclared,
+    /// which is precisely the state this replaced.
+    #[test]
+    fn the_schema_declares_at_least_one_writable_setting() {
+        // Platform-dependent: a build with no handlers for this OS legitimately has
+        // none, so this only asserts the two views agree about how many there are.
+        let ont = Ontology::build();
+        let declared = ont
+            .entities
+            .values()
+            .filter(|e| e.kind == EntityKind::Setting)
+            .count();
+        let registered = crate::profile::apply::builtin_handlers().len();
+        assert_eq!(
+            declared, registered,
+            "the schema declares {declared} writable settings but the apply registry \
+             has {registered}"
+        );
     }
 
     /// A derived value is only as trustworthy as its inputs, so it has to name them.

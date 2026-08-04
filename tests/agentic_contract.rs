@@ -209,6 +209,37 @@ fn the_command_catalogue_exposes_the_agentic_surface() {
     );
 }
 
+/// An agent needs to know what it may change, not only what it may read. Every
+/// entity advertising `writable_via` must name a setting the binary will actually
+/// accept, checked through the two surfaces an agent can reach.
+#[test]
+fn the_write_surface_agrees_with_what_the_binary_accepts() {
+    let doc = json(&["describe", "--writable", "--format", "json"]);
+    let entities = doc["entities"].as_object().expect("entities object");
+
+    // `profile writable` is the operator-facing list; `describe --writable` is the
+    // agent-facing one. They are different code paths over the same registry and
+    // must not disagree.
+    let (listed, _, _) = run(&["profile", "writable"]);
+
+    for (id, entity) in entities {
+        let via = entity["writable_via"]
+            .as_str()
+            .unwrap_or_else(|| panic!("{id} appears under --writable but has no writable_via"));
+        assert_eq!(
+            entity["kind"].as_str(),
+            Some("setting"),
+            "{id} is writable but is not declared a setting"
+        );
+        assert!(
+            listed.contains(via),
+            "the schema advertises writing {via:?} via {id}, but `simon profile \
+             writable` does not list it — an agent would attempt a write the \
+             binary rejects.\nlisted:\n{listed}"
+        );
+    }
+}
+
 /// The schema must be a fact about simon, not about the machine it ran on —
 /// otherwise an agent cannot fetch it ahead of time or cache it across hosts.
 #[test]

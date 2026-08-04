@@ -83,6 +83,11 @@ enum Commands {
         #[arg(long)]
         commands: bool,
 
+        /// List only settings that can be written, with the `simon profile set`
+        /// id that writes each
+        #[arg(long)]
+        writable: bool,
+
         /// Restrict to one domain (cpu, gpu, memory, disk, network, power, thermal,
         /// process, system, board)
         #[arg(long)]
@@ -623,6 +628,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Some(Commands::Describe {
             commands,
+            writable,
             domain,
             search,
             id,
@@ -630,6 +636,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }) => {
             handle_describe_command(
                 *commands,
+                *writable,
                 domain.as_deref(),
                 search.as_deref(),
                 id.as_deref(),
@@ -3445,6 +3452,7 @@ fn emit_command_catalog(format: &str) -> Result<(), Box<dyn std::error::Error>> 
 
 fn handle_describe_command(
     commands: bool,
+    writable: bool,
     domain: Option<&str>,
     search: Option<&str>,
     id: Option<&str>,
@@ -3456,10 +3464,20 @@ fn handle_describe_command(
         return emit_command_catalog(format);
     }
 
+    // Narrow to the write surface. Kept separate from the read filters because
+    // "what can I change" is a different question from "what can I see", and an
+    // agent asking it should not have to scan every entity for a null field.
+
     let ontology = Ontology::build();
 
     // Narrow by the most specific filter given.
-    let selected: Vec<&simonlib::ontology::Entity> = if let Some(id) = id {
+    let selected: Vec<&simonlib::ontology::Entity> = if writable {
+        ontology
+            .entities
+            .values()
+            .filter(|e| e.writable_via.is_some())
+            .collect()
+    } else if let Some(id) = id {
         match ontology.get(id) {
             Some(e) => vec![e],
             None => {
