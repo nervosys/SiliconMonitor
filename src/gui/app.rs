@@ -1717,7 +1717,21 @@ impl eframe::App for SiliconMonitorApp {
         });
 
         // Main content area
-        egui::CentralPanel::default().show(ctx, |ui| match self.current_tab {
+        egui::CentralPanel::default().show(ctx, |ui| self.draw_current_tab(ui));
+
+        // Settings window (floating)
+        self.draw_settings_window(ctx);
+    }
+}
+
+impl SiliconMonitorApp {
+    /// Draw whichever tab is selected.
+    ///
+    /// Split out of `update` so that `simon gui --frame` and the headless tests can
+    /// render one tab without driving a whole eframe cycle. Both paths go through
+    /// this, so a frame an agent reads is drawn by the same code a user sees.
+    pub fn draw_current_tab(&mut self, ui: &mut egui::Ui) {
+        match self.current_tab {
             Tab::Overview => self.draw_overview(ui),
             Tab::Cpu => self.draw_cpu_tab(ui),
             Tab::Accelerators => self.draw_accelerators_tab(ui),
@@ -1731,10 +1745,36 @@ impl eframe::App for SiliconMonitorApp {
             Tab::Peripherals => self.draw_peripherals_tab(ui),
             Tab::Profiles => self.draw_profiles_tab(ui),
             Tab::AIAssistant => self.draw_ai_assistant_tab(ui),
-        });
+        }
+    }
 
-        // Settings window (floating)
-        self.draw_settings_window(ctx);
+    /// Select a tab by name, as an agent reading the tab bar would refer to it.
+    ///
+    /// Returns the accepted names when the input matches none, so a caller is told
+    /// what it may ask for rather than silently getting the default.
+    pub fn select_tab_by_name(&mut self, name: &str) -> Result<(), Vec<&'static str>> {
+        let all = [
+            ("overview", Tab::Overview),
+            ("cpu", Tab::Cpu),
+            ("accelerators", Tab::Accelerators),
+            ("memory", Tab::Memory),
+            ("disk", Tab::Disk),
+            ("processes", Tab::Processes),
+            ("network", Tab::Network),
+            ("tools", Tab::NetworkTools),
+            ("connections", Tab::Connections),
+            ("system", Tab::SystemInfo),
+            ("peripherals", Tab::Peripherals),
+            ("profiles", Tab::Profiles),
+            ("ai", Tab::AIAssistant),
+        ];
+        match all.iter().find(|(n, _)| n.eq_ignore_ascii_case(name)) {
+            Some((_, tab)) => {
+                self.current_tab = *tab;
+                Ok(())
+            }
+            None => Err(all.iter().map(|(n, _)| *n).collect()),
+        }
     }
 }
 

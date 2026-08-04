@@ -300,6 +300,56 @@ fn tui_frame_selects_tabs_by_name_and_rejects_unknown_ones() {
     );
 }
 
+/// The GUI must be readable without a window, or it is the surface an agent cannot
+/// see at all — and the one where "rendered but invisible" already happened once.
+#[test]
+fn the_gui_renders_a_tab_headlessly() {
+    let (stdout, stderr, code) = run(&["gui", "--frame", "--tab", "profiles"]);
+    assert_eq!(
+        code, 0,
+        "rendering a GUI tab should succeed.\nstderr: {stderr}"
+    );
+    assert!(
+        stdout.contains("Hardware Profile Inspector"),
+        "the Profiles tab did not paint its header:\n{stdout}"
+    );
+
+    // An unknown tab must list the alternatives rather than silently rendering the
+    // default, which would give an agent a frame for a tab it did not ask for.
+    let (_, stderr, code) = run(&["gui", "--frame", "--tab", "not-a-tab"]);
+    assert_eq!(code, 1, "an unknown GUI tab must exit 1");
+    assert!(
+        stderr.contains("Unknown tab") && stderr.contains("overview"),
+        "an unknown tab should name the available ones, got: {stderr}"
+    );
+}
+
+/// Every GUI tab must paint something. A tab that paints nothing is blank to a user
+/// and indistinguishable from one that is broken.
+#[test]
+fn every_gui_tab_paints_text() {
+    for tab in [
+        "overview",
+        "cpu",
+        "accelerators",
+        "memory",
+        "disk",
+        "processes",
+        "network",
+        "system",
+        "peripherals",
+        "profiles",
+        "ai",
+    ] {
+        let (stdout, stderr, code) = run(&["gui", "--frame", "--tab", tab]);
+        assert_eq!(code, 0, "tab {tab} failed to render.\nstderr: {stderr}");
+        assert!(
+            !stdout.trim().is_empty(),
+            "the {tab} tab painted no text at all"
+        );
+    }
+}
+
 /// Driving the TUI is the other half of operability: an agent must be able to
 /// navigate and assert, not only observe a frame it did not choose.
 #[test]

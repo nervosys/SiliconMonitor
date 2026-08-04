@@ -20,27 +20,57 @@ use egui::Context;
 /// Walks the tessellated output rather than instrumenting the widgets, so it sees
 /// what egui actually drew — including text emitted by widgets this module knows
 /// nothing about.
-pub fn painted_text(ctx: &Context, body: impl FnOnce(&mut egui::Ui)) -> Vec<String> {
-    let mut out = Vec::new();
-    // `Context::run` wants an `FnMut` because a frame can be re-entered; the body is
-    // an `FnOnce`, so hand it over on the first call and leave nothing behind.
-    let mut body = Some(body);
-    let full_output = ctx.run(egui::RawInput::default(), |ctx| {
-        egui::CentralPanel::default().show(ctx, |ui| {
-            if let Some(body) = body.take() {
-                body(ui);
-            }
-        });
-    });
+pub fn painted_text(ctx: &Context, body: impl FnMut(&mut egui::Ui)) -> Vec<String> {
+    painted_text_sized(ctx, DEFAULT_VIEWPORT, body)
+}
 
-    for clipped in &full_output.shapes {
+/// Viewport used when none is given.
+///
+/// Large enough that a tab's content is not clipped away. This is not cosmetic:
+/// `RawInput::default()` carries no `screen_rect`, and widgets that guard on
+/// `Ui::is_rect_visible` — `SectionHeader` among them — paint nothing in a
+/// degenerate viewport.
+pub const DEFAULT_VIEWPORT: egui::Vec2 = egui::Vec2::new(1600.0, 1200.0);
+
+/// Every string painted by `body`, at an explicit viewport size.
+pub fn painted_text_sized(
+    ctx: &Context,
+    size: egui::Vec2,
+    mut body: impl FnMut(&mut egui::Ui),
+) -> Vec<String> {
+    let input = egui::RawInput {
+        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
+        ..Default::default()
+    };
+
+    // Two frames, and the second is the one that counts.
+    //
+    // egui is immediate-mode but not stateless: a `ScrollArea` does not know its
+    // content size until it has laid the content out once, and on that first frame
+    // it reports a viewport that makes `Ui::is_rect_visible` false for everything
+    // inside it. A tab whose body is entirely wrapped in one — the CPU and System
+    // tabs both are — paints nothing at all on frame one. That read as two dead
+    // tabs and was an artefact of rendering a single frame, not a defect in them.
+    //
+    // The body therefore has to run twice, which is why this takes `FnMut`.
+    let mut run_frame = || {
+        ctx.run(input.clone(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| body(ui));
+        })
+    };
+
+    let _warmup = run_frame();
+    let settled = run_frame();
+
+    let mut out = Vec::new();
+    for clipped in &settled.shapes {
         collect_shape_text(&clipped.shape, &mut out);
     }
     out
 }
 
 /// Text painted by `body`, joined into one haystack for substring assertions.
-pub fn painted_blob(ctx: &Context, body: impl FnOnce(&mut egui::Ui)) -> String {
+pub fn painted_blob(ctx: &Context, body: impl FnMut(&mut egui::Ui)) -> String {
     painted_text(ctx, body).join("\n")
 }
 

@@ -6,11 +6,12 @@
 
 use eframe::egui;
 
-pub(crate) mod app;
-// Test-only: the harness exists to verify rendering, and must not be compiled
-// into a shipped binary.
-#[cfg(test)]
-mod headless;
+pub mod app;
+// Renders the GUI's widget tree without a window and reads back the text that was
+// painted. Originally test-only, now also the backing for `simon gui --frame`: the
+// TUI became inspectable headlessly and leaving the GUI window-only made it the one
+// surface an agent still could not see.
+pub mod headless;
 mod profile_tab;
 mod theme;
 pub mod widgets;

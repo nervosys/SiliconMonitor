@@ -30,7 +30,22 @@ struct Cli {
 enum Commands {
     /// Launch Graphical User Interface (GUI) - desktop application
     #[cfg(feature = "gui")]
-    Gui,
+    Gui {
+        /// Render one tab's text content to stdout and exit, instead of opening a
+        /// window
+        ///
+        /// The GUI is the surface an agent otherwise cannot see at all: it draws
+        /// into a window, and a screenshot cannot distinguish text that was never
+        /// drawn from text drawn in an unreadable colour. This renders the same
+        /// widget tree headlessly and prints what was painted.
+        #[arg(long)]
+        frame: bool,
+
+        /// Tab to render with --frame (overview, cpu, memory, disk, processes,
+        /// network, system, peripherals, profiles, ai, ...)
+        #[arg(long, default_value = "overview")]
+        tab: String,
+    },
     /// Launch Terminal User Interface (TUI) - interactive dashboard
     Tui {
         /// Render one frame to stdout and exit, instead of taking over the terminal
@@ -609,7 +624,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     match &cli.command {
         // GUI command - Graphical User Interface (default if no command given)
         #[cfg(feature = "gui")]
-        Some(Commands::Gui) | None => {
+        Some(Commands::Gui { frame, tab }) => {
+            if *frame {
+                handle_gui_frame_command(tab)?;
+            } else {
+                simonlib::gui::run().map_err(|e| format!("GUI error: {}", e))?;
+            }
+        }
+        None => {
             simonlib::gui::run().map_err(|e| format!("GUI error: {}", e))?;
         }
 
@@ -3497,6 +3519,41 @@ fn emit_command_catalog(format: &str) -> Result<(), Box<dyn std::error::Error>> 
 /// loop driven by key events. None of that is reachable by an agent without a TTY,
 /// which left the TUI the one surface that could be neither read nor asserted on.
 /// This renders the identical frame into an in-memory buffer and prints it.
+/// Render one GUI tab headlessly and print the text it painted.
+///
+/// The GUI was the last surface with no non-visual representation. Reading the
+/// painted galleys rather than capturing pixels also preserves the distinction a
+/// screenshot destroys: text that was never emitted looks different here from text
+/// that was emitted in the panel colour, which is the bug that made the Profiles
+/// tab appear dead while it rendered all nineteen of its groups.
+fn handle_gui_frame_command(tab: &str) -> Result<(), Box<dyn std::error::Error>> {
+    use simonlib::gui::headless;
+
+    let ctx = headless::themed_context();
+    let mut app = simonlib::gui::app::SiliconMonitorApp::with_context(&ctx);
+
+    if let Err(available) = app.select_tab_by_name(tab) {
+        eprintln!("Unknown tab {tab:?}. Available tabs:");
+        for name in available {
+            eprintln!("  {name}");
+        }
+        std::process::exit(1);
+    }
+
+    let lines = headless::painted_text(&ctx, |ui| app.draw_current_tab(ui));
+    if lines.is_empty() {
+        eprintln!(
+            "the {tab} tab painted no text at all — that is a blank tab, not an \
+             empty one"
+        );
+        std::process::exit(2);
+    }
+    for line in lines {
+        println!("{line}");
+    }
+    Ok(())
+}
+
 /// Drive the TUI from a script and report what happened.
 ///
 /// This is the half of "operable" that `--frame` does not cover: an agent can now
