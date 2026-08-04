@@ -159,3 +159,269 @@ mod tests {
         }
     }
 }
+
+// ── Scripted driving ─────────────────────────────────────────────────────────
+
+/// One step in a TUI script.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Step {
+    /// Select a tab by name (case-insensitive) or index.
+    Goto(String),
+    /// Send a key through the same handler the interactive loop uses.
+    Key(String),
+    /// Re-sample and take a fresh snapshot.
+    Refresh,
+    /// Record the current frame.
+    Capture,
+    /// Fail unless the current frame contains this text.
+    Assert(String),
+    /// Fail if the current frame contains this text.
+    Refute(String),
+}
+
+/// Outcome of running a script.
+#[derive(Debug, Default)]
+pub struct ScriptResult {
+    /// Frames recorded by `capture`, in order.
+    pub captures: Vec<String>,
+    /// Assertion failures, in order. Empty means the script passed.
+    pub failures: Vec<String>,
+}
+
+/// Parse a script. One step per line; `#` starts a comment; blank lines ignored.
+///
+/// Deliberately tiny. A general scripting language would need its own semantics and
+/// its own tests; this covers navigate, observe, assert — what an agent needs to
+/// confirm the TUI shows what it expects.
+pub fn parse_script(text: &str) -> Result<Vec<Step>, String> {
+    let mut steps = Vec::new();
+    for (n, raw) in text.lines().enumerate() {
+        let line = raw.split('#').next().unwrap_or("").trim();
+        if line.is_empty() {
+            continue;
+        }
+        let (verb, rest) = match line.split_once(char::is_whitespace) {
+            Some((v, r)) => (v, r.trim()),
+            None => (line, ""),
+        };
+        let step = match verb.to_ascii_lowercase().as_str() {
+            "goto" if !rest.is_empty() => Step::Goto(rest.to_string()),
+            "key" if !rest.is_empty() => Step::Key(rest.to_string()),
+            "refresh" => Step::Refresh,
+            "capture" => Step::Capture,
+            "assert" if !rest.is_empty() => Step::Assert(rest.to_string()),
+            "refute" if !rest.is_empty() => Step::Refute(rest.to_string()),
+            other => {
+                return Err(format!(
+                    "line {}: unknown or incomplete step {other:?}. Steps: goto <tab>, \
+                     key <name>, refresh, capture, assert <text>, refute <text>",
+                    n + 1
+                ))
+            }
+        };
+        steps.push(step);
+    }
+    Ok(steps)
+}
+
+/// Translate a key name into a crossterm code.
+fn parse_key(name: &str) -> Option<crossterm::event::KeyCode> {
+    use crossterm::event::KeyCode;
+    let k = match name.to_ascii_lowercase().as_str() {
+        "tab" => KeyCode::Tab,
+        "backtab" | "shift-tab" => KeyCode::BackTab,
+        "left" => KeyCode::Left,
+        "right" => KeyCode::Right,
+        "up" => KeyCode::Up,
+        "down" => KeyCode::Down,
+        "enter" => KeyCode::Enter,
+        "esc" => KeyCode::Esc,
+        "home" => KeyCode::Home,
+        "end" => KeyCode::End,
+        "pageup" => KeyCode::PageUp,
+        "pagedown" => KeyCode::PageDown,
+        other => {
+            let mut chars = other.chars();
+            match (chars.next(), chars.next()) {
+                (Some(c), None) => KeyCode::Char(c),
+                _ => return None,
+            }
+        }
+    };
+    Some(k)
+}
+
+/// Run a script against `app`.
+///
+/// Key steps go through [`App::handle_main_key`] — the same function the interactive
+/// loop calls — so an assertion here is evidence about the real TUI rather than
+/// about a parallel reimplementation of its bindings.
+pub fn run_script(app: &mut App, steps: &[Step], width: u16, height: u16) -> ScriptResult {
+    use crossterm::event::KeyModifiers;
+
+    let mut result = ScriptResult::default();
+    let mut frame = render_rows(app, width, height).join("\n");
+
+    for (i, step) in steps.iter().enumerate() {
+        match step {
+            Step::Goto(target) => {
+                let resolved = target
+                    .parse::<usize>()
+                    .ok()
+                    .filter(|n| *n < app.tabs.len())
+                    .or_else(|| app.tabs.iter().position(|t| t.eq_ignore_ascii_case(target)));
+                match resolved {
+                    Some(index) => app.selected_tab = index,
+                    None => result.failures.push(format!(
+                        "step {}: unknown tab {target:?}; available: {:?}",
+                        i + 1,
+                        app.tabs
+                    )),
+                }
+            }
+            Step::Key(name) => match parse_key(name) {
+                Some(code) => {
+                    // A quit request stops the script rather than the process: a
+                    // script ending in `key q` should still report its findings.
+                    if app.handle_main_key(code, KeyModifiers::empty()) {
+                        break;
+                    }
+                }
+                None => result
+                    .failures
+                    .push(format!("step {}: unknown key {name:?}", i + 1)),
+            },
+            Step::Refresh => {
+                let _ = app.update();
+                app.sync_snapshot();
+            }
+            Step::Capture => result.captures.push(frame.clone()),
+            Step::Assert(needle) => {
+                if !frame.contains(needle.as_str()) {
+                    result.failures.push(format!(
+                        "step {}: expected {needle:?} in the frame, not found",
+                        i + 1
+                    ));
+                }
+            }
+            Step::Refute(needle) => {
+                if frame.contains(needle.as_str()) {
+                    result.failures.push(format!(
+                        "step {}: {needle:?} should not appear in the frame, but does",
+                        i + 1
+                    ));
+                }
+            }
+        }
+        // Re-render after anything that could change the screen, so the next
+        // assertion sees the result of this step rather than the previous frame.
+        if matches!(step, Step::Goto(_) | Step::Key(_) | Step::Refresh) {
+            frame = render_rows(app, width, height).join("\n");
+        }
+    }
+
+    result
+}
+
+#[cfg(test)]
+mod script_tests {
+    use super::*;
+
+    fn app() -> App {
+        App::new_fast().expect("app must be constructible headlessly")
+    }
+
+    #[test]
+    fn scripts_parse_with_comments_and_blank_lines() {
+        let steps = parse_script(
+            "# navigate\ngoto CPU\n\n  key tab  # inline comment\ncapture\nassert Overview\n",
+        )
+        .expect("should parse");
+        assert_eq!(
+            steps,
+            vec![
+                Step::Goto("CPU".into()),
+                Step::Key("tab".into()),
+                Step::Capture,
+                Step::Assert("Overview".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn unknown_steps_are_rejected_with_the_available_ones_named() {
+        let err = parse_script("frobnicate widget").expect_err("should reject");
+        assert!(err.contains("frobnicate"), "got: {err}");
+        assert!(
+            err.contains("goto"),
+            "the error should list valid steps: {err}"
+        );
+    }
+
+    #[test]
+    fn goto_changes_the_selected_tab() {
+        let mut app = app();
+        let steps = parse_script("goto Memory\nassert Overview").unwrap();
+        let result = run_script(&mut app, &steps, 160, 30);
+        assert!(result.failures.is_empty(), "{:?}", result.failures);
+        assert_eq!(
+            app.selected_tab,
+            app.tabs.iter().position(|t| *t == "Memory").unwrap()
+        );
+    }
+
+    /// Keys must go through the real handler. Pressing `3` selects the third tab in
+    /// the interactive TUI, so it must here too — that equivalence is the whole
+    /// reason the handler was extracted.
+    #[test]
+    fn key_presses_drive_the_same_handler_as_the_interactive_loop() {
+        let mut app = app();
+        let before = app.selected_tab;
+        let steps = parse_script("key 3").unwrap();
+        let result = run_script(&mut app, &steps, 160, 30);
+        assert!(result.failures.is_empty(), "{:?}", result.failures);
+        assert_eq!(app.selected_tab, 2, "key '3' should select tab index 2");
+        assert_ne!(before, app.selected_tab);
+    }
+
+    #[test]
+    fn assertions_report_failure_rather_than_panicking() {
+        let mut app = app();
+        let steps = parse_script("assert definitely-not-on-screen").unwrap();
+        let result = run_script(&mut app, &steps, 160, 30);
+        assert_eq!(result.failures.len(), 1, "expected one failure");
+        assert!(result.failures[0].contains("definitely-not-on-screen"));
+    }
+
+    #[test]
+    fn refute_catches_text_that_should_be_absent() {
+        let mut app = app();
+        // The tab bar is always present, so refuting it must fail.
+        let steps = parse_script("refute Overview").unwrap();
+        let result = run_script(&mut app, &steps, 160, 30);
+        assert_eq!(result.failures.len(), 1, "refute should have failed");
+    }
+
+    #[test]
+    fn capture_records_the_frame_at_that_point() {
+        let mut app = app();
+        let steps = parse_script("goto CPU\ncapture\ngoto Memory\ncapture").unwrap();
+        let result = run_script(&mut app, &steps, 160, 30);
+        assert_eq!(result.captures.len(), 2);
+        assert!(result.captures.iter().all(|c| c.contains("Overview")));
+    }
+
+    /// `q` quits the interactive TUI, so a script must stop there rather than
+    /// carrying on against an app the user has closed.
+    #[test]
+    fn a_quit_key_stops_the_script() {
+        let mut app = app();
+        let steps = parse_script("key q\nassert definitely-not-on-screen").unwrap();
+        let result = run_script(&mut app, &steps, 160, 30);
+        assert!(
+            result.failures.is_empty(),
+            "steps after a quit should not run: {:?}",
+            result.failures
+        );
+    }
+}

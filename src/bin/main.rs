@@ -52,6 +52,15 @@ enum Commands {
         /// Frame height in rows for --frame
         #[arg(long, default_value = "50")]
         height: u16,
+
+        /// Drive the TUI from a script and report the result; `-` reads stdin
+        ///
+        /// Steps: `goto <tab>`, `key <name>`, `refresh`, `capture`, `assert <text>`,
+        /// `refute <text>`. Key steps go through the same handler the interactive
+        /// loop uses, so an assertion is evidence about the real TUI. Exits 1 if any
+        /// assertion fails.
+        #[arg(long)]
+        script: Option<String>,
     },
     /// Command-line interface for monitoring hardware
     Cli {
@@ -610,8 +619,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             tab,
             width,
             height,
+            script,
         }) => {
-            if *frame {
+            if let Some(source) = script {
+                handle_tui_script_command(source, *width, *height)?;
+            } else if *frame {
                 handle_tui_frame_command(tab.as_deref(), *width, *height)?;
             } else {
                 simonlib::tui::run()?;
@@ -3485,6 +3497,71 @@ fn emit_command_catalog(format: &str) -> Result<(), Box<dyn std::error::Error>> 
 /// loop driven by key events. None of that is reachable by an agent without a TTY,
 /// which left the TUI the one surface that could be neither read nor asserted on.
 /// This renders the identical frame into an in-memory buffer and prints it.
+/// Drive the TUI from a script and report what happened.
+///
+/// This is the half of "operable" that `--frame` does not cover: an agent can now
+/// navigate and assert, not only observe. Key steps go through the same handler the
+/// interactive loop calls, so a passing script is evidence about the TUI a human
+/// uses rather than about a parallel implementation of its bindings.
+fn handle_tui_script_command(
+    source: &str,
+    width: u16,
+    height: u16,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use simonlib::tui::headless;
+
+    let text = if source == "-" {
+        use std::io::Read;
+        let mut buf = String::new();
+        std::io::stdin().read_to_string(&mut buf)?;
+        buf
+    } else {
+        std::fs::read_to_string(source)
+            .map_err(|e| format!("could not read script {source:?}: {e}"))?
+    };
+
+    let steps = match headless::parse_script(&text) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("{e}");
+            std::process::exit(2);
+        }
+    };
+    if steps.is_empty() {
+        eprintln!("the script contains no steps");
+        std::process::exit(2);
+    }
+
+    let mut app = simonlib::tui::App::new()?;
+    app.update()?;
+    // Same wait as `--frame`: assertions against a frame rendered before the
+    // collector published would be testing the zeroed defaults.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while std::time::Instant::now() < deadline {
+        if app.sync_snapshot() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+
+    let result = headless::run_script(&mut app, &steps, width, height);
+
+    for capture in &result.captures {
+        println!("{capture}");
+        println!();
+    }
+
+    if result.failures.is_empty() {
+        eprintln!("{} step(s) ok", steps.len());
+        return Ok(());
+    }
+    eprintln!("{} assertion(s) failed:", result.failures.len());
+    for failure in &result.failures {
+        eprintln!("  {failure}");
+    }
+    std::process::exit(1);
+}
+
 fn handle_tui_frame_command(
     tab: Option<&str>,
     width: u16,

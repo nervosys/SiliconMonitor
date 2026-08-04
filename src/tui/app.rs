@@ -986,6 +986,116 @@ impl App {
         Ok(app)
     }
 
+    /// Handle one key press in the main view. Returns `true` if the app should quit.
+    ///
+    /// Extracted from the interactive run loop so that the loop and the headless
+    /// script driver share one implementation. While this lived inline in the loop,
+    /// nothing could exercise it without a terminal: a driver would have had to
+    /// reimplement the bindings and would have drifted from them silently, which is
+    /// the same class of problem as three surfaces spelling one domain three ways.
+    pub fn handle_main_key(
+        &mut self,
+        code: crossterm::event::KeyCode,
+        modifiers: crossterm::event::KeyModifiers,
+    ) -> bool {
+        use crossterm::event::{KeyCode, KeyModifiers};
+        match code {
+            KeyCode::Char('q') => return true,
+            KeyCode::Esc => return true,
+            KeyCode::Tab => {
+                if modifiers.contains(KeyModifiers::SHIFT) {
+                    self.previous_tab();
+                } else {
+                    self.next_tab();
+                }
+            }
+            KeyCode::BackTab => self.previous_tab(),
+            // On the Profiles tab, 1–5 selects a subsystem
+            // instead of switching tabs (matches the on-screen
+            // "[1-5] subsystem" hint). Everywhere else, the
+            // number row switches tabs.
+            KeyCode::Char(c @ '1'..='5') if self.selected_tab == 7 => {
+                let idx = (c as u8 - b'1') as usize;
+                if idx < crate::profile::Subsystem::ALL.len() {
+                    self.profile_subsystem_idx = idx;
+                    self.profile_scroll = 0;
+                }
+            }
+            KeyCode::Char('1') => self.set_tab(0),
+            KeyCode::Char('2') => self.set_tab(1),
+            KeyCode::Char('3') => self.set_tab(2),
+            KeyCode::Char('4') => self.set_tab(3),
+            KeyCode::Char('5') => self.set_tab(4),
+            KeyCode::Char('6') => self.set_tab(5),
+            KeyCode::Char('7') => self.set_tab(6),
+            KeyCode::Char('8') => self.set_tab(7),
+            KeyCode::Char('9') => self.set_tab(8),
+            KeyCode::Left => self.previous_tab(),
+            KeyCode::Right => self.next_tab(),
+            KeyCode::Up => self.select_process_up(),
+            KeyCode::Down => self.select_process_down(),
+            KeyCode::PageUp => {
+                if self.selected_tab == 7 {
+                    self.profile_scroll = self.profile_scroll.saturating_sub(10);
+                } else {
+                    self.scroll_page_up();
+                }
+            }
+            KeyCode::PageDown => {
+                if self.selected_tab == 7 {
+                    self.profile_scroll = self.profile_scroll.saturating_add(10);
+                } else {
+                    self.scroll_page_down();
+                }
+            }
+            KeyCode::Home => self.scroll_to_top(),
+            KeyCode::End => self.scroll_to_bottom(),
+            KeyCode::Enter => self.open_process_detail(),
+            KeyCode::Char('p') | KeyCode::Char('P') => {
+                if modifiers.contains(KeyModifiers::SHIFT) {
+                    self.previous_process_mode();
+                } else {
+                    self.next_process_mode();
+                }
+            }
+            KeyCode::Char('t') | KeyCode::Char('T') => self.open_theme_picker(),
+            KeyCode::Char('r') => {
+                if self.selected_tab == 7 {
+                    self.refresh_profile_snapshot();
+                } else {
+                    self.reset_stats();
+                }
+            }
+            KeyCode::Char('[') => {
+                if self.selected_tab == 7 {
+                    self.profile_prev_subsystem();
+                }
+            }
+            KeyCode::Char(']') => {
+                if self.selected_tab == 7 {
+                    self.profile_next_subsystem();
+                }
+            }
+            KeyCode::Char('d') | KeyCode::Char('D') => {
+                if self.selected_tab == 7 {
+                    self.profile_show_deviations = !self.profile_show_deviations;
+                }
+            }
+            KeyCode::Char('a') | KeyCode::Char('A') => self.toggle_agent_input(),
+            KeyCode::Char('c') | KeyCode::Char('C') => {
+                if self.selected_tab == 8 {
+                    self.clear_agent_history();
+                }
+            }
+            KeyCode::F(12) => {
+                if let Err(e) = self.save_config() {
+                    self.set_status_message(format!("Failed to save config: {}", e));
+                }
+            }
+            _ => {}
+        }
+        false
+    }
     /// Whether new collector data has arrived since the last frame was drawn.
     ///
     /// Consuming: calling this marks the current generation as rendered. The render

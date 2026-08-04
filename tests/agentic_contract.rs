@@ -300,6 +300,62 @@ fn tui_frame_selects_tabs_by_name_and_rejects_unknown_ones() {
     );
 }
 
+/// Driving the TUI is the other half of operability: an agent must be able to
+/// navigate and assert, not only observe a frame it did not choose.
+#[test]
+fn the_tui_can_be_driven_by_a_script() {
+    use std::io::Write;
+    use std::process::Stdio;
+
+    fn run_script(script: &str) -> (String, String, i32) {
+        let mut child = simon()
+            .args(["tui", "--script", "-", "--width", "120", "--height", "12"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn simon tui --script");
+        child
+            .stdin
+            .as_mut()
+            .expect("stdin")
+            .write_all(script.as_bytes())
+            .expect("write script");
+        let out = child.wait_with_output().expect("wait");
+        (
+            String::from_utf8_lossy(&out.stdout).to_string(),
+            String::from_utf8_lossy(&out.stderr).to_string(),
+            out.status.code().unwrap_or(-1),
+        )
+    }
+
+    // Navigate by key, then assert on what that produced. `5` selects the fifth tab
+    // in the interactive TUI, so a passing assertion here is evidence the shared
+    // key handler behaves the same headlessly.
+    let (stdout, stderr, code) = run_script("goto CPU\nkey 5\nassert Memory\ncapture\n");
+    assert_eq!(code, 0, "script should pass.\nstderr: {stderr}");
+    assert!(
+        stdout.contains("Memory"),
+        "the captured frame should show the Memory tab:\n{stdout}"
+    );
+
+    // A failed assertion must be reported and exit non-zero, or an agent would read
+    // silence as success.
+    let (_, stderr, code) = run_script("assert absolutely-not-on-this-screen\n");
+    assert_eq!(code, 1, "a failed assertion must exit 1");
+    assert!(
+        stderr.contains("absolutely-not-on-this-screen"),
+        "the failure should name what was missing, got: {stderr}"
+    );
+
+    // A malformed script is a different failure from a failed assertion, and gets a
+    // different exit code so a caller can tell "my script is wrong" from "the TUI
+    // is wrong".
+    let (_, stderr, code) = run_script("frobnicate\n");
+    assert_eq!(code, 2, "a malformed script must exit 2, not 1");
+    assert!(stderr.contains("frobnicate"), "got: {stderr}");
+}
+
 /// The schema must be a fact about simon, not about the machine it ran on —
 /// otherwise an agent cannot fetch it ahead of time or cache it across hosts.
 #[test]

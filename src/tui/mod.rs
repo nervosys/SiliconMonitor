@@ -4,9 +4,7 @@
 //! It displays CPU, GPU, memory, disk, and system information using the ratatui library.
 
 use crossterm::{
-    event::{
-        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers,
-    },
+    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -124,111 +122,11 @@ fn run_app<B: Backend>(
                         } else {
                             use crate::tui::app::ViewMode;
                             match app.view_mode {
-                                ViewMode::Main => match key.code {
-                                    KeyCode::Char('q') => return Ok(()),
-                                    KeyCode::Esc => return Ok(()),
-                                    KeyCode::Tab => {
-                                        if key.modifiers.contains(KeyModifiers::SHIFT) {
-                                            app.previous_tab();
-                                        } else {
-                                            app.next_tab();
-                                        }
+                                ViewMode::Main => {
+                                    if app.handle_main_key(key.code, key.modifiers) {
+                                        return Ok(());
                                     }
-                                    KeyCode::BackTab => app.previous_tab(),
-                                    // On the Profiles tab, 1–5 selects a subsystem
-                                    // instead of switching tabs (matches the on-screen
-                                    // "[1-5] subsystem" hint). Everywhere else, the
-                                    // number row switches tabs.
-                                    KeyCode::Char(c @ '1'..='5') if app.selected_tab == 7 => {
-                                        let idx = (c as u8 - b'1') as usize;
-                                        if idx < crate::profile::Subsystem::ALL.len() {
-                                            app.profile_subsystem_idx = idx;
-                                            app.profile_scroll = 0;
-                                        }
-                                    }
-                                    KeyCode::Char('1') => app.set_tab(0),
-                                    KeyCode::Char('2') => app.set_tab(1),
-                                    KeyCode::Char('3') => app.set_tab(2),
-                                    KeyCode::Char('4') => app.set_tab(3),
-                                    KeyCode::Char('5') => app.set_tab(4),
-                                    KeyCode::Char('6') => app.set_tab(5),
-                                    KeyCode::Char('7') => app.set_tab(6),
-                                    KeyCode::Char('8') => app.set_tab(7),
-                                    KeyCode::Char('9') => app.set_tab(8),
-                                    KeyCode::Left => app.previous_tab(),
-                                    KeyCode::Right => app.next_tab(),
-                                    KeyCode::Up => app.select_process_up(),
-                                    KeyCode::Down => app.select_process_down(),
-                                    KeyCode::PageUp => {
-                                        if app.selected_tab == 7 {
-                                            app.profile_scroll =
-                                                app.profile_scroll.saturating_sub(10);
-                                        } else {
-                                            app.scroll_page_up();
-                                        }
-                                    }
-                                    KeyCode::PageDown => {
-                                        if app.selected_tab == 7 {
-                                            app.profile_scroll =
-                                                app.profile_scroll.saturating_add(10);
-                                        } else {
-                                            app.scroll_page_down();
-                                        }
-                                    }
-                                    KeyCode::Home => app.scroll_to_top(),
-                                    KeyCode::End => app.scroll_to_bottom(),
-                                    KeyCode::Enter => app.open_process_detail(),
-                                    KeyCode::Char('p') | KeyCode::Char('P') => {
-                                        if key.modifiers.contains(KeyModifiers::SHIFT) {
-                                            app.previous_process_mode();
-                                        } else {
-                                            app.next_process_mode();
-                                        }
-                                    }
-                                    KeyCode::Char('t') | KeyCode::Char('T') => {
-                                        app.open_theme_picker()
-                                    }
-                                    KeyCode::Char('r') => {
-                                        if app.selected_tab == 7 {
-                                            app.refresh_profile_snapshot();
-                                        } else {
-                                            app.reset_stats();
-                                        }
-                                    }
-                                    KeyCode::Char('[') => {
-                                        if app.selected_tab == 7 {
-                                            app.profile_prev_subsystem();
-                                        }
-                                    }
-                                    KeyCode::Char(']') => {
-                                        if app.selected_tab == 7 {
-                                            app.profile_next_subsystem();
-                                        }
-                                    }
-                                    KeyCode::Char('d') | KeyCode::Char('D') => {
-                                        if app.selected_tab == 7 {
-                                            app.profile_show_deviations =
-                                                !app.profile_show_deviations;
-                                        }
-                                    }
-                                    KeyCode::Char('a') | KeyCode::Char('A') => {
-                                        app.toggle_agent_input()
-                                    }
-                                    KeyCode::Char('c') | KeyCode::Char('C') => {
-                                        if app.selected_tab == 8 {
-                                            app.clear_agent_history();
-                                        }
-                                    }
-                                    KeyCode::F(12) => {
-                                        if let Err(e) = app.save_config() {
-                                            app.set_status_message(format!(
-                                                "Failed to save config: {}",
-                                                e
-                                            ));
-                                        }
-                                    }
-                                    _ => {}
-                                },
+                                }
                                 ViewMode::ProcessDetail => match key.code {
                                     KeyCode::Esc | KeyCode::Char('q') | KeyCode::Enter => {
                                         app.close_overlay()
