@@ -847,7 +847,7 @@ impl AiWorkloadMonitor {
         #[cfg(target_os = "linux")]
         {
             use std::fs;
-            let environ_path = format!("/proc/{}/environ", pid);
+            let environ_path = format!("/proc/{}/environ", _pid);
             if let Ok(environ) = fs::read_to_string(&environ_path) {
                 let env_map = self.parse_environ(&environ);
                 if let Some(cuda_devices) = env_map.get("CUDA_VISIBLE_DEVICES") {

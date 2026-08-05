@@ -340,7 +340,9 @@ impl CryptoAccelMonitor {
     }
 
     fn detect_rng() -> Vec<HardwareRng> {
-        let sources = Vec::new();
+        // Populated only on Linux; `mut` is unused on other platforms.
+        #[allow(unused_mut)]
+        let mut sources = Vec::new();
 
         #[cfg(target_os = "linux")]
         {

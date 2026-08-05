@@ -312,7 +312,6 @@ impl NumaMonitor {
                     self.distance_matrix = Some(NumaDistanceMatrix { size, distances });
                 }
             }
-            let _ = text;
         }
     }
 

@@ -1492,7 +1492,7 @@ mod linux {
                     .and_then(|s| s.parse::<u64>().ok())
             });
         let process_start_time =
-            boot_time_secs.map(|btime| btime + (starttime as f64 / clk_tck) as u64);
+            boot_time_secs.map(|btime| btime + (starttime as f64 / clk_tck as f64) as u64);
 
         // Read /proc/[pid]/statm for memory
         let statm_path = format!("{}/statm", proc_path);

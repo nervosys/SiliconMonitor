@@ -433,10 +433,17 @@ impl ServiceMonitor {
             }
         }
 
-        // Get detailed info for each service
-        for service in &mut self.services {
+        // Get detailed info for each service.
+        //
+        // Iterating `&mut self.services` while calling `&self` method borrows self
+        // both ways at once. Move the vector out for the duration and put it back:
+        // `linux_get_service_details` does not read `self.services`, so nothing
+        // observes it missing.
+        let mut services = std::mem::take(&mut self.services);
+        for service in &mut services {
             self.linux_get_service_details(service);
         }
+        self.services = services;
 
         Ok(())
     }

@@ -450,10 +450,25 @@ fn read_linux_storage_temps() -> Vec<HwSensor> {
             if name.starts_with("sd") && name.len() == 3
                 || name.starts_with("nvme") && name.contains("n1") && !name.contains("p")
             {
-                // Check for hwmon device
-                let hwmon_glob = entry.path().join("device/hwmon/hwmon*");
-                if let Ok(mut entries) = glob::glob(&hwmon_glob.to_string_lossy()) {
-                    if let Some(Ok(hwmon_path)) = entries.next() {
+                // Check for hwmon device.
+                //
+                // This used `glob::glob`, but `glob` is not a dependency of this
+                // crate and never has been — the call could not compile. The
+                // pattern is a single directory level with a fixed prefix, which
+                // `read_dir` expresses directly and without adding a dependency for
+                // one call site.
+                let hwmon_dir = entry.path().join("device/hwmon");
+                let first_hwmon = std::fs::read_dir(&hwmon_dir).ok().and_then(|mut dir| {
+                    dir.find_map(|e| {
+                        let e = e.ok()?;
+                        e.file_name()
+                            .to_string_lossy()
+                            .starts_with("hwmon")
+                            .then(|| e.path())
+                    })
+                });
+                {
+                    if let Some(hwmon_path) = first_hwmon {
                         if let Ok(temp_str) = fs::read_to_string(hwmon_path.join("temp1_input")) {
                             if let Ok(temp_mc) = temp_str.trim().parse::<i32>() {
                                 let model = fs::read_to_string(entry.path().join("device/model"))

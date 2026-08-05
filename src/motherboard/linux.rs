@@ -838,16 +838,21 @@ pub fn get_peripherals() -> Result<PeripheralsInfo, Error> {
 
                 let output_type = if name.contains("HDMI") {
                     DisplayOutputType::Hdmi
+                // eDP must be tested before DP: "eDP-1" contains "DP", so the
+                // DisplayPort arm would claim every internal panel and the eDP arm
+                // below could never be reached. The enum has no `Edp`; an embedded
+                // DisplayPort *is* the internal panel, which is what `Internal`
+                // means.
+                } else if name.contains("eDP") {
+                    DisplayOutputType::Internal
                 } else if name.contains("DP") || name.contains("DisplayPort") {
                     DisplayOutputType::DisplayPort
                 } else if name.contains("VGA") {
                     DisplayOutputType::Vga
                 } else if name.contains("DVI") {
                     DisplayOutputType::Dvi
-                } else if name.contains("eDP") {
-                    DisplayOutputType::Edp
                 } else {
-                    DisplayOutputType::Other
+                    DisplayOutputType::Unknown
                 };
 
                 info.display_outputs.push(DisplayOutputInfo {
@@ -856,6 +861,9 @@ pub fn get_peripherals() -> Result<PeripheralsInfo, Error> {
                     connected: status.as_deref() == Some("connected"),
                     resolution: None,
                     refresh_rate: None,
+                    // sysfs exposes the connector, not which GPU drives it; that
+                    // needs a DRM query this path does not make.
+                    adapter: None,
                 });
             }
         }
@@ -873,8 +881,12 @@ pub fn get_peripherals() -> Result<PeripheralsInfo, Error> {
                     info.audio_devices.push(AudioDeviceInfo {
                         name,
                         device_type: AudioDeviceType::Output,
-                        driver: Some("ALSA".to_string()),
+                        // The struct has `manufacturer`, not `driver`. ALSA is the
+                        // subsystem this was read through, not who made the device,
+                        // so claiming it as the manufacturer would be wrong.
+                        manufacturer: None,
                         status: Some("Available".to_string()),
+                        is_default: false,
                     });
                 }
             }
@@ -895,6 +907,9 @@ pub fn get_peripherals() -> Result<PeripheralsInfo, Error> {
                     address,
                     connected: true,
                     device_type: Some("Adapter".to_string()),
+                    // This enumerates adapters under /sys/class/bluetooth, not
+                    // remote devices; an adapter is not paired with anything.
+                    paired: false,
                 });
             }
         }
@@ -917,7 +932,7 @@ pub fn get_peripherals() -> Result<PeripheralsInfo, Error> {
                     .ok()
                     .map(|s| s.trim().to_string());
                 let port_type = if name.starts_with("wl") || name.starts_with("wlan") {
-                    NetworkPortType::Wifi
+                    NetworkPortType::WiFi
                 } else if name.starts_with("eth") || name.starts_with("en") {
                     NetworkPortType::Ethernet
                 } else {
@@ -927,8 +942,10 @@ pub fn get_peripherals() -> Result<PeripheralsInfo, Error> {
                 info.network_ports.push(NetworkPortInfo {
                     name,
                     port_type,
-                    speed_mbps: speed,
-                    link_detected: operstate.as_deref() == Some("up"),
+                    // The field is `speed: Option<String>`, and sysfs reports Mbit/s;
+                    // keep the unit in the text rather than dropping it silently.
+                    speed: speed.map(|mbps| format!("{mbps} Mb/s")),
+                    connected: operstate.as_deref() == Some("up"),
                     mac_address: fs::read_to_string(entry.path().join("address"))
                         .ok()
                         .map(|s| s.trim().to_string()),

@@ -290,9 +290,9 @@ impl SandboxDetector {
 
             // Check for Snap
             if std::env::var("SNAP").is_ok() {
-                info.is_container = true;
-                info.environment = Some("Snap".to_string());
-                info.indicators.push("Snap sandbox detected".to_string());
+                _info.is_container = true;
+                _info.environment = Some("Snap".to_string());
+                _info.indicators.push("Snap sandbox detected".to_string());
             }
         }
     }

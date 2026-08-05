@@ -124,6 +124,8 @@ impl IpmiController {
         }
 
         let stdout = String::from_utf8_lossy(&output.stdout);
+        // Populated only on Linux; `mut` is unused on other platforms.
+        #[allow(unused_mut)]
         let mut sensors = Vec::new();
 
         for line in stdout.lines() {
@@ -172,7 +174,9 @@ impl IpmiController {
     }
 
     fn read_sensors_sysfs(&self) -> Result<Vec<IpmiSensor>, super::DatacenterError> {
-        let sensors = Vec::new();
+        // Populated only on Linux; `mut` is unused on other platforms.
+        #[allow(unused_mut)]
+        let mut sensors = Vec::new();
         #[cfg(target_os = "linux")]
         {
             use std::fs;

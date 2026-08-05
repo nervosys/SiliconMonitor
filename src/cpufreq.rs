@@ -569,10 +569,10 @@ impl CpuFreqMonitor {
 
         // Enumerate CPUs
         for entry in fs::read_dir(cpu_path)
-            .map_err(|e| SimonError::IoError(format!("Failed to read CPU sysfs: {}", e)))?
+            .map_err(|e| SimonError::System(format!("Failed to read CPU sysfs: {}", e)))?
         {
             let entry =
-                entry.map_err(|e| SimonError::IoError(format!("Failed to read entry: {}", e)))?;
+                entry.map_err(|e| SimonError::System(format!("Failed to read entry: {}", e)))?;
 
             let name = entry.file_name().to_string_lossy().to_string();
             if !name.starts_with("cpu") {
@@ -711,10 +711,10 @@ impl CpuFreqMonitor {
         use std::fs;
 
         for entry in fs::read_dir(cpuidle_dir)
-            .map_err(|e| SimonError::IoError(format!("Failed to read cpuidle: {}", e)))?
+            .map_err(|e| SimonError::System(format!("Failed to read cpuidle: {}", e)))?
         {
             let entry =
-                entry.map_err(|e| SimonError::IoError(format!("Failed to read entry: {}", e)))?;
+                entry.map_err(|e| SimonError::System(format!("Failed to read entry: {}", e)))?;
 
             let name = entry.file_name().to_string_lossy().to_string();
             if !name.starts_with("state") {
@@ -848,7 +848,7 @@ impl CpuFreqMonitor {
                 let gov_file = path.join("cpufreq/scaling_governor");
                 if gov_file.exists() {
                     fs::write(&gov_file, &gov_str).map_err(|e| {
-                        SimonError::IoError(format!(
+                        SimonError::System(format!(
                             "Failed to set governor for CPU{} (need root?): {}",
                             cpu.id, e
                         ))
@@ -881,7 +881,7 @@ impl CpuFreqMonitor {
         if let Some(ref path) = cpu.sysfs_path {
             let gov_file = path.join("cpufreq/scaling_governor");
             fs::write(&gov_file, governor.to_string()).map_err(|e| {
-                SimonError::IoError(format!("Failed to set governor for CPU{}: {}", cpu_id, e))
+                SimonError::System(format!("Failed to set governor for CPU{}: {}", cpu_id, e))
             })?;
         }
 
@@ -902,7 +902,7 @@ impl CpuFreqMonitor {
                 let freq_file = path.join("cpufreq/scaling_min_freq");
                 if freq_file.exists() {
                     fs::write(&freq_file, freq_khz.to_string()).map_err(|e| {
-                        SimonError::IoError(format!(
+                        SimonError::System(format!(
                             "Failed to set min freq for CPU{}: {}",
                             cpu.id, e
                         ))
@@ -928,7 +928,7 @@ impl CpuFreqMonitor {
                 let freq_file = path.join("cpufreq/scaling_max_freq");
                 if freq_file.exists() {
                     fs::write(&freq_file, freq_khz.to_string()).map_err(|e| {
-                        SimonError::IoError(format!(
+                        SimonError::System(format!(
                             "Failed to set max freq for CPU{}: {}",
                             cpu.id, e
                         ))
@@ -949,7 +949,7 @@ impl CpuFreqMonitor {
         let value = if online { "1" } else { "0" };
 
         fs::write(&online_file, value).map_err(|e| {
-            SimonError::IoError(format!("Failed to set CPU{} online status: {}", cpu_id, e))
+            SimonError::System(format!("Failed to set CPU{} online status: {}", cpu_id, e))
         })?;
 
         self.refresh()?;
@@ -965,7 +965,7 @@ impl CpuFreqMonitor {
         if intel_turbo.exists() {
             let value = if enabled { "0" } else { "1" }; // no_turbo is inverted
             fs::write(intel_turbo, value)
-                .map_err(|e| SimonError::IoError(format!("Failed to set turbo: {}", e)))?;
+                .map_err(|e| SimonError::System(format!("Failed to set turbo: {}", e)))?;
             self.turbo.enabled = enabled;
             return Ok(());
         }
@@ -975,7 +975,7 @@ impl CpuFreqMonitor {
         if generic_boost.exists() {
             let value = if enabled { "1" } else { "0" };
             fs::write(generic_boost, value)
-                .map_err(|e| SimonError::IoError(format!("Failed to set turbo: {}", e)))?;
+                .map_err(|e| SimonError::System(format!("Failed to set turbo: {}", e)))?;
             self.turbo.enabled = enabled;
             return Ok(());
         }
@@ -1000,7 +1000,7 @@ impl CpuFreqMonitor {
                 let epp_file = path.join("cpufreq/energy_performance_preference");
                 if epp_file.exists() {
                     fs::write(&epp_file, &pref_str).map_err(|e| {
-                        SimonError::IoError(format!("Failed to set EPP for CPU{}: {}", cpu.id, e))
+                        SimonError::System(format!("Failed to set EPP for CPU{}: {}", cpu.id, e))
                     })?;
                 }
             }
@@ -1021,7 +1021,7 @@ impl CpuFreqMonitor {
 
         let value = if enabled { "0" } else { "1" };
         fs::write(&disable_file, value).map_err(|e| {
-            SimonError::IoError(format!(
+            SimonError::System(format!(
                 "Failed to set idle state{} for CPU{}: {}",
                 state_idx, cpu_id, e
             ))

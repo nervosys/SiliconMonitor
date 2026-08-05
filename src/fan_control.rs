@@ -568,10 +568,10 @@ impl FanMonitor {
         }
 
         for entry in fs::read_dir(hwmon_path)
-            .map_err(|e| SimonError::IoError(format!("Failed to read hwmon: {}", e)))?
+            .map_err(|e| SimonError::System(format!("Failed to read hwmon: {}", e)))?
         {
             let entry =
-                entry.map_err(|e| SimonError::IoError(format!("Failed to read entry: {}", e)))?;
+                entry.map_err(|e| SimonError::System(format!("Failed to read entry: {}", e)))?;
 
             let path = entry.path();
 
@@ -722,10 +722,10 @@ impl FanMonitor {
         }
 
         for entry in fs::read_dir(thermal_path)
-            .map_err(|e| SimonError::IoError(format!("Failed to read thermal: {}", e)))?
+            .map_err(|e| SimonError::System(format!("Failed to read thermal: {}", e)))?
         {
             let entry =
-                entry.map_err(|e| SimonError::IoError(format!("Failed to read entry: {}", e)))?;
+                entry.map_err(|e| SimonError::System(format!("Failed to read entry: {}", e)))?;
 
             let path = entry.path();
             let name = entry.file_name().to_string_lossy().to_string();
@@ -810,7 +810,7 @@ impl FanMonitor {
         let path = fan
             .sysfs_path
             .as_ref()
-            .ok_or_else(|| SimonError::IoError("No sysfs path for fan".to_string()))?;
+            .ok_or_else(|| SimonError::System("No sysfs path for fan".to_string()))?;
 
         // Calculate PWM value
         let pwm = ((speed_percent / 100.0) * 255.0).round() as u8;
@@ -821,15 +821,13 @@ impl FanMonitor {
         for pwm_file in &pwm_files {
             if pwm_file.exists() {
                 fs::write(pwm_file, format!("{}", pwm)).map_err(|e| {
-                    SimonError::IoError(format!("Failed to write PWM (need root?): {}", e))
+                    SimonError::System(format!("Failed to write PWM (need root?): {}", e))
                 })?;
                 return Ok(());
             }
         }
 
-        Err(SimonError::IoError(
-            "No writable PWM file found".to_string(),
-        ))
+        Err(SimonError::System("No writable PWM file found".to_string()))
     }
 
     #[cfg(target_os = "linux")]
@@ -845,7 +843,7 @@ impl FanMonitor {
         let path = fan
             .sysfs_path
             .as_ref()
-            .ok_or_else(|| SimonError::IoError("No sysfs path for fan".to_string()))?;
+            .ok_or_else(|| SimonError::System("No sysfs path for fan".to_string()))?;
 
         // For standard hwmon, set pwm_enable
         // 0 = DC mode
@@ -864,7 +862,7 @@ impl FanMonitor {
             };
 
             fs::write(&pwm_enable_file, format!("{}", enable_value)).map_err(|e| {
-                SimonError::IoError(format!("Failed to set fan profile (need root?): {}", e))
+                SimonError::System(format!("Failed to set fan profile (need root?): {}", e))
             })?;
 
             return Ok(());
@@ -880,7 +878,7 @@ impl FanMonitor {
             };
 
             fs::write(&temp_control, value)
-                .map_err(|e| SimonError::IoError(format!("Failed to set temp control: {}", e)))?;
+                .map_err(|e| SimonError::System(format!("Failed to set temp control: {}", e)))?;
 
             return Ok(());
         }

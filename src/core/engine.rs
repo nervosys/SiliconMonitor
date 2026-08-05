@@ -4,6 +4,12 @@ use crate::error::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+// These sysfs helpers live in `platform::common` and were never imported here.
+// The code below has always called them unqualified, so this module has never
+// compiled — it is reached only on Linux, which nothing built until now.
+#[cfg(target_os = "linux")]
+use crate::platform::common::{path_exists, read_file_u32};
+
 /// Engine information
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EngineInfo {

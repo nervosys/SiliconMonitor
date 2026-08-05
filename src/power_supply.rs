@@ -26,6 +26,9 @@
 //! ```
 
 use crate::error::Result;
+// Only the Linux enumeration path constructs an error value directly.
+#[cfg(target_os = "linux")]
+use crate::error::SimonError;
 use serde::{Deserialize, Serialize};
 
 /// Type of power supply
@@ -358,7 +361,7 @@ impl PowerSupplyMonitor {
         }
 
         let entries = fs::read_dir(power_supply_path)
-            .map_err(|e| SimonError::Other(format!("Failed to read power_supply: {}", e)))?;
+            .map_err(|e| SimonError::System(format!("Failed to read power_supply: {}", e)))?;
 
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().to_string();
