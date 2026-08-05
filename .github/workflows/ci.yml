@@ -33,6 +33,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Install Linux GUI build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-dev libwayland-dev libxcursor-dev \
+            libxrandr-dev libxi-dev libgl1-mesa-dev libssl-dev
       - run: cargo check --all-features --all-targets
 
   test:
@@ -44,6 +49,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      # eframe links against the system windowing and GL libraries on Linux. The
+      # runners do not carry them, and their absence surfaces as a linker error
+      # rather than anything naming a GUI.
+      - name: Install Linux GUI build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-dev libwayland-dev libxcursor-dev \
+            libxrandr-dev libxi-dev libgl1-mesa-dev libssl-dev
       # Documentation tests need a git checkout with history for
       # `tests/documentation_links.rs`, which enumerates tracked markdown via
       # `git ls-files`. actions/checkout provides one by default.
@@ -67,4 +81,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
+      - name: Install Linux GUI build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-dev libwayland-dev libxcursor-dev \
+            libxrandr-dev libxi-dev libgl1-mesa-dev libssl-dev
       - run: cargo clippy --all-features --all-targets -- -D warnings
