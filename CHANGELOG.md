@@ -5,9 +5,41 @@ All notable changes to Silicon Monitor will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.1.2] - 2026-08-05
 
 ### Fixed
+
+- **The crate did not build on Linux or macOS — and never had.** A missing
+  `[dependencies]` header meant the CLI, TUI, GUI, remote-AI-backend, and logging
+  dependencies, plus the unconditional `chrono` and `async-trait`, were all parsed
+  as a continuation of `[target.'cfg(windows)'.dependencies]`. On any other
+  platform the `cli`, `gui`, and `remote-backends` features enabled code whose
+  crates were absent from the dependency graph, and the build failed outright with
+  `cannot find crate 'crossterm'` and a dozen more like it.
+
+  This dates to the **initial commit** (2026-01-21) and shipped in **every one of
+  the eight versions published to crates.io**, while the README advertised a native
+  desktop application for Windows, Linux, and macOS. It survived because
+  development happened on Windows, where the manifest is correct, and because a
+  section header is invisible when you are reading the dependency beneath it —
+  every individual line was right.
+
+  `cargo tree --target x86_64-unknown-linux-gnu --features full` shows it in one
+  command, and now a test asks the manifest the same question on every run.
+
+### Added
+
+- `tests/manifest_portability.rs`: every crate reachable from a feature simon
+  presents as cross-platform (`cli`, `gui`, `remote-backends`) must be declared in
+  the plain `[dependencies]` table, and crates used without a `cfg` guard must not
+  be target-gated. Verified against the pre-fix manifest, where it names each
+  affected crate.
+
+### Fixed — CI
+
+The manifest bug above was invisible to development but not to CI, which had been
+red on every push. These are the reasons it stayed red without anyone learning
+anything from it.
 
 - **CI never compiled the `jetson-utils` feature.** Every job ran
   `--features full`, and `full` deliberately omits it — so
