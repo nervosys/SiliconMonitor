@@ -779,12 +779,37 @@ amon    # AI Monitor alias
 See [AGENTS.md](AGENTS.md) for driving the TUI from an agent, including reading frames without a terminal and scripting navigation.
 
 <details>
-<summary><strong>📸 TUI Screenshots</strong> (click to expand)</summary>
+<summary><strong>📸 What the TUI looks like</strong> (click to expand)</summary>
 
-|                 Overview Tab                  |                GPU Tab                |                Agent Tab                |
-| :-------------------------------------------: | :-----------------------------------: | :-------------------------------------: |
-| ![TUI Overview](docs/images/tui-overview.png) |  ![TUI GPU](docs/images/tui-gpu.png)  | ![TUI Agent](docs/images/tui-agent.png) |
-|     Real-time system overview with gauges     | GPU metrics, temperature, utilization |       Natural language AI queries       |
+Captured from a real run with `simon tui --frame --tab Overview`, using the same
+headless renderer the test suite drives — so it cannot drift from what the TUI
+actually draws. Only the hostname is substituted.
+
+```text
+┌Silicon Monitor │ CPU:99% MEM:45% GPU:0 │ hostname────────────────────────────────────────────────┐
+│ Overview │ Processes │ CPU │ Accelerators │ Memory │ System │ Peripherals │ Profiles │ Agent     │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌CPU───────────────────────────────────────────────────────────────────────────────────────────────┐
+│███████████████████████CPU ↑ 99% │ 24 cores @ 4400 MHz [████████████████…] ██████████████████████ │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌Memory────────────────────────────────────────────────────────────────────────────────────────────┐
+│██████████████████████████████MEM ↑ 45% │ 42.6G/93.6G │ SWAP: 106.8G                              │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌Network───────────────────────────────────────────────────────────────────────────────────────────┐
+│███████████NET ↓0B/s ↑0B/s │ Total: ↓34.9G ↑55.5G │ Ethernet, vSwitch (Default Switch)            │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌CPU History (60s)───────────────────────────────┐┌Memory History (60s)────────────────────────────┐
+│ █                                              ││▇█                                              │
+│ █                                              ││██                                              │
+│▃█                                              ││██                                              │
+└────────────────────────────────────────────────┘└────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
+│              Tab Navigate  1-8 Jump  q Quit  t Theme  │ OK CAREFUL WARNING CRITICAL              │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+Every other tab renders the same way — pass `--tab Processes`, `CPU`,
+`Accelerators`, `Memory`, `System`, `Peripherals`, `Profiles`, or `Agent`.
 
 </details>
 
@@ -809,15 +834,11 @@ simon gui
 - 🖱️ Mouse-friendly interface with scrollable panels
 - 📈 Historical data with trend charts
 
-<details>
-<summary><strong>📸 GUI Screenshots</strong> (click to expand)</summary>
-
-|                System Overview                |           GPU Monitoring            |              Theme Selection              |
-| :-------------------------------------------: | :---------------------------------: | :---------------------------------------: |
-| ![GUI Overview](docs/images/gui-overview.png) | ![GUI GPU](docs/images/gui-gpu.png) | ![GUI Themes](docs/images/gui-themes.png) |
-|       Main dashboard with system stats        |     Detailed GPU metrics panel      |          Available color themes           |
-
-</details>
+> **Screenshots pending.** This section previously linked six PNGs under
+> `docs/images/` that were never added, so every one rendered as a broken image
+> here and on crates.io. Run `simon gui` to see it, or read a tab's text content
+> without a display via `simon gui --frame --tab Overview`. The capture guidelines
+> for contributing real screenshots are in [`docs/images/README.md`](docs/images/README.md).
 
 ## Hardware Profile Inspector
 

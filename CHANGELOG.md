@@ -5,6 +5,26 @@ All notable changes to Silicon Monitor will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.1] - 2026-08-05
+
+### Fixed
+
+- **The README rendered six broken images**, on GitHub and on the crates.io page
+  for 2.1.0. Two "Screenshots" sections linked PNGs under `docs/images/` that were
+  never added — only the directory's own README describing how to capture them was
+  ever committed. A broken image fails silently: the markdown is valid and the
+  build is green, so nothing caught it. The TUI section now embeds a real frame
+  captured through the same headless renderer the tests drive, so it cannot drift
+  from what the TUI actually draws; the GUI section says plainly that screenshots
+  are outstanding and how to see the interface meanwhile.
+
+### Added
+
+- A test asserting every relative markdown link and image resolves, and a second
+  asserting documentation carries no machine identifiers. The embedded TUI frame is
+  real tool output, which includes the host's name — sanitizing it was a manual
+  step, and manual steps are the ones skipped next time the capture is refreshed.
+
 ## [2.1.0] - 2026-08-04
 
 Model names in this repository were frozen lists that had aged out of date. The
