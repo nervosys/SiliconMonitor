@@ -18,6 +18,9 @@ use crate::gpu::{
     Gpu, GpuClocks, GpuCollection, GpuDynamicInfo, GpuEngines, GpuMemory, GpuPower, GpuProcess,
     GpuStaticInfo, GpuThermal, GpuVendor, PcieLinkInfo,
 };
+// Only the Linux fdinfo path constructs a GpuProcess.
+#[cfg(target_os = "linux")]
+use crate::gpu::GpuProcessType;
 use crate::Error;
 
 #[cfg(target_os = "linux")]
@@ -270,9 +273,11 @@ impl Gpu for AmdGpu {
                     usage_percent: None,
                 },
                 thermal: GpuThermal {
-                    temperature,
+                    // sysfs reports these unsigned; the field is i32 so a sensor
+                    // below freezing can be represented.
+                    temperature: temperature.map(|t| t as i32),
                     max_temperature: None,
-                    critical_temperature: critical_temp,
+                    critical_temperature: critical_temp.map(|t| t as i32),
                     fan_speed,
                     fan_rpm,
                 },
@@ -477,12 +482,17 @@ fn parse_fdinfo_processes(card_path: &str) -> Result<Vec<GpuProcess>, Error> {
                                 processes.push(GpuProcess {
                                     pid,
                                     name,
-                                    gpu_memory: vram_mem,
-                                    compute_util: None,
-                                    memory_util: None,
-                                    encoder_util: None,
-                                    decoder_util: None,
-                                    process_type: None,
+                                    // fdinfo names the process's own VRAM use but
+                                    // not who owns it or what class of work it is.
+                                    user: String::new(),
+                                    process_type: GpuProcessType::Unknown,
+                                    gpu_usage: None,
+                                    memory_usage: Some(vram_mem),
+                                    memory_usage_percent: None,
+                                    encoder_usage: None,
+                                    decoder_usage: None,
+                                    cpu_usage: None,
+                                    cpu_memory: None,
                                 });
                             }
                             break; // Found amdgpu for this process

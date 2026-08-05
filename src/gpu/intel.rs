@@ -17,6 +17,9 @@ use crate::gpu::{
     Gpu, GpuClocks, GpuCollection, GpuDynamicInfo, GpuEngines, GpuMemory, GpuPower, GpuProcess,
     GpuStaticInfo, GpuThermal, GpuVendor, PcieLinkInfo,
 };
+// Only the Linux fdinfo path constructs a GpuProcess.
+#[cfg(target_os = "linux")]
+use crate::gpu::GpuProcessType;
 use crate::Error;
 
 #[cfg(target_os = "linux")]
@@ -272,7 +275,7 @@ impl Gpu for IntelGpu {
                     usage_percent: None,
                 },
                 thermal: GpuThermal {
-                    temperature,
+                    temperature: temperature.map(|t| t as i32),
                     max_temperature: None,
                     critical_temperature: None,
                     fan_speed: None,
@@ -445,12 +448,19 @@ fn parse_intel_fdinfo_processes(
                                 processes.push(GpuProcess {
                                     pid,
                                     name,
-                                    gpu_memory: 0, // Intel iGPUs share system memory
-                                    compute_util: None,
-                                    memory_util: None,
-                                    encoder_util: None,
-                                    decoder_util: None,
-                                    process_type: None,
+                                    user: String::new(),
+                                    process_type: GpuProcessType::Unknown,
+                                    gpu_usage: None,
+                                    // An Intel iGPU shares system memory, so there
+                                    // is no separate figure to report — `None` says
+                                    // that, where the previous `0` claimed the
+                                    // process used no memory at all.
+                                    memory_usage: None,
+                                    memory_usage_percent: None,
+                                    encoder_usage: None,
+                                    decoder_usage: None,
+                                    cpu_usage: None,
+                                    cpu_memory: None,
                                 });
                             }
                             break;
