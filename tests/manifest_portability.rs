@@ -22,9 +22,45 @@
 
 use std::collections::BTreeSet;
 
-/// Features simon presents as working everywhere. If one of these pulls in a crate
-/// that only exists on one platform, the crate does not build on the others.
-const CROSS_PLATFORM_FEATURES: &[&str] = &["cli", "gui", "remote-backends"];
+/// Features that must resolve on every platform.
+///
+/// This started as just `cli`, `gui`, and `remote-backends` — the obviously
+/// cross-platform ones — and that was too narrow. `nvidia` names `nvml-wrapper`,
+/// which was declared only in the Linux and Windows target sections, so
+/// `--all-features` on macOS failed with `unresolved import 'nvml_wrapper'`. A
+/// *feature* is not target-conditional even when the hardware it describes is:
+/// enabling it on a platform that lacks the dependency is a build failure, not a
+/// graceful absence. So every feature is checked, not a chosen few.
+///
+/// Crates that are target-gated on purpose, and whose *source* is gated to match.
+///
+/// Naming a target-gated crate from a feature is only safe when every `use` of it
+/// is also behind a `cfg(target_os)`. `drm`/`drm-ffi` are Linux kernel interfaces
+/// and `plist` is a macOS format; the code touching each is gated accordingly, so
+/// enabling `intel` or `apple` elsewhere compiles to nothing rather than failing.
+///
+/// `nvml-wrapper` was *not* on this list and was not gated that way: the `nvidia`
+/// feature named it, the source guarded only on the feature, and `--all-features`
+/// on macOS failed with `unresolved import 'nvml_wrapper'`. It is now declared
+/// cross-platform instead, which is why it does not appear here.
+///
+/// Anything new that reaches this list needs the same discipline, so adding to it
+/// should be a conscious act rather than a way to quiet the test.
+const PLATFORM_GATED_BY_DESIGN: &[&str] = &["drm", "drm-ffi", "plist"];
+
+fn features_to_check(manifest: &toml::Value) -> Vec<String> {
+    manifest
+        .get("features")
+        .and_then(toml::Value::as_table)
+        .map(|table| {
+            table
+                .keys()
+                .filter(|name| name.as_str() != "default")
+                .cloned()
+                .collect()
+        })
+        .unwrap_or_default()
+}
 
 fn manifest() -> toml::Value {
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml");
@@ -97,9 +133,18 @@ fn cross_platform_features_depend_only_on_cross_platform_crates() {
         "no [dependencies] table found; this check would pass vacuously"
     );
 
+    let features = features_to_check(&manifest);
+    assert!(
+        !features.is_empty(),
+        "no features to check; this test would pass vacuously"
+    );
+
     let mut problems = Vec::new();
-    for feature in CROSS_PLATFORM_FEATURES {
+    for feature in &features {
         for krate in required_crates(&manifest, feature) {
+            if PLATFORM_GATED_BY_DESIGN.contains(&krate.as_str()) {
+                continue;
+            }
             if !portable.contains(&krate) {
                 problems.push(format!(
                     "feature `{feature}` needs `{krate}`, which is not in [dependencies] \

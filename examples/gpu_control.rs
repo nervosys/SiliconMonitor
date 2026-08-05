@@ -5,9 +5,12 @@ use std::error::Error;
 fn main() -> Result<(), Box<dyn Error>> {
     #[cfg(target_os = "linux")]
     {
-        use simonlib::{core::gpu::GpuStats, SiliconMonitor};
+        // `SiliconMonitor` has no `snapshot`; the type with one — returning a
+        // `Snapshot` whose `gpus` is the map this example walks — is `stats::Simon`.
+        // Being Linux-only, this example had never been compiled.
+        use simonlib::{core::gpu::GpuStats, stats::Simon};
 
-        let mut stats = SiliconMonitor::new()?;
+        let mut stats = Simon::new();
         let snapshot = stats.snapshot()?;
 
         println!("=== GPU Control Example (Jetson) ===\n");

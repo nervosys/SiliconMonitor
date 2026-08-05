@@ -94,6 +94,14 @@ reqwest = { version = "0.12", features = ["blocking", "json"], optional = true }
 # Logging
 env_logger = { version = "0.11", optional = true }
 
+# NVML bindings. Declared here rather than per-target because the `nvidia` feature
+# names this crate, and a feature is not target-conditional: enabling `nvidia` on
+# macOS referenced a dependency that only the Linux and Windows sections declared,
+# so the build failed with "unresolved import `nvml_wrapper`". The crate itself is
+# a runtime loader for libnvidia-ml — it compiles anywhere and simply finds no
+# library where there is no NVIDIA driver, which is correct on a machine without one.
+nvml-wrapper = { version = "0.10", optional = true }
+
 # Platform-specific dependencies.
 #
 # Everything above this line is cross-platform and must stay above it. The CLI,
@@ -109,8 +117,6 @@ libc = "0.2"
 nix = { version = "0.29", features = ["fs", "process", "user", "signal"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-# NVML bindings for Linux
-nvml-wrapper = { version = "0.10", optional = true }
 # AMD GPU support via libdrm (we'll implement direct syscalls for now)
 # Intel GPU support via DRM
 drm = { version = "0.14", optional = true }
@@ -142,8 +148,6 @@ windows = { version = "0.58", features = [
 wmi = "0.14"
 # Windows registry access
 winreg = "0.52"
-# NVML for Windows
-nvml-wrapper = { version = "0.10", optional = true }
 
 # macOS dependencies
 [target.'cfg(target_os = "macos")'.dependencies]
