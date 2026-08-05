@@ -386,7 +386,7 @@ impl ServiceMonitor {
 
         #[cfg(target_os = "macos")]
         {
-            return self.macos_discover();
+            self.macos_discover()
         }
 
         #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]

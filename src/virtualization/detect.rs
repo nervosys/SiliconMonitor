@@ -262,14 +262,14 @@ pub fn detect_cpu_virt_caps() -> Option<CpuVirtCapability> {
     }
     #[cfg(target_arch = "aarch64")]
     {
-        return Some(CpuVirtCapability {
+        Some(CpuVirtCapability {
             hardware_virt: true, // ARMv8 always has EL2
             ept_npt: true,       // Stage-2 translation
             iommu: false,
             sriov: false,
             nested: false,
             technology: "ARM EL2".into(),
-        });
+        })
     }
     #[cfg(not(any(target_arch = "x86", target_arch = "x86_64", target_arch = "aarch64")))]
     {

@@ -276,8 +276,8 @@ impl LinuxSiliconMonitor {
                                 let idle = times[3];
                                 let total: u64 = times.iter().sum();
 
-                                if total > 0 {
-                                    let util = 100 - ((idle * 100) / total);
+                                if let Some(idle_pct) = (idle * 100).checked_div(total) {
+                                    let util = 100 - idle_pct;
                                     utilization.insert(cpu_num, util.min(100) as u8);
                                 }
                             }
@@ -350,8 +350,8 @@ impl LinuxSiliconMonitor {
                     // Update stored values
                     map.insert(key, (active_ms, suspended_ms));
 
-                    if delta_total > 0 {
-                        return ((delta_active * 100) / delta_total).min(100) as u8;
+                    if let Some(pct) = (delta_active * 100).checked_div(delta_total) {
+                        return pct.min(100) as u8;
                     }
                 } else {
                     // First reading — store baseline, return 0

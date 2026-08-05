@@ -252,10 +252,10 @@ fn linux_msr_power_group() -> Option<ProfileGroup> {
         );
         if let Some(limit) = read_msr(0x610) {
             // bits[14:0] = PL1 in power units, bit15 = enable, bits[23:17] = time window
-            let pl1_raw = (limit & 0x7FFF);
+            let pl1_raw = limit & 0x7FFF;
             let pl1_w = pl1_raw as f64 * power_w;
             let pl1_enabled = (limit >> 15) & 1 == 1;
-            let pl2_raw = ((limit >> 32) & 0x7FFF);
+            let pl2_raw = (limit >> 32) & 0x7FFF;
             let pl2_w = pl2_raw as f64 * power_w;
             let pl2_enabled = ((limit >> 47) & 1) == 1;
             g.push(

@@ -114,7 +114,13 @@ pub(crate) mod linux {
         Ok(stats)
     }
 
-    fn parse_nvmap_table(path: &str) -> Result<(u64, Vec<(u32, String, String, u64)>)> {
+    /// (pid, name, kind, bytes) for one nvmap client.
+    ///
+    /// Named because the bare tuple was long enough that clippy could not tell
+    /// what any position meant — and neither could a reader.
+    type NvmapRow = (u32, String, String, u64);
+
+    fn parse_nvmap_table(path: &str) -> Result<(u64, Vec<NvmapRow>)> {
         let content = fs::read_to_string(path)?;
         let mut processes = Vec::new();
         let mut total = 0u64;

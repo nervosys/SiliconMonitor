@@ -15,8 +15,13 @@ use std::path::{Path, PathBuf};
 
 /// Linux motherboard sensor device
 pub struct LinuxSensor {
-    name: String,
     hwmon_path: PathBuf,
+    /// Contents of the hwmon `name` file — the chip, e.g. `coretemp`.
+    ///
+    /// There used to be a `name` field alongside this holding the directory name
+    /// (`hwmon0`). Nothing ever read it: `name()` returns the chip, which is what a
+    /// reader can act on. Clippy flagged the getter as returning the wrong field;
+    /// the getter was right and the field was dead.
     chip_name: String,
 }
 
@@ -29,14 +34,7 @@ impl LinuxSensor {
             .trim()
             .to_string();
 
-        let name = hwmon_path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("unknown")
-            .to_string();
-
         Ok(Self {
-            name,
             hwmon_path,
             chip_name,
         })
@@ -89,6 +87,9 @@ impl LinuxSensor {
 }
 
 impl MotherboardDevice for LinuxSensor {
+    // The chip name, not the hwmon directory: `coretemp` tells a reader what they
+    // are looking at; `hwmon0` tells them where it happened to be enumerated.
+    #[allow(clippy::misnamed_getters)]
     fn name(&self) -> &str {
         &self.chip_name
     }

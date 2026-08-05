@@ -35,7 +35,7 @@ impl MacSensor {
 
         // Try ioreg for thermal sensors (AppleSMC)
         if let Ok(output) = Command::new("ioreg")
-            .args(&["-r", "-c", "AppleSmartBattery", "-d", "1"])
+            .args(["-r", "-c", "AppleSmartBattery", "-d", "1"])
             .output()
         {
             let text = String::from_utf8_lossy(&output.stdout);
@@ -56,7 +56,7 @@ impl MacSensor {
         // Try powermetrics for CPU die temperature (may require sudo)
         // Fallback: use IOKit thermal entries via ioreg
         if let Ok(output) = Command::new("ioreg")
-            .args(&["-r", "-c", "AppleARMIODevice", "-d", "1"])
+            .args(["-r", "-c", "AppleARMIODevice", "-d", "1"])
             .output()
         {
             let text = String::from_utf8_lossy(&output.stdout);
@@ -80,7 +80,7 @@ impl MacSensor {
 
         // ioreg -r -c AppleFanCtrl or AppleSMCFanControl
         if let Ok(output) = Command::new("ioreg")
-            .args(&["-r", "-n", "AppleSMCFamily", "-d", "3"])
+            .args(["-r", "-n", "AppleSMCFamily", "-d", "3"])
             .output()
         {
             let text = String::from_utf8_lossy(&output.stdout);
@@ -591,7 +591,7 @@ fn get_usb_devices() -> Vec<UsbDeviceInfo> {
                 vendor_id = trimmed
                     .split(':')
                     .nth(1)
-                    .map(|s| s.trim().split_whitespace().next().unwrap_or("").to_string());
+                    .map(|s| s.split_whitespace().next().unwrap_or("").to_string());
                 vendor = trimmed.split(':').nth(1).and_then(|s| {
                     let parts: Vec<&str> = s.trim().splitn(2, ' ').collect();
                     if parts.len() > 1 {
@@ -609,7 +609,7 @@ fn get_usb_devices() -> Vec<UsbDeviceInfo> {
                 product_id = trimmed
                     .split(':')
                     .nth(1)
-                    .map(|s| s.trim().split_whitespace().next().unwrap_or("").to_string());
+                    .map(|s| s.split_whitespace().next().unwrap_or("").to_string());
             } else if trimmed.starts_with("Speed:") {
                 speed = trimmed.split(':').nth(1).map(|s| s.trim().to_string());
             }

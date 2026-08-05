@@ -626,7 +626,7 @@ impl AiWorkloadMonitor {
 
         let process_name = cmdline
             .split('/')
-            .last()
+            .next_back()
             .unwrap_or("unknown")
             .split_whitespace()
             .next()

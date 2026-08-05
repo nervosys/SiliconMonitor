@@ -112,9 +112,12 @@ impl WslDetector {
                 info.is_wsl = true;
 
                 // Determine WSL version
-                if lower.contains("wsl2") || lower.contains("microsoft-standard-wsl2") {
-                    info.version = Some(2);
-                } else if Path::new("/run/WSL").exists() {
+                // The kernel string and /run/WSL are independent evidence of the
+                // same thing; either one is sufficient.
+                if lower.contains("wsl2")
+                    || lower.contains("microsoft-standard-wsl2")
+                    || Path::new("/run/WSL").exists()
+                {
                     info.version = Some(2);
                 } else {
                     // WSL1 doesn't have full Linux kernel

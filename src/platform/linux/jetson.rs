@@ -238,7 +238,7 @@ impl FanProfile {
         }
     }
 
-    fn to_pwm_enable(&self) -> u32 {
+    fn to_pwm_enable(self) -> u32 {
         match self {
             FanProfile::Manual => 1, // Manual control
             FanProfile::Auto | FanProfile::Quiet | FanProfile::Cool => 2, // Automatic

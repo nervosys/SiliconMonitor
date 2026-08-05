@@ -334,11 +334,7 @@ fn read_fan_stats() -> std::collections::HashMap<String, crate::core::fan::FanIn
                 .and_then(|s| s.trim().parse::<u32>().ok())
                 .unwrap_or(1);
 
-            let speed_percent = if max_state > 0 {
-                cur_state * 100 / max_state
-            } else {
-                0
-            };
+            let speed_percent = (cur_state * 100).checked_div(max_state).unwrap_or(0);
 
             // Get device type
             let device_type = fs::read_to_string(path.join("type"))

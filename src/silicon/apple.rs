@@ -179,7 +179,7 @@ impl AppleSiliconMonitor {
             let temp_file = format!("/tmp/simon_powermetrics_{}", std::process::id());
 
             // Read the plist file
-            let data = std::fs::read(&temp_file).map_err(|e| Error::Io(e))?;
+            let data = std::fs::read(&temp_file).map_err(Error::Io)?;
 
             // Split by null bytes (powermetrics appends multiple plists)
             let parts: Vec<&[u8]> = data.split(|&b| b == 0).collect();

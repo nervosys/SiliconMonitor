@@ -705,7 +705,7 @@ impl MemoryMonitor {
         }
 
         // Sort by RSS descending
-        processes.sort_by(|a, b| b.rss.cmp(&a.rss));
+        processes.sort_by_key(|p| std::cmp::Reverse(p.rss));
         processes.truncate(limit);
         processes
     }
@@ -935,7 +935,7 @@ impl MemoryMonitor {
             let free_pages = *pages.get("Pages free").unwrap_or(&0);
             let active_pages = *pages.get("Pages active").unwrap_or(&0);
             let inactive_pages = *pages.get("Pages inactive").unwrap_or(&0);
-            let wired_pages = *pages.get("Pages wired down").unwrap_or(&0);
+            let _wired_pages = *pages.get("Pages wired down").unwrap_or(&0);
             let compressed = *pages.get("Pages occupied by compressor").unwrap_or(&0);
 
             self.memory.free = free_pages * page_size;

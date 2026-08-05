@@ -411,11 +411,11 @@ impl PowerProfileMonitor {
         }
 
         // AC power status
-        for entry in std::fs::read_dir("/sys/class/power_supply")
-            .into_iter()
-            .flatten()
-        {
-            for e in entry {
+        // `read_dir` yields a Result; the doubled loop was iterating that Result as
+        // if it were a collection, which reads as two levels of directory when
+        // there is only one.
+        if let Ok(entries) = std::fs::read_dir("/sys/class/power_supply") {
+            for e in entries.flatten() {
                 let path = e.path();
                 if let Ok(ptype) = std::fs::read_to_string(path.join("type")) {
                     if ptype.trim() == "Mains" {

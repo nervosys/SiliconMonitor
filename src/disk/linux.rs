@@ -9,8 +9,6 @@ pub struct LinuxDisk {
     name: String,
     device_path: PathBuf,
     disk_type: DiskType,
-    major: u32,
-    minor: u32,
 }
 
 impl LinuxDisk {
@@ -18,14 +16,14 @@ impl LinuxDisk {
     pub fn new(name: String) -> Result<Self, Error> {
         let device_path = PathBuf::from(format!("/dev/{}", name));
 
-        // Read device major/minor numbers
+        // Confirm the device exists before describing it. This used to also parse
+        // the major:minor pair into two fields that nothing ever read, and it
+        // indexed `parts[1]` directly — a panic on any `dev` file without a colon,
+        // reached through a `.unwrap_or(0)` that looked like it was handling the
+        // error. The existence check is the part that was doing work.
         let dev_path = format!("/sys/block/{}/dev", name);
-        let dev_content = fs::read_to_string(&dev_path)
+        fs::read_to_string(&dev_path)
             .map_err(|e| Error::QueryFailed(format!("Failed to read {}: {}", dev_path, e)))?;
-
-        let parts: Vec<&str> = dev_content.trim().split(':').collect();
-        let major = parts[0].parse().unwrap_or(0);
-        let minor = parts[1].parse().unwrap_or(0);
 
         // Determine disk type
         let disk_type = Self::detect_disk_type(&name)?;
@@ -34,8 +32,6 @@ impl LinuxDisk {
             name,
             device_path,
             disk_type,
-            major,
-            minor,
         })
     }
 

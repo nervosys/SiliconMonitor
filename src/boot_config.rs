@@ -713,7 +713,7 @@ impl BootMonitor {
 
         // macOS on Apple Silicon is always UEFI-like
         // Intel Macs can be checked via nvram
-        let output = Command::new("nvram").arg("boot-args").output();
+        let _output = Command::new("nvram").arg("boot-args").output();
 
         // All modern Macs boot via EFI
         self.boot_info.boot_type = BootType::Uefi;

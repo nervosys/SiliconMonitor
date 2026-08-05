@@ -780,11 +780,10 @@ mod windows {
 mod macos {
     use super::*;
     use libc::{
-        freeifaddrs, getifaddrs, ifaddrs, sockaddr, sockaddr_in, sockaddr_in6, AF_INET, AF_INET6,
-        AF_LINK,
+        freeifaddrs, getifaddrs, ifaddrs, sockaddr_in, sockaddr_in6, AF_INET, AF_INET6, AF_LINK,
     };
     use std::ffi::CStr;
-    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+    use std::net::{Ipv4Addr, Ipv6Addr};
     use std::ptr;
 
     // if_data structure for macOS (from net/if.h)

@@ -317,9 +317,12 @@ impl InterruptMapMonitor {
             InterruptType::Spurious
         } else if irq == "RES" || irq == "CAL" || irq == "TLB" {
             InterruptType::IPI
-        } else if chip_lower.contains("io-apic") || chip_lower.contains("ioapic") {
-            InterruptType::LegacyPin
-        } else if irq.parse::<u32>().is_ok() {
+        // An IO-APIC chip and a bare numeric IRQ are two different ways of spotting
+        // the same thing, so they share an arm rather than repeating the result.
+        } else if chip_lower.contains("io-apic")
+            || chip_lower.contains("ioapic")
+            || irq.parse::<u32>().is_ok()
+        {
             InterruptType::LegacyPin
         } else {
             InterruptType::Unknown

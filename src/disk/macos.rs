@@ -163,7 +163,7 @@ pub fn enumerate() -> Result<Vec<Box<dyn DiskDevice>>, Error> {
     let mut disks: Vec<Box<dyn DiskDevice>> = Vec::new();
 
     // Use diskutil list to get disk information
-    let output = Command::new("diskutil")
+    let _output = Command::new("diskutil")
         .args(["list", "-plist"])
         .output()
         .map_err(|_| Error::QueryFailed("device enumeration failed".to_string()))?;
@@ -258,7 +258,7 @@ fn get_disk_details(disk_path: &str) -> (Option<String>, Option<String>, Option<
         .ok();
 
     let mut model = None;
-    let mut serial = None;
+    let serial = None;
     let mut size = None;
 
     if let Some(output) = output {
