@@ -10,7 +10,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         // Being Linux-only, this example had never been compiled.
         use simonlib::{core::gpu::GpuStats, stats::Simon};
 
-        let mut stats = Simon::new();
+        let mut stats = Simon::new()?;
         let snapshot = stats.snapshot()?;
 
         println!("=== GPU Control Example (Jetson) ===\n");

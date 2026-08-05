@@ -342,7 +342,7 @@ impl AiWorkloadMonitor {
         use std::fs;
 
         // Scan /proc for Python/AI processes
-        let proc_entries = fs::read_dir("/proc").map_err(|e| crate::error::SimonError::Io(e))?;
+        let proc_entries = fs::read_dir("/proc").map_err(crate::error::SimonError::Io)?;
 
         for entry in proc_entries.filter_map(|e| e.ok()) {
             if let Ok(file_name) = entry.file_name().into_string() {

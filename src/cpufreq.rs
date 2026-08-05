@@ -378,7 +378,7 @@ impl CpuFreqMonitor {
     pub fn set_governor(&mut self, governor: Governor) -> Result<()> {
         #[cfg(target_os = "linux")]
         {
-            return self.linux_set_governor(governor);
+            self.linux_set_governor(governor)
         }
 
         #[cfg(target_os = "windows")]
@@ -399,7 +399,7 @@ impl CpuFreqMonitor {
     pub fn set_cpu_governor(&mut self, cpu_id: u32, governor: Governor) -> Result<()> {
         #[cfg(target_os = "linux")]
         {
-            return self.linux_set_cpu_governor(cpu_id, governor);
+            self.linux_set_cpu_governor(cpu_id, governor)
         }
 
         #[cfg(not(target_os = "linux"))]
@@ -415,7 +415,7 @@ impl CpuFreqMonitor {
     pub fn set_min_freq(&mut self, freq_khz: u64) -> Result<()> {
         #[cfg(target_os = "linux")]
         {
-            return self.linux_set_min_freq(freq_khz);
+            self.linux_set_min_freq(freq_khz)
         }
 
         #[cfg(not(target_os = "linux"))]
@@ -431,7 +431,7 @@ impl CpuFreqMonitor {
     pub fn set_max_freq(&mut self, freq_khz: u64) -> Result<()> {
         #[cfg(target_os = "linux")]
         {
-            return self.linux_set_max_freq(freq_khz);
+            self.linux_set_max_freq(freq_khz)
         }
 
         #[cfg(not(target_os = "linux"))]
@@ -453,7 +453,7 @@ impl CpuFreqMonitor {
 
         #[cfg(target_os = "linux")]
         {
-            return self.linux_set_cpu_online(cpu_id, online);
+            self.linux_set_cpu_online(cpu_id, online)
         }
 
         #[cfg(not(target_os = "linux"))]
@@ -475,7 +475,7 @@ impl CpuFreqMonitor {
 
         #[cfg(target_os = "linux")]
         {
-            return self.linux_set_turbo(enabled);
+            self.linux_set_turbo(enabled)
         }
 
         #[cfg(not(target_os = "linux"))]
@@ -491,7 +491,7 @@ impl CpuFreqMonitor {
     pub fn set_energy_preference(&mut self, pref: EnergyPreference) -> Result<()> {
         #[cfg(target_os = "linux")]
         {
-            return self.linux_set_energy_preference(pref);
+            self.linux_set_energy_preference(pref)
         }
 
         #[cfg(not(target_os = "linux"))]
@@ -507,7 +507,7 @@ impl CpuFreqMonitor {
     pub fn set_idle_state(&mut self, cpu_id: u32, state_idx: usize, enabled: bool) -> Result<()> {
         #[cfg(target_os = "linux")]
         {
-            return self.linux_set_idle_state(cpu_id, state_idx, enabled);
+            self.linux_set_idle_state(cpu_id, state_idx, enabled)
         }
 
         #[cfg(not(target_os = "linux"))]

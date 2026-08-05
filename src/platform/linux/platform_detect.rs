@@ -2,7 +2,6 @@
 
 use crate::core::platform_info::{BoardInfo, HardwareInfo, LibraryVersions, PlatformInfo};
 use crate::error::Result;
-use crate::platform::common::*;
 use std::collections::HashMap;
 use std::fs;
 
@@ -359,7 +358,7 @@ fn map_l4t_to_jetpack(l4t: &str) -> Option<String> {
 }
 
 fn detect_library_versions() -> Result<LibraryVersions> {
-    let mut other = HashMap::new();
+    let other = HashMap::new();
 
     // Try to detect CUDA version
     let cuda = detect_cuda_version();
@@ -402,7 +401,7 @@ fn detect_cuda_version() -> Option<String> {
 fn detect_cudnn_version() -> Option<String> {
     // Try using dpkg
     if let Ok(output) = std::process::Command::new("dpkg")
-        .args(&["-l", "libcudnn*"])
+        .args(["-l", "libcudnn*"])
         .output()
     {
         if output.status.success() {
@@ -421,7 +420,7 @@ fn detect_cudnn_version() -> Option<String> {
 fn detect_tensorrt_version() -> Option<String> {
     // Try using dpkg
     if let Ok(output) = std::process::Command::new("dpkg")
-        .args(&["-l", "libnvinfer*"])
+        .args(["-l", "libnvinfer*"])
         .output()
     {
         if output.status.success() {

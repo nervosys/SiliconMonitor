@@ -468,7 +468,7 @@ fn collector_loop(
 ) {
     // COM must be initialized on this thread before any WMI collector runs, and
     // must stay initialized for the thread's lifetime.
-    let _com = com_guard();
+    com_guard();
 
     let mut histories = Histories::default();
     let mut generation: u64 = 0;
@@ -748,7 +748,7 @@ where
     T: Send,
 {
     move || {
-        let _com = com_guard();
+        com_guard();
         let start = Instant::now();
         let value = f();
         (value, start.elapsed().as_micros() as u64)

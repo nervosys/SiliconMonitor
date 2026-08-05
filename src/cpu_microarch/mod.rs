@@ -951,7 +951,7 @@ impl CpuMicroarchMonitor {
 
     #[cfg(target_os = "linux")]
     fn read_cpu_info() -> Result<CpuInfoFields, SimonError> {
-        let cpuinfo = std::fs::read_to_string("/proc/cpuinfo").map_err(|e| SimonError::Io(e))?;
+        let cpuinfo = std::fs::read_to_string("/proc/cpuinfo").map_err(SimonError::Io)?;
 
         let mut model_name = String::new();
         let mut family = 0u32;

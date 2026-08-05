@@ -123,7 +123,7 @@ impl UsbMonitor {
                             _ => UsbDeviceClass::Unknown,
                         };
                         let parts: Vec<&str> = name.split('-').collect();
-                        let bus_number = parts.get(0).and_then(|s| s.parse().ok()).unwrap_or(0);
+                        let bus_number = parts.first().and_then(|s| s.parse().ok()).unwrap_or(0);
                         let port_number = parts
                             .get(1)
                             .and_then(|s| s.split('.').next())

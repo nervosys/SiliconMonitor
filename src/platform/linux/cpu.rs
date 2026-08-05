@@ -1,7 +1,7 @@
 //! Linux CPU monitoring
 
 use crate::core::cpu::{CpuCore, CpuFrequency, CpuStats, CpuTotal};
-use crate::error::{Result, SimonError};
+use crate::error::Result;
 use crate::platform::common::*;
 use std::collections::HashMap;
 use std::fs;
@@ -189,7 +189,7 @@ fn read_thermal_zone_temperature(cpu_id: usize) -> Option<i32> {
                 let zone_type = zone_type.trim();
                 if zone_type.contains(&format!("cpu{}", cpu_id))
                     || zone_type.contains(&format!("core{}", cpu_id))
-                    || zone_type.contains(&format!("x86_pkg_temp"))
+                    || zone_type.contains(&"x86_pkg_temp".to_string())
                 {
                     if let Ok(temp_str) = fs::read_to_string(zone_path.join("temp")) {
                         if let Ok(temp_millic) = temp_str.trim().parse::<i32>() {
@@ -203,7 +203,7 @@ fn read_thermal_zone_temperature(cpu_id: usize) -> Option<i32> {
     None
 }
 
-fn read_coretemp_temperature(cpu_id: usize) -> Option<i32> {
+fn read_coretemp_temperature(_cpu_id: usize) -> Option<i32> {
     // Fallback: try the package temperature as an approximation
     let paths = [
         "/sys/class/hwmon/hwmon0/temp1_input",

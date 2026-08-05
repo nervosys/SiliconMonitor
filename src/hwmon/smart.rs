@@ -410,7 +410,6 @@ fn get_drive_model(drive_path: &str) -> Option<String> {
 fn read_linux_storage_temps() -> Vec<HwSensor> {
     use std::fs;
     use std::path::Path;
-    use std::process::Command;
 
     let mut sensors = Vec::new();
 

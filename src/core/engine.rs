@@ -139,7 +139,7 @@ pub(crate) mod linux {
                             let engine_full_name = dir_name.to_uppercase();
                             engines
                                 .entry(group)
-                                .or_insert_with(Vec::new)
+                                .or_default()
                                 .push((engine_full_name, path.to_string_lossy().to_string()));
                             break;
                         }
@@ -149,7 +149,7 @@ pub(crate) mod linux {
                         let engine_full_name = dir_name.to_uppercase();
                         engines
                             .entry(group)
-                            .or_insert_with(Vec::new)
+                            .or_default()
                             .push((engine_full_name, path.to_string_lossy().to_string()));
                         break;
                     }

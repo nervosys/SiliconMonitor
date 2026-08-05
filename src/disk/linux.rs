@@ -1,7 +1,6 @@
 //! Linux disk monitoring via sysfs, ioctl, and procfs
 
 use crate::disk::traits::*;
-use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 

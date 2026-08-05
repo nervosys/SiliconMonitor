@@ -648,7 +648,7 @@ impl ConnectionMonitor {
         let local = parts[1];
         let remote = parts[2];
         let state_hex = parts[3];
-        let uid = parts[7].parse::<u32>().ok();
+        let _uid = parts[7].parse::<u32>().ok();
         let inode = parts[9];
 
         let is_ipv6 = matches!(protocol, Protocol::Tcp6 | Protocol::Udp6);

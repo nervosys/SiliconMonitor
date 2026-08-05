@@ -126,9 +126,9 @@ fn read_emc_info() -> Result<EmcInfo> {
         }
     }
 
-    let cur = read_file_u32(&format!("{}/cur_freq", emc_path))? / 1000;
-    let min = read_file_u32(&format!("{}/min_freq", emc_path))? / 1000;
-    let max = read_file_u32(&format!("{}/max_freq", emc_path))? / 1000;
+    let cur = read_file_u32(format!("{}/cur_freq", emc_path))? / 1000;
+    let min = read_file_u32(format!("{}/min_freq", emc_path))? / 1000;
+    let max = read_file_u32(format!("{}/max_freq", emc_path))? / 1000;
 
     // Calculate bandwidth percentage (simplified)
     let value = if max > 0 {

@@ -381,13 +381,13 @@ impl CryptoAccelMonitor {
             if tpm_path.exists() {
                 let version = std::fs::read_to_string(tpm_path.join("tpm_version_major"))
                     .ok()
-                    .and_then(|v| {
+                    .map(|v| {
                         let major = v.trim().to_string();
                         let minor = std::fs::read_to_string(tpm_path.join("tpm_version_minor"))
                             .ok()
                             .map(|m| m.trim().to_string())
                             .unwrap_or_else(|| "0".into());
-                        Some(format!("{}.{}", major, minor))
+                        format!("{}.{}", major, minor)
                     })
                     .unwrap_or_else(|| "2.0".into());
 

@@ -299,7 +299,7 @@ impl ProcessTree {
         let cpu_quota = fs::read_to_string(format!("{}/cpu.max", cgroup_base))
             .ok()
             .and_then(|s| {
-                let parts: Vec<&str> = s.trim().split_whitespace().collect();
+                let parts: Vec<&str> = s.split_whitespace().collect();
                 if parts.first() == Some(&"max") {
                     None
                 } else {
@@ -310,7 +310,7 @@ impl ProcessTree {
         let cpu_period = fs::read_to_string(format!("{}/cpu.max", cgroup_base))
             .ok()
             .and_then(|s| {
-                let parts: Vec<&str> = s.trim().split_whitespace().collect();
+                let parts: Vec<&str> = s.split_whitespace().collect();
                 parts.get(1).and_then(|v| v.parse().ok())
             });
 

@@ -3,7 +3,7 @@
 //! Comprehensive hardware monitoring for Linux systems using sysfs, /proc, and hwmon
 
 use super::*;
-use crate::error::{Error, Result};
+use crate::error::Result;
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
@@ -469,11 +469,11 @@ impl SiliconMonitor for LinuxSiliconMonitor {
                     // Read device name
                     let name = std::fs::read_to_string(path.join("device/modalias"))
                         .ok()
-                        .and_then(|s| {
+                        .map(|s| {
                             if s.contains("intel") {
-                                Some(format!("Intel AI Boost NPU {}", index))
+                                format!("Intel AI Boost NPU {}", index)
                             } else {
-                                Some(format!("NPU {}", index))
+                                format!("NPU {}", index)
                             }
                         })
                         .unwrap_or_else(|| format!("NPU {}", index));
@@ -722,12 +722,12 @@ impl SiliconMonitor for LinuxSiliconMonitor {
                     .unwrap_or(0) as u32;
 
                 // Read statistics
-                let rx_bytes = std::fs::read_to_string(path.join("statistics/rx_bytes"))
+                let _rx_bytes = std::fs::read_to_string(path.join("statistics/rx_bytes"))
                     .ok()
                     .and_then(|s| s.trim().parse::<u64>().ok())
                     .unwrap_or(0);
 
-                let tx_bytes = std::fs::read_to_string(path.join("statistics/tx_bytes"))
+                let _tx_bytes = std::fs::read_to_string(path.join("statistics/tx_bytes"))
                     .ok()
                     .and_then(|s| s.trim().parse::<u64>().ok())
                     .unwrap_or(0);
@@ -790,7 +790,7 @@ impl SiliconMonitor for LinuxSiliconMonitor {
         if let Ok(entries) = std::fs::read_dir("/sys/class/ieee80211") {
             for (index, entry) in entries.enumerate() {
                 if let Ok(entry) = entry {
-                    let phy_name = entry.file_name().to_string_lossy().to_string();
+                    let _phy_name = entry.file_name().to_string_lossy().to_string();
 
                     // Try to find the interface name
                     let interface_name = std::fs::read_dir(entry.path().join("device/net"))

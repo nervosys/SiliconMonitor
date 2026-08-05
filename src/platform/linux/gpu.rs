@@ -4,7 +4,6 @@ use crate::core::gpu::{GpuFrequency, GpuInfo, GpuStats, GpuStatus, GpuType};
 use crate::error::Result;
 use crate::platform::common::*;
 use std::collections::HashMap;
-use std::fs;
 use std::path::Path;
 
 #[cfg(feature = "nvml")]

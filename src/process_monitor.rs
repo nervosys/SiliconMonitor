@@ -1286,7 +1286,7 @@ impl ProcessMonitor {
                 .arg(format!("-{}", signal))
                 .arg(pid.to_string())
                 .status()
-                .map_err(|e| SimonError::Io(e))?;
+                .map_err(SimonError::Io)?;
 
             if !status.success() {
                 return Err(SimonError::Other(format!(

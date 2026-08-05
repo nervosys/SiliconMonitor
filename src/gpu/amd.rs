@@ -140,7 +140,7 @@ impl Gpu for AmdGpu {
             // Read EU/shader info if available
             let shader_cores = fs::read_to_string(format!("{}/gpu_busy_percent", device_path))
                 .ok()
-                .and_then(|_| {
+                .and({
                     // This indicates the file exists, but we need a different approach for EU count
                     // Try reading from debugfs or another source
                     None
@@ -430,7 +430,7 @@ fn parse_fdinfo_processes(card_path: &str) -> Result<Vec<GpuProcess>, Error> {
     let proc_dir = Path::new("/proc");
 
     // Get the card's DRM minor number from card path
-    let card_name = Path::new(card_path)
+    let _card_name = Path::new(card_path)
         .file_name()
         .and_then(|s| s.to_str())
         .unwrap_or("");
@@ -557,7 +557,7 @@ pub fn detect_gpus(collection: &mut GpuCollection) -> Result<(), Error> {
 
             cards.sort_by(|a, b| a.0.cmp(&b.0));
 
-            for (card_name, card_path) in cards {
+            for (_card_name, card_path) in cards {
                 let device_path = card_path.join("device");
 
                 // Check if it's an AMD GPU by reading driver symlink

@@ -196,7 +196,7 @@ fn detect_cgroup_version() -> CgroupVersion {
 fn detect_cgroupv2() -> Option<ContainerResources> {
     use std::fs;
     let base = "/sys/fs/cgroup";
-    let read_i64 = |name: &str| -> Option<i64> {
+    let _read_i64 = |name: &str| -> Option<i64> {
         fs::read_to_string(format!("{}/{}", base, name))
             .ok()
             .and_then(|v| v.trim().parse().ok())
@@ -210,7 +210,7 @@ fn detect_cgroupv2() -> Option<ContainerResources> {
     let (cpu_quota, cpu_period) = fs::read_to_string(format!("{}/cpu.max", base))
         .ok()
         .and_then(|v| {
-            let parts: Vec<&str> = v.trim().split_whitespace().collect();
+            let parts: Vec<&str> = v.split_whitespace().collect();
             if parts.len() == 2 {
                 let q = parts[0].parse::<i64>().ok();
                 let p = parts[1].parse::<u64>().ok();

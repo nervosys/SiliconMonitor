@@ -268,7 +268,7 @@ impl ServiceMonitor {
     pub fn start(&self, name: &str) -> Result<()> {
         #[cfg(target_os = "linux")]
         {
-            return self.linux_start_service(name);
+            self.linux_start_service(name)
         }
 
         #[cfg(target_os = "windows")]
@@ -289,7 +289,7 @@ impl ServiceMonitor {
     pub fn stop(&self, name: &str) -> Result<()> {
         #[cfg(target_os = "linux")]
         {
-            return self.linux_stop_service(name);
+            self.linux_stop_service(name)
         }
 
         #[cfg(target_os = "windows")]
@@ -310,7 +310,7 @@ impl ServiceMonitor {
     pub fn restart(&self, name: &str) -> Result<()> {
         #[cfg(target_os = "linux")]
         {
-            return self.linux_restart_service(name);
+            self.linux_restart_service(name)
         }
 
         #[cfg(target_os = "windows")]
@@ -334,7 +334,7 @@ impl ServiceMonitor {
     pub fn enable(&self, name: &str) -> Result<()> {
         #[cfg(target_os = "linux")]
         {
-            return self.linux_enable_service(name);
+            self.linux_enable_service(name)
         }
 
         #[cfg(target_os = "windows")]
@@ -355,7 +355,7 @@ impl ServiceMonitor {
     pub fn disable(&self, name: &str) -> Result<()> {
         #[cfg(target_os = "linux")]
         {
-            return self.linux_disable_service(name);
+            self.linux_disable_service(name)
         }
 
         #[cfg(target_os = "windows")]
@@ -376,7 +376,7 @@ impl ServiceMonitor {
     fn discover(&mut self) -> Result<()> {
         #[cfg(target_os = "linux")]
         {
-            return self.linux_discover();
+            self.linux_discover()
         }
 
         #[cfg(target_os = "windows")]

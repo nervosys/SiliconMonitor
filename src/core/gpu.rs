@@ -108,7 +108,7 @@ impl GpuStats {
         #[cfg(target_os = "linux")]
         {
             use crate::platform::linux::jetson::set_gpu_3d_scaling;
-            return set_gpu_3d_scaling(name, enabled);
+            set_gpu_3d_scaling(name, enabled)
         }
 
         #[cfg(not(target_os = "linux"))]
@@ -132,7 +132,7 @@ impl GpuStats {
         #[cfg(target_os = "linux")]
         {
             use crate::platform::linux::jetson::set_gpu_railgate;
-            return set_gpu_railgate(name, enabled);
+            set_gpu_railgate(name, enabled)
         }
 
         #[cfg(not(target_os = "linux"))]

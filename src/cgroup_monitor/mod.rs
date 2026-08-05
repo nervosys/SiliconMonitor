@@ -256,7 +256,7 @@ impl CgroupMonitor {
     fn list_controllers(version: &CgroupVersion) -> Vec<String> {
         match version {
             CgroupVersion::V2 => std::fs::read_to_string("/sys/fs/cgroup/cgroup.controllers")
-                .map(|s| s.trim().split_whitespace().map(String::from).collect())
+                .map(|s| s.split_whitespace().map(String::from).collect())
                 .unwrap_or_default(),
             CgroupVersion::V1 => {
                 // List controller directories
@@ -334,7 +334,7 @@ impl CgroupMonitor {
                     let friendly_name = if is_container {
                         // Try to extract container ID
                         name.split('-')
-                            .last()
+                            .next_back()
                             .unwrap_or(&name)
                             .replace(".scope", "")
                     } else {
@@ -342,7 +342,7 @@ impl CgroupMonitor {
                     };
 
                     let controllers = std::fs::read_to_string(path.join("cgroup.controllers"))
-                        .map(|s| s.trim().split_whitespace().map(String::from).collect())
+                        .map(|s| s.split_whitespace().map(String::from).collect())
                         .unwrap_or_default();
 
                     let cpu = Self::read_cpu_v2(&path);
@@ -373,7 +373,7 @@ impl CgroupMonitor {
     #[cfg(target_os = "linux")]
     fn read_cpu_v2(path: &std::path::Path) -> Option<CgroupCpu> {
         let max_str = std::fs::read_to_string(path.join("cpu.max")).ok()?;
-        let parts: Vec<&str> = max_str.trim().split_whitespace().collect();
+        let parts: Vec<&str> = max_str.split_whitespace().collect();
 
         let quota = if parts.first() == Some(&"max") {
             -1i64

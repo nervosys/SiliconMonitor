@@ -399,7 +399,7 @@ impl Gpu for IntelGpu {
 /// Parse fdinfo for Intel GPU processes
 #[cfg(target_os = "linux")]
 fn parse_intel_fdinfo_processes(
-    card_path: &str,
+    _card_path: &str,
     driver: &IntelDriver,
 ) -> Result<Vec<GpuProcess>, Error> {
     let mut processes = Vec::new();

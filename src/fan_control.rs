@@ -459,7 +459,7 @@ impl FanMonitor {
 
         #[cfg(target_os = "linux")]
         {
-            return self.linux_set_fan_speed(fan_name, speed_percent);
+            self.linux_set_fan_speed(fan_name, speed_percent)
         }
 
         #[cfg(target_os = "windows")]
@@ -486,7 +486,7 @@ impl FanMonitor {
     pub fn set_profile(&self, fan_name: &str, profile: FanProfile) -> Result<()> {
         #[cfg(target_os = "linux")]
         {
-            return self.linux_set_fan_profile(fan_name, profile);
+            self.linux_set_fan_profile(fan_name, profile)
         }
 
         #[cfg(not(target_os = "linux"))]

@@ -243,7 +243,7 @@ impl PciDeviceMonitor {
 
                 let class_hex = Self::read_trimmed(&base.join("class"));
                 let class_byte = u8::from_str_radix(
-                    &class_hex.trim_start_matches("0x").get(..2).unwrap_or("00"),
+                    class_hex.trim_start_matches("0x").get(..2).unwrap_or("00"),
                     16,
                 )
                 .unwrap_or(0);

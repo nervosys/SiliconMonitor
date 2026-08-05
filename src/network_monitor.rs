@@ -471,7 +471,7 @@ mod linux {
     }
 
     fn read_ip_addresses(iface_name: &str) -> Result<(Vec<String>, Vec<String>)> {
-        let mut ipv4_addrs = Vec::new();
+        let ipv4_addrs = Vec::new();
         let mut ipv6_addrs = Vec::new();
 
         // Read IPv4 addresses from /proc/net/fib_trie

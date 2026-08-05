@@ -155,11 +155,11 @@ fn find_jetson_fan_hwmon() -> Option<PathBuf> {
 pub fn read_fan_speed() -> Result<Option<u32>> {
     if let Some(hwmon) = find_jetson_fan_hwmon() {
         // Try pwm1 first (standard hwmon)
-        if let Ok(value) = read_file_u32(&hwmon.join("pwm1")) {
+        if let Ok(value) = read_file_u32(hwmon.join("pwm1")) {
             return Ok(Some(value));
         }
         // Try cur_pwm (Jetson-specific)
-        if let Ok(value) = read_file_u32(&hwmon.join("cur_pwm")) {
+        if let Ok(value) = read_file_u32(hwmon.join("cur_pwm")) {
             return Ok(Some(value));
         }
     }
@@ -169,7 +169,7 @@ pub fn read_fan_speed() -> Result<Option<u32>> {
 /// Read fan target speed
 pub fn read_fan_target_speed() -> Result<Option<u32>> {
     if let Some(hwmon) = find_jetson_fan_hwmon() {
-        if let Ok(value) = read_file_u32(&hwmon.join("target_pwm")) {
+        if let Ok(value) = read_file_u32(hwmon.join("target_pwm")) {
             return Ok(Some(value));
         }
     }

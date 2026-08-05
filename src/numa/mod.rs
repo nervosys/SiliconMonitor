@@ -292,7 +292,7 @@ impl NumaMonitor {
         // Distance matrix
         if let Some(first_node) = node_ids.first() {
             let dist_path = node_base.join(format!("node{}/distance", first_node));
-            if let Ok(text) = std::fs::read_to_string(&dist_path) {
+            if let Ok(_text) = std::fs::read_to_string(&dist_path) {
                 let size = node_ids.len();
                 let mut distances = Vec::with_capacity(size * size);
 
@@ -300,7 +300,7 @@ impl NumaMonitor {
                 for nid in &node_ids {
                     let p = node_base.join(format!("node{}/distance", nid));
                     if let Ok(line) = std::fs::read_to_string(&p) {
-                        for val in line.trim().split_whitespace() {
+                        for val in line.split_whitespace() {
                             if let Ok(d) = val.parse::<u32>() {
                                 distances.push(d);
                             }

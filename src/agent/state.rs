@@ -211,7 +211,7 @@ impl SystemState {
                         .unwrap_or_else(|| "CPU".to_string()),
                     cores: num_cpus,
                     threads: num_cpus,
-                    utilization: utilization as f32,
+                    utilization: utilization,
                     temperature_c: None,
                     frequency_mhz: stats
                         .cores
@@ -220,7 +220,7 @@ impl SystemState {
                     per_core_usage: stats
                         .cores
                         .iter()
-                        .map(|c| (100.0 - c.idle.unwrap_or(100.0)) as f32)
+                        .map(|c| (100.0 - c.idle.unwrap_or(100.0)))
                         .collect(),
                 });
             }

@@ -92,7 +92,7 @@ fn linux_groups() -> Vec<ProfileGroup> {
             "Controller features",
             ctrl_dir.display().to_string(),
         );
-        let mut push_str = |g: &mut ProfileGroup, file: &str, id: &str, label: &str| {
+        let push_str = |g: &mut ProfileGroup, file: &str, id: &str, label: &str| {
             if let Ok(v) = fs::read_to_string(ctrl_dir.join(file)) {
                 let v = v.trim().to_string();
                 if !v.is_empty() {

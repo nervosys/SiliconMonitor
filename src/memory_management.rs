@@ -660,7 +660,7 @@ impl MemoryMonitor {
                             .next()
                             .unwrap_or("")
                             .split('/')
-                            .last()
+                            .next_back()
                             .unwrap_or("unknown")
                             .to_string();
 

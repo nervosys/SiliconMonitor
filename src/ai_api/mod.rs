@@ -499,12 +499,12 @@ impl AiDataApi {
             use crate::platform::linux::memory;
             if let Ok(mem) = memory::read_memory_stats() {
                 summary.memory = Some(MemorySummary {
-                    total_mb: (mem.ram.total / 1024) as u64,
-                    used_mb: (mem.ram.used / 1024) as u64,
-                    free_mb: (mem.ram.free / 1024) as u64,
-                    cached_mb: (mem.ram.cached / 1024) as u64,
-                    swap_total_mb: (mem.swap.total / 1024) as u64,
-                    swap_used_mb: (mem.swap.used / 1024) as u64,
+                    total_mb: (mem.ram.total / 1024),
+                    used_mb: (mem.ram.used / 1024),
+                    free_mb: (mem.ram.free / 1024),
+                    cached_mb: (mem.ram.cached / 1024),
+                    swap_total_mb: (mem.swap.total / 1024),
+                    swap_used_mb: (mem.swap.used / 1024),
                     usage_percent: if mem.ram.total > 0 {
                         (mem.ram.used as f32 / mem.ram.total as f32) * 100.0
                     } else {

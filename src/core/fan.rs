@@ -68,7 +68,7 @@ impl FanStats {
         #[cfg(target_os = "linux")]
         {
             use crate::platform::linux::jetson::set_fan_speed;
-            return set_fan_speed(name, speed, index);
+            set_fan_speed(name, speed, index)
         }
 
         #[cfg(not(target_os = "linux"))]
@@ -92,7 +92,7 @@ impl FanStats {
         #[cfg(target_os = "linux")]
         {
             use crate::platform::linux::jetson::set_fan_profile;
-            return set_fan_profile(name, profile);
+            set_fan_profile(name, profile)
         }
 
         #[cfg(not(target_os = "linux"))]

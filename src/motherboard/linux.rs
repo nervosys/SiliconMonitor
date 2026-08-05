@@ -235,8 +235,8 @@ pub fn enumerate() -> Result<Vec<Box<dyn MotherboardDevice>>, Error> {
 
     let mut devices: Vec<Box<dyn MotherboardDevice>> = Vec::new();
 
-    for entry in fs::read_dir(hwmon_dir).map_err(|e| Error::IoError(e))? {
-        let entry = entry.map_err(|e| Error::IoError(e))?;
+    for entry in fs::read_dir(hwmon_dir).map_err(Error::IoError)? {
+        let entry = entry.map_err(Error::IoError)?;
         let path = entry.path();
 
         // Skip if not a directory
@@ -458,8 +458,8 @@ pub fn get_pcie_devices() -> Result<Vec<PcieDeviceInfo>, Error> {
 
     let mut devices = Vec::new();
 
-    for entry in fs::read_dir(pci_dir).map_err(|e| Error::IoError(e))? {
-        let entry = entry.map_err(|e| Error::IoError(e))?;
+    for entry in fs::read_dir(pci_dir).map_err(Error::IoError)? {
+        let entry = entry.map_err(Error::IoError)?;
         let path = entry.path();
         if !path.is_dir() {
             continue;
@@ -481,7 +481,7 @@ pub fn get_pcie_devices() -> Result<Vec<PcieDeviceInfo>, Error> {
             .map(|s| s.trim().to_string());
 
         // Classify device from PCI class code
-        let device_class = class.as_deref().map(|c| classify_pci_class(c));
+        let device_class = class.as_deref().map(classify_pci_class);
 
         // Read link speed/width from /sys/bus/pci/devices/XXXX:XX:XX.X/
         let current_link_speed = fs::read_to_string(path.join("current_link_speed"))
@@ -576,15 +576,15 @@ pub fn get_sata_devices() -> Result<Vec<SataDeviceInfo>, Error> {
 
     let mut devices = Vec::new();
 
-    for entry in fs::read_dir(block_dir).map_err(|e| Error::IoError(e))? {
-        let entry = entry.map_err(|e| Error::IoError(e))?;
+    for entry in fs::read_dir(block_dir).map_err(Error::IoError)? {
+        let entry = entry.map_err(Error::IoError)?;
         let name = entry.file_name().to_string_lossy().to_string();
 
         // Skip partitions (sda1, nvme0n1p1) - only include whole disks
         if name.contains('p') && name.starts_with("nvme") {
             continue; // Skip NVMe partition
         }
-        if name.chars().last().map_or(false, |c| c.is_ascii_digit()) && !name.starts_with("nvme") {
+        if name.chars().last().is_some_and(|c| c.is_ascii_digit()) && !name.starts_with("nvme") {
             // Check if it's a partition of sdX type
             let base: String = name.chars().take_while(|c| !c.is_ascii_digit()).collect();
             if base.len() < name.len()

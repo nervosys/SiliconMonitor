@@ -235,7 +235,7 @@ impl PrinterMonitor {
         let mut in_printer = false;
 
         for line in output.lines() {
-            if line.starts_with("printer ") {
+            if let Some(rest) = line.strip_prefix("printer ") {
                 // Save previous
                 if in_printer && !current_name.is_empty() {
                     let port = device_map.get(&current_name).cloned().unwrap_or_default();
@@ -260,7 +260,6 @@ impl PrinterMonitor {
                 }
 
                 // Parse: "printer NAME is idle."  or "printer NAME disabled since ..."
-                let rest = &line["printer ".len()..];
                 let name_end = rest
                     .find(" is ")
                     .or_else(|| rest.find(" disabled"))
