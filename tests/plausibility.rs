@@ -275,9 +275,18 @@ fn process_table_is_plausible() {
 
     // State must be a code we actually mean, including 'U' for "this platform does
     // not tell us".
+    //
+    // The reader passes through whatever character `/proc/[pid]/stat` reports, so
+    // this list has to be the set the kernel documents rather than the subset that
+    // happens to show up. It was written on Windows and omitted `I` — idle kernel
+    // thread, which Linux has reported since 3.13 and which every `kworker/R-*`
+    // carries. The first Linux CI run that ever reached this test failed on PID 4.
     for proc in &snap.processes {
         assert!(
-            matches!(proc.state, 'R' | 'S' | 'D' | 'Z' | 'T' | 'U'),
+            matches!(
+                proc.state,
+                'R' | 'S' | 'D' | 'Z' | 'T' | 't' | 'W' | 'X' | 'x' | 'K' | 'P' | 'I' | 'U'
+            ),
             "process {} ({}) reports unknown state {:?}",
             proc.pid,
             proc.name,

@@ -8,7 +8,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         // `SiliconMonitor` has no `snapshot`; the type with one — returning a
         // `Snapshot` whose `gpus` is the map this example walks — is `stats::Simon`.
         // Being Linux-only, this example had never been compiled.
-        use simonlib::{core::gpu::GpuStats, stats::Simon};
+        // `GpuStats` is used only by the commented-out control block below.
+        use simonlib::stats::Simon;
 
         let mut stats = Simon::new()?;
         let snapshot = stats.snapshot()?;
@@ -39,11 +40,12 @@ fn main() -> Result<(), Box<dyn Error>> {
         println!("\n=== Attempting to toggle 3D scaling ===");
         println!("Note: This requires root permissions on Jetson devices");
 
-        let mut gpu_stats = GpuStats::new();
-
         // This would toggle 3D scaling (commented out for safety)
-        // Uncomment and run with sudo to test
+        // Uncomment and run with sudo to test. `gpu_stats` is constructed inside
+        // the block rather than outside it — left outside, it was a binding the
+        // live code never used, which clippy rejects under -D warnings.
         /*
+        let mut gpu_stats = simonlib::core::gpu::GpuStats::new();
         if let Some((name, gpu)) = snapshot.gpus.iter().next() {
             if let Some(current_scaling) = gpu.status.scaling_3d {
                 println!("Toggling 3D scaling for GPU: {}", name);

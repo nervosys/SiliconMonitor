@@ -1460,7 +1460,10 @@ mod linux {
         // 10: cmajflt, 11: utime, 12: stime, 13: cutime, 14: cstime,
         // 15: priority, 16: nice, 17: num_threads, 18: itrealvalue,
         // 19: starttime, 20: vsize, 21: rss
-        let state = stat_fields[0].chars().next().unwrap_or('?');
+        // 'U' rather than '?' for an unreadable state: the rest of simon uses 'U'
+        // to mean "not reported", and two different sentinels for one condition
+        // means every consumer has to know both.
+        let state = stat_fields[0].chars().next().unwrap_or('U');
         let parent_pid: u32 = stat_fields[1].parse().unwrap_or(0);
         let utime: u64 = stat_fields[11].parse().unwrap_or(0);
         let stime: u64 = stat_fields[12].parse().unwrap_or(0);
