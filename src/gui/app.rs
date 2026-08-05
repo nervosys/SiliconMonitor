@@ -6789,7 +6789,11 @@ impl SiliconMonitorApp {
 
         #[cfg(not(target_os = "windows"))]
         {
-            if let Ok(_) = std::process::Command::new("ollama").arg("serve").spawn() {
+            if std::process::Command::new("ollama")
+                .arg("serve")
+                .spawn()
+                .is_ok()
+            {
                 self.ai_status_message = Some((
                     "Ollama started! Wait a few seconds and click 'Retry Connection'.".to_string(),
                     false,

@@ -70,8 +70,15 @@ pub fn com_guard() -> Option<wmi::COMLibrary> {
 }
 
 /// Per-thread COM guard (no-op on non-Windows targets).
+///
+/// Returns `Option<()>` rather than `()` so the five call sites can keep binding
+/// the result to hold the guard for the scope, as they must on Windows. Returning
+/// unit made every one of those a `let _x = ()`, which clippy rejects — and the
+/// fix belongs here rather than in five cfg'd bindings at the call sites.
 #[cfg(not(target_os = "windows"))]
-pub fn com_guard() {}
+pub fn com_guard() -> Option<()> {
+    None
+}
 
 // ============================================================================
 // Plain-data snapshot types

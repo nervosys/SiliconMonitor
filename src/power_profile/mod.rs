@@ -446,21 +446,24 @@ impl PowerProfileMonitor {
         }
 
         // Brightness
-        if let Ok(entries) = std::fs::read_dir("/sys/class/backlight") {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                let cur = std::fs::read_to_string(path.join("brightness"))
-                    .ok()
-                    .and_then(|s| s.trim().parse::<u32>().ok());
-                let max = std::fs::read_to_string(path.join("max_brightness"))
-                    .ok()
-                    .and_then(|s| s.trim().parse::<u32>().ok());
-                if let (Some(c), Some(m)) = (cur, max) {
-                    if m > 0 {
-                        self.display_brightness = Some(((c as f32 / m as f32) * 100.0) as u8);
-                    }
+        // Only the first backlight is read — the loop ended in an unconditional
+        // `break`, so it never iterated. `next()` says that outright.
+        if let Some(entry) = std::fs::read_dir("/sys/class/backlight")
+            .ok()
+            .and_then(|mut entries| entries.next())
+            .and_then(|e| e.ok())
+        {
+            let path = entry.path();
+            let cur = std::fs::read_to_string(path.join("brightness"))
+                .ok()
+                .and_then(|s| s.trim().parse::<u32>().ok());
+            let max = std::fs::read_to_string(path.join("max_brightness"))
+                .ok()
+                .and_then(|s| s.trim().parse::<u32>().ok());
+            if let (Some(c), Some(m)) = (cur, max) {
+                if m > 0 {
+                    self.display_brightness = Some(((c as f32 / m as f32) * 100.0) as u8);
                 }
-                break;
             }
         }
     }
