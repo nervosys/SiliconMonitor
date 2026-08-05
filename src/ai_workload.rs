@@ -561,6 +561,7 @@ impl AiWorkloadMonitor {
 
     #[cfg(target_os = "macos")]
     fn detect_macos(&mut self) -> Result<()> {
+        use crate::error::SimonError;
         use std::process::Command;
 
         // Use ps to list all processes with full command lines
@@ -612,7 +613,7 @@ impl AiWorkloadMonitor {
 
             // Analyze the process
             if let Some(workload) = self.analyze_process_macos(pid, &cmdline)? {
-                self.workloads.insert(pid, workload);
+                self.workloads.push(workload);
             }
         }
 
@@ -659,36 +660,41 @@ impl AiWorkloadMonitor {
         let framework = self.detect_framework(cmdline);
         let workload_type = self.detect_workload_type(cmdline);
 
-        // For macOS, check if it's using ANE (Apple Neural Engine) via Metal
-        let accelerator = if cmdline.contains("mlx") || cmdline.contains("coreml") {
-            HardwareAccelerator::Npu // ANE
-        } else if cmdline.contains("metal") || cmdline.contains("mps") {
-            HardwareAccelerator::Gpu // Metal GPU
-        } else {
-            HardwareAccelerator::Cpu
-        };
+        // This function was written against an older `AiWorkload` — it set
+        // process_name, gpu_utilization, gpu_memory_mb, system_memory_mb,
+        // cpu_percent, model_name, and an `accelerator` of a `HardwareAccelerator`
+        // type that does not exist, and reached for a `CloudProvider::HuggingFace`
+        // variant that does not either. Being macOS-only it had never been
+        // compiled, so none of that was ever caught. It now builds the struct the
+        // rest of the module uses.
+        //
+        // `memory_mb` is still read above because `ps` is already being run, but
+        // the struct has no field for resident memory; the process monitor owns
+        // that. Dropping the read entirely would remove a working measurement in
+        // case this grows a home for it, so it is bound and explicitly unused.
+        let _ = memory_mb;
 
-        // Check for specific macOS AI tools
         let cloud_provider = if cmdline.contains("ollama") {
             CloudProvider::OnPremise
-        } else if cmdline.contains("huggingface") {
-            CloudProvider::HuggingFace
         } else {
             CloudProvider::Unknown
         };
 
         Ok(Some(AiWorkload {
             pid,
-            process_name: process_name.clone(),
+            name: process_name,
+            cmdline: cmdline.to_string(),
             framework,
             workload_type,
-            gpu_utilization: 0.0, // Not available without Metal performance API
-            gpu_memory_mb: 0,     // Not easily available on macOS
-            system_memory_mb: memory_mb,
-            cpu_percent: 0.0,
-            model_name: None,
-            accelerator,
+            // `ps` gives no training or inference telemetry, and there is no Metal
+            // performance API call here to supply GPU figures.
+            training_metrics: None,
+            inference_metrics: None,
+            gpu_indices: Vec::new(),
+            tpu_config: None,
+            distributed_config: None,
             cloud_provider,
+            env_vars: HashMap::new(),
             start_time: std::time::SystemTime::now(),
         }))
     }

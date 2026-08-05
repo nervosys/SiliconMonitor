@@ -482,3 +482,69 @@ fn read_fan_stats() -> std::collections::HashMap<String, crate::core::fan::FanIn
 
     fans
 }
+
+// Platform implementations for macOS.
+//
+// `stats.rs` has carried Linux and Windows implementations of these since the
+// beginning and never had macOS ones, so `Simon` could not be built there at all —
+// the manifest bug meant nothing ever tried, and the gap went unnoticed.
+//
+// These report `UnsupportedPlatform` rather than guessing. Writing real ones means
+// sysctl and IOKit work that has to be verified on actual hardware; a plausible
+// implementation that returned made-up numbers would be worse than an honest
+// refusal, because callers cannot tell fabricated telemetry from measured
+// telemetry. `SiliconMonitor` (see `lib.rs`) has working macOS paths and is the
+// type to use there today.
+#[cfg(target_os = "macos")]
+mod macos_stats {
+    use super::*;
+    use crate::error::SimonError;
+
+    fn unsupported(what: &str) -> SimonError {
+        SimonError::UnsupportedPlatform(format!(
+            "{what} is not implemented for macOS in `stats::Simon`; use `SiliconMonitor`"
+        ))
+    }
+
+    pub(super) fn read_cpu_stats() -> Result<CpuStats> {
+        Err(unsupported("CPU statistics"))
+    }
+
+    pub(super) fn read_gpu_stats() -> Result<GpuStats> {
+        Err(unsupported("GPU statistics"))
+    }
+
+    pub(super) fn read_memory_stats() -> Result<MemoryStats> {
+        Err(unsupported("memory statistics"))
+    }
+
+    pub(super) fn read_power_stats() -> Result<PowerStats> {
+        Err(unsupported("power statistics"))
+    }
+
+    pub(super) fn read_temperature_stats() -> Result<TemperatureStats> {
+        Err(unsupported("temperature statistics"))
+    }
+
+    pub(super) fn detect_platform_info() -> Result<BoardInfo> {
+        Err(unsupported("platform detection"))
+    }
+
+    pub(super) fn read_uptime() -> Result<Duration> {
+        Err(unsupported("uptime"))
+    }
+
+    pub(super) fn read_process_stats() -> Result<ProcessStats> {
+        Err(unsupported("process statistics"))
+    }
+
+    pub(super) fn read_engine_stats() -> Result<EngineStats> {
+        Err(unsupported("engine statistics"))
+    }
+}
+
+#[cfg(target_os = "macos")]
+use macos_stats::{
+    detect_platform_info, read_cpu_stats, read_engine_stats, read_gpu_stats, read_memory_stats,
+    read_power_stats, read_process_stats, read_temperature_stats, read_uptime,
+};

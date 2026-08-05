@@ -83,7 +83,7 @@ impl DiskDevice for MacDisk {
         let output = Command::new("iostat")
             .args(["-d", "-K", &self.name, "1", "1"])
             .output()
-            .map_err(|_| Error::ReadFailed)?;
+            .map_err(|_| Error::QueryFailed("iostat or diskutil query failed".to_string()))?;
 
         let text = String::from_utf8_lossy(&output.stdout);
         let lines: Vec<&str> = text.lines().collect();
@@ -98,26 +98,36 @@ impl DiskDevice for MacDisk {
                 let tps: f64 = values[1].parse().unwrap_or(0.0);
                 let mb_per_s: f64 = values[2].parse().unwrap_or(0.0);
 
+                // `iostat -d -K` reports rates, not the cumulative counters this
+                // struct is built around, and it gives one combined throughput
+                // figure with no way to attribute it to reads or writes. An earlier
+                // version halved that figure into both directions, so a pure-read
+                // workload was reported as 50% writes — a split that was never
+                // measured. The optional fields carry `None` for the same reason:
+                // unknown, rather than a number nothing observed.
+                //
+                // `tps` (transfers/second) has no home in this struct: every
+                // operation field is a cumulative count, and a rate cannot be
+                // stored in one without inventing an interval.
+                let _ = (tps, mb_per_s);
                 return Ok(DiskIoStats {
-                    read_ios: 0, // Not available from basic iostat
-                    write_ios: 0,
                     read_bytes: 0,
                     write_bytes: 0,
-                    // `iostat` reports one combined throughput figure and gives no
-                    // way to attribute it. This used to halve that number into both
-                    // directions, so a pure-read workload was reported as 50% writes
-                    // — a split that was never measured. Zero here means "unknown",
-                    // matching the ops counters above.
-                    read_bytes_per_sec: 0,
-                    write_bytes_per_sec: 0,
-                    iops: tps as u64,
-                    avg_latency_us: None,
+                    read_ops: 0,
+                    write_ops: 0,
+                    read_time_ms: None,
+                    write_time_ms: None,
                     queue_depth: None,
+                    avg_latency_us: None,
+                    read_throughput: None,
+                    write_throughput: None,
                 });
             }
         }
 
-        Err(Error::ReadFailed)
+        Err(Error::QueryFailed(
+            "iostat or diskutil query failed".to_string(),
+        ))
     }
 
     fn health(&self) -> Result<DiskHealth, Error> {
@@ -125,7 +135,7 @@ impl DiskDevice for MacDisk {
         let output = Command::new("diskutil")
             .args(["info", self.device_path.to_str().unwrap_or("")])
             .output()
-            .map_err(|_| Error::ReadFailed)?;
+            .map_err(|_| Error::QueryFailed("iostat or diskutil query failed".to_string()))?;
 
         let text = String::from_utf8_lossy(&output.stdout);
 
@@ -133,7 +143,7 @@ impl DiskDevice for MacDisk {
         for line in text.lines() {
             if line.contains("SMART Status:") {
                 if line.contains("Verified") || line.contains("OK") {
-                    return Ok(DiskHealth::Good);
+                    return Ok(DiskHealth::Healthy);
                 } else if line.contains("Failing") {
                     return Ok(DiskHealth::Critical);
                 }
@@ -156,13 +166,13 @@ pub fn enumerate() -> Result<Vec<Box<dyn DiskDevice>>, Error> {
     let output = Command::new("diskutil")
         .args(["list", "-plist"])
         .output()
-        .map_err(|_| Error::EnumerationFailed)?;
+        .map_err(|_| Error::QueryFailed("device enumeration failed".to_string()))?;
 
     // Parse simple format (non-plist) as fallback
     let output = Command::new("diskutil")
         .args(["list"])
         .output()
-        .map_err(|_| Error::EnumerationFailed)?;
+        .map_err(|_| Error::QueryFailed("device enumeration failed".to_string()))?;
 
     let text = String::from_utf8_lossy(&output.stdout);
 
@@ -204,7 +214,7 @@ pub fn enumerate() -> Result<Vec<Box<dyn DiskDevice>>, Error> {
                 // Determine disk type from context
                 let disk_type = if line.contains("internal") {
                     if line.contains("SSD") || line.contains("NVMe") || line.contains("Apple SSD") {
-                        DiskType::Ssd
+                        DiskType::NvmeSsd
                     } else {
                         DiskType::Unknown
                     }

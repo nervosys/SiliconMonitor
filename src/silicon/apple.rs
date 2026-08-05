@@ -293,7 +293,8 @@ impl AppleSiliconMonitor {
             // Parse GPU data
             if let Some(Value::Dictionary(gpu)) = dict.get("gpu") {
                 if let Some(Value::Integer(freq_hz)) = gpu.get("freq_hz") {
-                    data.gpu_freq_mhz = (*freq_hz as u64 / 1_000_000) as u32;
+                    // `plist::Integer` is not a primitive; it must be asked for its value.
+                    data.gpu_freq_mhz = (freq_hz.as_unsigned().unwrap_or(0) / 1_000_000) as u32;
                 }
                 if let Some(Value::Real(idle_ratio)) = gpu.get("idle_ratio") {
                     data.gpu_active = ((1.0 - idle_ratio) * 100.0) as u8;

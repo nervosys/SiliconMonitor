@@ -203,7 +203,7 @@ impl UsbMonitor {
                         product: Some(name),
                         description: None,
                         serial_number: current_serial.take(),
-                        class: UsbDeviceClass::Other,
+                        class: UsbDeviceClass::Unknown,
                         speed: current_speed,
                     });
                     current_vendor_id = 0;
@@ -281,7 +281,7 @@ impl UsbMonitor {
                 product: Some(name),
                 description: None,
                 serial_number: current_serial.take(),
-                class: UsbDeviceClass::Other,
+                class: UsbDeviceClass::Unknown,
                 speed: current_speed,
             });
         }

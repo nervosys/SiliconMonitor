@@ -907,7 +907,10 @@ mod macos {
                             // IPv4 address
                             let sin = &*(ifa.ifa_addr as *const sockaddr_in);
                             let ip = Ipv4Addr::from(u32::from_be(sin.sin_addr.s_addr));
-                            entry.ipv4_address = Some(IpAddr::V4(ip));
+                            // The field is `ipv4_addresses: Vec<String>`; an
+                            // interface can hold several, and the old singular
+                            // assignment would have kept only the last.
+                            entry.ipv4_addresses.push(ip.to_string());
                         }
                         AF_INET6 => {
                             // IPv6 address
@@ -915,7 +918,7 @@ mod macos {
                             let ip = Ipv6Addr::from(sin6.sin6_addr.s6_addr);
                             // Skip link-local addresses
                             if !ip.is_loopback() {
-                                entry.ipv6_address = Some(IpAddr::V6(ip));
+                                entry.ipv6_addresses.push(ip.to_string());
                             }
                         }
                         AF_LINK => {
@@ -929,7 +932,7 @@ mod macos {
                                 entry.tx_packets = if_data.ifi_opackets as u64;
                                 entry.rx_errors = if_data.ifi_ierrors as u64;
                                 entry.tx_errors = if_data.ifi_oerrors as u64;
-                                entry.rx_dropped = if_data.ifi_iqdrops as u64;
+                                entry.rx_drops = if_data.ifi_iqdrops as u64;
                                 entry.mtu = Some(if_data.ifi_mtu);
 
                                 // Speed from baudrate (bits/s to Mbps)
