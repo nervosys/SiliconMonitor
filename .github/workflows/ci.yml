@@ -1,5 +1,22 @@
 name: CI
 
+# Every job below builds with `--all-features`, not `--features full`.
+#
+# `full` deliberately omits `jetson-utils`, so CI never compiled the code behind
+# it: `src/utils/{swap,clocks,power_mode,security}.rs`. That is shipped code a user
+# can turn on, and it is the most safety-sensitive code in the repository — the
+# feature's own comment points at SECURITY.md. It accumulated 25 clippy warnings
+# without a single CI run ever looking at it. `jetson-utils` enables no extra
+# dependencies (`jetson-utils = []`); it only gates `cfg`, so building everything
+# costs nothing but catches that whole surface.
+#
+# Clippy additionally runs with `--all-targets`. Without it, examples and
+# integration tests go unlinted — which is how `examples/agent_backends.rs` came to
+# abort on its own second step, unnoticed, for months.
+#
+# The delta is not hypothetical: `--features full` runs 70 doc tests where
+# `--all-features` runs 73, and the three it skipped did not compile.
+
 on:
   push:
     branches: [master, main]
@@ -16,7 +33,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo check --features full
+      - run: cargo check --all-features --all-targets
 
   test:
     name: Test
@@ -27,7 +44,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo test --features full
+      # Documentation tests need a git checkout with history for
+      # `tests/documentation_links.rs`, which enumerates tracked markdown via
+      # `git ls-files`. actions/checkout provides one by default.
+      - run: cargo test --all-features
 
   fmt:
     name: Format
@@ -47,4 +67,4 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
-      - run: cargo clippy --features full -- -D warnings
+      - run: cargo clippy --all-features --all-targets -- -D warnings

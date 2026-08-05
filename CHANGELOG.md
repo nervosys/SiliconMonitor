@@ -5,6 +5,28 @@ All notable changes to Silicon Monitor will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **CI never compiled the `jetson-utils` feature.** Every job ran
+  `--features full`, and `full` deliberately omits it — so
+  `src/utils/{swap,clocks,power_mode,security}.rs` was never checked, linted, or
+  tested by any CI run. That is shipped code a user can enable, and it is the most
+  safety-sensitive in the repository; the feature's own comment points at
+  SECURITY.md. It had accumulated 25 clippy warnings, invisible. `jetson-utils`
+  pulls in no dependencies — it only gates `cfg` — so building everything costs
+  nothing. All jobs now use `--all-features`.
+- **Clippy ran without `--all-targets`,** so examples and integration tests were
+  never linted. That is how `examples/agent_backends.rs` came to abort on its own
+  second step, unnoticed, for months.
+- **Three doc tests never ran in CI:** `--features full` runs 70, `--all-features`
+  runs 73, and the three it skipped did not compile.
+- The documentation tests added in 2.1.1 panicked outside a git checkout, which
+  would have broken `cargo test` for anyone building from the packaged tarball or a
+  vendored copy. They now skip when there is no checkout to enumerate, while still
+  refusing to pass vacuously inside one.
+
 ## [2.1.1] - 2026-08-05
 
 ### Fixed

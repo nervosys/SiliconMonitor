@@ -13,20 +13,30 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// Markdown files tracked by git, so generated and vendored trees are skipped.
-fn tracked_markdown() -> Vec<PathBuf> {
+///
+/// Returns `None` when there is no git checkout to ask — the published `.crate`
+/// tarball and vendored builds have no `.git`, and these two tests are about
+/// repository hygiene rather than about anything the library does at runtime.
+/// Failing there would make `cargo test` on a packaged copy fail for a reason the
+/// person running it cannot act on.
+fn tracked_markdown() -> Option<Vec<PathBuf>> {
     let root = repo_root();
     let output = Command::new("git")
         .args(["ls-files", "*.md"])
         .current_dir(&root)
         .output()
-        .expect("git ls-files should run inside the repository");
-    assert!(output.status.success(), "git ls-files failed");
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
 
-    String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .filter(|line| !line.trim().is_empty())
-        .map(|line| root.join(line))
-        .collect()
+    Some(
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| root.join(line))
+            .collect(),
+    )
 }
 
 fn repo_root() -> PathBuf {
@@ -66,10 +76,15 @@ fn is_local(target: &str) -> bool {
 
 #[test]
 fn every_relative_link_and_image_resolves() {
-    let files = tracked_markdown();
+    let Some(files) = tracked_markdown() else {
+        eprintln!("skipping: not a git checkout, so there is no file list to check");
+        return;
+    };
+    // Inside a checkout the list must be non-empty, or the assertions below run
+    // over nothing and report success without having examined anything.
     assert!(
         !files.is_empty(),
-        "no tracked markdown found; the checker would pass vacuously"
+        "git reported no tracked markdown; the checker would pass vacuously"
     );
 
     let mut broken = Vec::new();
@@ -125,8 +140,17 @@ fn documentation_carries_no_machine_identifiers() {
     // routine way to leak one, so the routine gets a check.
     const IDENTIFIERS: &[&str] = &["heimdall", "adamm"];
 
+    let Some(files) = tracked_markdown() else {
+        eprintln!("skipping: not a git checkout, so there is no file list to check");
+        return;
+    };
+    assert!(
+        !files.is_empty(),
+        "git reported no tracked markdown; the checker would pass vacuously"
+    );
+
     let mut found = Vec::new();
-    for file in tracked_markdown() {
+    for file in files {
         let Ok(text) = std::fs::read_to_string(&file) else {
             continue;
         };
