@@ -88,10 +88,25 @@ fn cpu_readings_are_physically_possible() {
         assert!(!value.is_nan(), "aggregate {label} is NaN");
     }
 
+    // These three are shares of one total, so together they cannot exceed it —
+    // that is the invariant worth asserting, and it catches double-counting or a
+    // wrong denominator on any platform.
+    //
+    // They are *not* required to reach 100. This used to demand ~100 and passed
+    // only because it had never run anywhere but Windows, where user/system/idle
+    // are the whole story. Linux divides by the sum of every field in
+    // `/proc/stat`, so nice, iowait, irq, softirq and steal are real time that
+    // belongs to none of these three. A virtualized CI runner has enough steal and
+    // iowait to put the total at 94%, which is an accurate reading, not a fault.
     let sum = total.user + total.system + total.idle;
     assert!(
-        (sum - 100.0).abs() < 5.0,
-        "aggregate user+system+idle = {sum}%, expected ~100"
+        sum <= 100.5,
+        "aggregate user+system+idle = {sum}%, which exceeds the whole"
+    );
+    // A reading of exactly zero across all three means nothing was measured.
+    assert!(
+        sum > 0.0,
+        "aggregate user+system+idle is 0% — no CPU time was accounted for at all"
     );
 
     // Per-core figures must be per-core, not one number replicated. Identical
