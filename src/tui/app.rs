@@ -2469,11 +2469,15 @@ mod tests {
             "collector published no snapshot within 45s; the pipeline is not running"
         );
 
-        // CPU statistics have Linux and Windows readers and no macOS one —
-        // `CpuStats::new` leaves `cores` empty there, so the display state
-        // legitimately has nothing to show. Asserting otherwise would be asserting
-        // that a reader exists which does not; the gap is recorded in
-        // `stats::macos_stats` rather than papered over here.
+        // CPU and memory statistics have Linux and Windows readers and no macOS
+        // ones, so the display state legitimately has nothing to show there.
+        // Asserting otherwise would be asserting that readers exist which do not;
+        // the gap is recorded in `stats::macos_stats` rather than papered over here.
+        //
+        // What the test still checks on every platform is the part it is actually
+        // about: that the collector publishes a snapshot, that applying it is
+        // idempotent, and that the render guard consumes the generation exactly
+        // once. Those hold regardless of which readers a platform has.
         #[cfg(any(target_os = "linux", target_os = "windows"))]
         {
             assert!(
@@ -2484,11 +2488,15 @@ mod tests {
                 !app.cpu_info.per_core_usage.is_empty(),
                 "per-core usage did not reach the display state"
             );
+            assert!(
+                app.memory_info.total > 0,
+                "memory total did not reach the display state"
+            );
         }
-        assert!(
-            app.memory_info.total > 0,
-            "memory total did not reach the display state"
-        );
+
+        // This one holds everywhere: on a platform with no reader both are zero,
+        // and zero does not exceed zero. A used figure above total would be wrong
+        // on any platform.
         assert!(
             app.memory_info.used <= app.memory_info.total,
             "memory used {} exceeds total {}",
