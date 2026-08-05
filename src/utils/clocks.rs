@@ -44,7 +44,7 @@ pub fn enable() -> Result<()> {
     let output = Command::new("sudo")
         .arg(&jetson_clocks)
         .output()
-        .map_err(|e| SimonError::Io(e))?;
+        .map_err(SimonError::Io)?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -68,7 +68,7 @@ pub fn disable() -> Result<()> {
         .arg(&jetson_clocks)
         .arg("--restore")
         .output()
-        .map_err(|e| SimonError::Io(e))?;
+        .map_err(SimonError::Io)?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -88,7 +88,7 @@ pub fn show() -> Result<JetsonClocksStatus> {
     let output = Command::new(&jetson_clocks)
         .arg("--show")
         .output()
-        .map_err(|e| SimonError::Io(e))?;
+        .map_err(SimonError::Io)?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -176,7 +176,7 @@ pub fn store() -> Result<()> {
         .arg(&jetson_clocks)
         .arg("--store")
         .output()
-        .map_err(|e| SimonError::Io(e))?;
+        .map_err(SimonError::Io)?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);

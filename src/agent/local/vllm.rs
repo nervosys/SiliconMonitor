@@ -18,7 +18,7 @@
 //! # Example
 //!
 //! ```no_run
-//! use simonlib::agent::local::{VllmClient, InferenceRequest};
+//! use simonlib::agent::local::{VllmClient, InferenceRequest, LocalInferenceClient};
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! let client = VllmClient::new("http://localhost:8000")?;
@@ -74,6 +74,11 @@ impl VllmClient {
     }
 
     /// Create default vLLM client (localhost:8000)
+    ///
+    /// Not `Default::default` — constructing this validates the endpoint and so
+    /// can fail, which `Default` has no way to report. Renaming it would break
+    /// callers on the published API for a purely cosmetic gain.
+    #[allow(clippy::should_implement_trait)]
     pub fn default() -> Result<Self> {
         Self::new("http://localhost:8000")
     }

@@ -40,7 +40,7 @@ pub fn verify_sudo_available() -> Result<()> {
 
     // Verify user has sudo privileges without password prompt
     // The -n flag prevents sudo from prompting for password
-    let sudo_check = Command::new("sudo").args(&["-n", "true"]).output();
+    let sudo_check = Command::new("sudo").args(["-n", "true"]).output();
 
     match sudo_check {
         Ok(output) if output.status.success() => {

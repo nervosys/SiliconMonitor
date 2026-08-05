@@ -11,19 +11,23 @@ use std::collections::HashMap;
 /// Export format for different AI agent systems
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExportFormat {
-    /// OpenAI (GPT-4o, GPT-4.5, o1, o3, o3-mini)
+    // These name the provider and its wire format, deliberately not the model
+    // generations they were current for. A comment listing model names is a comment
+    // that will be wrong by the next release, and the format is what actually
+    // differs between these variants.
+    /// OpenAI function-calling format.
     OpenAI,
-    /// Anthropic (Claude 4 Opus, Claude 4 Sonnet, Claude 3.5)
+    /// Anthropic tool-use format.
     Anthropic,
-    /// Google (Gemini 2.0, Gemini 1.5)
+    /// Google Gemini function-declaration format.
     Gemini,
-    /// xAI (Grok 3, Grok 2)
+    /// xAI — OpenAI-compatible format.
     Grok,
-    /// Meta Llama (Llama 4, Llama 3.3) - OpenAI-compatible format
+    /// Meta Llama, via any host that serves it — OpenAI-compatible format.
     Llama,
-    /// Mistral (Large, Mixtral) - OpenAI-compatible format
+    /// Mistral — OpenAI-compatible format.
     Mistral,
-    /// DeepSeek (R1, V3) - OpenAI-compatible format
+    /// DeepSeek — OpenAI-compatible format.
     DeepSeek,
     /// JSON-LD for semantic web discovery
     JsonLd,
@@ -75,6 +79,30 @@ impl AgentManifest {
         }
     }
 
+    /// Where to ask a provider what it currently serves.
+    ///
+    /// This replaced a per-provider `supported_models` array. That array was a
+    /// frozen enumeration of model ids, and it was wrong twice over: it went stale
+    /// the moment a provider shipped anything (it still advertised `gpt-4o` and
+    /// `claude-3-opus-20240229` long after both were superseded), and it was never
+    /// true in the first place — this manifest describes *tools*, so any model that
+    /// can call tools in the provider's format can consume it. There was nothing to
+    /// "support".
+    ///
+    /// Naming the listing endpoint instead is strictly better for the agent reading
+    /// this: it answers the question the array was pretending to answer, it answers
+    /// it about the caller's own account rather than about the day this file was
+    /// written, and it cannot rot.
+    fn model_discovery(endpoint: &str) -> Value {
+        json!({
+            "endpoint": endpoint,
+            "method": "GET",
+            "note": "Ask this endpoint for the models this account can reach. \
+                     Any model that supports tool calling in this format works; \
+                     the `model` field above is only a starting suggestion.",
+        })
+    }
+
     fn to_openai(&self) -> Value {
         let functions: Vec<Value> = self
             .tools
@@ -90,17 +118,11 @@ impl AgentManifest {
                 })
             })
             .collect();
-        // Supports: gpt-4o, gpt-4.5-preview, o1, o3, o3-mini, gpt-4-turbo, gpt-4
         json!({
-            "model": "gpt-4o",
+            "model": crate::agent::DEFAULT_OPENAI_MODEL,
             "tools": functions,
             "tool_choice": "auto",
-            "supported_models": [
-                "gpt-4o", "gpt-4o-mini", "gpt-4.5-preview",
-                "o1", "o1-mini", "o1-preview",
-                "o3", "o3-mini",
-                "gpt-4-turbo", "gpt-4"
-            ]
+            "model_discovery": Self::model_discovery("https://api.openai.com/v1/models"),
         })
     }
 
@@ -116,14 +138,10 @@ impl AgentManifest {
                 })
             })
             .collect();
-        // Supports: claude-4-opus, claude-4-sonnet, claude-3.5-sonnet, claude-3-opus
         json!({
+            "model": crate::agent::DEFAULT_ANTHROPIC_MODEL,
             "tools": tools,
-            "supported_models": [
-                "claude-opus-4-20250514", "claude-sonnet-4-20250514",
-                "claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022",
-                "claude-3-opus-20240229", "claude-3-sonnet-20240229"
-            ]
+            "model_discovery": Self::model_discovery("https://api.anthropic.com/v1/models"),
         })
     }
 
@@ -139,13 +157,11 @@ impl AgentManifest {
                 })
             })
             .collect();
-        // Supports: gemini-2.0-flash, gemini-2.0-pro, gemini-1.5-pro, gemini-1.5-flash
         json!({
             "tools": [{ "function_declarations": function_declarations }],
-            "supported_models": [
-                "gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-2.0-pro",
-                "gemini-1.5-pro", "gemini-1.5-flash", "gemini-1.5-flash-8b"
-            ]
+            "model_discovery": Self::model_discovery(
+                "https://generativelanguage.googleapis.com/v1beta/models",
+            ),
         })
     }
 
@@ -165,12 +181,10 @@ impl AgentManifest {
                 })
             })
             .collect();
-        // Supports: grok-3, grok-3-mini, grok-2, grok-2-mini
         json!({
-            "model": "grok-3",
             "tools": functions,
             "tool_choice": "auto",
-            "supported_models": ["grok-3", "grok-3-mini", "grok-2", "grok-2-mini"]
+            "model_discovery": Self::model_discovery("https://api.x.ai/v1/models"),
         })
     }
 
@@ -190,19 +204,16 @@ impl AgentManifest {
                 })
             })
             .collect();
-        // Supports: Llama 4 Scout/Maverick, Llama 3.3, Llama 3.1
         json!({
-            "model": "meta-llama/Llama-4-Scout-17B-16E-Instruct",
             "tools": functions,
             "tool_choice": "auto",
-            "supported_models": [
-                "meta-llama/Llama-4-Scout-17B-16E-Instruct",
-                "meta-llama/Llama-4-Maverick-17B-128E-Instruct",
-                "meta-llama/Llama-3.3-70B-Instruct-Turbo",
-                "meta-llama/Meta-Llama-3.1-405B-Instruct-Turbo",
-                "meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo"
-            ],
-            "note": "Use with OpenAI-compatible API providers (Together, Fireworks, Groq, etc.)"
+            // Llama is served by many hosts, each with its own catalogue and its own
+            // naming, so there is no one endpoint to name here.
+            "model_discovery": {
+                "note": "Llama is served by third parties (Together, Fireworks, Groq, \
+                         and others). Ask your chosen provider's OpenAI-compatible \
+                         `/v1/models` endpoint for the models and exact ids it serves.",
+            },
         })
     }
 
@@ -222,17 +233,13 @@ impl AgentManifest {
                 })
             })
             .collect();
-        // Supports: Mistral Large, Codestral, Mixtral
         json!({
+            // A `-latest` alias tracks the current release, so unlike a pinned id
+            // this default does not go stale on its own.
             "model": "mistral-large-latest",
             "tools": functions,
             "tool_choice": "auto",
-            "supported_models": [
-                "mistral-large-latest", "mistral-large-2411",
-                "codestral-latest", "codestral-2501",
-                "mistral-small-latest",
-                "open-mixtral-8x22b", "open-mixtral-8x7b"
-            ]
+            "model_discovery": Self::model_discovery("https://api.mistral.ai/v1/models"),
         })
     }
 
@@ -252,16 +259,13 @@ impl AgentManifest {
                 })
             })
             .collect();
-        // Supports: DeepSeek-R1, DeepSeek-V3, DeepSeek-Coder
         json!({
+            // DeepSeek's ids name a role rather than a release, so they follow the
+            // current model rather than pinning one.
             "model": "deepseek-chat",
             "tools": functions,
             "tool_choice": "auto",
-            "supported_models": [
-                "deepseek-chat",
-                "deepseek-reasoner"
-            ],
-            "note": "deepseek-chat = DeepSeek-V3, deepseek-reasoner = DeepSeek-R1"
+            "model_discovery": Self::model_discovery("https://api.deepseek.com/models"),
         })
     }
 
@@ -311,4 +315,60 @@ pub fn get_tools_by_category() -> HashMap<ToolCategory, Vec<ToolDefinition>> {
         grouped.entry(tool.category).or_default().push(tool);
     }
     grouped
+}
+
+#[cfg(test)]
+mod model_staleness_tests {
+    use super::{AgentManifest, ExportFormat};
+
+    const ALL_FORMATS: &[ExportFormat] = &[
+        ExportFormat::OpenAI,
+        ExportFormat::Anthropic,
+        ExportFormat::Gemini,
+        ExportFormat::Grok,
+        ExportFormat::Llama,
+        ExportFormat::Mistral,
+        ExportFormat::DeepSeek,
+        ExportFormat::JsonLd,
+        ExportFormat::Mcp,
+        ExportFormat::SimpleJson,
+    ];
+
+    /// The manifest must not carry a frozen catalogue of model ids again.
+    ///
+    /// Seven of these formats used to ship a `supported_models` array. Each was a
+    /// claim about the world on the day it was typed, and every one of them was
+    /// wrong within months — the OpenAI entry still advertised `gpt-4o` and the
+    /// Anthropic entry `claude-3-opus-20240229`. Nothing consumed them, and they
+    /// were never true anyway: this manifest describes tools, and any tool-calling
+    /// model can use it. If the key comes back, so does the rot.
+    #[test]
+    fn no_export_format_ships_a_frozen_model_catalogue() {
+        let manifest = AgentManifest::new();
+        for format in ALL_FORMATS {
+            let exported = manifest.export(*format);
+            assert!(
+                exported.get("supported_models").is_none(),
+                "{format:?} advertises a fixed list of model ids; name the \
+                 provider's listing endpoint instead so the answer stays current"
+            );
+        }
+    }
+
+    /// A format that suggests a model must also say how to find a better one, so an
+    /// agent reading the manifest is never stuck with the suggestion.
+    #[test]
+    fn a_suggested_model_comes_with_a_way_to_discover_others() {
+        let manifest = AgentManifest::new();
+        for format in ALL_FORMATS {
+            let exported = manifest.export(*format);
+            if exported.get("model").is_some() {
+                assert!(
+                    exported.get("model_discovery").is_some(),
+                    "{format:?} names a default model but gives an agent no way to \
+                     learn what else is available"
+                );
+            }
+        }
+    }
 }

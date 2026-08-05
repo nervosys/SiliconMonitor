@@ -4,7 +4,7 @@
 //! - Automatic backend discovery
 //! - Backend configuration
 //! - Switching between local and remote backends
-//! - Using different AI models (OpenAI, Ollama, rule-based)
+//! - Using different AI models (OpenAI, Anthropic, Ollama, IronWorks)
 
 use simonlib::agent::{Agent, AgentConfig, BackendConfig, BackendDiscovery, BackendType};
 use simonlib::SiliconMonitor;
@@ -38,19 +38,40 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let recommended = discovery.recommended();
     println!("\n  Recommended: {}", recommended.display_name());
 
-    // 2. Rule-Based Backend (always available)
+    // 2. Whatever discovery found
+    //
+    // This step used to build an `AgentConfig::new(ModelSize::Medium)` and call it
+    // the "rule-based built-in backend, always available". There is no such
+    // backend: `Agent::new` requires one to be configured and returns
+    // `Configuration` otherwise, so the example aborted here — five of its six
+    // sections were unreachable. Use the discovered backend instead, and treat
+    // "none available" as a thing to report rather than an error to die on.
     println!("\n{}", "=".repeat(60));
-    println!("\n2. Using Rule-Based Backend (Built-in)\n");
-
-    let config_rule_based = AgentConfig::new(simonlib::agent::ModelSize::Medium);
-    let mut agent_rule_based = Agent::new(config_rule_based)?;
+    println!("\n2. Using the Recommended Backend\n");
 
     let monitor = SiliconMonitor::new()?;
 
-    let response = agent_rule_based.ask("What's my GPU temperature?", &monitor)?;
-    println!("Query:    What's my GPU temperature?");
-    println!("Response: {}", response.response);
-    println!("Time:     {}ms (rule-based)", response.inference_time_ms);
+    match AgentConfig::auto_detect().and_then(Agent::new) {
+        // Don't `?` the query itself: this reaches a real backend, which can time
+        // out or refuse. A demo that aborts on the first slow model is less useful
+        // than one that says what happened and moves on to the rest of its output.
+        Ok(mut agent) => match agent.ask("What's my GPU temperature?", &monitor) {
+            Ok(response) => {
+                println!("Query:    What's my GPU temperature?");
+                println!("Response: {}", response.response);
+                println!(
+                    "Time:     {}ms ({})",
+                    response.inference_time_ms,
+                    recommended.display_name()
+                );
+            }
+            Err(e) => println!("Query failed against {}: {e}", recommended.display_name()),
+        },
+        Err(e) => {
+            println!("No backend could be configured: {e}");
+            println!("Start a local server (`ollama serve`) or set a provider API key.");
+        }
+    }
 
     // 3. Ollama Backend (if available)
     println!("\n{}", "=".repeat(60));
@@ -115,8 +136,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         #[cfg(feature = "remote-backends")]
         {
-            println!("\nCreating agent with OpenAI (gpt-4o-mini)...");
-            let openai_backend = BackendConfig::openai("gpt-4o-mini", None);
+            println!("\nCreating agent with OpenAI (gpt-5.6-terra)...");
+            let openai_backend = BackendConfig::openai("gpt-5.6-terra", None);
             let config_openai = AgentConfig::with_backend(openai_backend);
 
             match Agent::new(config_openai) {
@@ -126,10 +147,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let response = agent_openai.ask("What's my GPU temperature?", &monitor)?;
                     println!("\nQuery:    What's my GPU temperature?");
                     println!("Response: {}", response.response);
-                    println!(
-                        "Time:     {}ms (OpenAI GPT-4o-mini)",
-                        response.inference_time_ms
-                    );
+                    println!("Time:     {}ms (OpenAI)", response.inference_time_ms);
                 }
                 Err(e) => println!("✗ Failed to create agent: {}", e),
             }
@@ -152,27 +170,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("{}", "-".repeat(65));
 
     let backends = vec![
-        ("Rule-Based (built-in)", "Free", "~15ms", "100% local"),
+        ("IronWorks (built-in)", "Free", "~200ms", "100% local"),
         ("Ollama (local)", "Free", "~500ms", "100% local"),
         ("LM Studio (local)", "Free", "~400ms", "100% local"),
-        ("OpenAI GPT-4o-mini", "$0.15/1M", "~300ms", "Cloud"),
-        ("Anthropic Claude", "$3.00/1M", "~400ms", "Cloud"),
-        ("GitHub Models", "Free*", "~350ms", "Cloud"),
+        // Cloud rates are per model and split into input and output prices, so a
+        // single figure here would be wrong whichever model the reader picks.
+        // GitHub Models is gone entirely — GitHub retired it on 2026-07-30.
+        ("OpenAI", "see pricing", "~300ms", "Cloud"),
+        ("Anthropic Claude", "see pricing", "~400ms", "Cloud"),
     ];
 
     for (name, cost, speed, privacy) in backends {
         println!("{:<25} {:<15} {:<15} {:<10}", name, cost, speed, privacy);
     }
 
-    println!("\n  * GitHub Models free for personal use with rate limits");
-
     // 6. Configuration Examples
     println!("\n{}", "=".repeat(60));
     println!("\n6. Configuration Examples\n");
 
-    println!("Rule-Based (Default):");
+    // `AgentConfig::new` alone is not a runnable configuration — it sets no
+    // backend, and `Agent::new` rejects that. Show the discovery path instead.
+    println!("Auto-detected (Default):");
     println!(
-        "  let config = AgentConfig::new(ModelSize::Medium);\n\
+        "  let config = AgentConfig::auto_detect()?;\n\
         let agent = Agent::new(config)?;\n"
     );
 
@@ -185,14 +205,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("OpenAI:");
     println!(
-        "  let backend = BackendConfig::openai(\"gpt-4o-mini\", None);\n\
+        "  let backend = BackendConfig::openai(\"gpt-5.6-terra\", None);\n\
         let config = AgentConfig::with_backend(backend);\n\
         let agent = Agent::new(config)?;\n"
     );
 
     println!("Anthropic Claude:");
     println!(
-        "  let backend = BackendConfig::anthropic(\"claude-3-5-sonnet-20241022\", None);\n\
+        "  let backend = BackendConfig::anthropic(\"claude-sonnet-5\", None);\n\
         let config = AgentConfig::with_backend(backend);\n\
         let agent = Agent::new(config)?;\n"
     );
@@ -202,19 +222,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n7. Recommendations\n");
 
     println!("For quick testing:");
-    println!("  → Rule-Based (instant, no setup required)\n");
+    println!("  → IronWorks, simon's built-in engine: local, no account needed\n");
 
     println!("For better reasoning (local):");
     println!("  → Ollama with llama3 or mistral");
     println!("  → LM Studio with any local model\n");
 
     println!("For best reasoning (cloud):");
-    println!("  → OpenAI GPT-4o or GPT-4o-mini");
-    println!("  → Anthropic Claude 3.5 Sonnet\n");
+    // Naming specific models here would date this example the way it already had.
+    println!("  → OpenAI or Anthropic; ask each provider's /v1/models");
+    println!("    endpoint for what your account can actually reach\n");
 
     println!("For cost-effective:");
-    println!("  → GitHub Models (free for personal use)");
-    println!("  → OpenAI GPT-4o-mini ($0.15/1M tokens)\n");
+    println!("  → A local server (Ollama, vLLM): no per-token cost at all");
+    println!("  → Or a smaller hosted model; compare current provider pricing\n");
 
     Ok(())
 }

@@ -69,7 +69,19 @@ pub enum BackendType {
     /// Remote TensorRT-LLM (local server, NVIDIA GPUs)
     RemoteTensorRT,
 
-    /// Remote GitHub Models
+    /// Remote GitHub Models.
+    ///
+    /// **Retired by GitHub on 2026-07-30.** The playground, model catalogue,
+    /// inference API, and bring-your-own-key access were all shut down; there is
+    /// no endpoint left to talk to. The variant is kept only so existing saved
+    /// configurations still deserialize instead of failing to load, and it is no
+    /// longer offered by [`BackendDiscovery`]. Choose another provider — Microsoft
+    /// Foundry is GitHub's suggested destination for the same catalogue.
+    #[deprecated(
+        since = "2.1.0",
+        note = "GitHub retired GitHub Models on 2026-07-30; there is no service \
+                left to reach. Use another provider."
+    )]
     RemoteGitHub,
 
     /// Remote Azure OpenAI
@@ -133,6 +145,9 @@ impl BackendType {
     }
 
     /// Get display name
+    // Must still handle the retired GitHub variant so saved configs keep
+    // working; the deprecation is aimed at new downstream callers, not here.
+    #[allow(deprecated)]
     pub fn display_name(&self) -> &str {
         match self {
             BackendType::IronWorks => "IronWorks (Built-in Engine)",
@@ -153,6 +168,9 @@ impl BackendType {
     }
 
     /// Check if backend requires API key
+    // Must still handle the retired GitHub variant so saved configs keep
+    // working; the deprecation is aimed at new downstream callers, not here.
+    #[allow(deprecated)]
     pub fn requires_api_key(&self) -> bool {
         matches!(
             self,
@@ -164,6 +182,9 @@ impl BackendType {
     }
 
     /// Get environment variable name for API key
+    // Must still handle the retired GitHub variant so saved configs keep
+    // working; the deprecation is aimed at new downstream callers, not here.
+    #[allow(deprecated)]
     pub fn api_key_env_var(&self) -> Option<&str> {
         match self {
             BackendType::RemoteOpenAI => Some("OPENAI_API_KEY"),
@@ -175,6 +196,9 @@ impl BackendType {
     }
 
     /// Get default endpoint URL
+    // Must still handle the retired GitHub variant so saved configs keep
+    // working; the deprecation is aimed at new downstream callers, not here.
+    #[allow(deprecated)]
     pub fn default_endpoint(&self) -> Option<String> {
         match self {
             // Port 8080 matches the IronWorks server and CLI default. The `/v1`
@@ -208,7 +232,12 @@ pub struct BackendConfig {
     /// Backend type
     pub backend_type: BackendType,
 
-    /// Model identifier (e.g., "gpt-4", "llama-3-8b", "phi-3-mini")
+    /// Model identifier, in whatever form the chosen provider names its models.
+    ///
+    /// Deliberately not illustrated with example ids: a comment naming models is
+    /// wrong by the next release, and every provider spells them differently. Ask
+    /// the provider — a local server and each hosted API all expose a listing —
+    /// rather than copying a name from here.
     pub model_id: String,
 
     /// API endpoint URL (for remote backends)
@@ -333,6 +362,9 @@ impl BackendConfig {
     }
 
     /// Create config for GitHub Models
+    // Must still handle the retired GitHub variant so saved configs keep
+    // working; the deprecation is aimed at new downstream callers, not here.
+    #[allow(deprecated)]
     pub fn github_models(model: &str, token: Option<String>) -> Self {
         Self {
             backend_type: BackendType::RemoteGitHub,
@@ -478,9 +510,12 @@ impl BackendDiscovery {
         if std::env::var("ANTHROPIC_API_KEY").is_ok() {
             available.push(BackendType::RemoteAnthropic);
         }
-        if std::env::var("GITHUB_TOKEN").is_ok() {
-            available.push(BackendType::RemoteGitHub);
-        }
+        // GitHub Models is deliberately not discovered. GitHub retired the service
+        // on 2026-07-30 — catalogue, inference API, and BYOK are all gone — so a
+        // token can no longer buy access to it. `GITHUB_TOKEN` is set on a great
+        // many developer machines for entirely unrelated reasons (the `gh` CLI, CI),
+        // and treating its presence as an available backend handed those users a
+        // provider guaranteed to fail, presented as one that was ready to use.
         if std::env::var("AZURE_OPENAI_API_KEY").is_ok() {
             available.push(BackendType::RemoteAzure);
         }
@@ -691,12 +726,22 @@ pub struct BackendCapabilities {
     /// Maximum context length
     pub max_context_length: usize,
 
-    /// Estimated cost per 1M tokens (in USD)
+    /// Estimated cost per 1M tokens (in USD).
+    ///
+    /// `None` means simon does not know the rate — **not** that the backend is
+    /// free. It is `None` for on-host backends, where there is no per-token rate at
+    /// all, and equally for hosted providers, where the rate depends on the chosen
+    /// model and splits into separate input and output prices this single field
+    /// cannot represent. Use [`BackendType::runs_on_host`] to tell the two apart
+    /// before presenting `None` to a user as "free".
     pub cost_per_million_tokens: Option<f32>,
 }
 
 impl BackendCapabilities {
     /// Get capabilities for backend type
+    // Must still handle the retired GitHub variant so saved configs keep
+    // working; the deprecation is aimed at new downstream callers, not here.
+    #[allow(deprecated)]
     pub fn for_backend(backend: &BackendType) -> Self {
         match backend {
             BackendType::IronWorks => Self {
@@ -722,19 +767,30 @@ impl BackendCapabilities {
                 // reporting a number here would be a guess.
                 cost_per_million_tokens: None,
             },
+            // Context length and price are properties of the *model*, not of the
+            // provider, and both providers serve a range of each. The figures below
+            // describe their current flagship families and will understate or
+            // overstate any particular model; both expose the exact numbers per
+            // model from their `/v1/models` endpoint, which is the authority.
             BackendType::RemoteOpenAI => Self {
                 supports_streaming: true,
                 supports_functions: true,
                 supports_vision: true,
-                max_context_length: 128_000,
-                cost_per_million_tokens: Some(5.0), // GPT-4o pricing
+                max_context_length: 1_000_000,
+                // Was `Some(5.0)`, labelled "GPT-4o pricing". Beyond being stale,
+                // one number cannot express a hosted provider's rate: input and
+                // output are billed differently, and the split varies per model.
+                // Reporting nothing beats reporting a figure that is wrong in both
+                // magnitude and shape — the same reasoning already applied to CLI
+                // backends above.
+                cost_per_million_tokens: None,
             },
             BackendType::RemoteAnthropic => Self {
                 supports_streaming: true,
                 supports_functions: true,
                 supports_vision: true,
-                max_context_length: 200_000,
-                cost_per_million_tokens: Some(3.0), // Claude 3.5 Sonnet
+                max_context_length: 1_000_000,
+                cost_per_million_tokens: None, // See the note on RemoteOpenAI.
             },
             BackendType::RemoteOllama | BackendType::RemoteLMStudio => Self {
                 supports_streaming: true,

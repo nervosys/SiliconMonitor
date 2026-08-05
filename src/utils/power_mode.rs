@@ -43,7 +43,7 @@ pub fn query() -> Result<PowerMode> {
     let output = Command::new("nvpmodel")
         .arg("-q")
         .output()
-        .map_err(|e| SimonError::Io(e))?;
+        .map_err(SimonError::Io)?;
 
     if !output.status.success() {
         return Err(SimonError::CommandFailed(
@@ -80,7 +80,7 @@ pub fn list_modes() -> Result<NVPModelStatus> {
         .arg("-p")
         .arg("--verbose")
         .output()
-        .map_err(|e| SimonError::Io(e))?;
+        .map_err(SimonError::Io)?;
 
     if !output.status.success() {
         return Err(SimonError::CommandFailed(
@@ -156,7 +156,7 @@ pub fn set_mode(mode_id: u32, force: bool) -> Result<()> {
     } else {
         cmd.output()
     }
-    .map_err(|e| SimonError::Io(e))?;
+    .map_err(SimonError::Io)?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);

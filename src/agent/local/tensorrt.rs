@@ -21,7 +21,7 @@
 //! # Example
 //!
 //! ```no_run
-//! use simonlib::agent::local::{TensorRtClient, InferenceRequest};
+//! use simonlib::agent::local::{TensorRtClient, InferenceRequest, LocalInferenceClient};
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! let client = TensorRtClient::new("localhost:8001")?;
@@ -77,6 +77,11 @@ impl TensorRtClient {
     }
 
     /// Create default TensorRT-LLM client (localhost:8001)
+    ///
+    /// Not `Default::default` — constructing this validates the endpoint and so
+    /// can fail, which `Default` has no way to report. Renaming it would break
+    /// callers on the published API for a purely cosmetic gain.
+    #[allow(clippy::should_implement_trait)]
     pub fn default() -> Result<Self> {
         Self::new("localhost:8001")
     }

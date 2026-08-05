@@ -91,6 +91,31 @@ pub use query::{Query, QueryType};
 pub use remote::{RemoteClient, RemoteClientBuilder};
 pub use state::SystemState;
 
+/// The model to ask a hosted provider for when the caller named none.
+///
+/// These are the only place in the non-interactive path where simon picks a model
+/// name, and a name is all a hosted provider will accept — unlike a local server,
+/// there is nothing to ask "what are you serving?" without a credential. So they
+/// are a starting point, not a claim about what is current: a provider ships a new
+/// model and these age the same day. Anything that can enumerate the provider (the
+/// GUI's model dropdown does) should prefer the live listing and treat these as the
+/// answer of last resort. Set the model explicitly on [`BackendConfig`] to pin one.
+pub const DEFAULT_OPENAI_MODEL: &str = "gpt-5.6-terra";
+/// See [`DEFAULT_OPENAI_MODEL`].
+pub const DEFAULT_ANTHROPIC_MODEL: &str = "claude-sonnet-5";
+/// Formerly the default for GitHub Models, retained only so existing saved
+/// configurations still resolve to something.
+///
+/// GitHub retired that service on 2026-07-30, so no id reaches it any more —
+/// including this one. It keeps GitHub's publisher-qualified spelling because that
+/// is what a stored config from before the shutdown will look like. See
+/// [`BackendType::RemoteGitHub`].
+#[deprecated(
+    since = "2.1.0",
+    note = "GitHub retired GitHub Models on 2026-07-30; no model id reaches it."
+)]
+pub const DEFAULT_GITHUB_MODEL: &str = "openai/gpt-4.1";
+
 /// AI model size options
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum ModelSize {
@@ -263,6 +288,7 @@ impl AgentConfig {
     /// 1. Discover available backends (local and remote)
     /// 2. Select the recommended backend
     /// 3. Configure with appropriate defaults
+    #[allow(deprecated)]
     pub fn auto_detect() -> Result<Self> {
         let discovery = BackendDiscovery::discover();
         let available_backends = discovery.available();
@@ -288,10 +314,10 @@ impl AgentConfig {
             // "default" tells the client not to override it.
             BackendType::Cli(provider) => BackendConfig::cli(provider, "default"),
             BackendType::RemoteOpenAI => {
-                BackendConfig::openai("gpt-4o-mini", None) // Uses OPENAI_API_KEY from env
+                BackendConfig::openai(DEFAULT_OPENAI_MODEL, None) // Uses OPENAI_API_KEY from env
             }
             BackendType::RemoteAnthropic => {
-                BackendConfig::anthropic("claude-3-5-haiku-20241022", None) // Uses ANTHROPIC_API_KEY from env
+                BackendConfig::anthropic(DEFAULT_ANTHROPIC_MODEL, None) // Uses ANTHROPIC_API_KEY from env
             }
             BackendType::RemoteOllama => {
                 BackendConfig::ollama("llama3.2:3b") // Default Ollama model
@@ -300,7 +326,7 @@ impl AgentConfig {
                 BackendConfig::lm_studio("local-model") // LM Studio model
             }
             BackendType::RemoteGitHub => {
-                BackendConfig::github_models("gpt-4o-mini", None) // Uses GITHUB_TOKEN from env
+                BackendConfig::github_models(DEFAULT_GITHUB_MODEL, None) // Uses GITHUB_TOKEN from env
             }
             BackendType::RemoteVllm => {
                 BackendConfig::vllm("local-model") // vLLM model
@@ -323,19 +349,18 @@ impl AgentConfig {
     }
 
     /// Create config with specific backend type
+    #[allow(deprecated)]
     pub fn with_backend_type(backend_type: BackendType) -> Result<Self> {
         let backend_config = match backend_type {
             BackendType::IronWorks => BackendConfig::ironworks("default"),
             // CLI tools use whatever model they are configured for; "default" tells
             // the client not to override it.
             BackendType::Cli(provider) => BackendConfig::cli(provider, "default"),
-            BackendType::RemoteOpenAI => BackendConfig::openai("gpt-4o-mini", None),
-            BackendType::RemoteAnthropic => {
-                BackendConfig::anthropic("claude-3-5-haiku-20241022", None)
-            }
+            BackendType::RemoteOpenAI => BackendConfig::openai(DEFAULT_OPENAI_MODEL, None),
+            BackendType::RemoteAnthropic => BackendConfig::anthropic(DEFAULT_ANTHROPIC_MODEL, None),
             BackendType::RemoteOllama => BackendConfig::ollama("llama3.2:3b"),
             BackendType::RemoteLMStudio => BackendConfig::lm_studio("local-model"),
-            BackendType::RemoteGitHub => BackendConfig::github_models("gpt-4o-mini", None),
+            BackendType::RemoteGitHub => BackendConfig::github_models(DEFAULT_GITHUB_MODEL, None),
             BackendType::RemoteVllm => BackendConfig::vllm("local-model"),
             BackendType::RemoteTensorRT => BackendConfig::tensorrt("local-model"),
             _ => {
@@ -684,7 +709,7 @@ mod offline_enforcement_tests {
         std::env::set_var("SIMON_OFFLINE", "1");
 
         let agent = agent_with(BackendConfig::anthropic(
-            "claude-sonnet-4-5",
+            DEFAULT_ANTHROPIC_MODEL,
             Some("test".into()),
         ));
         let err = agent
@@ -727,7 +752,7 @@ mod offline_enforcement_tests {
         std::env::remove_var("SIMON_OFFLINE");
 
         let agent = agent_with(BackendConfig::anthropic(
-            "claude-sonnet-4-5",
+            DEFAULT_ANTHROPIC_MODEL,
             Some("test".into()),
         ));
         assert!(agent.refuse_if_offline_and_offhost().is_ok());

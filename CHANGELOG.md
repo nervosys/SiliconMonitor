@@ -5,6 +5,69 @@ All notable changes to Silicon Monitor will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.0] - 2026-08-04
+
+Model names in this repository were frozen lists that had aged out of date. The
+fix is not new names — those would age too — but reaching for the provider's own
+listing wherever one exists, and saying plainly that anything still hardcoded is a
+guess.
+
+### Fixed
+
+- **The GUI's model dropdown never actually asked hosted providers what they
+  serve.** `fetch_models_async` read the API key only from the tab's text field.
+  Both hosted listing endpoints require authentication, so a user with
+  `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` already exported — the normal case — sent
+  an unauthenticated request, got a 401, received an empty list, and silently fell
+  back to hardcoded names. The live-refresh path existed but could not be reached.
+  The key is now resolved from the field *or* the environment, and setting a key in
+  the tab drops the cached unauthenticated result so the provider is asked again.
+
+### Changed
+
+- **`simon ai manifest` no longer advertises a fixed `supported_models` list.**
+  Seven export formats each carried a frozen array of model ids. Nothing consumed
+  them, every one had gone stale (the OpenAI entry still listed `gpt-4o`, the
+  Anthropic entry `claude-3-opus-20240229`), and the claim was wrong in principle:
+  the manifest describes *tools*, so any model that calls tools in that provider's
+  format can use it. Replaced with `model_discovery`, naming the provider's listing
+  endpoint — which answers the question for the caller's own account and cannot
+  rot. **Consumers reading `supported_models` must switch to `model_discovery`.**
+- **Refreshed the model names that remain**, in the GUI's fallback list, the
+  auto-detect defaults (now the named constants `DEFAULT_OPENAI_MODEL`,
+  `DEFAULT_ANTHROPIC_MODEL`, `DEFAULT_GITHUB_MODEL`), the examples, and the docs.
+  The GUI labels these "Not listed by provider" because that is what they are.
+- **GitHub Models is no longer offered — GitHub retired it on 2026-07-30.** The
+  playground, catalogue, inference API, and BYOK access are all shut down. Backend
+  discovery previously treated the mere presence of `GITHUB_TOKEN` as an available
+  backend; that variable is set on a great many machines for unrelated reasons (the
+  `gh` CLI, CI), so those users were handed a provider guaranteed to fail, presented
+  as ready to use. Discovery no longer offers it, the GUI labels it retired, and
+  `BackendType::RemoteGitHub` and `DEFAULT_GITHUB_MODEL` are `#[deprecated]`. Both
+  are retained so saved configurations still deserialize rather than failing to
+  load.
+- **Backend capability metadata was model-pinned and wrong.** `RemoteAnthropic`
+  reported a 200K context and `$3.00/1M` ("Claude 3.5 Sonnet"); `RemoteOpenAI`
+  reported 128K and `$5.00` ("GPT-4o pricing"). Context is now 1M for both, and the
+  per-token cost is `None` — a single figure cannot express a hosted rate, which
+  splits into input and output prices and varies per model. `None` is documented as
+  "not known", not "free", and the discovery example now distinguishes the two
+  rather than printing "Free" for a paid API.
+
+- **The `agent_backends` example ran only two of its seven sections.** It opened by
+  building `AgentConfig::new(ModelSize::Medium)` and calling it "the rule-based
+  built-in backend, always available". No such backend exists — `Agent::new`
+  requires one to be configured — so the example aborted on its own second step and
+  everything after it was unreachable. It now uses the discovered backend, and
+  reports a missing or failing backend instead of dying on it.
+
+### Added
+
+- Tests pinning the invariants behind all of the above: a provider shipping
+  hardcoded names must have somewhere to find a credential (or those names can
+  never be replaced), a local provider must never guess a model name, and no export
+  format may ship a frozen model catalogue again.
+
 ## [2.0.1] - 2026-08-04
 
 The first 2.x published to crates.io. 2.0.0 was tagged but never published: these

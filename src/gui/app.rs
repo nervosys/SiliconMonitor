@@ -380,7 +380,10 @@ impl AiBackendSelection {
             Self::TensorRt => "⚡ TensorRT-LLM",
             Self::OpenAi => "🤖 OpenAI",
             Self::Anthropic => "🧠 Anthropic",
-            Self::GitHub => "🐙 GitHub Models",
+            // GitHub shut this service down on 2026-07-30 — catalogue, inference,
+            // and BYOK all gone. Say so in the menu rather than offering a provider
+            // that cannot answer, which reads to the user as a bug in simon.
+            Self::GitHub => "🐙 GitHub Models (retired)",
             Self::Cli(CliProvider::Claude) => "🖥 Claude Code CLI",
             Self::Cli(CliProvider::Codex) => "🖥 Codex CLI",
             Self::Cli(CliProvider::Gemini) => "🖥 Gemini CLI",
@@ -409,17 +412,40 @@ impl AiBackendSelection {
         }
     }
 
+    /// The environment variable a hosted provider reads its credential from.
+    ///
+    /// The listing endpoints of hosted providers all require authentication, so
+    /// without this the live fetch answers 401 and the dropdown silently falls back
+    /// to the hardcoded guess below — which is exactly the staleness the fetch
+    /// exists to avoid. A key the user exported before launching simon is just as
+    /// usable as one typed into the field.
+    fn api_key_env_var(self) -> Option<&'static str> {
+        match self {
+            Self::OpenAi => Some("OPENAI_API_KEY"),
+            Self::Anthropic => Some("ANTHROPIC_API_KEY"),
+            Self::GitHub => Some("GITHUB_TOKEN"),
+            _ => None,
+        }
+    }
+
     /// Names to offer when the provider could not be asked.
     ///
     /// Only reached when a listing is unavailable — the server is down, or a hosted
-    /// provider has no key yet. A live listing is always preferred: a hardcoded list
-    /// is stale the moment a provider ships a model, which is how this tab came to
-    /// offer `gpt-3.5-turbo` and `claude-3-sonnet`.
+    /// provider has no key anywhere simon can see. A live listing is always
+    /// preferred: a hardcoded list is stale the moment a provider ships a model,
+    /// which is how this tab came to offer `gpt-3.5-turbo` and `claude-3-sonnet`.
+    /// The dropdown labels these "Not listed by provider" for that reason — they are
+    /// a guess, not an observation, and they will age.
     fn fallback_models(self) -> &'static [&'static str] {
         match self {
-            Self::Anthropic => &["claude-opus-4-5", "claude-sonnet-4-5", "claude-haiku-4-5"],
-            Self::OpenAi => &["gpt-4o", "gpt-4o-mini", "o3-mini"],
-            Self::GitHub => &["gpt-4o", "gpt-4o-mini"],
+            Self::Anthropic => &["claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5"],
+            Self::OpenAi => &["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"],
+            // GitHub's catalogue is readable without a credential, so the live
+            // listing is reached whenever the machine is online. Guessing here
+            // would only ever be consulted offline, where the name cannot be used
+            // anyway — and GitHub's ids are publisher-qualified, so a guess copied
+            // from another provider would be wrong.
+            Self::GitHub => &[],
             // Local servers name whatever was loaded into them; there is no
             // meaningful guess, and inventing one would send a request for a model
             // that does not exist.
@@ -6791,6 +6817,11 @@ impl SiliconMonitorApp {
         // Set environment variable for this process
         std::env::set_var(env_var, key);
         self.ai_api_key_input.clear();
+        // The listing this provider gave before the key existed was an
+        // unauthenticated one — almost certainly empty. Drop it so the loader asks
+        // again, now that there is something to authenticate with; otherwise the
+        // dropdown keeps showing the hardcoded guess for the rest of the session.
+        self.models_by_provider.remove(&self.ai_selected_backend);
         self.ai_status_message = Some((format!("{} set! Retrying connection...", env_var), false));
 
         // Retry connection
@@ -6839,6 +6870,26 @@ impl SiliconMonitorApp {
         }
     }
 
+    /// The credential to authenticate a listing request with, if there is one.
+    ///
+    /// The field the user just typed into wins, because that is the key they are
+    /// currently trying; otherwise the process environment, which is where a key
+    /// exported before launch lives. Reading only the field meant a user with
+    /// `ANTHROPIC_API_KEY` already set got an unauthenticated request, a 401, an
+    /// empty list, and the stale hardcoded names — with nothing on screen saying
+    /// the provider had never actually been asked.
+    fn resolve_api_key(&self, provider: AiBackendSelection) -> String {
+        let typed = self.ai_api_key_input.trim();
+        if !typed.is_empty() {
+            return typed.to_string();
+        }
+        provider
+            .api_key_env_var()
+            .and_then(|var| std::env::var(var).ok())
+            .map(|key| key.trim().to_string())
+            .unwrap_or_default()
+    }
+
     /// Ask a provider what models it serves, on a background thread.
     ///
     /// Every provider that exposes a listing is read live, so the dropdown shows what
@@ -6855,7 +6906,7 @@ impl SiliconMonitorApp {
             return;
         };
 
-        let api_key = self.ai_api_key_input.trim().to_string();
+        let api_key = self.resolve_api_key(provider);
         let (tx, rx) = channel();
         self.models_receiver = Some(rx);
         self.models_loading_for = Some(provider);
@@ -7116,5 +7167,68 @@ fn format_bytes(bytes: f64) -> String {
         format!("{:.2} KB", bytes / KB)
     } else {
         format!("{:.0} B", bytes)
+    }
+}
+
+#[cfg(test)]
+mod model_listing_tests {
+    use super::AiBackendSelection;
+
+    /// The stale-model bug in one assertion.
+    ///
+    /// A hardcoded fallback list is only ever reached when the live listing failed,
+    /// and for a hosted provider the overwhelmingly common cause is that simon had
+    /// no credential to authenticate the listing request with. If such a provider
+    /// has nowhere to look for a key, its dropdown can *never* show live names — it
+    /// is permanently pinned to whatever was true the day the list was written.
+    /// That is exactly how this tab came to offer `gpt-3.5-turbo`.
+    #[test]
+    fn a_provider_with_hardcoded_models_can_find_a_credential_to_replace_them() {
+        for provider in AiBackendSelection::ALL {
+            if provider.fallback_models().is_empty() {
+                continue;
+            }
+            assert!(
+                provider.api_key_env_var().is_some(),
+                "{:?} ships hardcoded model names but has no environment variable to \
+                 read a key from, so its listing request is always unauthenticated \
+                 and those names can never be replaced by live ones",
+                provider
+            );
+        }
+    }
+
+    /// A key is only useful if there is somewhere to spend it.
+    #[test]
+    fn every_provider_with_a_credential_has_a_listing_to_authenticate() {
+        for provider in AiBackendSelection::ALL {
+            if provider.api_key_env_var().is_some() {
+                assert!(
+                    provider.models_endpoint().is_some(),
+                    "{:?} reads an API key but exposes no listing endpoint",
+                    provider
+                );
+            }
+        }
+    }
+
+    /// Guessing a name for a local server produces a request for a model that was
+    /// never loaded — a confusing failure the user cannot act on. Only providers
+    /// serving a fixed hosted catalogue may guess.
+    #[test]
+    fn local_providers_never_guess_a_model_name() {
+        for provider in AiBackendSelection::ALL {
+            let is_local = provider
+                .models_endpoint()
+                .is_some_and(|url| url.contains("localhost"));
+            if is_local {
+                assert!(
+                    provider.fallback_models().is_empty(),
+                    "{:?} guesses a model name, but a local server serves only what \
+                     was loaded into it",
+                    provider
+                );
+            }
+        }
     }
 }

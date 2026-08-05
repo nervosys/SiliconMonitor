@@ -29,10 +29,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if caps.supports_streaming { "Yes" } else { "No" }
         );
 
-        if let Some(cost) = caps.cost_per_million_tokens {
-            println!("    - Cost: ${}/1M tokens", cost);
-        } else {
-            println!("    - Cost: Free");
+        // `None` means "simon does not know the rate", which is only the same as
+        // "free" when inference happens on this machine. Printing "Free" for a
+        // hosted provider would understate the cost of every query by its whole
+        // price.
+        match caps.cost_per_million_tokens {
+            Some(cost) => println!("    - Cost: ${}/1M tokens", cost),
+            None if backend.runs_on_host() => println!("    - Cost: Free (runs locally)"),
+            None => println!("    - Cost: billed by the provider, per model"),
         }
 
         // Show configuration
@@ -76,7 +80,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         BackendType::RemoteLMStudio,
         BackendType::RemoteVllm,
         BackendType::RemoteTensorRT,
-        BackendType::RemoteGitHub,
+        // GitHub Models is omitted: GitHub retired it on 2026-07-30, so listing it
+        // here would report on a service that no longer exists.
         BackendType::RemoteAzure,
     ];
 
@@ -101,9 +106,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 BackendType::RemoteAnthropic if std::env::var("ANTHROPIC_API_KEY").is_err() => {
                     "   Reason: ANTHROPIC_API_KEY not set"
-                }
-                BackendType::RemoteGitHub if std::env::var("GITHUB_TOKEN").is_err() => {
-                    "   Reason: GITHUB_TOKEN not set"
                 }
                 BackendType::RemoteAzure if std::env::var("AZURE_OPENAI_API_KEY").is_err() => {
                     "   Reason: AZURE_OPENAI_API_KEY not set"
@@ -146,7 +148,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!();
 
     println!("// OpenAI (requires API key)");
-    println!("let config = BackendConfig::openai(\"gpt-4o-mini\", None);");
+    println!("let config = BackendConfig::openai(\"gpt-5.6-terra\", None);");
     println!("// Set environment variable: export OPENAI_API_KEY=\"sk-...\"");
     println!();
 

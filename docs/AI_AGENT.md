@@ -312,7 +312,7 @@ revisions of this document described one; it does not exist in the code.
   OpenAI-compatible server.
 - **External servers** — Ollama, LM Studio, vLLM, TensorRT-LLM, llama.cpp.
 - **CLI tools** — `ollama`, `claude`, `codex`, `gemini`, driven as subprocesses.
-- **Remote APIs** — OpenAI, Anthropic, GitHub Models, Azure OpenAI.
+- **Remote APIs** — OpenAI, Anthropic, Azure OpenAI.
 
 Selection prefers backends that infer on the host, so a hosted provider is chosen
 only when nothing local is running. Note that `claude`, `codex` and `gemini` are

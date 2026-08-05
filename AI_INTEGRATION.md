@@ -7,8 +7,8 @@ Silicon Monitor provides comprehensive hardware monitoring capabilities that AI 
 ### Closed Source
 | Provider | Models | Format |
 |----------|--------|--------|
-| **OpenAI** | GPT-4o, GPT-4.5, o1, o3, o3-mini | `openai` |
-| **Anthropic** | Claude 4 Opus, Claude 4 Sonnet, Claude 3.5 | `anthropic` |
+| **OpenAI** | GPT-5.6 (Sol / Terra / Luna) | `openai` |
+| **Anthropic** | Claude Opus 5, Claude Sonnet 5, Claude Haiku 4.5 | `anthropic` |
 | **Google** | Gemini 2.0 Flash, Gemini 2.0 Pro, Gemini 1.5 | `gemini` |
 | **xAI** | Grok 3, Grok 3 Mini, Grok 2 | `grok` |
 
@@ -17,7 +17,7 @@ Silicon Monitor provides comprehensive hardware monitoring capabilities that AI 
 |----------|--------|--------|
 | **Meta** | Llama 4 Scout/Maverick, Llama 3.3 70B | `llama` |
 | **Mistral** | Mistral Large, Codestral, Mixtral 8x22B | `mistral` |
-| **DeepSeek** | DeepSeek-R1, DeepSeek-V3 | `deepseek` |
+| **DeepSeek** | DeepSeek models | `deepseek` |
 
 ## Quick Start
 
@@ -35,7 +35,7 @@ with open("openai_tools.json") as f:
     tools = json.load(f)["tools"]
 
 response = client.chat.completions.create(
-    model="gpt-4o",  # or gpt-4.5-preview, o1, o3
+    model="gpt-5.6-terra",  # ask GET /v1/models for the live list
     messages=[{"role": "user", "content": "What is my GPU temperature?"}],
     tools=tools
 )
@@ -55,7 +55,7 @@ with open("claude_tools.json") as f:
     tools = json.load(f)["tools"]
 
 response = client.messages.create(
-    model="claude-opus-4-20250514",  # or claude-sonnet-4-20250514
+    model="claude-opus-5",  # ask GET /v1/models for the live list
     tools=tools,
     messages=[{"role": "user", "content": "How much GPU memory is being used?"}]
 )
@@ -115,7 +115,7 @@ with open("grok_tools.json") as f:
     tools = json.load(f)["tools"]
 
 response = client.chat.completions.create(
-    model="grok-3",  # or grok-3-mini
+    model="grok-4.5",  # ask GET https://api.x.ai/v1/models for the live list
     messages=[{"role": "user", "content": "Check my GPU status"}],
     tools=tools
 )
@@ -143,7 +143,7 @@ with open("llama_tools.json") as f:
     tools = json.load(f)["tools"]
 
 response = client.chat.completions.create(
-    model="meta-llama/Llama-4-Scout-17B-16E-Instruct",
+    model="meta-llama/Llama-4-Scout-17B-16E-Instruct",  # ask your host's /v1/models — ids vary by provider
     messages=[{"role": "user", "content": "What's my memory usage?"}],
     tools=tools
 )
@@ -190,7 +190,7 @@ with open("deepseek_tools.json") as f:
     tools = json.load(f)["tools"]
 
 response = client.chat.completions.create(
-    model="deepseek-chat",  # DeepSeek-V3
+    model="deepseek-chat",  # a role alias, so it follows the current model
     messages=[{"role": "user", "content": "List all GPUs"}],
     tools=tools
 )
@@ -283,13 +283,13 @@ goes to stderr, so stdout carries only protocol traffic. It supports:
 
 | Format | Command | Use Case |
 |--------|---------|----------|
-| `openai` | `--format openai` | ChatGPT, GPT-4o, GPT-4.5, o1, o3 |
-| `anthropic` | `--format anthropic` | Claude 4 Opus/Sonnet, Claude 3.5 |
-| `gemini` | `--format gemini` | Gemini 2.0, Gemini 1.5 |
-| `grok` | `--format grok` | xAI Grok 3, Grok 2 |
-| `llama` | `--format llama` | Meta Llama 4, Llama 3.3 (via OpenAI-compatible APIs) |
-| `mistral` | `--format mistral` | Mistral Large, Codestral, Mixtral |
-| `deepseek` | `--format deepseek` | DeepSeek-R1, DeepSeek-V3 |
+| `openai` | `--format openai` | OpenAI models (ChatGPT, GPT family) |
+| `anthropic` | `--format anthropic` | Anthropic Claude models |
+| `gemini` | `--format gemini` | Google Gemini models |
+| `grok` | `--format grok` | xAI Grok models |
+| `llama` | `--format llama` | Meta Llama, via any OpenAI-compatible host |
+| `mistral` | `--format mistral` | Mistral models |
+| `deepseek` | `--format deepseek` | DeepSeek models |
 | `mcp` | `--format mcp` | Model Context Protocol (Claude Desktop) |
 | `jsonld` | `--format jsonld` | Semantic web, general discovery |
 | `json` | `--format json` | Full manifest with ontology |

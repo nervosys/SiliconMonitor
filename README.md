@@ -357,7 +357,7 @@ amon query                                 # Interactive AI mode
 amon                                       # Also starts interactive mode
 
 # Export manifests for AI agents
-amon manifest --format openai              # Export for OpenAI/GPT-4o/o1/o3
+amon manifest --format openai              # Export for OpenAI models
 amon manifest --format anthropic           # Export for Claude 4
 amon manifest --format gemini              # Export for Gemini 2.0
 amon manifest --format grok                # Export for xAI Grok 3
@@ -666,7 +666,6 @@ already authenticated):
 
 - **OpenAI API** - GPT models (requires `OPENAI_API_KEY`)
 - **Anthropic Claude** - Claude models (requires `ANTHROPIC_API_KEY`)
-- **GitHub Models** - Free AI models (requires `GITHUB_TOKEN`)
 - **Azure OpenAI** - Enterprise OpenAI (requires `AZURE_OPENAI_API_KEY`)
 
 #### Where your telemetry goes
@@ -688,9 +687,6 @@ amon --list-backends
 # 1. IronWorks (Built-in Engine) [+] running on localhost:8080
 # 2. Ollama (Local Server) [+] running
 # 3. Claude CLI [+] found on PATH
-# 4. GitHub Models
-#    API Key: GITHUB_TOKEN [+] configured
-#    Endpoint: https://models.inference.ai.azure.com
 
 # Automatic backend detection (default)
 amon query "What's my GPU temperature?"
@@ -701,7 +697,6 @@ amon query "What's my GPU temperature?"
 # Configure via environment variables (remote APIs only)
 export OPENAI_API_KEY="sk-..."      # For OpenAI
 export ANTHROPIC_API_KEY="sk-..."  # For Anthropic
-export GITHUB_TOKEN="ghp_..."       # For GitHub Models
 
 # Or start local inference servers
 ollama serve                         # Ollama (easiest)
@@ -723,7 +718,7 @@ let config = AgentConfig::auto_detect()?;
 let config = AgentConfig::with_backend_type(BackendType::RemoteOpenAI)?;
 
 // Or custom configuration
-let backend = BackendConfig::openai("gpt-4o-mini", Some("sk-...".into()));
+let backend = BackendConfig::openai("gpt-5.6-terra", Some("sk-...".into()));
 let config = AgentConfig::with_backend(backend);
 
 let mut agent = Agent::new(config)?;

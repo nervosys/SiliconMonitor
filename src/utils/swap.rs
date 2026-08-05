@@ -36,7 +36,7 @@ pub fn status() -> Result<Vec<SwapInfo>> {
         .arg("--noheadings")
         .arg("--raw")
         .output()
-        .map_err(|e| SimonError::Io(e))?;
+        .map_err(SimonError::Io)?;
 
     if !output.status.success() {
         return Ok(Vec::new());
@@ -97,9 +97,7 @@ fn validate_swap_path(path: &Path) -> Result<PathBuf> {
     let abs_path = if path.is_absolute() {
         path.to_path_buf()
     } else {
-        std::env::current_dir()
-            .map_err(|e| SimonError::Io(e))?
-            .join(path)
+        std::env::current_dir().map_err(SimonError::Io)?.join(path)
     };
 
     // Get parent directory for validation
@@ -109,7 +107,7 @@ fn validate_swap_path(path: &Path) -> Result<PathBuf> {
 
     // Check if parent exists and canonicalize to resolve symlinks
     let canonical_parent = if parent.exists() {
-        parent.canonicalize().map_err(|e| SimonError::Io(e))?
+        parent.canonicalize().map_err(SimonError::Io)?
     } else {
         return Err(SimonError::InvalidValue(format!(
             "Parent directory does not exist: {}",
@@ -196,7 +194,7 @@ pub fn create(path: &Path, size_gb: u32, enable_on_boot: bool) -> Result<()> {
         .arg(format!("count={}", block_count))
         .arg("status=progress")
         .output()
-        .map_err(|e| SimonError::Io(e))?;
+        .map_err(SimonError::Io)?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -212,14 +210,14 @@ pub fn create(path: &Path, size_gb: u32, enable_on_boot: bool) -> Result<()> {
         .arg("600")
         .arg(&validated_path)
         .output()
-        .map_err(|e| SimonError::Io(e))?;
+        .map_err(SimonError::Io)?;
 
     // Make swap
     let output = Command::new("sudo")
         .arg("mkswap")
         .arg(&validated_path)
         .output()
-        .map_err(|e| SimonError::Io(e))?;
+        .map_err(SimonError::Io)?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -250,7 +248,7 @@ pub fn enable(path: &Path) -> Result<()> {
         .arg("swapon")
         .arg(path)
         .output()
-        .map_err(|e| SimonError::Io(e))?;
+        .map_err(SimonError::Io)?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -272,7 +270,7 @@ pub fn disable(path: &Path) -> Result<()> {
         .arg("swapoff")
         .arg(path)
         .output()
-        .map_err(|e| SimonError::Io(e))?;
+        .map_err(SimonError::Io)?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -290,7 +288,7 @@ fn add_to_fstab(path: &Path) -> Result<()> {
     use std::io::Write;
 
     // Canonicalize path to prevent injection
-    let canonical_path = path.canonicalize().map_err(|e| SimonError::Io(e))?;
+    let canonical_path = path.canonicalize().map_err(SimonError::Io)?;
 
     let fstab_entry = format!("{} none swap sw 0 0\n", canonical_path.display());
 
@@ -310,16 +308,16 @@ fn add_to_fstab(path: &Path) -> Result<()> {
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::null())
         .spawn()
-        .map_err(|e| SimonError::Io(e))?;
+        .map_err(SimonError::Io)?;
 
     // Write to stdin
     if let Some(ref mut stdin) = child.stdin {
         stdin
             .write_all(fstab_entry.as_bytes())
-            .map_err(|e| SimonError::Io(e))?;
+            .map_err(SimonError::Io)?;
     }
 
-    let output = child.wait_with_output().map_err(|e| SimonError::Io(e))?;
+    let output = child.wait_with_output().map_err(SimonError::Io)?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -348,7 +346,7 @@ pub fn remove(path: &Path) -> Result<()> {
         .arg("rm")
         .arg(path)
         .output()
-        .map_err(|e| SimonError::Io(e))?;
+        .map_err(SimonError::Io)?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);

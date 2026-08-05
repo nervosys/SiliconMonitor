@@ -19,7 +19,7 @@
 //! # Example
 //!
 //! ```no_run
-//! use simonlib::agent::local::{LlamaCppClient, InferenceRequest};
+//! use simonlib::agent::local::{LlamaCppClient, InferenceRequest, LocalInferenceClient};
 //! use std::path::PathBuf;
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
