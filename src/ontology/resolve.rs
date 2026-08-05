@@ -963,31 +963,28 @@ fn resolve_thermal(out: &mut Vec<Reading>) {
         }
     };
 
-    let mut any = false;
     for (name, value) in [
         ("cpu", temps.cpu),
         ("gpu", temps.gpu),
         ("motherboard", temps.motherboard),
     ] {
         match value {
-            Some(v) => {
-                any = true;
-                out.push(Reading::measured(
-                    format!("thermal.{name}.temperature"),
-                    serde_json::json!(v),
-                    Some(Unit::Celsius),
-                ));
-            }
+            Some(v) => out.push(Reading::measured(
+                format!("thermal.{name}.temperature"),
+                serde_json::json!(v),
+                Some(Unit::Celsius),
+            )),
             None => out.push(Reading::unavailable(
                 format!("thermal.{name}.temperature"),
                 Some(Unit::Celsius),
-                "no sensor exposed for this component",
+                "no sensor exposed for this component — on Windows most board \
+                 sensors require a signed kernel driver, and a virtual machine \
+                 usually exposes none at all",
             )),
         }
     }
 
     for (device, value) in temps.storage.iter().chain(temps.network.iter()) {
-        any = true;
         out.push(Reading::measured(
             format!("thermal.{}.temperature", id_segment(device)),
             serde_json::json!(value),
@@ -995,14 +992,16 @@ fn resolve_thermal(out: &mut Vec<Reading>) {
         ));
     }
 
-    if !any {
-        out.push(Reading::unavailable(
-            "thermal.<none>",
-            Some(Unit::Celsius),
-            "no thermal sensors readable on this machine — on Windows most board \
-             sensors require a signed kernel driver",
-        ));
-    }
+    // There is deliberately no `thermal.<none>` row when every sensor comes back
+    // empty. `<none>` means the domain enumerated nothing, and this resolver always
+    // enumerates cpu, gpu and motherboard — it emits an `unavailable` row for each,
+    // which states the same fact per component and more precisely. Emitting both
+    // produced a snapshot that said "the domain enumerated nothing" beside three
+    // thermal rows. It only showed up on a machine where no sensor reads at all,
+    // which is why the first macOS CI run found it and no Windows run ever did.
+    //
+    // The read-failure path above still emits `<none>`, and correctly: it returns
+    // before pushing anything, so nothing contradicts it.
 }
 
 fn resolve_power(out: &mut Vec<Reading>) {
