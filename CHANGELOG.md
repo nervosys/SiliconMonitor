@@ -5,6 +5,57 @@ All notable changes to Silicon Monitor will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.0] - 2026-08-06
+
+SMART and NVMe support, and the removal of a fabrication the work uncovered.
+
+### Added
+
+- **`DiskDevice::smart_info()`** on Linux and Windows. Returns the drive's health
+  verdict and whatever attributes the platform exposes. Verified on Windows against
+  four physical drives.
+- **`DiskDevice::nvme_info()`** on Linux and Windows. Identity — model, serial,
+  firmware, capacity — needs no privileges. Linux additionally reads the controller
+  id and namespace count from `/sys/class/nvme`, which Windows does not expose
+  unelevated. Returns `NotSupported` for non-NVMe devices.
+- `DiskDevice::health()` is now derived from SMART on both platforms. The Linux
+  implementation previously returned `Healthy` whenever the device file existed,
+  reporting "the kernel enumerated this drive" as a clean bill of health.
+
+### Fixed
+
+- **SMART reported fabricated readings for every drive.**
+  `Get-StorageReliabilityCounter` requires elevation; unelevated it fails with
+  `PermissionDenied`. That failure was swallowed by `-ErrorAction SilentlyContinue`
+  and replaced with `0`, so simon reported every drive as healthy with a
+  temperature of 0 °C and zero power-on hours. An access error was being presented
+  as a measurement.
+- **Every drive was named `PhysicalDrive0`.** `DeviceId` arrives from PowerShell as
+  a JSON *string* (`"1"`), and `as_u64()` returned `None` for all of them, so the
+  `.unwrap_or(0)` fallback collapsed four distinct drives into one name.
+- **Health was graded from an empty scorecard.** With counters defaulting to zero,
+  a drive whose data could not be read took no penalties, scored 100, and was
+  declared `Good` with "100% life remaining" — a confident verdict derived from
+  nothing. Scoring now requires evidence; with none, the platform's own verdict
+  stands and no life estimate is published.
+- **Every NVMe drive was classified as a plain SSD.** Windows answers `MediaType`
+  (the medium, `"SSD"`) and `BusType` (the transport, `"NVMe"`) separately, and only
+  `MediaType` was read — which then made `nvme_info()` refuse to answer for the
+  drives it was written for.
+
+### Changed — breaking
+
+- `smart::SmartDiskInfo`'s counters are now `Option`: `temperature_celsius`,
+  `power_on_hours`, `power_cycle_count`, `reallocated_sectors`, `pending_sectors`,
+  `uncorrectable_errors`, `total_bytes_written`, `total_bytes_read`. `None` means
+  the platform would not report it; it does not mean zero.
+- `disk::NvmeInfo`'s `nvme_version`, `unallocated_capacity`, `controller_id`,
+  `num_namespaces`, `power_state` and `critical_warnings` are now `Option` for the
+  same reason. A `controller_id` of 0 is a real controller and a `num_namespaces`
+  of 0 is a real answer; neither can stand in for "not read".
+- `SmartMonitor::max_temperature()` returns `Option<u32>` rather than `0` when no
+  drive reported a temperature.
+
 ## [2.1.5] - 2026-08-06
 
 ### Fixed

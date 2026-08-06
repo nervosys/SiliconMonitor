@@ -74,6 +74,23 @@ impl LinuxDisk {
     }
 }
 
+impl LinuxDisk {
+    /// This drive's entry from the SMART collector, matched on device path.
+    ///
+    /// One collector run enumerates every drive, so this costs a full sweep per
+    /// call. The trait is per-device, which makes that unavoidable here; a caller
+    /// wanting all drives should use [`crate::smart::SmartMonitor`] directly.
+    fn smart_disk(&self) -> Option<crate::smart::SmartDiskInfo> {
+        let wanted = format!("/dev/{}", self.name);
+        crate::smart::SmartMonitor::new()
+            .ok()?
+            .disks()
+            .iter()
+            .find(|d| d.device == wanted)
+            .cloned()
+    }
+}
+
 impl DiskDevice for LinuxDisk {
     fn name(&self) -> &str {
         &self.name
@@ -192,13 +209,127 @@ impl DiskDevice for LinuxDisk {
     }
 
     fn health(&self) -> Result<DiskHealth, Error> {
-        // Basic health check - would need SMART data for comprehensive check
-        // For now, just check if device is accessible
-        if self.device_path.exists() {
-            Ok(DiskHealth::Healthy)
-        } else {
-            Ok(DiskHealth::Unknown)
+        // The device file existing says the kernel enumerated it, not that the
+        // drive is well. Ask the SMART collector, which reads the drive's own
+        // health, and fall back to Unknown rather than asserting Healthy — an
+        // existence check reported as a clean bill of health is a claim nothing
+        // measured.
+        match self.smart_disk() {
+            Some(disk) => Ok(match disk.health {
+                crate::smart::DiskHealth::Good => DiskHealth::Healthy,
+                crate::smart::DiskHealth::Warning => DiskHealth::Warning,
+                crate::smart::DiskHealth::Critical => DiskHealth::Critical,
+                crate::smart::DiskHealth::Failed => DiskHealth::Failed,
+                crate::smart::DiskHealth::Unknown => DiskHealth::Unknown,
+            }),
+            None => Ok(DiskHealth::Unknown),
         }
+    }
+
+    fn smart_info(&self) -> Result<SmartInfo, Error> {
+        let Some(disk) = self.smart_disk() else {
+            return Err(Error::QueryFailed(format!(
+                "no SMART data for {}; `smartctl` or `nvme` may not be installed",
+                self.name
+            )));
+        };
+
+        Ok(SmartInfo {
+            passed: !matches!(
+                disk.health,
+                crate::smart::DiskHealth::Critical | crate::smart::DiskHealth::Failed
+            ),
+            attributes: disk
+                .attributes
+                .iter()
+                .map(|a| SmartAttribute {
+                    id: a.id.min(u8::MAX as u16) as u8,
+                    name: a.name.clone(),
+                    value: a.value.min(u8::MAX as u64) as u8,
+                    worst: a.worst.min(u8::MAX as u64) as u8,
+                    threshold: a.threshold.min(u8::MAX as u64) as u8,
+                    raw_value: a.raw_value,
+                    critical: a.pre_fail,
+                })
+                .collect(),
+            temperature: disk.temperature_celsius.map(|t| t as f32),
+            power_on_hours: disk.power_on_hours,
+            power_cycle_count: disk.power_cycle_count,
+            reallocated_sectors: disk.reallocated_sectors,
+            pending_sectors: disk.pending_sectors,
+            uncorrectable_sectors: disk.uncorrectable_errors,
+        })
+    }
+
+    fn nvme_info(&self) -> Result<NvmeInfo, Error> {
+        // Namespaces are named `nvme0n1`; the controller they belong to is
+        // `nvme0`, and that is what sysfs keys on.
+        let Some(controller) = self
+            .name
+            .split('n')
+            .next()
+            .filter(|c| c.starts_with("nvme"))
+        else {
+            return Err(Error::NotSupported);
+        };
+        let base = PathBuf::from("/sys/class/nvme").join(controller);
+        if !base.exists() {
+            return Err(Error::NotSupported);
+        }
+
+        let attr = |name: &str| {
+            fs::read_to_string(base.join(name))
+                .ok()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+        };
+
+        // sysfs exposes identity, the controller id and the namespace list without
+        // root — more than Windows gives unelevated. The SMART/Health log page
+        // (temperature, wear, data units) still needs the admin ioctl, so those
+        // come from the SMART collector when `nvme` is installed, and stay None
+        // otherwise rather than becoming zero.
+        let smart = self.smart_disk();
+        let namespaces = fs::read_dir(&base).ok().map(|entries| {
+            entries
+                .flatten()
+                .filter(|e| {
+                    e.file_name()
+                        .to_string_lossy()
+                        .starts_with(&format!("{controller}n"))
+                })
+                .count() as u32
+        });
+
+        Ok(NvmeInfo {
+            model: attr("model").unwrap_or_default(),
+            serial: attr("serial").unwrap_or_default(),
+            firmware: attr("firmware_rev").unwrap_or_default(),
+            nvme_version: attr("nvme_version"),
+            total_capacity: self.read_sysfs_u64("size").map(|s| s * 512).unwrap_or(0),
+            unallocated_capacity: None,
+            controller_id: attr("cntlid").and_then(|v| v.parse().ok()),
+            num_namespaces: namespaces,
+            temperature_sensors: smart
+                .as_ref()
+                .and_then(|d| d.temperature_celsius)
+                .map(|t| vec![t as f32])
+                .unwrap_or_default(),
+            power_state: None,
+            available_power_states: Vec::new(),
+            percentage_used: smart.as_ref().and_then(|d| d.nvme_percentage_used),
+            data_units_read: smart
+                .as_ref()
+                .and_then(|d| d.total_bytes_read)
+                .map(|b| b / 512),
+            data_units_written: smart
+                .as_ref()
+                .and_then(|d| d.total_bytes_written)
+                .map(|b| b / 512),
+            host_read_commands: None,
+            host_write_commands: None,
+            critical_warnings: None,
+        })
     }
 
     fn device_path(&self) -> PathBuf {

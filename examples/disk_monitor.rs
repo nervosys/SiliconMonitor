@@ -178,14 +178,24 @@ fn print_disk_info(disk: &dyn disk::DiskDevice) -> Result<(), Box<dyn std::error
         println!("  Model:          {}", nvme.model);
         println!("  Serial:         {}", nvme.serial);
         println!("  Firmware:       {}", nvme.firmware);
-        println!("  NVMe Version:   {}", nvme.nvme_version);
+        // These come from Identify Controller, which needs elevation on Windows
+        // and root for the ioctl on Linux. Say "unknown" rather than printing a
+        // zero that reads as a real controller id or a namespace count of none.
+        fn or_unknown<T: std::fmt::Display>(value: Option<T>) -> String {
+            value.map_or_else(
+                || "unknown (needs elevation)".to_string(),
+                |v| v.to_string(),
+            )
+        }
+
+        println!("  NVMe Version:   {}", or_unknown(nvme.nvme_version));
         println!(
             "  Total Capacity: {:.2} GB",
             nvme.total_capacity as f64 / 1_000_000_000.0
         );
-        println!("  Controller ID:  {}", nvme.controller_id);
-        println!("  Namespaces:     {}", nvme.num_namespaces);
-        println!("  Power State:    {}", nvme.power_state);
+        println!("  Controller ID:  {}", or_unknown(nvme.controller_id));
+        println!("  Namespaces:     {}", or_unknown(nvme.num_namespaces));
+        println!("  Power State:    {}", or_unknown(nvme.power_state));
 
         if !nvme.temperature_sensors.is_empty() {
             print!("  Temperatures:   ");

@@ -153,6 +153,24 @@ impl WindowsDisk {
     }
 }
 
+impl WindowsDisk {
+    /// This drive's entry from the SMART collector, matched on physical index.
+    ///
+    /// The collector enumerates every drive in one PowerShell round trip, so this
+    /// costs a subprocess per call. The trait is per-device, which makes that
+    /// unavoidable here; a caller wanting all drives should use
+    /// [`crate::smart::SmartMonitor`] directly and read the whole list once.
+    fn smart_disk(&self) -> Option<crate::smart::SmartDiskInfo> {
+        let wanted = format!(r"\\.\PhysicalDrive{}", self.disk_index);
+        crate::smart::SmartMonitor::new()
+            .ok()?
+            .disks()
+            .iter()
+            .find(|d| d.device == wanted)
+            .cloned()
+    }
+}
+
 impl DiskDevice for WindowsDisk {
     fn name(&self) -> &str {
         &self.name
@@ -201,10 +219,98 @@ impl DiskDevice for WindowsDisk {
     }
 
     fn health(&self) -> Result<DiskHealth, Error> {
-        // Would use DeviceIoControl with SMART_RCV_DRIVE_DATA
-        // or WMI MSStorageDriver_FailurePredictStatus
-        // For basic implementation, return Unknown
-        Ok(DiskHealth::Unknown)
+        // Windows publishes a HealthStatus per physical disk; the SMART collector
+        // already reads it, so ask that rather than guessing Unknown.
+        match self.smart_disk() {
+            Some(disk) => Ok(match disk.health {
+                crate::smart::DiskHealth::Good => DiskHealth::Healthy,
+                crate::smart::DiskHealth::Warning => DiskHealth::Warning,
+                crate::smart::DiskHealth::Critical => DiskHealth::Critical,
+                crate::smart::DiskHealth::Failed => DiskHealth::Failed,
+                crate::smart::DiskHealth::Unknown => DiskHealth::Unknown,
+            }),
+            None => Ok(DiskHealth::Unknown),
+        }
+    }
+
+    fn smart_info(&self) -> Result<SmartInfo, Error> {
+        let Some(disk) = self.smart_disk() else {
+            return Err(Error::QueryFailed(format!(
+                "no SMART data for physical drive {}",
+                self.disk_index
+            )));
+        };
+
+        // Every counter is Option because the Windows storage stack only exposes
+        // them to an elevated caller: unelevated, `Get-StorageReliabilityCounter`
+        // fails with PermissionDenied and there is genuinely nothing to report.
+        // `passed` reflects the platform's own health verdict, which *is*
+        // available without elevation.
+        Ok(SmartInfo {
+            passed: !matches!(
+                disk.health,
+                crate::smart::DiskHealth::Critical | crate::smart::DiskHealth::Failed
+            ),
+            attributes: disk
+                .attributes
+                .iter()
+                .map(|a| SmartAttribute {
+                    id: a.id.min(u8::MAX as u16) as u8,
+                    name: a.name.clone(),
+                    value: a.value.min(u8::MAX as u64) as u8,
+                    worst: a.worst.min(u8::MAX as u64) as u8,
+                    threshold: a.threshold.min(u8::MAX as u64) as u8,
+                    raw_value: a.raw_value,
+                    critical: a.pre_fail,
+                })
+                .collect(),
+            temperature: disk.temperature_celsius.map(|t| t as f32),
+            power_on_hours: disk.power_on_hours,
+            power_cycle_count: disk.power_cycle_count,
+            reallocated_sectors: disk.reallocated_sectors,
+            pending_sectors: disk.pending_sectors,
+            uncorrectable_sectors: disk.uncorrectable_errors,
+        })
+    }
+
+    fn nvme_info(&self) -> Result<NvmeInfo, Error> {
+        let Some(disk) = self.smart_disk() else {
+            return Err(Error::QueryFailed(format!(
+                "no device data for physical drive {}",
+                self.disk_index
+            )));
+        };
+        if disk.media_type != crate::smart::DriveMediaType::NVMe {
+            return Err(Error::NotSupported);
+        }
+
+        // Identity comes from the storage stack and needs no elevation. Everything
+        // from Identify Controller and the SMART/Health log page — controller id,
+        // namespace count, NVMe version, temperature sensors, critical warnings —
+        // requires an elevated DeviceIoControl this path does not make, so those
+        // stay None rather than becoming zero.
+        Ok(NvmeInfo {
+            model: disk.model.clone(),
+            serial: disk.serial.clone(),
+            firmware: disk.firmware.clone(),
+            nvme_version: None,
+            total_capacity: disk.capacity_bytes,
+            unallocated_capacity: None,
+            controller_id: None,
+            num_namespaces: None,
+            temperature_sensors: disk
+                .temperature_celsius
+                .map(|t| vec![t as f32])
+                .unwrap_or_default(),
+            power_state: None,
+            available_power_states: Vec::new(),
+            percentage_used: disk.nvme_percentage_used,
+            data_units_read: disk.total_bytes_read.map(|b| b / 512),
+            data_units_written: disk.total_bytes_written.map(|b| b / 512),
+            host_read_commands: None,
+            host_write_commands: None,
+            critical_warnings: None,
+        })
     }
 
     fn device_path(&self) -> PathBuf {

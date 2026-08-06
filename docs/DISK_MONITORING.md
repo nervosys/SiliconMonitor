@@ -68,17 +68,38 @@ Silicon Monitor (simon) provides comprehensive disk and storage monitoring acros
 
 ### 🚧 Partially Implemented
 
-- **Health Status**: Basic presence check (Linux), needs SMART integration
-- **SMART Attributes**: Trait defined, not yet implemented
-- **NVMe Specific Info**: Trait defined, not yet implemented
+- **SMART Attributes** (`DiskDevice::smart_info`): implemented on Linux and
+  Windows. The drive's own health verdict and any attributes the platform exposes
+  are returned; every counter is `Option`, and on Windows they are `None` unless
+  the process is elevated — `Get-StorageReliabilityCounter` requires it and fails
+  with `PermissionDenied` otherwise. Verified on Windows against four physical
+  drives.
+- **NVMe Specific Info** (`DiskDevice::nvme_info`): implemented on Linux and
+  Windows. Identity (model, serial, firmware, capacity) needs no privileges.
+  Linux additionally reads the controller id and namespace count from
+  `/sys/class/nvme`, which Windows does not expose unelevated. Everything from
+  Identify Controller and the SMART/Health log page — NVMe version, power states,
+  critical warnings — needs an elevated ioctl neither path makes, and is `None`
+  rather than zero. Returns `NotSupported` for non-NVMe devices.
+- **Health Status**: now derived from SMART rather than from whether the device
+  file exists. The Linux implementation previously returned `Healthy` whenever the
+  path was present, which reported the kernel having enumerated a drive as a clean
+  bill of health.
+
+> **Elevation.** Without it, on Windows you get identity, media type, bus type and
+> the platform's health verdict, but no temperature, power-on hours, wear or error
+> counts. simon reports those as unavailable rather than as zero — the previous
+> behaviour turned an access-denied error into "0 °C, 0 power-on hours, healthy"
+> for every drive on the system.
 
 ### ❌ Not Yet Implemented
 
-1. **Windows Support**
-   - WMI `Win32_DiskDrive` enumeration
-   - Performance counters for I/O stats
-   - `DeviceIoControl` for SMART data
-   - NVMe passthrough commands
+1. **Elevated Windows SMART/NVMe passthrough**
+   - `DeviceIoControl` with `StorageDeviceProtocolSpecificProperty` for the NVMe
+     Identify Controller and SMART/Health log pages
+   - Would supply the fields currently `None` unelevated: temperature, power-on
+     hours, wear, error counts, controller id, namespace count, critical warnings
+   - WMI enumeration and I/O performance counters are already implemented
 
 2. **macOS Support**
    - IOKit `IOBlockStorageDevice` enumeration

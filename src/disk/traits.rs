@@ -178,20 +178,26 @@ pub struct NvmeInfo {
     pub serial: String,
     /// Firmware revision
     pub firmware: String,
+    // The fields below come from NVMe Identify Controller and the SMART/Health
+    // log page. Both need elevation on Windows and root for the ioctl on Linux, so
+    // a caller without them can still learn the drive's identity but not its
+    // controller details. They are `Option` because a `controller_id` of 0 is a
+    // real controller and `num_namespaces` of 0 is a real answer — neither can
+    // stand in for "not read".
     /// NVMe version (e.g., "1.4")
-    pub nvme_version: String,
+    pub nvme_version: Option<String>,
     /// Total NVM capacity (bytes)
     pub total_capacity: u64,
     /// Unallocated capacity (bytes)
-    pub unallocated_capacity: u64,
+    pub unallocated_capacity: Option<u64>,
     /// Controller ID
-    pub controller_id: u16,
+    pub controller_id: Option<u16>,
     /// Number of namespaces
-    pub num_namespaces: u32,
-    /// Temperature sensors (Celsius)
+    pub num_namespaces: Option<u32>,
+    /// Temperature sensors (Celsius). Empty means none were read.
     pub temperature_sensors: Vec<f32>,
     /// Current power state
-    pub power_state: u8,
+    pub power_state: Option<u8>,
     /// Available power states
     pub available_power_states: Vec<NvmePowerState>,
     /// Percentage used (wear indicator, 0-100)
@@ -204,8 +210,9 @@ pub struct NvmeInfo {
     pub host_read_commands: Option<u64>,
     /// Host write commands
     pub host_write_commands: Option<u64>,
-    /// Critical warnings (bit flags)
-    pub critical_warnings: u8,
+    /// Critical warnings (bit flags). `None` when the health log was not read —
+    /// distinct from `Some(0)`, which means the drive reported no warnings.
+    pub critical_warnings: Option<u8>,
 }
 
 /// NVMe power state information

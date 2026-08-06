@@ -13,10 +13,18 @@
 //!
 //! let monitor = SmartMonitor::new().unwrap();
 //! for disk in monitor.disks() {
-//!     println!("{}: health={:?}, temp={}°C, power_on={}h",
-//!         disk.device, disk.health, disk.temperature_celsius, disk.power_on_hours);
+//!     println!("{}: health={:?}", disk.device, disk.health);
+//!     // Every counter is `Option`: `None` means the platform would not report it,
+//!     // which on Windows is the unelevated case. It does not mean zero.
+//!     match disk.temperature_celsius {
+//!         Some(c) => println!("  temperature: {c}°C"),
+//!         None => println!("  temperature: not reported (needs elevation on Windows)"),
+//!     }
+//!     if let Some(hours) = disk.power_on_hours {
+//!         println!("  power-on hours: {hours}");
+//!     }
 //!     if let Some(wear) = disk.wear_leveling_percent {
-//!         println!("  SSD wear: {}%", wear);
+//!         println!("  SSD wear: {wear}%");
 //!     }
 //! }
 //! ```
@@ -85,24 +93,33 @@ pub struct SmartDiskInfo {
     pub capacity_bytes: u64,
     /// Overall health assessment
     pub health: DiskHealth,
-    /// Current temperature in Celsius
-    pub temperature_celsius: u32,
+    // Every counter below is `Option` because "the platform would not tell us" and
+    // "the drive reports zero" are different facts, and this struct used to render
+    // both as `0`.
+    //
+    // On Windows these come from `Get-StorageReliabilityCounter`, which requires
+    // elevation: unelevated it fails with `PermissionDenied`. That failure was
+    // being swallowed and replaced with zeros, so simon reported every drive as
+    // healthy with a temperature of 0 °C and zero power-on hours — an access
+    // error presented as a measurement.
+    /// Current temperature in Celsius, if the platform reported one
+    pub temperature_celsius: Option<u32>,
     /// Power-on hours
-    pub power_on_hours: u64,
+    pub power_on_hours: Option<u64>,
     /// Power cycle count
-    pub power_cycle_count: u64,
+    pub power_cycle_count: Option<u64>,
     /// Reallocated sector count (HDD/SSD)
-    pub reallocated_sectors: u64,
+    pub reallocated_sectors: Option<u64>,
     /// Pending sector count
-    pub pending_sectors: u64,
+    pub pending_sectors: Option<u64>,
     /// Uncorrectable error count
-    pub uncorrectable_errors: u64,
+    pub uncorrectable_errors: Option<u64>,
     /// SSD wear leveling percentage used (0-100, None for HDD)
     pub wear_leveling_percent: Option<f32>,
     /// Total bytes written (lifetime)
-    pub total_bytes_written: u64,
+    pub total_bytes_written: Option<u64>,
     /// Total bytes read (lifetime)
-    pub total_bytes_read: u64,
+    pub total_bytes_read: Option<u64>,
     /// NVMe percentage used (0-100, None for SATA)
     pub nvme_percentage_used: Option<u8>,
     /// NVMe available spare percentage
@@ -164,47 +181,61 @@ impl SmartMonitor {
             .collect()
     }
 
-    /// Get the hottest disk temperature.
-    pub fn max_temperature(&self) -> u32 {
+    /// Get the hottest disk temperature, if any disk reported one.
+    pub fn max_temperature(&self) -> Option<u32> {
         self.disks
             .iter()
-            .map(|d| d.temperature_celsius)
+            .filter_map(|d| d.temperature_celsius)
             .max()
-            .unwrap_or(0)
     }
 
     /// Infer health status and remaining life from raw attributes.
+    ///
+    /// Scoring only reflects evidence that was actually read. Previously every
+    /// counter was a plain integer, so a drive whose counters could not be read at
+    /// all arrived here as zeros, took no penalties, scored 100 and was declared
+    /// `Good` — a confident verdict derived from nothing. Where no factor applies,
+    /// this now leaves whatever the platform itself reported (Windows supplies a
+    /// `HealthStatus`) rather than overwriting it with a computed judgement.
     fn infer_health(disk: &mut SmartDiskInfo) {
         let mut score: f32 = 100.0;
+        let mut had_evidence = false;
 
         // Factor 1: Reallocated sectors (very bad for HDDs, concerning for SSDs)
-        if disk.reallocated_sectors > 0 {
+        if let Some(reallocated) = disk.reallocated_sectors.filter(|n| *n > 0) {
+            had_evidence = true;
             let penalty = match disk.media_type {
-                DriveMediaType::HDD => (disk.reallocated_sectors as f32 * 2.0).min(40.0),
-                _ => (disk.reallocated_sectors as f32 * 0.5).min(20.0),
+                DriveMediaType::HDD => (reallocated as f32 * 2.0).min(40.0),
+                _ => (reallocated as f32 * 0.5).min(20.0),
             };
             score -= penalty;
         }
 
         // Factor 2: Pending sectors
-        if disk.pending_sectors > 0 {
-            score -= (disk.pending_sectors as f32 * 3.0).min(30.0);
+        if let Some(pending) = disk.pending_sectors.filter(|n| *n > 0) {
+            had_evidence = true;
+            score -= (pending as f32 * 3.0).min(30.0);
         }
 
         // Factor 3: Uncorrectable errors
-        if disk.uncorrectable_errors > 0 {
-            score -= (disk.uncorrectable_errors as f32 * 5.0).min(40.0);
+        if let Some(errors) = disk.uncorrectable_errors.filter(|n| *n > 0) {
+            had_evidence = true;
+            score -= (errors as f32 * 5.0).min(40.0);
         }
 
         // Factor 4: Temperature (above 55°C is concerning, above 70°C is critical)
-        if disk.temperature_celsius > 70 {
-            score -= 20.0;
-        } else if disk.temperature_celsius > 55 {
-            score -= 5.0;
+        if let Some(temp) = disk.temperature_celsius {
+            had_evidence = true;
+            if temp > 70 {
+                score -= 20.0;
+            } else if temp > 55 {
+                score -= 5.0;
+            }
         }
 
         // Factor 5: SSD wear leveling
         if let Some(wear) = disk.wear_leveling_percent {
+            had_evidence = true;
             if wear > 90.0 {
                 score -= 30.0;
             } else if wear > 75.0 {
@@ -214,6 +245,7 @@ impl SmartMonitor {
 
         // Factor 6: NVMe percentage used
         if let Some(pct) = disk.nvme_percentage_used {
+            had_evidence = true;
             if pct > 90 {
                 score -= 30.0;
             } else if pct > 75 {
@@ -223,6 +255,7 @@ impl SmartMonitor {
 
         // Factor 7: NVMe available spare
         if let Some(spare) = disk.nvme_available_spare {
+            had_evidence = true;
             if spare < 10 {
                 score -= 25.0;
             } else if spare < 25 {
@@ -236,10 +269,20 @@ impl SmartMonitor {
             DriveMediaType::HDD => 30_000,
             _ => 50_000,
         };
-        if disk.power_on_hours > age_threshold * 2 {
-            score -= 15.0;
-        } else if disk.power_on_hours > age_threshold {
-            score -= 5.0;
+        if let Some(hours) = disk.power_on_hours {
+            had_evidence = true;
+            if hours > age_threshold * 2 {
+                score -= 15.0;
+            } else if hours > age_threshold {
+                score -= 5.0;
+            }
+        }
+
+        // With nothing to go on, keep the platform's own verdict and publish no
+        // life estimate. A score of 100 here would mean "no penalties applied",
+        // which is not the same as "healthy".
+        if !had_evidence {
+            return;
         }
 
         // Determine health from score
@@ -257,17 +300,17 @@ impl SmartMonitor {
         disk.estimated_life_remaining = Some(score.max(0.0));
 
         // Estimate days remaining via wear rate extrapolation
-        if disk.power_on_hours > 100 {
+        if let Some(hours) = disk.power_on_hours.filter(|h| *h > 100) {
             if let Some(wear) = disk.wear_leveling_percent {
                 if wear > 5.0 {
-                    let hours_per_percent = disk.power_on_hours as f32 / wear;
+                    let hours_per_percent = hours as f32 / wear;
                     let remaining_percent = 100.0 - wear;
                     let remaining_hours = hours_per_percent * remaining_percent;
                     disk.estimated_days_remaining = Some((remaining_hours / 24.0) as u32);
                 }
             } else if let Some(pct) = disk.nvme_percentage_used {
                 if pct > 5 {
-                    let hours_per_percent = disk.power_on_hours as f32 / pct as f32;
+                    let hours_per_percent = hours as f32 / pct as f32;
                     let remaining_percent = 100.0 - pct as f32;
                     let remaining_hours = hours_per_percent * remaining_percent;
                     disk.estimated_days_remaining = Some((remaining_hours / 24.0) as u32);
@@ -306,15 +349,15 @@ impl SmartMonitor {
                         media_type: DriveMediaType::NVMe,
                         capacity_bytes: 0,
                         health: DiskHealth::Unknown,
-                        temperature_celsius: 0,
-                        power_on_hours: 0,
-                        power_cycle_count: 0,
-                        reallocated_sectors: 0,
-                        pending_sectors: 0,
-                        uncorrectable_errors: 0,
+                        temperature_celsius: None,
+                        power_on_hours: None,
+                        power_cycle_count: None,
+                        reallocated_sectors: None,
+                        pending_sectors: None,
+                        uncorrectable_errors: None,
                         wear_leveling_percent: None,
-                        total_bytes_written: 0,
-                        total_bytes_read: 0,
+                        total_bytes_written: None,
+                        total_bytes_read: None,
                         nvme_percentage_used: None,
                         nvme_available_spare: None,
                         attributes: Vec::new(),
@@ -329,24 +372,28 @@ impl SmartMonitor {
                     {
                         if let Ok(text) = String::from_utf8(output.stdout) {
                             if let Ok(val) = serde_json::from_str::<serde_json::Value>(&text) {
+                                // Absent keys stay `None`: `nvme smart-log` omits
+                                // what the drive did not report, and the previous
+                                // `.unwrap_or(0)` turned every omission into a
+                                // reading of zero.
                                 disk.temperature_celsius = val["temperature"]
                                     .as_u64()
                                     .or_else(|| val["composite_temperature"].as_u64())
-                                    .map(|t| if t > 273 { (t - 273) as u32 } else { t as u32 })
-                                    .unwrap_or(0);
-                                disk.power_on_hours = val["power_on_hours"].as_u64().unwrap_or(0);
-                                disk.power_cycle_count = val["power_cycles"].as_u64().unwrap_or(0);
+                                    .map(|t| if t > 273 { (t - 273) as u32 } else { t as u32 });
+                                disk.power_on_hours = val["power_on_hours"].as_u64();
+                                disk.power_cycle_count = val["power_cycles"].as_u64();
                                 disk.nvme_percentage_used =
                                     val["percent_used"].as_u64().map(|v| v as u8);
                                 disk.nvme_available_spare =
                                     val["avail_spare"].as_u64().map(|v| v as u8);
-                                disk.uncorrectable_errors =
-                                    val["media_errors"].as_u64().unwrap_or(0);
-                                // data_units_written * 512 * 1000
-                                disk.total_bytes_written =
-                                    val["data_units_written"].as_u64().unwrap_or(0) * 512_000;
+                                disk.uncorrectable_errors = val["media_errors"].as_u64();
+                                // NVMe reports data units of 512 bytes, in
+                                // thousands.
+                                disk.total_bytes_written = val["data_units_written"]
+                                    .as_u64()
+                                    .map(|units| units * 512_000);
                                 disk.total_bytes_read =
-                                    val["data_units_read"].as_u64().unwrap_or(0) * 512_000;
+                                    val["data_units_read"].as_u64().map(|units| units * 512_000);
                             }
                         }
                     }
@@ -393,15 +440,15 @@ impl SmartMonitor {
                     media_type,
                     capacity_bytes,
                     health: DiskHealth::Unknown,
-                    temperature_celsius: 0,
-                    power_on_hours: 0,
-                    power_cycle_count: 0,
-                    reallocated_sectors: 0,
-                    pending_sectors: 0,
-                    uncorrectable_errors: 0,
+                    temperature_celsius: None,
+                    power_on_hours: None,
+                    power_cycle_count: None,
+                    reallocated_sectors: None,
+                    pending_sectors: None,
+                    uncorrectable_errors: None,
                     wear_leveling_percent: None,
-                    total_bytes_written: 0,
-                    total_bytes_read: 0,
+                    total_bytes_written: None,
+                    total_bytes_read: None,
                     nvme_percentage_used: None,
                     nvme_available_spare: None,
                     attributes: Vec::new(),
@@ -437,19 +484,23 @@ impl SmartMonitor {
                     let raw_val = attr["raw"]["value"].as_u64().unwrap_or(0);
                     let pre_fail = attr["flags"]["prefailure"].as_bool().unwrap_or(false);
 
+                    // Each arm here means the drive actually published that
+                    // attribute, so `Some` is the truthful wrapper — unlike the
+                    // struct's defaults, which stay `None` for attributes the
+                    // drive never reported.
                     match id {
-                        5 => disk.reallocated_sectors = raw_val, // Reallocated_Sector_Ct
-                        9 => disk.power_on_hours = raw_val,      // Power_On_Hours
-                        12 => disk.power_cycle_count = raw_val,  // Power_Cycle_Count
+                        5 => disk.reallocated_sectors = Some(raw_val), // Reallocated_Sector_Ct
+                        9 => disk.power_on_hours = Some(raw_val),      // Power_On_Hours
+                        12 => disk.power_cycle_count = Some(raw_val),  // Power_Cycle_Count
                         177 | 233 => {
                             // Wear_Leveling_Count or Media_Wearout_Indicator
                             disk.wear_leveling_percent = Some(100.0 - value as f32);
                         }
-                        194 | 190 => disk.temperature_celsius = raw_val as u32, // Temperature
-                        197 => disk.pending_sectors = raw_val, // Current_Pending_Sector
-                        198 => disk.uncorrectable_errors = raw_val, // Offline_Uncorrectable
-                        241 => disk.total_bytes_written = raw_val * 512, // Total_LBAs_Written
-                        242 => disk.total_bytes_read = raw_val * 512, // Total_LBAs_Read
+                        194 | 190 => disk.temperature_celsius = Some(raw_val as u32), // Temperature
+                        197 => disk.pending_sectors = Some(raw_val), // Current_Pending_Sector
+                        198 => disk.uncorrectable_errors = Some(raw_val), // Offline_Uncorrectable
+                        241 => disk.total_bytes_written = Some(raw_val * 512), // Total_LBAs_Written
+                        242 => disk.total_bytes_read = Some(raw_val * 512), // Total_LBAs_Read
                         _ => {}
                     }
 
@@ -493,12 +544,14 @@ Get-PhysicalDisk | ForEach-Object {
         SerialNumber = $disk.SerialNumber
         FirmwareVersion = $disk.FirmwareVersion
         MediaType = $disk.MediaType
+        BusType = $disk.BusType
         Size = $disk.Size
         HealthStatus = $disk.HealthStatus
-        Temperature = if ($rel) { $rel.Temperature } else { 0 }
-        PowerOnHours = if ($rel) { $rel.PowerOnHours } else { 0 }
-        ReadErrorsTotal = if ($rel) { $rel.ReadErrorsTotal } else { 0 }
-        WriteErrorsTotal = if ($rel) { $rel.WriteErrorsTotal } else { 0 }
+        Temperature = if ($rel) { $rel.Temperature } else { $null }
+        PowerOnHours = if ($rel) { $rel.PowerOnHours } else { $null }
+        PowerCycleCount = if ($rel) { $rel.StartStopCycleCount } else { $null }
+        ReadErrorsTotal = if ($rel) { $rel.ReadErrorsTotal } else { $null }
+        WriteErrorsTotal = if ($rel) { $rel.WriteErrorsTotal } else { $null }
         Wear = if ($rel) { $rel.Wear } else { $null }
     }
 } | ConvertTo-Json -Compress
@@ -514,20 +567,31 @@ Get-PhysicalDisk | ForEach-Object {
                         _ => vec![],
                     };
                     for item in &items {
+                        // Windows answers these separately: MediaType describes the
+                        // storage medium ("SSD"), BusType the transport ("NVMe").
+                        // An NVMe drive therefore reports MediaType=SSD, and
+                        // matching on MediaType alone classified every NVMe drive
+                        // on this machine as a plain SSD — which then made
+                        // `nvme_info()` refuse to answer for them.
                         let media_str = item["MediaType"].as_str().unwrap_or("");
-                        let media_type = match media_str {
-                            "SSD" => DriveMediaType::SSD,
-                            "HDD" => DriveMediaType::HDD,
-                            "NVMe" | "SCM" => DriveMediaType::NVMe,
-                            _ => {
-                                // Infer from model name
-                                let model = item["Model"].as_str().unwrap_or("").to_lowercase();
-                                if model.contains("nvme") {
-                                    DriveMediaType::NVMe
-                                } else if model.contains("ssd") {
-                                    DriveMediaType::SSD
-                                } else {
-                                    DriveMediaType::Unknown
+                        let bus_str = item["BusType"].as_str().unwrap_or("");
+                        let media_type = if bus_str.eq_ignore_ascii_case("nvme") {
+                            DriveMediaType::NVMe
+                        } else {
+                            match media_str {
+                                "SSD" => DriveMediaType::SSD,
+                                "HDD" => DriveMediaType::HDD,
+                                "NVMe" | "SCM" => DriveMediaType::NVMe,
+                                _ => {
+                                    // Infer from model name
+                                    let model = item["Model"].as_str().unwrap_or("").to_lowercase();
+                                    if model.contains("nvme") {
+                                        DriveMediaType::NVMe
+                                    } else if model.contains("ssd") {
+                                        DriveMediaType::SSD
+                                    } else {
+                                        DriveMediaType::Unknown
+                                    }
                                 }
                             }
                         };
@@ -542,11 +606,21 @@ Get-PhysicalDisk | ForEach-Object {
 
                         let wear = item["Wear"].as_u64().map(|w| w as f32);
 
+                        // `DeviceId` arrives as a JSON *string* ("1"), not a
+                        // number. `as_u64()` returned None for every disk and the
+                        // fallback made them all PhysicalDrive0 — four drives with
+                        // one name, indistinguishable to any caller.
+                        let device_id = item["DeviceId"]
+                            .as_u64()
+                            .or_else(|| item["DeviceId"].as_str()?.trim().parse().ok());
+                        let Some(device_id) = device_id else {
+                            // Without an id there is no way to name the device or
+                            // match it to anything; a placeholder would collide.
+                            continue;
+                        };
+
                         self.disks.push(SmartDiskInfo {
-                            device: format!(
-                                r"\\.\PhysicalDrive{}",
-                                item["DeviceId"].as_u64().unwrap_or(0)
-                            ),
+                            device: format!(r"\\.\PhysicalDrive{device_id}"),
                             model: item["Model"].as_str().unwrap_or("").trim().to_string(),
                             serial: item["SerialNumber"]
                                 .as_str()
@@ -561,16 +635,27 @@ Get-PhysicalDisk | ForEach-Object {
                             media_type,
                             capacity_bytes: item["Size"].as_u64().unwrap_or(0),
                             health,
-                            temperature_celsius: item["Temperature"].as_u64().unwrap_or(0) as u32,
-                            power_on_hours: item["PowerOnHours"].as_u64().unwrap_or(0),
-                            power_cycle_count: 0,
-                            reallocated_sectors: 0,
-                            pending_sectors: 0,
-                            uncorrectable_errors: item["ReadErrorsTotal"].as_u64().unwrap_or(0)
-                                + item["WriteErrorsTotal"].as_u64().unwrap_or(0),
+                            // Null throughout when Get-StorageReliabilityCounter
+                            // was unavailable, which is the unelevated case. These
+                            // stay None rather than becoming zero.
+                            temperature_celsius: item["Temperature"].as_u64().map(|t| t as u32),
+                            power_on_hours: item["PowerOnHours"].as_u64(),
+                            power_cycle_count: item["PowerCycleCount"].as_u64(),
+                            // SATA reallocated/pending sector counts are not
+                            // exposed by the Windows storage stack at all; they
+                            // need a SMART passthrough this path does not make.
+                            reallocated_sectors: None,
+                            pending_sectors: None,
+                            uncorrectable_errors: match (
+                                item["ReadErrorsTotal"].as_u64(),
+                                item["WriteErrorsTotal"].as_u64(),
+                            ) {
+                                (None, None) => None,
+                                (r, w) => Some(r.unwrap_or(0) + w.unwrap_or(0)),
+                            },
                             wear_leveling_percent: wear,
-                            total_bytes_written: 0,
-                            total_bytes_read: 0,
+                            total_bytes_written: None,
+                            total_bytes_read: None,
                             nvme_percentage_used: wear.map(|w| w as u8),
                             nvme_available_spare: None,
                             attributes: Vec::new(),
@@ -607,15 +692,15 @@ Get-PhysicalDisk | ForEach-Object {
                                 media_type: DriveMediaType::Unknown,
                                 capacity_bytes: 0,
                                 health: DiskHealth::Unknown,
-                                temperature_celsius: 0,
-                                power_on_hours: 0,
-                                power_cycle_count: 0,
-                                reallocated_sectors: 0,
-                                pending_sectors: 0,
-                                uncorrectable_errors: 0,
+                                temperature_celsius: None,
+                                power_on_hours: None,
+                                power_cycle_count: None,
+                                reallocated_sectors: None,
+                                pending_sectors: None,
+                                uncorrectable_errors: None,
                                 wear_leveling_percent: None,
-                                total_bytes_written: 0,
-                                total_bytes_read: 0,
+                                total_bytes_written: None,
+                                total_bytes_read: None,
                                 nvme_percentage_used: None,
                                 nvme_available_spare: None,
                                 attributes: Vec::new(),
@@ -651,11 +736,11 @@ Get-PhysicalDisk | ForEach-Object {
                                             .to_string();
                                         if let Some(temp) = info["temperature"]["current"].as_u64()
                                         {
-                                            disk.temperature_celsius = temp as u32;
+                                            disk.temperature_celsius = Some(temp as u32);
                                         }
                                         if let Some(hours) = info["power_on_time"]["hours"].as_u64()
                                         {
-                                            disk.power_on_hours = hours;
+                                            disk.power_on_hours = Some(hours);
                                         }
                                     }
                                 }
@@ -691,15 +776,15 @@ Get-PhysicalDisk | ForEach-Object {
                                 media_type: DriveMediaType::Unknown,
                                 capacity_bytes: 0,
                                 health: DiskHealth::Unknown,
-                                temperature_celsius: 0,
-                                power_on_hours: 0,
-                                power_cycle_count: 0,
-                                reallocated_sectors: 0,
-                                pending_sectors: 0,
-                                uncorrectable_errors: 0,
+                                temperature_celsius: None,
+                                power_on_hours: None,
+                                power_cycle_count: None,
+                                reallocated_sectors: None,
+                                pending_sectors: None,
+                                uncorrectable_errors: None,
                                 wear_leveling_percent: None,
-                                total_bytes_written: 0,
-                                total_bytes_read: 0,
+                                total_bytes_written: None,
+                                total_bytes_read: None,
                                 nvme_percentage_used: None,
                                 nvme_available_spare: None,
                                 attributes: Vec::new(),
@@ -760,15 +845,15 @@ mod tests {
             media_type: DriveMediaType::SSD,
             capacity_bytes: 500_000_000_000,
             health: DiskHealth::Unknown,
-            temperature_celsius: 35,
-            power_on_hours: 5000,
-            power_cycle_count: 1000,
-            reallocated_sectors: 0,
-            pending_sectors: 0,
-            uncorrectable_errors: 0,
+            temperature_celsius: Some(35),
+            power_on_hours: Some(5000),
+            power_cycle_count: Some(1000),
+            reallocated_sectors: None,
+            pending_sectors: None,
+            uncorrectable_errors: None,
             wear_leveling_percent: Some(10.0),
-            total_bytes_written: 0,
-            total_bytes_read: 0,
+            total_bytes_written: None,
+            total_bytes_read: None,
             nvme_percentage_used: None,
             nvme_available_spare: None,
             attributes: Vec::new(),
@@ -790,15 +875,15 @@ mod tests {
             media_type: DriveMediaType::HDD,
             capacity_bytes: 1_000_000_000_000,
             health: DiskHealth::Unknown,
-            temperature_celsius: 72,
-            power_on_hours: 80000,
-            power_cycle_count: 5000,
-            reallocated_sectors: 50,
-            pending_sectors: 10,
-            uncorrectable_errors: 5,
+            temperature_celsius: Some(72),
+            power_on_hours: Some(80000),
+            power_cycle_count: Some(5000),
+            reallocated_sectors: Some(50),
+            pending_sectors: Some(10),
+            uncorrectable_errors: Some(5),
             wear_leveling_percent: None,
-            total_bytes_written: 0,
-            total_bytes_read: 0,
+            total_bytes_written: None,
+            total_bytes_read: None,
             nvme_percentage_used: None,
             nvme_available_spare: None,
             attributes: Vec::new(),
@@ -822,15 +907,15 @@ mod tests {
             media_type: DriveMediaType::SSD,
             capacity_bytes: 500_000_000_000,
             health: DiskHealth::Good,
-            temperature_celsius: 35,
-            power_on_hours: 1000,
-            power_cycle_count: 100,
-            reallocated_sectors: 0,
-            pending_sectors: 0,
-            uncorrectable_errors: 0,
+            temperature_celsius: Some(35),
+            power_on_hours: Some(1000),
+            power_cycle_count: Some(100),
+            reallocated_sectors: None,
+            pending_sectors: None,
+            uncorrectable_errors: None,
             wear_leveling_percent: Some(5.0),
-            total_bytes_written: 1_000_000_000,
-            total_bytes_read: 2_000_000_000,
+            total_bytes_written: Some(1_000_000_000),
+            total_bytes_read: Some(2_000_000_000),
             nvme_percentage_used: None,
             nvme_available_spare: None,
             attributes: Vec::new(),
@@ -840,5 +925,53 @@ mod tests {
         let json = serde_json::to_string(&disk).unwrap();
         assert!(json.contains("Samsung"));
         let _: SmartDiskInfo = serde_json::from_str(&json).unwrap();
+    }
+
+    /// A drive whose counters could not be read must not be graded.
+    ///
+    /// Every counter used to be a plain integer, so a drive whose reliability
+    /// counters were unavailable — the unelevated Windows case, which is the
+    /// common one — arrived at `infer_health` as zeros. Zero reallocated sectors,
+    /// zero errors and zero degrees took no penalties, scored 100, and produced a
+    /// confident `Good` plus an "estimated life remaining: 100%" derived from no
+    /// measurement whatsoever.
+    #[test]
+    fn a_drive_with_no_readable_counters_is_not_graded_healthy() {
+        let mut disk = SmartDiskInfo {
+            device: r"\.\PhysicalDrive0".into(),
+            model: "Unreadable".into(),
+            serial: String::new(),
+            firmware: String::new(),
+            media_type: DriveMediaType::NVMe,
+            capacity_bytes: 0,
+            // What the platform itself said; the scorer must not overwrite it.
+            health: DiskHealth::Unknown,
+            temperature_celsius: None,
+            power_on_hours: None,
+            power_cycle_count: None,
+            reallocated_sectors: None,
+            pending_sectors: None,
+            uncorrectable_errors: None,
+            wear_leveling_percent: None,
+            total_bytes_written: None,
+            total_bytes_read: None,
+            nvme_percentage_used: None,
+            nvme_available_spare: None,
+            attributes: Vec::new(),
+            estimated_life_remaining: None,
+            estimated_days_remaining: None,
+        };
+
+        SmartMonitor::infer_health(&mut disk);
+
+        assert_eq!(
+            disk.health,
+            DiskHealth::Unknown,
+            "a drive with no readable counters was graded from an empty score"
+        );
+        assert!(
+            disk.estimated_life_remaining.is_none(),
+            "a life estimate was published for a drive nothing was read from"
+        );
     }
 }
