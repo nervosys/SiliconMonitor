@@ -40,6 +40,15 @@ use simonlib::pipeline::{Collector, CollectorConfig};
 /// slow; this bounds the test, it is not a performance assertion.
 const SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(90);
 
+/// Whether this platform has readers that produce live hardware values.
+///
+/// simon has CPU and memory readers for Linux and Windows and none for macOS, so
+/// assertions that a reading is non-zero have nothing to hold onto there. This
+/// names that once rather than repeating a cfg at each site.
+fn platform_has_hardware_readers() -> bool {
+    cfg!(any(target_os = "linux", target_os = "windows"))
+}
+
 /// Spawn a collector and wait for a snapshot with real data.
 ///
 /// Returns `None` when nothing populated in time, so callers can skip rather than
@@ -103,11 +112,14 @@ fn cpu_readings_are_physically_possible() {
         sum <= 100.5,
         "aggregate user+system+idle = {sum}%, which exceeds the whole"
     );
-    // A reading of exactly zero across all three means nothing was measured.
-    assert!(
-        sum > 0.0,
-        "aggregate user+system+idle is 0% — no CPU time was accounted for at all"
-    );
+    // A reading of exactly zero across all three means nothing was measured, which
+    // is the honest answer where no CPU reader exists.
+    if platform_has_hardware_readers() {
+        assert!(
+            sum > 0.0,
+            "aggregate user+system+idle is 0% — no CPU time was accounted for at all"
+        );
+    }
 
     // Per-core figures must be per-core, not one number replicated. Identical
     // cumulative values across every core is the signature of the system aggregate
@@ -148,7 +160,9 @@ fn memory_readings_are_self_consistent() {
         return;
     };
 
-    assert!(mem.ram.total > 0, "reported zero total RAM");
+    if platform_has_hardware_readers() {
+        assert!(mem.ram.total > 0, "reported zero total RAM");
+    }
     assert!(
         mem.ram.used <= mem.ram.total,
         "used RAM {} exceeds total {}",
