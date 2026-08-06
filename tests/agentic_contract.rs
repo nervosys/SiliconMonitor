@@ -15,6 +15,23 @@ fn simon() -> Command {
     Command::new(env!("CARGO_BIN_EXE_simon"))
 }
 
+/// Whether this platform has readers that produce live hardware values.
+///
+/// simon has CPU and memory readers for Linux and Windows and none for macOS —
+/// `CpuStats::new` and `MemoryStats::new` return empty there, and `stats::Simon`
+/// reports `UnsupportedPlatform` outright. Tests that assert something *about a
+/// reading* have nothing to assert where no reading is produced, and gating them
+/// on this says so once, by name, instead of scattering `cfg(target_os)` through
+/// the file as if each site were its own special case.
+///
+/// This gates assertions about *values*. It deliberately does not gate the
+/// contract itself: the schema, the id vocabulary, exit codes for unknown ids, and
+/// the `describe`/`get`/`snapshot` agreement are all checked on every platform,
+/// because they are properties of simon rather than of the hardware beneath it.
+fn platform_has_hardware_readers() -> bool {
+    cfg!(any(target_os = "linux", target_os = "windows"))
+}
+
 fn run(args: &[&str]) -> (String, String, i32) {
     let out = simon()
         .args(args)
@@ -140,9 +157,11 @@ fn unreadable_values_are_absent_and_explained_never_defaulted() {
 /// that is merely idle.
 #[test]
 fn get_distinguishes_unknown_ids_from_unavailable_values() {
-    // A value present on every supported platform.
-    let (_, _, code) = run(&["get", "memory.total"]);
-    assert_eq!(code, 0, "reading memory.total should succeed");
+    // `memory.total` is produced wherever a memory reader exists.
+    if platform_has_hardware_readers() {
+        let (_, _, code) = run(&["get", "memory.total"]);
+        assert_eq!(code, 0, "reading memory.total should succeed");
+    }
 
     let (_, stderr, code) = run(&["get", "definitely.not.an.entity"]);
     assert_eq!(code, 1, "an unknown id must exit 1");
@@ -277,11 +296,17 @@ fn a_rendered_frame_carries_readings_not_zeroed_defaults() {
         header.contains("MEM:"),
         "the header does not report memory at all:\n{header}"
     );
-    assert!(
-        !header.contains("MEM:0%"),
-        "memory reads 0%, which no running machine does — the frame was rendered \
-         before the collector published and is showing defaults:\n{header}"
-    );
+    // 0% is the signature of the un-populated state on a platform that *has* a
+    // memory reader. Where there is none it is simply the truth, so this checks
+    // the header exists everywhere and checks its value only where a reading is
+    // produced.
+    if platform_has_hardware_readers() {
+        assert!(
+            !header.contains("MEM:0%"),
+            "memory reads 0%, which no running machine does — the frame was rendered \
+             before the collector published and is showing defaults:\n{header}"
+        );
+    }
 }
 
 /// Tab selection has to work by name, since an agent reading the tab bar has names
