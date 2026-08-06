@@ -28,6 +28,7 @@ exclude = [
     "AI_INTEGRATION.md",
     "ROADMAP.md",
     "CHANGELOG.md",
+    "HANDOFF.md",
 ]
 
 [lib]
