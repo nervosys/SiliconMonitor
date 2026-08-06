@@ -14,14 +14,34 @@ Silicon Monitor provides comprehensive CPU monitoring across all platforms with 
 | Feature                | Linux | Windows | macOS |
 | ---------------------- | ----- | ------- | ----- |
 | Per-core frequency     | ✅     | 🚧       | ✅     |
-| Per-core utilization   | ✅     | 🚧       | ✅     |
-| Temperature monitoring | ✅     | 🚧       | ❌*    |
+| Per-core utilization   | ✅     | ✅       | ✅     |
+| Temperature monitoring | ✅     | ❌†      | ❌*    |
 | Hybrid CPU support     | ✅     | 🚧       | ✅     |
 | Power consumption      | 🚧     | 🚧       | ✅     |
 
 ✅ = Implemented | 🚧 = Partial/TODO | ❌ = Not available from platform
 
 *macOS: Thermal pressure available, but not per-core temperatures
+
+†Windows: `simon cli temperature` reports no sensors on a desktop Ryzen system.
+Most board sensors need a signed kernel driver, which simon does not ship.
+
+> **This table describes `src/silicon/`, not `CpuStats`.** The two are separate:
+> `silicon` is the enhanced per-core and cluster layer, and `CpuStats` /
+> `stats::Simon` is the general path — which has **no macOS implementation at all**
+> (see the platform table in the README). A ✅ here does not imply the general path
+> works on that platform.
+>
+> The Windows column previously read 🚧 throughout, describing
+> `src/silicon/windows.rs` as "basic structure and skeleton" with a "placeholder
+> for WMI and Performance Counter integration". It is 644 lines across 25
+> functions, and `simon cli cpu` returns twenty-four distinct per-core figures on a
+> Ryzen 9 9900X — not one average replicated, which is the defect this repository
+> has hit before. Per-core utilization is corrected to ✅ on that evidence.
+>
+> The macOS column is **unverified**. It has never been exercised: until 2.1.2 the
+> crate could not build on macOS at all. Treat those marks as claims awaiting a
+> Mac, not as measurements.
 
 ## Implementation Status
 
@@ -40,9 +60,10 @@ Silicon Monitor provides comprehensive CPU monitoring across all platforms with 
    - Cluster grouping: P-cores vs E-cores
 
 3. **Windows Implementation** (`src/silicon/windows.rs`)
-   - Basic structure and skeleton
-   - CPU count detection
-   - Placeholder for WMI and Performance Counter integration
+   - Per-core utilization via performance counters — verified returning distinct
+     per-core figures, not a replicated aggregate
+   - CPU identity, core count and clock
+   - No temperature: board sensors need a signed kernel driver simon does not ship
 
 4. **macOS Implementation** (`src/silicon/apple.rs`)
    - Full powermetrics integration
@@ -286,5 +307,5 @@ cargo run --example cpu_monitor --features apple,cpu
 
 ---
 
-**Status**: Linux ✅ Complete | Windows 🚧 Partial | macOS ✅ Complete  
-**Task #5**: Enhanced CPU monitoring (all platforms) - IN PROGRESS
+**Status**: Linux ✅ | Windows ✅ per-core utilization, no temperature | macOS
+unverified — never exercised, since the crate could not build there until 2.1.2

@@ -5,6 +5,38 @@ All notable changes to Silicon Monitor will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.5] - 2026-08-06
+
+### Fixed
+
+- **`docs/CPU_MONITORING.md` described the Windows implementation as a skeleton.**
+  It called `src/silicon/windows.rs` "basic structure and skeleton" with a
+  "placeholder for WMI and Performance Counter integration", and marked every
+  Windows cell 🚧. The file is 644 lines across 25 functions with no TODO markers,
+  and `simon cli cpu` returns twenty-four distinct per-core figures on a Ryzen 9
+  9900X — not one average replicated, which is a defect this repository has shipped
+  before. Per-core utilization corrected to ✅ on that evidence; temperature
+  corrected to ❌, since `simon cli temperature` finds no sensors and the board
+  ones need a signed kernel driver simon does not ship.
+- **The same table marked macOS "✅ Complete" for a column nothing has ever
+  exercised.** The crate could not build on macOS until 2.1.2. Those marks are now
+  labelled unverified rather than corrected, because verifying them needs a Mac.
+- The table also did not say which subsystem it describes. `src/silicon/` is the
+  enhanced per-core layer; `CpuStats` / `stats::Simon` is the general path and has
+  no macOS implementation at all. A ✅ in one table did not imply the other worked,
+  and nothing said so.
+
+### Verified, not changed
+
+- Every documented flag (`--format`, `--watch`, `--frame`, `--script`,
+  `--writable`, `--search`) exists on the command it is shown with.
+- Every documented entity id resolves: `gpu.0.power.limit` and
+  `gpu.0.thermal.temperature` return measured values, and the template form
+  `gpu.{n}.name` is rejected with the guidance the contract promises.
+- `docs/DISK_MONITORING.md`'s "trait defined, not yet implemented" claims for SMART
+  and NVMe are accurate — both are trait defaults returning `NotSupported` with no
+  platform override.
+
 ## [2.1.4] - 2026-08-06
 
 ### Fixed
