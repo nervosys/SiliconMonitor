@@ -924,9 +924,22 @@ cargo run --release --features full --example agent_simple
 | -------- | --- | ------ | ---- | ------------ | --------- | ----------- | ----------- | ------- | ----- | --------- | ------- | --- |
 | Linux    | ✅   | ✅      | ✅    | ✅            | ✅         | ✅           | ❌           | ✅       | ✅     | ✅         | ✅       | ✅   |
 | Windows  | ✅   | ✅      | ✅    | ✅            | ✅         | ✅           | ❌           | ✅       | ✅     | ✅         | ✅       | ✅   |
-| macOS    | ✅   | ✅      | ✅    | ❌            | ❌         | ❌           | ✅           | ✅       | ✅     | ✅         | ✅       | ✅   |
+| macOS    | ❌   | ❌      | ✅    | ❌            | ❌         | ❌           | ✅           | ✅       | ✅     | ✅         | ✅       | ✅   |
 
 ✅ Fully Supported | 🚧 Partial/In Progress | ❌ Not Supported
+
+> **macOS CPU and memory are not implemented.** This table claimed both as
+> supported through 2.1.2. There are readers for Linux and Windows and none for
+> macOS: `CpuStats::new` and `MemoryStats::new` return empty there, and
+> `stats::Simon`'s platform functions report `UnsupportedPlatform`. The claim
+> survived because the crate could not build on macOS at all, so nothing ever
+> exercised it. Contributions implementing these against sysctl and IOKit are
+> welcome — see Contributing.
+>
+> macOS disk support covers enumeration, device info and health. Per-device I/O
+> counters are not available: `iostat` reports rates rather than the cumulative
+> counters the API is built around, and there is no way to attribute its single
+> combined throughput figure to reads versus writes.
 
 ### GPU Backend Details
 
@@ -1125,12 +1138,15 @@ cargo run --release --features nvidia --example gpu_monitor
 
 Contributions are welcome! Areas that need help:
 
+- **macOS CPU and memory readers** — the largest gap. simon builds and passes its
+  suite on macOS but reads neither: there is no `platform/macos.rs`, and
+  `stats::Simon`'s ten platform functions return `UnsupportedPlatform`. This needs
+  sysctl and IOKit work verified on real hardware.
 - **Apple GPU enhancements**: Apple Silicon GPU auto-detection is integrated via `GpuCollection::auto_detect()`; could add Metal Performance Shaders for richer metrics
 - **macOS Process I/O**: I/O read/write bytes and handle counts on macOS
 - **CPU% refinements**: CPU% now uses delta-based sampling (matching Task Manager/top behavior); further improvements could include per-core attribution
 - **Documentation**: More examples, tutorials, API documentation
 - **Testing**: Multi-GPU setups, edge cases, platform-specific bugs
-- **GUI**: Native desktop application (egui) — planned but not yet implemented
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 

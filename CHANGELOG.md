@@ -5,6 +5,25 @@ All notable changes to Silicon Monitor will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.3] - 2026-08-05
+
+### Fixed
+
+- **The README's platform table claimed macOS CPU and memory support that does not
+  exist.** Both were marked fully supported. Neither has a reader — the claim
+  survived because the crate could not build on macOS at all, so nothing ever
+  contradicted it. Corrected, with the gap and the reason stated beneath the table,
+  and macOS disk's I/O-counter limitation noted alongside.
+- **The Contributing section listed the GUI as "planned but not yet
+  implemented"** while three other sections of the same README documented how to
+  run it.
+- The 2.1.2 changelog entry described only the manifest bug and the CI gaps, having
+  been written before the 114 compile errors, the lint pass, and the defects that
+  surfaced behind them. It now records what actually shipped.
+
+This is a documentation-only release. 2.1.2's published page carries the incorrect
+table, which is the reason for shipping a patch rather than waiting.
+
 ## [2.1.2] - 2026-08-05
 
 ### Fixed
@@ -27,13 +46,75 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `cargo tree --target x86_64-unknown-linux-gnu --features full` shows it in one
   command, and now a test asks the manifest the same question on every run.
 
+- **The GUI could not build on Linux either.** `eframe` is declared with
+  `default-features = false`, which drops its windowing backends along with the
+  renderer defaults. Windows and macOS each have one backend and winit finds it
+  without a feature; Linux has two, winit selects neither, and the build stops at
+  `compile_error!`. `x11` and `wayland` are both named now.
+- **`nvidia` did not resolve on macOS.** `nvml-wrapper` was declared only in the
+  Linux and Windows target sections, but a feature is not target-conditional, so
+  enabling it elsewhere referenced a crate absent from the graph. It is
+  cross-platform now — nvml-wrapper is a runtime loader for libnvidia-ml, so it
+  compiles anywhere and finds no library where there is no driver.
+
+- **114 compile errors in code that had never been built** — 73 on Linux, 41 on
+  macOS, across roughly forty files. The manifest bug meant cargo never reached
+  simon's own source on those platforms, so none of it had ever been checked. Most
+  were mechanical (a `SimonError::IoError` variant that does not exist, at 23
+  sites; structs and enums whose fields and variants had been renamed under code
+  that never recompiled). Several were not:
+
+  - `motherboard/linux.rs` tested `contains("DP")` before `contains("eDP")`. Since
+    `"eDP-1"` contains `"DP"`, **every internal laptop panel was reported as an
+    external DisplayPort** and the eDP arm was unreachable.
+  - `disk/linux.rs` indexed `parts[1]` of a `dev` file split on `':'` — a panic on
+    any malformed file, sitting behind a `.unwrap_or(0)` that made it look handled.
+    The major/minor pair it parsed was never read by anything.
+  - `disk/macos.rs` and `gpu/intel.rs` reported measurements they never made: one
+    combined `iostat` throughput figure halved into read and write, and a
+    `gpu_memory: 0` meaning "shares system memory". Zero is not unknown.
+  - `services.rs` borrowed `self` mutably and immutably at once; `numa/mod.rs`
+    referenced a binding one line after it left scope; `process_monitor.rs` divided
+    `f64` by `u64`; `hwmon/smart.rs` called `glob::glob` with no `glob` dependency.
+
+- **`thermal.<none>` contradicted the readings beside it.** The resolver always
+  enumerates cpu, gpu and motherboard and writes an `unavailable` row for each, then
+  *also* emitted a summary row saying the domain enumerated nothing. Only reachable
+  where no sensor reads at all, which is why the first macOS run found it and no
+  Windows run could. The read-failure path still emits it, correctly — that path
+  returns before pushing anything.
+
+- **The plausibility suite encoded Windows' CPU accounting model.** It demanded
+  user+system+idle sum to ~100. Linux divides by every field in `/proc/stat`, so
+  nice, iowait, irq, softirq and steal are real time belonging to none of the
+  three; a virtualized runner sits at 94%. The invariant that holds everywhere is
+  that three shares of one total cannot exceed it.
+
+- **The process-state set omitted `'I'`** — idle kernel thread, reported by Linux
+  since 3.13 and carried by every `kworker/R-*`. The reader also fell back to `'?'`
+  for an unreadable state where the rest of simon uses `'U'`.
+
+- **102 clippy findings in never-linted Linux code**, which CI rejects under
+  `-D warnings`.
+
 ### Added
 
-- `tests/manifest_portability.rs`: every crate reachable from a feature simon
-  presents as cross-platform (`cli`, `gui`, `remote-backends`) must be declared in
-  the plain `[dependencies]` table, and crates used without a `cfg` guard must not
-  be target-gated. Verified against the pre-fix manifest, where it names each
-  affected crate.
+- `tests/manifest_portability.rs`: every crate reachable from a feature must be
+  declared in the plain `[dependencies]` table unless it is one of the three
+  (`drm`, `drm-ffi`, `plist`) that are target-gated by design with call sites
+  gated to match; and crates used without a `cfg` guard must not be target-gated.
+  Verified against the pre-fix manifest, where it names each affected crate.
+
+### Known gaps
+
+- **simon does not measure CPU or memory on macOS.** There are readers for Linux
+  and Windows and none for macOS: `CpuStats::new` and `MemoryStats::new` return
+  empty, and `stats::Simon`'s ten platform functions report `UnsupportedPlatform`
+  naming `SiliconMonitor`, which does have working macOS paths. The crate builds,
+  lints, and passes its suite there — it does not yet read hardware. Tests that
+  assert something *about a reading* are gated on `platform_has_hardware_readers()`
+  so the gap is named once rather than hidden behind scattered `cfg`s. Implementing
+  this means sysctl and IOKit work that has to be verified on real hardware.
 
 ### Fixed — CI
 
