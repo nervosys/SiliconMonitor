@@ -9,6 +9,7 @@
 //!
 //! A missing target is checkable, so it should be checked rather than noticed.
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -169,5 +170,102 @@ fn documentation_carries_no_machine_identifiers() {
         found.is_empty(),
         "documentation leaks a machine identifier:\n  {}",
         found.join("\n  ")
+    );
+}
+
+/// Every `simon …` invocation shown in the documentation must be a real command.
+///
+/// The README's main usage block documented eight commands that do not exist —
+/// `simon cpu`, `simon gpu`, `simon audio`, `simon displays` and others, all of
+/// which live under `simon cli`. It contradicted itself ten lines later, where the
+/// watch-mode examples used the correct `simon cli audio --watch`. `docs/UTILITIES.md`
+/// had `simon all` the same way.
+///
+/// Anyone following the quick-start hit `error: unrecognized subcommand` on their
+/// first command. Nothing caught it because documentation is not compiled — but
+/// the binary can be asked what it accepts, so the two can be compared.
+#[test]
+fn every_documented_command_exists() {
+    let Some(files) = tracked_markdown() else {
+        eprintln!("skipping: not a git checkout, so there is no file list to check");
+        return;
+    };
+
+    let catalog = Command::new(env!("CARGO_BIN_EXE_simon"))
+        .args(["describe", "--commands", "--format", "json"])
+        .output()
+        .expect("simon describe should run");
+    assert!(
+        catalog.status.success(),
+        "`simon describe --commands` failed; the catalog is the source of truth here"
+    );
+    let catalog: serde_json::Value =
+        serde_json::from_slice(&catalog.stdout).expect("the catalog should be JSON");
+
+    // Flatten the tree into the set of accepted paths: "cli", "cli cpu", "ai query".
+    let mut valid = BTreeSet::new();
+    fn walk(node: &serde_json::Value, prefix: &str, out: &mut BTreeSet<String>) {
+        let Some(subs) = node.get("subcommands").and_then(|s| s.as_array()) else {
+            return;
+        };
+        for sub in subs {
+            let Some(name) = sub.get("name").and_then(|n| n.as_str()) else {
+                continue;
+            };
+            let path = if prefix.is_empty() {
+                name.to_string()
+            } else {
+                format!("{prefix} {name}")
+            };
+            out.insert(path.clone());
+            walk(sub, &path, out);
+        }
+    }
+    walk(&catalog, "", &mut valid);
+    assert!(
+        !valid.is_empty(),
+        "the command catalog is empty; this check would pass vacuously"
+    );
+
+    let mut broken = Vec::new();
+    for file in &files {
+        let Ok(text) = std::fs::read_to_string(file) else {
+            continue;
+        };
+        for line in text.lines() {
+            // Only lines that *are* an invocation. Prose mentioning simon in the
+            // middle of a sentence is not a command and must not be flagged.
+            let Some(rest) = line.trim_start().strip_prefix("simon ") else {
+                continue;
+            };
+            // `simon [OPTIONS] [COMMAND]` is a synopsis, not an invocation — the
+            // brackets are the giveaway, and clap prints exactly that shape.
+            let tokens: Vec<&str> = rest
+                .split_whitespace()
+                .take_while(|t| !t.starts_with('-') && !t.starts_with('['))
+                .collect();
+            if tokens.is_empty() {
+                continue;
+            }
+            // Accept the longest prefix that resolves; `simon cli cpu --watch`
+            // is fine, and so is `simon get some.entity.id` where `get` resolves
+            // and the rest is an argument.
+            let resolves = (1..=tokens.len())
+                .rev()
+                .any(|n| valid.contains(&tokens[..n].join(" ")));
+            if !resolves {
+                broken.push(format!(
+                    "{}: simon {}",
+                    file.strip_prefix(repo_root()).unwrap_or(file).display(),
+                    tokens.join(" ")
+                ));
+            }
+        }
+    }
+
+    assert!(
+        broken.is_empty(),
+        "documentation shows commands simon does not accept:\n  {}",
+        broken.join("\n  ")
     );
 }

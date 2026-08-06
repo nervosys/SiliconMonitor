@@ -317,17 +317,17 @@ Complete hardware monitoring with subcommands for specific metrics:
 simon
 
 # Monitor specific components
-simon cpu
-simon gpu
-simon memory
-simon processes
+simon cli cpu
+simon cli gpu
+simon cli memory
+simon cli processes
 
 
 # Peripheral hardware
-simon audio           # List audio devices and volume
-simon bluetooth       # List Bluetooth adapters and devices
-simon displays        # Show connected displays
-simon usb             # List USB devices
+simon cli audio       # List audio devices and volume
+simon cli bluetooth   # List Bluetooth adapters and devices
+simon cli display     # Show connected displays
+simon cli usb         # List USB devices
 
 # Watch mode: continuously monitor devices (press 'q' to quit)
 simon cli audio --watch          # Watch audio devices

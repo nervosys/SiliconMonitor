@@ -262,7 +262,7 @@ simon cli jetson clocks status
 sudo simon cli jetson swap create --size 8 --auto
 
 # Check system status
-simon all
+simon cli all
 
 # Monitor continuously
 simon

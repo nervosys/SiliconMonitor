@@ -63,8 +63,8 @@ Launches an interactive terminal UI showing real-time stats. Press 'q' to quit.
 ### Board Information
 
 ```bash
-simon board
-simon board --format json
+simon cli board
+simon cli board --format json
 ```
 
 Shows hardware information:
@@ -78,8 +78,8 @@ Shows hardware information:
 ### GPU Monitoring
 
 ```bash
-simon gpu
-simon gpu --format json
+simon cli gpu
+simon cli gpu --format json
 ```
 
 Displays GPU statistics:
@@ -93,8 +93,8 @@ Displays GPU statistics:
 ### CPU Monitoring
 
 ```bash
-simon cpu
-simon cpu --format json
+simon cli cpu
+simon cli cpu --format json
 ```
 
 Shows CPU information:
@@ -107,8 +107,8 @@ Shows CPU information:
 ### Memory Monitoring
 
 ```bash
-simon memory
-simon memory --format json
+simon cli memory
+simon cli memory --format json
 ```
 
 Memory statistics:
@@ -120,8 +120,8 @@ Memory statistics:
 ### Power Monitoring
 
 ```bash
-simon power
-simon power --format json
+simon cli power
+simon cli power --format json
 ```
 
 Power consumption:
@@ -133,8 +133,8 @@ Power consumption:
 ### Temperature Monitoring
 
 ```bash
-simon temperature
-simon temperature --format json
+simon cli temperature
+simon cli temperature --format json
 ```
 
 Temperature readings:
@@ -145,8 +145,8 @@ Temperature readings:
 ### Process Monitoring
 
 ```bash
-simon processes
-simon processes --format json
+simon cli processes
+simon cli processes --format json
 ```
 
 GPU process information:
@@ -162,8 +162,8 @@ GPU process information:
 ### Engine Monitoring
 
 ```bash
-simon engines
-simon engines --format json
+simon cli engines
+simon cli engines --format json
 ```
 
 Hardware accelerator status:
@@ -182,8 +182,8 @@ Hardware accelerator status:
 ### All Statistics
 
 ```bash
-simon all
-simon all --format json
+simon cli all
+simon cli all --format json
 ```
 
 ## Advanced Utilities
@@ -357,19 +357,19 @@ Disables and deletes swap file.
 simon
 
 # One-time snapshot
-simon all
+simon cli all
 
 # JSON output for integration
-simon all --format json | jq '.gpus'
+simon cli all --format json | jq '.gpus'
 ```
 
 ### Performance Profiling
 
 ```bash
 # Check current status
-simon gpu
-simon cpu
-simon memory
+simon cli gpu
+simon cli cpu
+simon cli memory
 
 # Enable maximum performance
 sudo simon cli jetson powermode set-name MAXN --force
@@ -403,14 +403,14 @@ simon cli jetson swap status
 sudo simon cli jetson swap create --size 8 --auto
 
 # Check memory after
-simon memory
+simon cli memory
 ```
 
 ### Process Tracking
 
 ```bash
 # Monitor GPU processes
-simon processes
+simon cli processes
 
 # Watch process changes
 watch -n 1 'simon processes'
@@ -422,7 +422,7 @@ watch -n 1 'simon processes'
 # First-time setup
 sudo simon cli jetson swap create --size 8 --auto
 sudo simon cli jetson powermode set-name MAXN
-simon board
+simon cli board
 
 # Start monitoring
 simon
@@ -435,7 +435,7 @@ simon
 Human-readable output with labels and formatting.
 
 ```bash
-simon gpu
+simon cli gpu
 ```
 
 ```
@@ -451,7 +451,7 @@ GPU 0 (Integrated):
 Machine-readable JSON for scripting and integration.
 
 ```bash
-simon gpu --format json
+simon cli gpu --format json
 ```
 
 ```json

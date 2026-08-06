@@ -5,6 +5,26 @@ All notable changes to Silicon Monitor will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.4] - 2026-08-06
+
+### Fixed
+
+- **The documented commands did not exist.** The README's main usage block showed
+  `simon cpu`, `simon gpu`, `simon memory`, `simon processes`, `simon audio`,
+  `simon bluetooth`, `simon displays` and `simon usb`. All of these live under
+  `simon cli`, and `displays` is `display`. Anyone following the quick-start hit
+  `error: unrecognized subcommand` on their first command — while the watch-mode
+  examples ten lines below used the correct form. `CLI.md` had twenty-nine such
+  lines and `docs/UTILITIES.md` one more.
+
+### Added
+
+- A test comparing every `simon …` invocation in the documentation against
+  `simon describe --commands`, the machine-readable catalog the binary generates
+  from its own argument parser. Documentation is not compiled, but the binary can
+  be asked what it accepts, so the two can be checked against each other. It found
+  `CLI.md`, which a manual sweep of the same question had missed entirely.
+
 ## [2.1.3] - 2026-08-05
 
 ### Fixed
