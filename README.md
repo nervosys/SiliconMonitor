@@ -39,7 +39,7 @@ Silicon Monitor provides comprehensive hardware monitoring:
 - **🎮 GPU Monitoring**: NVIDIA, AMD, and Intel GPUs with utilization, memory, temperature, power, and process tracking
 - **💻 CPU Monitoring**: Per-core metrics, frequencies, temperatures, and hybrid architecture support
 - **🧠 Memory Monitoring**: RAM, swap, bandwidth, and latency tracking
-- **💾 Disk Monitoring**: I/O operations, throughput, queue depth, and SMART data
+- **💾 Disk Monitoring**: I/O operations, throughput, queue depth, SMART attributes, and NVMe controller data, with health derived from what the drive actually reports
 - **🔧 Motherboard Monitoring**: System information, BIOS version, and hardware sensors
 - **📊 Process Monitoring**: System-wide process tracking with GPU attribution
 - **🌐 Network Monitoring**: Interface statistics, bandwidth rates, and network health
@@ -287,6 +287,33 @@ This enables AI agents to:
 
 ## Installation
 
+### From crates.io
+
+```bash
+cargo install silicon-monitor
+```
+
+That installs both binaries, `simon` and `amon`. Default features are `full`,
+which includes the GUI, so on Linux the build needs system development packages:
+
+```bash
+sudo apt-get install -y libxkbcommon-dev libwayland-dev libxcursor-dev \
+  libxrandr-dev libxi-dev libgl1-mesa-dev libssl-dev
+```
+
+As a library, where the GUI and CLI stacks are usually unwanted:
+
+```toml
+[dependencies]
+silicon-monitor = { version = "3.0", default-features = false, features = ["cpu", "io", "network"] }
+```
+
+The crate is published as `silicon-monitor` and imported as `simonlib`:
+
+```rust
+use simonlib::disk;
+```
+
 ### From Source
 
 ```bash
@@ -385,8 +412,20 @@ cargo build --release --features cli
 - `nvidia` - NVIDIA GPU support via NVML
 - `amd` - AMD GPU support via sysfs/DRM
 - `intel` - Intel GPU support via i915/xe drivers
+- `apple` - Apple Silicon support (M-series) via `powermetrics`
+- `cpu` - Enhanced CPU monitoring (per-core, clusters, power states)
+- `npu` - NPU/ASIC monitoring (ANE, Intel NPU, AMD AI Engine)
+- `io` - I/O controller monitoring (PCIe, NVMe, USB, Thunderbolt)
+- `network` - Network silicon monitoring (WiFi, Ethernet, offload engines)
 - `cli` - Command-line interface and TUI
-- `full` - All features enabled
+- `gui` - Desktop GUI
+- `full` - All features enabled (the default)
+
+> **Building the binaries currently requires `gui` alongside `cli`.** `simon`
+> imports `simonlib::gui` without gating it on the feature, so
+> `--no-default-features --features cli` fails to compile. The library itself has
+> no such constraint — `--no-default-features` builds, as does any subset of the
+> monitoring features above.
 
 ## Quick Start
 
@@ -443,6 +482,49 @@ println!("Memory: {} / {} MB ({:.1}% used)",
 println!("Swap: {} / {} MB",
     info.swap_used_mb(), info.swap_total_mb());
 ```
+
+### Disk, SMART and NVMe Monitoring
+
+```rust
+use simonlib::disk::{self, DiskType};
+
+for device in disk::enumerate_disks()? {
+    let info = device.info()?;
+    println!("{} — {} ({:?})", device.name(), info.model, device.disk_type());
+
+    // Counters are Option: None means the platform would not report the value,
+    // which is not the same as a reading of zero.
+    if let Ok(smart) = device.smart_info() {
+        match smart.temperature {
+            Some(c) => println!("  {c} °C, passed={}", smart.passed),
+            None => println!("  temperature not readable"),
+        }
+        if let Some(hours) = smart.power_on_hours {
+            println!("  {hours} power-on hours");
+        }
+    }
+
+    if device.disk_type() == DiskType::NvmeSsd {
+        let nvme = device.nvme_info()?;
+        println!("  NVMe {} fw {}", nvme.model, nvme.firmware);
+        if let Some(used) = nvme.percentage_used {
+            println!("  {used}% of rated endurance consumed");
+        }
+    }
+}
+```
+
+`health()` derives from SMART rather than from the device merely existing, so a
+drive whose counters cannot be read reports `Unknown` instead of `Healthy`.
+
+On Windows, `Get-StorageReliabilityCounter` requires elevation. Without it the
+identity fields (model, serial, firmware, capacity, bus type) still resolve, while
+temperature, power-on hours and wear come back `None`. Run elevated for those.
+
+Calling `smart_info()` spawns one PowerShell invocation per device on Windows. To
+query every drive at once, use `simonlib::smart::SmartMonitor` directly.
+
+See `cargo run --all-features --example disk_monitor` for the full surface.
 
 ### Network Monitoring
 
