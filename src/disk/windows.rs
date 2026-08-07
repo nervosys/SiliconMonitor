@@ -221,11 +221,10 @@ impl WindowsDisk {
                 .and_then(|h| h.temperature_celsius())
                 .map(|t| vec![t])
                 .unwrap_or_default(),
-            // The current power state comes from Get Features (FID 0x02), a
-            // separate command this does not issue. The *available* states below
-            // come from Identify, so the list can be populated while the current
-            // one is not.
-            power_state: None,
+            // From Get Features (FID 0x02); the available states below come from
+            // Identify, so the list can be populated while the current state is
+            // not, on a controller that does not implement Get Features.
+            power_state: data.power_state,
             available_power_states: id
                 .as_ref()
                 .map(|i| {

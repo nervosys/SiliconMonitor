@@ -79,12 +79,19 @@ jobs:
             const optional=new Set(p.dependencies.filter(d=>d.optional).map(d=>d.name));
             console.log(Object.keys(p.features).filter(f=>f!=='default'&&!optional.has(f)).join('\n'));
           });")
+          # --all-targets, so examples and test targets are covered too. Without
+          # it this job checked only the library and binaries, and missed three
+          # things of exactly the kind it exists to find: examples/gui.rs naming
+          # `simonlib::gui` with no required-features, a #[test] in
+          # platform/windows.rs calling `num_cpus` (an optional dependency the
+          # `cli` feature supplies), and examples/all_gpus.rs failing to infer a
+          # HashMap type with no vendor feature enabled.
           failed=()
           echo '--- no features ---'
-          cargo check --quiet --no-default-features || failed+=("(none)")
+          cargo check --quiet --no-default-features --all-targets || failed+=("(none)")
           for f in $features; do
             echo "--- $f ---"
-            cargo check --quiet --no-default-features --features "$f" || failed+=("$f")
+            cargo check --quiet --no-default-features --all-targets --features "$f" || failed+=("$f")
           done
           if [ ${#failed[@]} -ne 0 ]; then
             echo "::error::feature(s) do not build in isolation: ${failed[*]}"

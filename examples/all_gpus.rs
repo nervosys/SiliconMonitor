@@ -23,7 +23,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("═══════════════════════════════════════════════════════════\n");
 
     let mut all_devices: Vec<Box<dyn Device>> = Vec::new();
-    let mut vendor_counts = std::collections::HashMap::new();
+    // Annotated because every insertion sits behind a vendor feature: with none
+    // enabled there is nothing for inference to work from and the example fails to
+    // compile, which only shows up on a build that is not `--all-features`.
+    let mut vendor_counts: std::collections::HashMap<Vendor, usize> =
+        std::collections::HashMap::new();
 
     // Enumerate NVIDIA GPUs
     #[cfg(feature = "nvidia")]

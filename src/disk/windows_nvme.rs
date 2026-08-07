@@ -29,9 +29,9 @@ use windows::Win32::Storage::FileSystem::{
     CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
 };
 use windows::Win32::System::Ioctl::{
-    NVMeDataTypeIdentify, NVMeDataTypeLogPage, PropertyStandardQuery, ProtocolTypeNvme,
-    StorageDeviceProtocolSpecificProperty, IOCTL_STORAGE_QUERY_PROPERTY, STORAGE_PROPERTY_QUERY,
-    STORAGE_PROTOCOL_DATA_DESCRIPTOR, STORAGE_PROTOCOL_SPECIFIC_DATA,
+    NVMeDataTypeFeature, NVMeDataTypeIdentify, NVMeDataTypeLogPage, PropertyStandardQuery,
+    ProtocolTypeNvme, StorageDeviceProtocolSpecificProperty, IOCTL_STORAGE_QUERY_PROPERTY,
+    STORAGE_PROPERTY_QUERY, STORAGE_PROTOCOL_DATA_DESCRIPTOR, STORAGE_PROTOCOL_SPECIFIC_DATA,
 };
 use windows::Win32::System::IO::DeviceIoControl;
 
@@ -39,6 +39,8 @@ use windows::Win32::System::IO::DeviceIoControl;
 const NVME_LOG_PAGE_HEALTH: u32 = 0x02;
 /// Identify Controller data structure (CNS 0x01).
 const NVME_IDENTIFY_CNS_CONTROLLER: u32 = 0x01;
+/// Get Features feature identifier for Power Management.
+const NVME_FEATURE_POWER_MANAGEMENT: u32 = 0x02;
 /// The health log page is 512 bytes; Identify structures are 4096.
 const HEALTH_LOG_LEN: usize = 512;
 const IDENTIFY_LEN: usize = 4096;
@@ -48,6 +50,9 @@ const IDENTIFY_LEN: usize = 4096;
 pub(crate) struct NvmeData {
     pub identify: Option<IdentifyController>,
     pub health: Option<HealthLog>,
+    /// Current power state, from Get Features. `None` when the controller did not
+    /// answer — a state of 0 is a real, and common, reading.
+    pub power_state: Option<u8>,
 }
 
 /// Closes the device handle on every exit path, including the error ones.
@@ -91,8 +96,18 @@ impl Device {
         Ok(Self(handle))
     }
 
-    /// Issue one protocol-specific query and return the payload bytes.
-    fn query(&self, data_type: i32, request_value: u32, data_len: usize) -> Result<Vec<u8>, Error> {
+    /// What one protocol-specific query returned.
+    ///
+    /// Log pages and Identify answer in `data`. Get Features answers in `fixed`,
+    /// which carries completion queue entry dword 0 — there is no payload to read,
+    /// so a caller that only looked at `data` would find it empty and conclude the
+    /// command had failed.
+    fn query(
+        &self,
+        data_type: i32,
+        request_value: u32,
+        data_len: usize,
+    ) -> Result<ProtocolReply, Error> {
         let header = std::mem::size_of::<STORAGE_PROPERTY_QUERY>()
             + std::mem::size_of::<STORAGE_PROTOCOL_SPECIFIC_DATA>();
         let mut buf = vec![0u8; header + data_len];
@@ -145,18 +160,34 @@ impl Device {
             let offset = (*descriptor).ProtocolSpecificData.ProtocolDataOffset as usize;
             let length = (*descriptor).ProtocolSpecificData.ProtocolDataLength as usize;
 
+            let fixed = (*descriptor).ProtocolSpecificData.FixedProtocolReturnData;
+
             let start = embedded.saturating_add(offset);
             let end = start.saturating_add(length);
-            if length == 0 || end > buf.len() {
-                return Err(Error::QueryFailed(format!(
-                    "NVMe reply describes {length} bytes at offset {start}, buffer is {}",
-                    buf.len()
-                )));
-            }
 
-            Ok(buf[start..end].to_vec())
+            // A Get Features reply carries no payload, so an empty or
+            // out-of-bounds range is not an error for it — `fixed` is the answer.
+            let data = if length == 0 || end > buf.len() {
+                Vec::new()
+            } else {
+                buf[start..end].to_vec()
+            };
+
+            Ok(ProtocolReply { data, fixed })
         }
     }
+
+    /// Issue Get Features and return completion dword 0.
+    fn feature(&self, feature_id: u32) -> Result<u32, Error> {
+        self.query(NVMeDataTypeFeature.0, feature_id, IDENTIFY_LEN)
+            .map(|reply| reply.fixed)
+    }
+}
+
+/// The two ways a protocol query can answer.
+struct ProtocolReply {
+    data: Vec<u8>,
+    fixed: u32,
 }
 
 /// Read Identify Controller and the SMART/Health log for a physical drive.
@@ -180,8 +211,19 @@ pub(crate) fn query(index: u32) -> Result<NvmeData, Error> {
 
     let health = device.query(NVMeDataTypeLogPage.0, NVME_LOG_PAGE_HEALTH, HEALTH_LOG_LEN);
 
+    // Power state is bits 4:0 of completion dword 0. Get Features is optional for
+    // a controller to implement, so a failure here is not a failure of the query
+    // as a whole.
+    let power_state = device
+        .feature(NVME_FEATURE_POWER_MANAGEMENT)
+        .ok()
+        .map(|cdw0| (cdw0 & 0x1F) as u8);
+
     Ok(NvmeData {
-        identify: identify.ok().and_then(|d| IdentifyController::parse(&d)),
-        health: health.ok().and_then(|d| HealthLog::parse(&d)),
+        identify: identify
+            .ok()
+            .and_then(|r| IdentifyController::parse(&r.data)),
+        health: health.ok().and_then(|r| HealthLog::parse(&r.data)),
+        power_state,
     })
 }

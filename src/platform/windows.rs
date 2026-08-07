@@ -1212,7 +1212,12 @@ mod tests {
 
     #[test]
     fn per_core_utilization_is_not_the_system_average() {
-        let cpu_count = num_cpus::get();
+        // `available_parallelism` rather than `num_cpus::get`: num_cpus is an
+        // optional dependency enabled by `cli`, so naming it here made the library's
+        // own test target fail to build on any feature set without the CLI.
+        let cpu_count = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1);
 
         // Assert on the *cumulative* counters rather than instantaneous percentages.
         //
