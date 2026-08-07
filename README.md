@@ -519,9 +519,14 @@ for device in disk::enumerate_disks()? {
 `health()` derives from SMART rather than from the device merely existing, so a
 drive whose counters cannot be read reports `Unknown` instead of `Healthy`.
 
-On Windows, `Get-StorageReliabilityCounter` requires elevation. Without it the
-identity fields (model, serial, firmware, capacity, bus type) still resolve, while
-temperature, power-on hours and wear come back `None`. Run elevated for those.
+On Windows, NVMe drives are read from the controller itself — Identify Controller
+and the SMART/Health log page, via `DeviceIoControl` — so temperature, power-on
+hours, wear, controller id, namespace count and critical warnings all resolve
+**without elevation**.
+
+SATA and USB devices have no such log page and fall back to WMI, where
+`Get-StorageReliabilityCounter` does require elevation. Unelevated, their identity
+fields still resolve while the counters come back `None`.
 
 Calling `smart_info()` spawns one PowerShell invocation per device on Windows. To
 query every drive at once, use `simonlib::smart::SmartMonitor` directly.

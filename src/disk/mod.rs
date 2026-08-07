@@ -13,11 +13,19 @@
 
 pub mod traits;
 
+// Not target-gated. The parsers are pure byte arithmetic over structures the NVMe
+// specification defines identically everywhere, so gating them to Windows would
+// mean their tests only ever ran on one of the three platforms CI covers.
+pub mod nvme_log;
+
 #[cfg(target_os = "linux")]
 pub mod linux;
 
 #[cfg(target_os = "windows")]
 pub mod windows;
+
+#[cfg(target_os = "windows")]
+mod windows_nvme;
 
 #[cfg(target_os = "macos")]
 pub mod macos;

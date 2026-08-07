@@ -9,6 +9,7 @@ Current as of 3.0.1. This file is excluded from the published crate
 |---|---|
 | 3.0.0 | Published, tagged `v3.0.0`. SMART and NVMe support. |
 | 3.0.1 | Feature-combination fix — see CHANGELOG. |
+| 3.1.0 | Windows NVMe passthrough, unelevated. |
 | 2.1.5 | Committed, never published. Documentation only; superseded by 3.0.0. |
 
 ## Verification that is worth repeating
@@ -32,11 +33,11 @@ feature stayed broken through eight published versions.
 
 ## Open work
 
-1. **Windows NVMe passthrough is not implemented.** `DeviceIoControl` with
-   `StorageDeviceProtocolSpecificProperty` would supply the fields that are
-   currently `None` even when elevated: temperature, power-on hours, wear,
-   controller id, namespace count, critical warnings. Scoped in
-   `docs/DISK_MONITORING.md`. Verifiable on the author's four drives.
+1. **Current NVMe power state is still `None`.** The available power state table
+   comes from Identify Controller and is populated; the current state needs Get
+   Features (FID 0x02), a separate admin command. SATA SMART attributes still go
+   through `Get-StorageReliabilityCounter` and so still need elevation — ATA
+   pass-through would remove that. Both scoped in `docs/DISK_MONITORING.md`.
 
 2. **macOS reads no CPU or memory.** There is no `src/platform/macos.rs`;
    `CpuStats::new` and `MemoryStats::new` return empty and `stats::Simon`'s ten

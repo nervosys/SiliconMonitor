@@ -5,6 +5,63 @@ All notable changes to Silicon Monitor will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.0] - 2026-08-06
+
+Windows NVMe drives are now read from the controller instead of from WMI.
+
+### Added
+
+- **NVMe passthrough on Windows** via `DeviceIoControl` with
+  `StorageDeviceProtocolSpecificProperty`, issuing Identify Controller and the
+  SMART/Health log page. Fields that were `None` in 3.0.0 now carry readings:
+  temperature, power-on hours, power cycles, media errors, wear, controller id,
+  namespace count, NVMe version, total and unallocated capacity, data units read
+  and written, host read and write commands, critical warnings, and the available
+  power state table.
+
+  Measured on this machine, unelevated:
+
+  ```
+  PhysicalDrive0  Samsung SSD 9100 PRO 4TB     52.9 °C  27 h  NVMe 2.0.0  cntlid 1
+  PhysicalDrive1  Samsung SSD 990 PRO 4TB      45.9 °C  40 h  NVMe 2.0.0  cntlid 1
+  PhysicalDrive2  Samsung SSD 970 EVO Plus 2TB 45.9 °C  58 h  NVMe 1.3.0  cntlid 6
+  PhysicalDrive3  USB enclosure                NotSupported
+  ```
+
+- `disk::nvme_log`, parsers for the health log page and Identify Controller with
+  13 unit tests over synthetic structures. They are not target-gated: the byte
+  layouts are the same everywhere, so gating them to Windows would mean their tests
+  ran on one of the three platforms CI covers.
+
+### Changed
+
+- **The passthrough needs no elevation, and the documentation saying otherwise was
+  wrong.** `\\.\PhysicalDriveN` has to be opened with a desired access of *zero*;
+  requesting `GENERIC_READ | GENERIC_WRITE` is what demands Administrator. 3.0.0
+  scoped this work as "elevated Windows passthrough" and left the fields `None` on
+  that assumption. Only the `Get-StorageReliabilityCounter` path ever needed
+  elevation, and that is now the fallback for SATA and USB rather than the primary
+  route for everything.
+- `nvme_info()` decides whether a device is NVMe by whether the controller accepts
+  the NVMe protocol, not by comparing WMI's `MediaType` string. That comparison is
+  what made 3.0.0 refuse every NVMe drive in this machine before `BusType` was
+  added; the device's own answer cannot drift out of sync the same way.
+- Windows NVMe health is graded from the controller's critical warning bits, wear
+  and remaining spare. Reliability-degraded and read-only bits are `Critical`;
+  other warnings, wear at 100%, or spare below the drive's own threshold are
+  `Warning`.
+- `smart_info()` reports `reallocated_sectors` and `pending_sectors` as `None` on
+  NVMe rather than 0. They are ATA concepts; zero would assert a count that was
+  never measured.
+
+### Fixed
+
+- The reply payload is located from the returned descriptor rather than from the
+  offset the request used. Those differ by four bytes, and reading the wrong one
+  produces shifted-but-plausible data rather than an error — model strings arrived
+  as `"ung SSD 9100 PRO 4TB"`, temperatures as 3 K, power-on hours as
+  2139160387885137115025686659072.
+
 ## [3.0.1] - 2026-08-06
 
 ### Fixed

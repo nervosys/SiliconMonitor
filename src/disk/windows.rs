@@ -169,6 +169,131 @@ impl WindowsDisk {
             .find(|d| d.device == wanted)
             .cloned()
     }
+
+    /// Build [`NvmeInfo`] from what the controller itself reported.
+    ///
+    /// Fields stay `None` when the controller did not report them. `percentage_used`
+    /// of 0 and `critical_warnings` of 0 are readings — a new drive with nothing
+    /// wrong — and are preserved as such.
+    fn nvme_info_from_controller(&self, data: crate::disk::windows_nvme::NvmeData) -> NvmeInfo {
+        let id = data.identify;
+        let health = data.health;
+
+        // Identity from Identify Controller, falling back to WMI if the controller
+        // served the log page but not the identify structure.
+        let wmi = if id.is_none() {
+            self.smart_disk()
+        } else {
+            None
+        };
+        let identity = |from_id: Option<String>, from_wmi: Option<String>| {
+            from_id.unwrap_or_else(|| from_wmi.unwrap_or_default())
+        };
+
+        NvmeInfo {
+            model: identity(
+                id.as_ref().map(|i| i.model.clone()),
+                wmi.as_ref().map(|w| w.model.clone()),
+            ),
+            serial: identity(
+                id.as_ref().map(|i| i.serial.clone()),
+                wmi.as_ref().map(|w| w.serial.clone()),
+            ),
+            firmware: identity(
+                id.as_ref().map(|i| i.firmware.clone()),
+                wmi.as_ref().map(|w| w.firmware.clone()),
+            ),
+            nvme_version: id.as_ref().and_then(|i| i.version.clone()),
+            total_capacity: id
+                .as_ref()
+                .and_then(|i| i.total_capacity)
+                .map(|c| c.min(u64::MAX as u128) as u64)
+                .or_else(|| wmi.as_ref().map(|w| w.capacity_bytes))
+                .unwrap_or(0),
+            unallocated_capacity: id
+                .as_ref()
+                .and_then(|i| i.unallocated_capacity)
+                .map(|c| c.min(u64::MAX as u128) as u64),
+            controller_id: id.as_ref().map(|i| i.controller_id),
+            num_namespaces: id.as_ref().map(|i| i.num_namespaces),
+            temperature_sensors: health
+                .as_ref()
+                .and_then(|h| h.temperature_celsius())
+                .map(|t| vec![t])
+                .unwrap_or_default(),
+            // The current power state comes from Get Features (FID 0x02), a
+            // separate command this does not issue. The *available* states below
+            // come from Identify, so the list can be populated while the current
+            // one is not.
+            power_state: None,
+            available_power_states: id
+                .as_ref()
+                .map(|i| {
+                    i.power_states
+                        .iter()
+                        .map(|p| NvmePowerState {
+                            state: p.state,
+                            max_power_watts: p.max_power_watts,
+                            entry_latency_us: p.entry_latency_us,
+                            exit_latency_us: p.exit_latency_us,
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
+            percentage_used: health.as_ref().map(|h| h.percentage_used),
+            data_units_read: health
+                .as_ref()
+                .map(|h| h.data_units_read.min(u64::MAX as u128) as u64),
+            data_units_written: health
+                .as_ref()
+                .map(|h| h.data_units_written.min(u64::MAX as u128) as u64),
+            host_read_commands: health
+                .as_ref()
+                .map(|h| h.host_read_commands.min(u64::MAX as u128) as u64),
+            host_write_commands: health
+                .as_ref()
+                .map(|h| h.host_write_commands.min(u64::MAX as u128) as u64),
+            critical_warnings: health.as_ref().map(|h| h.critical_warning),
+        }
+    }
+
+    /// The pre-3.1 path: identity from WMI, with everything the controller alone
+    /// can answer left `None`. Reached only when the passthrough fails on a device
+    /// that is nonetheless NVMe.
+    fn nvme_info_from_wmi(&self) -> Result<NvmeInfo, Error> {
+        let Some(disk) = self.smart_disk() else {
+            return Err(Error::QueryFailed(format!(
+                "no device data for physical drive {}",
+                self.disk_index
+            )));
+        };
+        if disk.media_type != crate::smart::DriveMediaType::NVMe {
+            return Err(Error::NotSupported);
+        }
+
+        Ok(NvmeInfo {
+            model: disk.model.clone(),
+            serial: disk.serial.clone(),
+            firmware: disk.firmware.clone(),
+            nvme_version: None,
+            total_capacity: disk.capacity_bytes,
+            unallocated_capacity: None,
+            controller_id: None,
+            num_namespaces: None,
+            temperature_sensors: disk
+                .temperature_celsius
+                .map(|t| vec![t as f32])
+                .unwrap_or_default(),
+            power_state: None,
+            available_power_states: Vec::new(),
+            percentage_used: disk.nvme_percentage_used,
+            data_units_read: disk.total_bytes_read.map(|b| b / 512),
+            data_units_written: disk.total_bytes_written.map(|b| b / 512),
+            host_read_commands: None,
+            host_write_commands: None,
+            critical_warnings: None,
+        })
+    }
 }
 
 impl DiskDevice for WindowsDisk {
@@ -219,6 +344,31 @@ impl DiskDevice for WindowsDisk {
     }
 
     fn health(&self) -> Result<DiskHealth, Error> {
+        // An NVMe controller grades itself. Critical warning bits are the drive
+        // saying something is wrong now; spare below its own threshold and wear at
+        // or past 100% are conditions it will not flag until they bite.
+        if let Ok(data) = crate::disk::windows_nvme::query(self.disk_index) {
+            if let Some(health) = data.health {
+                // Bit 0 spare below threshold, 1 temperature past threshold,
+                // 2 reliability degraded, 3 read-only, 4 volatile backup failed.
+                const RELIABILITY_DEGRADED: u8 = 0b0000_0100;
+                const READ_ONLY: u8 = 0b0000_1000;
+
+                return Ok(
+                    if health.critical_warning & (RELIABILITY_DEGRADED | READ_ONLY) != 0 {
+                        DiskHealth::Critical
+                    } else if health.critical_warning != 0
+                        || health.percentage_used >= 100
+                        || health.available_spare_percent < health.available_spare_threshold_percent
+                    {
+                        DiskHealth::Warning
+                    } else {
+                        DiskHealth::Healthy
+                    },
+                );
+            }
+        }
+
         // Windows publishes a HealthStatus per physical disk; the SMART collector
         // already reads it, so ask that rather than guessing Unknown.
         match self.smart_disk() {
@@ -234,6 +384,31 @@ impl DiskDevice for WindowsDisk {
     }
 
     fn smart_info(&self) -> Result<SmartInfo, Error> {
+        // On NVMe the health log page carries temperature, power-on hours, power
+        // cycles and error counts, and needs no elevation. The WMI path below
+        // reaches the same numbers only through `Get-StorageReliabilityCounter`,
+        // which does require it — so prefer the controller and keep WMI for the
+        // SATA and USB devices that have no log page.
+        if let Ok(data) = crate::disk::windows_nvme::query(self.disk_index) {
+            if let Some(health) = data.health {
+                return Ok(SmartInfo {
+                    // The critical warning field is the drive's own verdict: any
+                    // bit set means it is reporting a condition against itself.
+                    passed: health.critical_warning == 0,
+                    attributes: Vec::new(),
+                    temperature: health.temperature_celsius(),
+                    power_on_hours: Some(health.power_on_hours.min(u64::MAX as u128) as u64),
+                    power_cycle_count: Some(health.power_cycles.min(u64::MAX as u128) as u64),
+                    // NVMe has no reallocated or pending sector concept; those are
+                    // ATA notions. Reporting 0 would assert a healthy count that
+                    // was never measured.
+                    reallocated_sectors: None,
+                    pending_sectors: None,
+                    uncorrectable_sectors: Some(health.media_errors.min(u64::MAX as u128) as u64),
+                });
+            }
+        }
+
         let Some(disk) = self.smart_disk() else {
             return Err(Error::QueryFailed(format!(
                 "no SMART data for physical drive {}",
@@ -274,43 +449,20 @@ impl DiskDevice for WindowsDisk {
     }
 
     fn nvme_info(&self) -> Result<NvmeInfo, Error> {
-        let Some(disk) = self.smart_disk() else {
-            return Err(Error::QueryFailed(format!(
-                "no device data for physical drive {}",
-                self.disk_index
-            )));
-        };
-        if disk.media_type != crate::smart::DriveMediaType::NVMe {
-            return Err(Error::NotSupported);
+        // Ask the controller directly. This settles "is this NVMe" without
+        // consulting WMI's MediaType, which reports the medium (`SSD`) rather than
+        // the transport and so classified every NVMe drive here as a plain SSD
+        // until 3.0.0 — making this method refuse the very drives it exists for.
+        // The device itself rejecting the NVMe protocol is a better answer than any
+        // string comparison.
+        match crate::disk::windows_nvme::query(self.disk_index) {
+            Ok(data) => Ok(self.nvme_info_from_controller(data)),
+            Err(Error::NotSupported) => Err(Error::NotSupported),
+            // The passthrough can fail on a drive that is genuinely NVMe — a driver
+            // that does not implement the protocol query, for instance. Fall back
+            // to what WMI knows rather than losing the identity fields entirely.
+            Err(_) => self.nvme_info_from_wmi(),
         }
-
-        // Identity comes from the storage stack and needs no elevation. Everything
-        // from Identify Controller and the SMART/Health log page — controller id,
-        // namespace count, NVMe version, temperature sensors, critical warnings —
-        // requires an elevated DeviceIoControl this path does not make, so those
-        // stay None rather than becoming zero.
-        Ok(NvmeInfo {
-            model: disk.model.clone(),
-            serial: disk.serial.clone(),
-            firmware: disk.firmware.clone(),
-            nvme_version: None,
-            total_capacity: disk.capacity_bytes,
-            unallocated_capacity: None,
-            controller_id: None,
-            num_namespaces: None,
-            temperature_sensors: disk
-                .temperature_celsius
-                .map(|t| vec![t as f32])
-                .unwrap_or_default(),
-            power_state: None,
-            available_power_states: Vec::new(),
-            percentage_used: disk.nvme_percentage_used,
-            data_units_read: disk.total_bytes_read.map(|b| b / 512),
-            data_units_written: disk.total_bytes_written.map(|b| b / 512),
-            host_read_commands: None,
-            host_write_commands: None,
-            critical_warnings: None,
-        })
     }
 
     fn device_path(&self) -> PathBuf {

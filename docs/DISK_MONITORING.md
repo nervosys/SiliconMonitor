@@ -70,36 +70,43 @@ Silicon Monitor (simon) provides comprehensive disk and storage monitoring acros
 
 - **SMART Attributes** (`DiskDevice::smart_info`): implemented on Linux and
   Windows. The drive's own health verdict and any attributes the platform exposes
-  are returned; every counter is `Option`, and on Windows they are `None` unless
-  the process is elevated — `Get-StorageReliabilityCounter` requires it and fails
-  with `PermissionDenied` otherwise. Verified on Windows against four physical
-  drives.
+  are returned; every counter is `Option`. On Windows, NVMe drives are read from
+  the controller's SMART/Health log page and need no elevation. SATA and USB
+  devices fall back to `Get-StorageReliabilityCounter`, which does require it and
+  fails with `PermissionDenied` otherwise. Verified against four physical drives.
 - **NVMe Specific Info** (`DiskDevice::nvme_info`): implemented on Linux and
-  Windows. Identity (model, serial, firmware, capacity) needs no privileges.
-  Linux additionally reads the controller id and namespace count from
-  `/sys/class/nvme`, which Windows does not expose unelevated. Everything from
-  Identify Controller and the SMART/Health log page — NVMe version, power states,
-  critical warnings — needs an elevated ioctl neither path makes, and is `None`
-  rather than zero. Returns `NotSupported` for non-NVMe devices.
-- **Health Status**: now derived from SMART rather than from whether the device
-  file exists. The Linux implementation previously returned `Healthy` whenever the
-  path was present, which reported the kernel having enumerated a drive as a clean
-  bill of health.
+  Windows. On Windows this issues `DeviceIoControl` with
+  `StorageDeviceProtocolSpecificProperty` for Identify Controller and the
+  SMART/Health log page, supplying NVMe version, controller id, namespace count,
+  capacities, power state table, wear, data units, host commands and critical
+  warnings — unelevated. Linux reads the controller id and namespace count from
+  `/sys/class/nvme`. Returns `NotSupported` for non-NVMe devices, decided by the
+  controller rejecting the NVMe protocol rather than by a media-type string.
+- **Health Status**: derived from SMART rather than from whether the device file
+  exists. The Linux implementation previously returned `Healthy` whenever the path
+  was present, which reported the kernel having enumerated a drive as a clean bill
+  of health. On Windows NVMe, health now comes from the controller's own critical
+  warning bits, wear and remaining spare.
 
-> **Elevation.** Without it, on Windows you get identity, media type, bus type and
-> the platform's health verdict, but no temperature, power-on hours, wear or error
-> counts. simon reports those as unavailable rather than as zero — the previous
-> behaviour turned an access-denied error into "0 °C, 0 power-on hours, healthy"
-> for every drive on the system.
+> **Elevation.** The NVMe passthrough needs none, which is worth stating because
+> the obvious way to write it does. `\\.\PhysicalDriveN` must be opened with a
+> desired access of *zero*: requesting `GENERIC_READ | GENERIC_WRITE` is what
+> requires Administrator and fails with `ERROR_ACCESS_DENIED` for a normal user. A
+> query-only handle needs no access rights at all.
+>
+> SATA and USB devices still depend on `Get-StorageReliabilityCounter` and so on
+> elevation. simon reports their counters as unavailable rather than as zero — the
+> pre-3.0.0 behaviour turned an access-denied error into "0 °C, 0 power-on hours,
+> healthy" for every drive on the system.
 
 ### ❌ Not Yet Implemented
 
-1. **Elevated Windows SMART/NVMe passthrough**
-   - `DeviceIoControl` with `StorageDeviceProtocolSpecificProperty` for the NVMe
-     Identify Controller and SMART/Health log pages
-   - Would supply the fields currently `None` unelevated: temperature, power-on
-     hours, wear, error counts, controller id, namespace count, critical warnings
-   - WMI enumeration and I/O performance counters are already implemented
+1. **Current NVMe power state**
+   - The available power state table comes from Identify Controller and is
+     populated; the *current* state needs Get Features (FID 0x02), a separate
+     admin command, and stays `None`
+   - ATA pass-through for SATA SMART attributes, which would remove the last
+     dependency on elevation for non-NVMe drives
 
 2. **macOS Support**
    - IOKit `IOBlockStorageDevice` enumeration
