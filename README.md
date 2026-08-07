@@ -340,8 +340,11 @@ The CLI provides two binary names optimized for different use cases:
 Complete hardware monitoring with subcommands for specific metrics:
 
 ```bash
-# Launch TUI (default)
+# No subcommand: launches the GUI, or the TUI if built without the `gui` feature
 simon
+
+# Launch the TUI explicitly
+simon tui
 
 # Monitor specific components
 simon cli cpu
@@ -421,11 +424,10 @@ cargo build --release --features cli
 - `gui` - Desktop GUI
 - `full` - All features enabled (the default)
 
-> **Building the binaries currently requires `gui` alongside `cli`.** `simon`
-> imports `simonlib::gui` without gating it on the feature, so
-> `--no-default-features --features cli` fails to compile. The library itself has
-> no such constraint — `--no-default-features` builds, as does any subset of the
-> monitoring features above.
+Every feature builds in isolation, and CI checks each one that way on every push —
+`--all-features` cannot catch a feature that only compiles because another supplies
+what it is missing. Built without `gui`, `simon` with no subcommand launches the
+TUI instead of the desktop window.
 
 ## Quick Start
 

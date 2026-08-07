@@ -5,6 +5,43 @@ All notable changes to Silicon Monitor will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.1] - 2026-08-06
+
+### Fixed
+
+- **The `cli` feature did not build on its own.** `simon` called
+  `simonlib::gui::run()` in the `None` arm of the command match without a
+  `cfg(feature = "gui")`, so `--no-default-features --features cli` failed with five
+  unresolved imports, and the arm also duplicated the `not(feature = "gui")`
+  fallback that already existed twenty lines below. README has advertised `cli` as a
+  standalone flag since the first release. Built without `gui`, `simon` with no
+  subcommand now launches the TUI, which is what that fallback was written to do.
+
+  Every CI job was green throughout, because every job enabled `gui` as well.
+  `--all-features` is the one combination a user is least likely to choose, and it
+  cannot catch a feature that only compiles because another supplies what it is
+  missing.
+
+### Added
+
+- CI job **Feature combinations**, checking each advertised feature in isolation on
+  every push. It reads the feature list from the manifest, so a feature added later
+  is covered without editing the workflow. All eighteen build, as does the crate
+  with no features at all.
+
+### Documentation
+
+- Installation covers crates.io: `cargo install silicon-monitor`, the Linux system
+  packages the default GUI build needs, and the `default-features = false`
+  dependency line library consumers want.
+- Quick Start has a worked SMART/NVMe example — 3.0.0's headline feature shipped
+  without one. It shows what the `Option` counters require of callers and states the
+  Windows elevation behaviour.
+- The feature flag list was missing `apple`, `cpu`, `npu`, `io`, `network` and
+  `gui`.
+- `simon` with no subcommand was documented as launching the TUI. It launches the
+  GUI in a default build.
+
 ## [3.0.0] - 2026-08-06
 
 SMART and NVMe support, and the removal of a fabrication the work uncovered.

@@ -40,6 +40,58 @@ jobs:
             libxrandr-dev libxi-dev libgl1-mesa-dev libssl-dev
       - run: cargo check --all-features --all-targets
 
+  features:
+    name: Feature combinations
+    runs-on: ubuntu-latest
+    # `--all-features` enables everything at once, which is the one combination a
+    # user is least likely to pick. It cannot catch a feature that is broken when
+    # enabled *alone*, because some other feature always supplies what it is
+    # missing.
+    #
+    # In 3.0.0 that gap was live: `simon` called `simonlib::gui::run()` in the
+    # `None` arm of the command match without a `cfg(feature = "gui")`, so
+    # `--no-default-features --features cli` failed with five unresolved imports.
+    # The README advertised `cli` as a standalone flag for eight published
+    # versions. Every CI job was green throughout, because every one of them
+    # enabled `gui` too.
+    #
+    # One job looping rather than a matrix: the checks share a target directory,
+    # so dependencies are built once instead of nineteen times.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Linux GUI build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-dev libwayland-dev libxcursor-dev \
+            libxrandr-dev libxi-dev libgl1-mesa-dev libssl-dev
+      - name: Check every feature in isolation
+        run: |
+          set -u
+          # Read the advertised features from the manifest rather than a list kept
+          # here, so a feature added later is covered without touching this file.
+          # Optional dependencies also appear in cargo's feature table as implicit
+          # features; those are excluded, since checking `clap` or `tokio` in
+          # isolation tests cargo, not this crate.
+          features=$(cargo metadata --no-deps --format-version 1 | node -e "
+          let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{
+            const p=JSON.parse(s).packages.find(p=>p.name==='silicon-monitor');
+            const optional=new Set(p.dependencies.filter(d=>d.optional).map(d=>d.name));
+            console.log(Object.keys(p.features).filter(f=>f!=='default'&&!optional.has(f)).join('\n'));
+          });")
+          failed=()
+          echo '--- no features ---'
+          cargo check --quiet --no-default-features || failed+=("(none)")
+          for f in $features; do
+            echo "--- $f ---"
+            cargo check --quiet --no-default-features --features "$f" || failed+=("$f")
+          done
+          if [ ${#failed[@]} -ne 0 ]; then
+            echo "::error::feature(s) do not build in isolation: ${failed[*]}"
+            exit 1
+          fi
+          echo "all feature combinations build"
+
   test:
     name: Test
     runs-on: ${{ matrix.os }}

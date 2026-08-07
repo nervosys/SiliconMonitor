@@ -642,6 +642,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 simonlib::gui::run().map_err(|e| format!("GUI error: {}", e))?;
             }
         }
+        #[cfg(feature = "gui")]
         None => {
             simonlib::gui::run().map_err(|e| format!("GUI error: {}", e))?;
         }
@@ -3537,6 +3538,7 @@ fn emit_command_catalog(format: &str) -> Result<(), Box<dyn std::error::Error>> 
 /// keystroke state to drive. Exit codes match the TUI's so a caller can treat both
 /// surfaces the same way — 1 for a failed assertion, 2 for a script that does not
 /// parse, which keeps "the GUI is wrong" separable from "my script is wrong".
+#[cfg(feature = "gui")]
 fn handle_gui_script_command(source: &str) -> Result<(), Box<dyn std::error::Error>> {
     use simonlib::gui::headless;
 
@@ -3589,6 +3591,7 @@ fn handle_gui_script_command(source: &str) -> Result<(), Box<dyn std::error::Err
 /// screenshot destroys: text that was never emitted looks different here from text
 /// that was emitted in the panel colour, which is the bug that made the Profiles
 /// tab appear dead while it rendered all nineteen of its groups.
+#[cfg(feature = "gui")]
 fn handle_gui_frame_command(tab: &str) -> Result<(), Box<dyn std::error::Error>> {
     use simonlib::gui::headless;
 
