@@ -9,7 +9,7 @@ Current as of 3.0.1. This file is excluded from the published crate
 |---|---|
 | 3.0.0 | Published, tagged `v3.0.0`. SMART and NVMe support. |
 | 3.0.1 | Feature-combination fix — see CHANGELOG. |
-| 3.1.0 | Windows NVMe passthrough, unelevated. |
+| 3.1.0 | Windows NVMe passthrough (unelevated) and macOS CPU/memory. Published, tagged. |
 | 2.1.5 | Committed, never published. Documentation only; superseded by 3.0.0. |
 
 ## Verification that is worth repeating
@@ -39,12 +39,19 @@ feature stayed broken through eight published versions.
    through `Get-StorageReliabilityCounter` and so still need elevation — ATA
    pass-through would remove that. Both scoped in `docs/DISK_MONITORING.md`.
 
-2. **macOS reads no CPU or memory.** There is no `src/platform/macos.rs`;
-   `CpuStats::new` and `MemoryStats::new` return empty and `stats::Simon`'s ten
-   platform functions return `UnsupportedPlatform`. Needs sysctl/IOKit work, and
-   it cannot be verified without a Mac — cross-compilation proves only that it
-   builds. Documented in the README platform table, CHANGELOG *Known gaps*, and
-   Contributing.
+2. **macOS GPU, power and temperature are still unimplemented.** CPU, memory,
+   swap, uptime and board info landed in 3.1.0 (`src/platform/macos.rs`), so
+   `Simon::cpu()`, `memory()` and `uptime()` work there. `Simon::snapshot()` still
+   fails, because it requires every reader. Per-core utilisation and nice time are
+   also absent — `top` gives one aggregate and separates no nice time; both need
+   `host_processor_info`.
+
+   **If you have a Mac, that is the thing to use it for.** The 3.1.0 readers were
+   written by cross-compilation and are verified only by
+   `tests/macos_readers.rs` on `macos-latest`, which checks that readings are
+   plausible — not that they are *correct*. Comparing `Simon::cpu()` and
+   `memory()` against Activity Monitor once would settle whether the `vm_stat`
+   accounting matches what a user sees.
 
 3. **The Linux SMART/NVMe paths have executed exactly once**, in CI on
    `33ee241` — 733 tests, 0 failures. No one has run them against real Linux
@@ -61,7 +68,8 @@ feature stayed broken through eight published versions.
 | Test | Catches |
 |---|---|
 | `tests/manifest_portability.rs` | A feature depending on a target-gated crate — the bug that meant the crate never built on Linux or macOS |
-| CI job *Feature combinations* | A feature that does not build in isolation |
+| CI job *Feature combinations* | A feature that does not build in isolation — found `cargo install` broken on Linux on its first run |
+| `tests/macos_readers.rs` | macOS readings that are not plausible readings; runs on `macos-latest`, which is the only Mac this project has |
 | `tests/documentation_links.rs` | Broken relative links; machine identifiers in docs; documented `simon …` commands that do not exist |
 | `smart::tests::a_drive_with_no_readable_counters_is_not_graded_healthy` | Health graded from an empty scorecard |
 | `tests/plausibility.rs` | Physically impossible readings |
