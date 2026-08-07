@@ -1988,11 +1988,27 @@ fn handle_jetson_command(cmd: &JetsonSubcommand) -> Result<(), Box<dyn std::erro
         std::process::exit(1);
     }
 
-    #[cfg(target_os = "linux")]
+    // The handlers below are additionally gated on `jetson-utils`, which `full`
+    // deliberately omits. Without this second arm, a Linux build with `cli` and
+    // without `jetson-utils` reached three functions that did not exist —
+    // `cargo install silicon-monitor` on Linux failed with E0425 for every version
+    // published up to 3.0.1, because the default feature set is exactly that
+    // combination. `--all-features` enables `jetson-utils` and so never saw it.
+    #[cfg(all(target_os = "linux", feature = "jetson-utils"))]
     match cmd {
         JetsonSubcommand::Clocks { action } => handle_jetson_clocks(action),
         JetsonSubcommand::Powermode { action } => handle_nvpmodel(action),
         JetsonSubcommand::Swap { action } => handle_swap(action),
+    }
+
+    #[cfg(all(target_os = "linux", not(feature = "jetson-utils")))]
+    {
+        let _ = cmd;
+        eprintln!("Error: this build was compiled without the `jetson-utils` feature");
+        eprintln!("       Jetson clock, power mode and swap controls are gated behind it");
+        eprintln!("       because they write to system state; see SECURITY.md");
+        eprintln!("       Rebuild with: cargo build --features cli,jetson-utils");
+        std::process::exit(1);
     }
 }
 

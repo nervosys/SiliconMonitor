@@ -22,12 +22,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cannot catch a feature that only compiles because another supplies what it is
   missing.
 
+- **`cargo install silicon-monitor` failed on Linux.** `handle_jetson_command`
+  dispatched to `handle_jetson_clocks`, `handle_nvpmodel` and `handle_swap` under
+  `cfg(target_os = "linux")` alone, while all three functions are additionally gated
+  on `jetson-utils`. `full` — the default feature set — includes `cli` and
+  deliberately omits `jetson-utils`, so the default Linux build failed with three
+  E0425s. Every published version carried it. On Linux without `jetson-utils`,
+  `simon jetson …` now exits with a message naming the feature to rebuild with,
+  matching how the non-Linux case already behaved.
+
+  This one is why the new CI job checks combinations rather than the union:
+  `--all-features` enables `jetson-utils` and never saw it, and it cannot be
+  reproduced from Windows — `cli` pulls `openssl-sys`, whose build script needs
+  Linux headers, so the cross-target check the project relies on stops short of it.
+
 ### Added
 
 - CI job **Feature combinations**, checking each advertised feature in isolation on
   every push. It reads the feature list from the manifest, so a feature added later
-  is covered without editing the workflow. All eighteen build, as does the crate
-  with no features at all.
+  is covered without editing the workflow. It found the Linux `full` breakage above
+  on its first run.
 
 ### Documentation
 
