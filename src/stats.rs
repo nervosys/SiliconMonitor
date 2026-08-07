@@ -529,24 +529,65 @@ mod macos_stats {
     pub(super) fn read_cpu_stats() -> Result<CpuStats> {
         use crate::platform::macos;
 
-        let usage = macos::cpu_usage()
-            .ok_or_else(|| unsupported("CPU statistics: `top` output was not understood"))?;
-
-        let count = macos::sysctl_u64("hw.logicalcpu").unwrap_or(0) as usize;
         let model = macos::sysctl_string("machdep.cpu.brand_string")
             // Apple Silicon does not publish machdep.cpu.brand_string; the machine
             // identifier is the closest thing it does publish.
             .or_else(|| macos::sysctl_string("hw.model"))
             .unwrap_or_default();
 
+        // `host_processor_info` is preferred over parsing `top`: it is the only
+        // source of per-core figures and of nice time, and it reports cumulative
+        // ticks, which is the same thing the Linux reader turns into percentages
+        // from /proc/stat. Both therefore mean an average since boot.
+        if let Some(ticks) = macos::per_core_ticks() {
+            if let Some(total) = macos::aggregate_ticks(&ticks).percentages() {
+                let cores = ticks
+                    .iter()
+                    .enumerate()
+                    .map(|(id, core)| {
+                        let split = core.percentages();
+                        CpuCore {
+                            id,
+                            online: true,
+                            governor: String::new(),
+                            frequency: None,
+                            user: split.map(|s| s.user),
+                            nice: split.map(|s| s.nice),
+                            system: split.map(|s| s.system),
+                            idle: split.map(|s| s.idle),
+                            model: model.clone(),
+                        }
+                    })
+                    .collect();
+
+                return Ok(CpuStats {
+                    cores,
+                    total: CpuTotal {
+                        user: total.user,
+                        nice: total.nice,
+                        system: total.system,
+                        idle: total.idle,
+                    },
+                });
+            }
+        }
+
+        // Fallback: `top`, which reports one aggregate and no nice time. Reached
+        // only if the Mach call fails, and it keeps a failure there from turning
+        // into no CPU data at all.
+        let usage = macos::cpu_usage().ok_or_else(|| {
+            unsupported("CPU statistics: host_processor_info failed and `top` was not understood")
+        })?;
+
+        let count = macos::sysctl_u64("hw.logicalcpu").unwrap_or(0) as usize;
         let cores = (0..count)
             .map(|id| CpuCore {
                 id,
                 online: true,
                 governor: String::new(),
                 frequency: None,
-                // `top` reports one aggregate for the package. Copying it into
-                // every core would present an average as a per-core measurement.
+                // One aggregate copied into every core would present an average as
+                // a per-core measurement.
                 user: None,
                 nice: None,
                 system: None,
@@ -559,10 +600,8 @@ mod macos_stats {
             cores,
             total: CpuTotal {
                 user: usage.user,
-                // No macOS command-line tool separates nice time; `top` reports
-                // user, sys and idle only. This 0.0 is a convention, not a reading
-                // — the only one in this module. `host_processor_info` would give
-                // the real split.
+                // `top` does not separate nice time. Only reachable on the
+                // fallback path; the primary one reports it properly.
                 nice: 0.0,
                 system: usage.system,
                 idle: usage.idle,

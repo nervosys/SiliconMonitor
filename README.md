@@ -1017,12 +1017,10 @@ cargo run --release --features full --example agent_simple
 
 ✅ Fully Supported | 🚧 Partial/In Progress | ❌ Not Supported
 
-> **macOS CPU and memory are partial.** As of 3.1.0 `stats::Simon` reads CPU
-> utilisation, memory, swap, uptime and board info on macOS by parsing `top`,
-> `vm_stat` and `sysctl`. Two things are deliberately absent: per-core utilisation,
-> because `top` reports one aggregate and copying it into each core would present
-> an average as a measurement; and nice time, which no macOS command-line tool
-> separates. Both need `host_processor_info`.
+> **macOS CPU and memory are partial.** `stats::Simon` reads CPU utilisation
+> (per-core, including nice time, via `host_processor_info`), memory, swap, uptime
+> and board info on macOS. As on Linux, CPU percentages come from cumulative ticks
+> and so are averages since boot rather than instantaneous rates.
 >
 > `Simon::snapshot()` still fails on macOS because it requires every reader, and
 > GPU, power and temperature remain unimplemented there. Use `Simon::cpu()`,

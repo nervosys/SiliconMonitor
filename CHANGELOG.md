@@ -5,6 +5,52 @@ All notable changes to Silicon Monitor will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.2.0] - 2026-08-07
+
+The last three fields that were `None` or a placeholder now carry readings, and
+the feature job checks the targets it was missing.
+
+### Added
+
+- **Per-core CPU utilisation and nice time on macOS**, via
+  `libc::host_processor_info`. 3.1.0 reported one aggregate parsed from `top` with
+  `nice` fixed at 0.0 — the only number in that module that was a convention rather
+  than a measurement. Both are now read per core, from cumulative tick counters,
+  which is the same thing the Linux reader derives percentages from; so both
+  platforms report an average since boot and mean the same by "user".
+
+  3.1.0 declined this on the grounds that unrun Mach FFI is a poor bet. That
+  reasoning held for a hand-written structure; it does not hold here. This is a
+  `libc` call whose signature the compiler checks, and `tests/macos_readers.rs`
+  runs it on `macos-latest` on every push — asserting each core's split accounts
+  for that core, and that cores differ from one another, which is what fails if a
+  refactor ever fills them from the average. `top` parsing remains as the fallback.
+
+- **Current NVMe power state on Windows**, via Get Features (FID 0x02). The last
+  `NvmeInfo` field still fixed at `None`.
+
+  All three drives report state 0, which is both correct for an active drive and
+  exactly what an unpopulated field looks like. Querying Temperature Threshold
+  (FID 0x04) on the same path returns 0x0165 and 0x0163 — 84 °C and 82 °C, real
+  over-temperature thresholds — confirming `FixedProtocolReturnData` is genuinely
+  written and the zero is a reading.
+
+### Fixed
+
+- **The Feature combinations job checked default targets only**, so examples and
+  test targets went unchecked on every feature set but `--all-features`. It now
+  passes `--all-targets`, which immediately surfaced three breakages:
+
+  - `examples/gui.rs` named `simonlib::gui` and `eframe` with no
+    `required-features`, so `cargo check --all-targets` failed on any set without
+    `gui`.
+  - A `#[test]` in `platform/windows.rs` called `num_cpus::get()`. `num_cpus` is an
+    optional dependency supplied by the `cli` feature, so the library's own test
+    target did not build without it. It uses `std::thread::available_parallelism`
+    now, which needs no dependency at all.
+  - `examples/all_gpus.rs` could not infer its `HashMap` type with no vendor
+    feature enabled, because every insertion sits behind a `cfg`.
+
 ## [3.1.0] - 2026-08-06
 
 Windows NVMe drives are now read from the controller instead of from WMI, and

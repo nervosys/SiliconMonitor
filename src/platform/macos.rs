@@ -19,18 +19,19 @@
 //! over a byte string, and the tests feed them real captured output. Those tests
 //! run on Linux, Windows and macOS alike.
 //!
-//! # What is not measured
+//! # The one exception
 //!
-//! - **Per-core utilisation.** `top` reports one aggregate. Cores are enumerated
-//!   with their identity and `None` for utilisation rather than each being given a
-//!   copy of the average, which would read as measurement.
-//! - **Nice time.** No macOS command-line tool separates it; `top` reports user,
-//!   sys and idle only. `CpuTotal::nice` is not an `Option`, so it is reported as
-//!   0.0 — the one number here that is a convention rather than a reading, and it
-//!   is called out in `docs/` for that reason.
+//! [`per_core_ticks`] does call Mach, through `libc::host_processor_info`. It is
+//! the only source of per-core figures and of nice time, both of which `top`
+//! cannot give at all — so unlike the rest, there is no textual alternative to
+//! weigh it against. The two objections above are also answered for it
+//! specifically: it is a `libc` call whose signature the compiler checks rather
+//! than a structure whose offsets are hand-written, and `tests/macos_readers.rs`
+//! executes it on `macos-latest` on every push, asserting that each core's split
+//! accounts for that core and that cores differ from one another.
 //!
-//! Both would be fixed by `host_processor_info`, which is the natural next step
-//! once someone can run it against a Mac and compare.
+//! `top` parsing remains as the fallback if that call fails, which is the only
+//! path on which nice time is still reported as 0.0.
 
 use std::process::Command;
 
@@ -185,6 +186,131 @@ pub fn parse_swapusage(output: &str) -> Option<SwapUsage> {
         total: field("total")?,
         used: field("used")?,
     })
+}
+
+/// Cumulative CPU ticks for one core, as the kernel counts them since boot.
+///
+/// The same shape as a `/proc/stat` line on Linux, which is what the Linux reader
+/// turns into percentages — so both platforms report an average since boot rather
+/// than an instantaneous rate, and mean the same thing by "user".
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct CoreTicks {
+    pub user: u64,
+    pub system: u64,
+    pub idle: u64,
+    pub nice: u64,
+}
+
+/// A core's time split as percentages.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CoreUsage {
+    pub user: f32,
+    pub nice: f32,
+    pub system: f32,
+    pub idle: f32,
+}
+
+impl CoreTicks {
+    /// Convert to percentages, or `None` if the core has accumulated no time.
+    ///
+    /// Zero total means the counters were not read — a core that has genuinely run
+    /// for zero ticks does not exist on a machine that is executing this code. It
+    /// must not become "0% used, 0% idle", which reads as a measurement.
+    pub fn percentages(&self) -> Option<CoreUsage> {
+        let total = self.user + self.system + self.idle + self.nice;
+        if total == 0 {
+            return None;
+        }
+        let pct = |v: u64| (v as f64 / total as f64 * 100.0) as f32;
+        Some(CoreUsage {
+            user: pct(self.user),
+            nice: pct(self.nice),
+            system: pct(self.system),
+            idle: pct(self.idle),
+        })
+    }
+}
+
+/// Sum per-core ticks into one aggregate.
+pub fn aggregate_ticks(cores: &[CoreTicks]) -> CoreTicks {
+    cores.iter().fold(CoreTicks::default(), |mut acc, c| {
+        // Saturating because these are u64 counters summed across up to 128 cores;
+        // wrapping would turn a busy machine into an idle one.
+        acc.user = acc.user.saturating_add(c.user);
+        acc.system = acc.system.saturating_add(c.system);
+        acc.idle = acc.idle.saturating_add(c.idle);
+        acc.nice = acc.nice.saturating_add(c.nice);
+        acc
+    })
+}
+
+/// Per-core cumulative ticks from `host_processor_info`.
+///
+/// This is the one piece of FFI in the module. It earns its place where `top`
+/// parsing could not: it is the only source of per-core figures and of nice time,
+/// and unlike a hand-rolled Mach structure it is a call whose signature the
+/// compiler checks against `libc` and whose result `tests/macos_readers.rs`
+/// checks against reality on `macos-latest`.
+///
+/// Returns `None` rather than partial data if the call fails.
+#[cfg(target_os = "macos")]
+pub fn per_core_ticks() -> Option<Vec<CoreTicks>> {
+    use std::ptr;
+
+    let mut cpu_count: libc::natural_t = 0;
+    let mut info: libc::processor_info_array_t = ptr::null_mut();
+    let mut info_count: libc::mach_msg_type_number_t = 0;
+
+    // SAFETY: out-parameters are all initialised above and passed by address. On
+    // success the kernel allocates `info`, which is released via vm_deallocate
+    // below on every path that reaches it.
+    let result = unsafe {
+        libc::host_processor_info(
+            libc::mach_host_self(),
+            libc::PROCESSOR_CPU_LOAD_INFO,
+            &mut cpu_count,
+            &mut info,
+            &mut info_count,
+        )
+    };
+
+    if result != libc::KERN_SUCCESS || info.is_null() {
+        return None;
+    }
+
+    let states = libc::CPU_STATE_MAX as usize;
+    // SAFETY: the kernel reports how many integers it wrote in `info_count`.
+    let data =
+        unsafe { std::slice::from_raw_parts(info as *const libc::integer_t, info_count as usize) };
+
+    let mut cores = Vec::with_capacity(cpu_count as usize);
+    for i in 0..cpu_count as usize {
+        let base = i * states;
+        if base + states > data.len() {
+            // The kernel reported more processors than it wrote data for. Stop at
+            // what was actually returned rather than reading past the buffer.
+            break;
+        }
+        cores.push(CoreTicks {
+            user: data[base + libc::CPU_STATE_USER as usize].max(0) as u64,
+            system: data[base + libc::CPU_STATE_SYSTEM as usize].max(0) as u64,
+            idle: data[base + libc::CPU_STATE_IDLE as usize].max(0) as u64,
+            nice: data[base + libc::CPU_STATE_NICE as usize].max(0) as u64,
+        });
+    }
+
+    // SAFETY: `info` was allocated by host_processor_info and is released exactly
+    // once here. Leaking it would grow the task's VM on every sample, which for a
+    // monitor polling once a second is a leak that compounds all day.
+    unsafe {
+        libc::vm_deallocate(
+            libc::mach_task_self(),
+            info as libc::vm_address_t,
+            info_count as usize * std::mem::size_of::<libc::integer_t>(),
+        );
+    }
+
+    Some(cores)
 }
 
 /// Run a command and return stdout, or `None` if it could not be run.
@@ -353,5 +479,72 @@ Pages occupied by compressor:             34567.
     #[test]
     fn unparseable_swapusage_is_none() {
         assert!(parse_swapusage("vm.swapusage: unavailable").is_none());
+    }
+
+    #[test]
+    fn ticks_become_percentages_of_that_core() {
+        let ticks = CoreTicks {
+            user: 250,
+            system: 150,
+            idle: 550,
+            nice: 50,
+        };
+        let usage = ticks.percentages().expect("has accumulated time");
+        assert!((usage.user - 25.0).abs() < 0.01);
+        assert!((usage.system - 15.0).abs() < 0.01);
+        assert!((usage.idle - 55.0).abs() < 0.01);
+        assert!((usage.nice - 5.0).abs() < 0.01);
+        assert!((usage.user + usage.nice + usage.system + usage.idle - 100.0).abs() < 0.01);
+    }
+
+    /// A core with no accumulated time was not read. Reporting 0% used and 0% idle
+    /// would present that as a measurement of an idle core.
+    #[test]
+    fn a_core_with_no_ticks_is_none_rather_than_wholly_idle() {
+        assert_eq!(CoreTicks::default().percentages(), None);
+    }
+
+    #[test]
+    fn aggregate_sums_every_core() {
+        let cores = [
+            CoreTicks {
+                user: 10,
+                system: 20,
+                idle: 30,
+                nice: 40,
+            },
+            CoreTicks {
+                user: 1,
+                system: 2,
+                idle: 3,
+                nice: 4,
+            },
+        ];
+        let total = aggregate_ticks(&cores);
+        assert_eq!(total.user, 11);
+        assert_eq!(total.system, 22);
+        assert_eq!(total.idle, 33);
+        assert_eq!(total.nice, 44);
+    }
+
+    /// Counters near u64::MAX must not wrap a busy machine into an idle one.
+    #[test]
+    fn aggregating_saturates_rather_than_wrapping() {
+        let cores = [
+            CoreTicks {
+                user: u64::MAX,
+                ..Default::default()
+            },
+            CoreTicks {
+                user: 100,
+                ..Default::default()
+            },
+        ];
+        assert_eq!(aggregate_ticks(&cores).user, u64::MAX);
+    }
+
+    #[test]
+    fn an_empty_core_list_aggregates_to_no_reading() {
+        assert_eq!(aggregate_ticks(&[]).percentages(), None);
     }
 }

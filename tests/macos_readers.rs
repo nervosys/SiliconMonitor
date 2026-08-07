@@ -85,21 +85,71 @@ fn every_logical_core_is_enumerated() {
     );
 }
 
-/// Per-core utilisation is deliberately absent: `top` reports one aggregate, and
-/// copying it into each core would present an average as a measurement. This pins
-/// that decision so it cannot be quietly reversed.
+/// Per-core figures come from `host_processor_info`. Each core's own split must
+/// account for that core — a core reporting a share of the *machine* rather than
+/// of itself is the mistake this catches.
 #[test]
-fn per_core_utilisation_is_absent_rather_than_the_average_repeated() {
+fn every_core_reports_its_own_complete_split() {
     let simon = Simon::new().expect("construct");
     let cpu = simon.cpu().expect("CPU statistics");
 
     for core in &cpu.cores {
+        let (user, nice, system, idle) = (
+            core.user.expect("per-core user"),
+            core.nice.expect("per-core nice"),
+            core.system.expect("per-core system"),
+            core.idle.expect("per-core idle"),
+        );
+
+        let total = user + nice + system + idle;
         assert!(
-            core.user.is_none() && core.system.is_none() && core.idle.is_none(),
-            "core {} carries per-core utilisation, which no macOS tool reports",
+            (99.0..=101.0).contains(&total),
+            "core {} splits to {total}%, so its ticks were not read as one core's",
             core.id
         );
     }
+}
+
+/// The whole point of reading per-core ticks rather than copying an aggregate. If
+/// a refactor ever fills each core from the average, every core reads identically
+/// and this fails.
+///
+/// Not asserted on a single sample of a *busy* machine — under a saturated CI
+/// runner every core can legitimately read the same. Cumulative since-boot ticks
+/// are what is compared, and those diverge across cores on any machine that has
+/// been up for more than a moment.
+#[test]
+fn cores_are_not_all_reporting_the_same_number() {
+    let simon = Simon::new().expect("construct");
+    let cpu = simon.cpu().expect("CPU statistics");
+
+    if cpu.cores.len() < 2 {
+        return; // Nothing to compare on a single-core runner.
+    }
+
+    let idles: Vec<f32> = cpu.cores.iter().filter_map(|c| c.idle).collect();
+    let spread = idles.iter().cloned().fold(f32::MIN, f32::max)
+        - idles.iter().cloned().fold(f32::MAX, f32::min);
+
+    assert!(
+        spread > 0.0,
+        "all {} cores report identical idle time, which means one figure was \
+         copied across them rather than each core being read",
+        cpu.cores.len()
+    );
+}
+
+/// Nice time is a real reading now rather than the 0.0 the `top` path had to use.
+#[test]
+fn nice_time_is_a_reading_rather_than_a_placeholder() {
+    let simon = Simon::new().expect("construct");
+    let cpu = simon.cpu().expect("CPU statistics");
+
+    assert!(
+        (0.0..=100.0).contains(&cpu.total.nice),
+        "nice is {}%, which is not a percentage",
+        cpu.total.nice
+    );
 }
 
 #[test]

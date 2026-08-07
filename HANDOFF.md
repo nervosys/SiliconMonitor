@@ -33,25 +33,23 @@ feature stayed broken through eight published versions.
 
 ## Open work
 
-1. **Current NVMe power state is still `None`.** The available power state table
-   comes from Identify Controller and is populated; the current state needs Get
-   Features (FID 0x02), a separate admin command. SATA SMART attributes still go
-   through `Get-StorageReliabilityCounter` and so still need elevation — ATA
-   pass-through would remove that. Both scoped in `docs/DISK_MONITORING.md`.
+1. **SATA SMART attributes still need elevation.** They go through
+   `Get-StorageReliabilityCounter`; ATA pass-through (`IOCTL_ATA_PASS_THROUGH`)
+   would remove that, the way the NVMe protocol query removed it for NVMe drives.
+   Scoped in `docs/DISK_MONITORING.md`. Every NVMe field is now read.
 
-2. **macOS GPU, power and temperature are still unimplemented.** CPU, memory,
-   swap, uptime and board info landed in 3.1.0 (`src/platform/macos.rs`), so
-   `Simon::cpu()`, `memory()` and `uptime()` work there. `Simon::snapshot()` still
-   fails, because it requires every reader. Per-core utilisation and nice time are
-   also absent — `top` gives one aggregate and separates no nice time; both need
-   `host_processor_info`.
+2. **macOS GPU, power and temperature are still unimplemented.** CPU (per-core,
+   with nice time), memory, swap, uptime and board info work — `Simon::cpu()`,
+   `memory()`, `uptime()`. `Simon::snapshot()` still fails, because it requires
+   every reader. Power and temperature need `powermetrics`, which requires root,
+   so they may not be reachable unelevated at all; that is worth establishing
+   before writing anything.
 
-   **If you have a Mac, that is the thing to use it for.** The 3.1.0 readers were
-   written by cross-compilation and are verified only by
-   `tests/macos_readers.rs` on `macos-latest`, which checks that readings are
-   plausible — not that they are *correct*. Comparing `Simon::cpu()` and
-   `memory()` against Activity Monitor once would settle whether the `vm_stat`
-   accounting matches what a user sees.
+   **If you have a Mac, that is the thing to use it for.** These readers were
+   written by cross-compilation and are verified only by `tests/macos_readers.rs`
+   on `macos-latest`, which checks that readings are *plausible* — not that they
+   are *correct*. Comparing `Simon::cpu()` and `memory()` against Activity Monitor
+   once would settle whether the `vm_stat` accounting matches what a user sees.
 
 3. **The Linux SMART/NVMe paths have executed exactly once**, in CI on
    `33ee241` — 733 tests, 0 failures. No one has run them against real Linux
