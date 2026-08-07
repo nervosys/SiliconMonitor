@@ -136,6 +136,27 @@ impl Simon {
         Ok(snapshot)
     }
 
+    /// Read CPU statistics alone.
+    ///
+    /// [`Self::snapshot`] needs every reader to succeed, so on a platform where any
+    /// one of them is unimplemented it returns an error and the rest are
+    /// unreachable. macOS is that platform today: CPU, memory, uptime and board
+    /// info are implemented while GPU, power and temperature are not. These
+    /// accessors expose what does work without the others having to pretend.
+    pub fn cpu(&self) -> Result<CpuStats> {
+        read_cpu_stats()
+    }
+
+    /// Read memory statistics alone. See [`Self::cpu`].
+    pub fn memory(&self) -> Result<MemoryStats> {
+        read_memory_stats()
+    }
+
+    /// Read system uptime alone. See [`Self::cpu`].
+    pub fn uptime(&self) -> Result<Duration> {
+        read_uptime()
+    }
+
     /// Get the update interval
     pub fn interval(&self) -> Duration {
         self.interval
@@ -494,6 +515,9 @@ fn read_fan_stats() -> std::collections::HashMap<String, crate::core::fan::FanIn
 #[cfg(target_os = "macos")]
 mod macos_stats {
     use super::*;
+    use crate::core::cpu::{CpuCore, CpuTotal};
+    use crate::core::memory::{RamInfo, SwapInfo};
+    use crate::core::platform_info::{HardwareInfo, LibraryVersions, PlatformInfo};
     use crate::error::SimonError;
 
     fn unsupported(what: &str) -> SimonError {
@@ -503,7 +527,47 @@ mod macos_stats {
     }
 
     pub(super) fn read_cpu_stats() -> Result<CpuStats> {
-        Err(unsupported("CPU statistics"))
+        use crate::platform::macos;
+
+        let usage = macos::cpu_usage()
+            .ok_or_else(|| unsupported("CPU statistics: `top` output was not understood"))?;
+
+        let count = macos::sysctl_u64("hw.logicalcpu").unwrap_or(0) as usize;
+        let model = macos::sysctl_string("machdep.cpu.brand_string")
+            // Apple Silicon does not publish machdep.cpu.brand_string; the machine
+            // identifier is the closest thing it does publish.
+            .or_else(|| macos::sysctl_string("hw.model"))
+            .unwrap_or_default();
+
+        let cores = (0..count)
+            .map(|id| CpuCore {
+                id,
+                online: true,
+                governor: String::new(),
+                frequency: None,
+                // `top` reports one aggregate for the package. Copying it into
+                // every core would present an average as a per-core measurement.
+                user: None,
+                nice: None,
+                system: None,
+                idle: None,
+                model: model.clone(),
+            })
+            .collect();
+
+        Ok(CpuStats {
+            cores,
+            total: CpuTotal {
+                user: usage.user,
+                // No macOS command-line tool separates nice time; `top` reports
+                // user, sys and idle only. This 0.0 is a convention, not a reading
+                // — the only one in this module. `host_processor_info` would give
+                // the real split.
+                nice: 0.0,
+                system: usage.system,
+                idle: usage.idle,
+            },
+        })
     }
 
     pub(super) fn read_gpu_stats() -> Result<GpuStats> {
@@ -511,7 +575,44 @@ mod macos_stats {
     }
 
     pub(super) fn read_memory_stats() -> Result<MemoryStats> {
-        Err(unsupported("memory statistics"))
+        use crate::platform::macos;
+
+        let vm = macos::vm_stat()
+            .ok_or_else(|| unsupported("memory statistics: `vm_stat` was not understood"))?;
+
+        // hw.memsize is the installed RAM. Summing vm_stat's pages gives a slightly
+        // different figure — the kernel's own footprint is not in the page counts —
+        // so the installed size is the one to report as total.
+        let total = macos::sysctl_u64("hw.memsize").unwrap_or_else(|| {
+            (vm.free + vm.active + vm.inactive + vm.speculative + vm.wired + vm.compressed)
+                * vm.page_size
+        });
+
+        // Swap being unreadable is different from swap being off: the first leaves
+        // zeros that mean "unknown", the second is a real zero. `SwapInfo` has no
+        // Option to carry that distinction, so an unreadable value is reported as
+        // zero and noted here rather than silently conflated.
+        let swap = macos::swap_usage().unwrap_or(macos::SwapUsage { total: 0, used: 0 });
+
+        Ok(MemoryStats {
+            ram: RamInfo {
+                total,
+                used: vm.used_bytes(),
+                free: vm.free_bytes(),
+                // macOS has no buffer cache distinct from the file cache.
+                buffers: 0,
+                cached: vm.cached_bytes(),
+                shared: 0,
+                lfb: None,
+            },
+            swap: SwapInfo {
+                total: swap.total,
+                used: swap.used,
+                cached: 0,
+            },
+            emc: None,
+            iram: None,
+        })
     }
 
     pub(super) fn read_power_stats() -> Result<PowerStats> {
@@ -523,11 +624,65 @@ mod macos_stats {
     }
 
     pub(super) fn detect_platform_info() -> Result<BoardInfo> {
-        Err(unsupported("platform detection"))
+        use crate::platform::macos;
+
+        // `Simon::with_interval` calls this in its constructor, so a failure here
+        // makes the whole type unconstructible — which is what kept CPU and memory
+        // out of reach on macOS even after they were implemented.
+        let machine = macos::sysctl_string("hw.machine").unwrap_or_default();
+        let model = macos::sysctl_string("hw.model").unwrap_or_default();
+        let release = macos::sysctl_string("kern.osrelease").unwrap_or_default();
+        let product = macos::sysctl_string("kern.osproductversion");
+
+        Ok(BoardInfo {
+            platform: PlatformInfo {
+                machine,
+                system: "Darwin".to_string(),
+                // The marketing version (26.x) rather than the Darwin kernel
+                // version, which `release` already carries.
+                distribution: product.map(|v| format!("macOS {v}")),
+                release,
+            },
+            hardware: HardwareInfo {
+                model,
+                p_number: None,
+                module: None,
+                soc: macos::sysctl_string("machdep.cpu.brand_string"),
+                cuda_arch: None,
+                codename: None,
+                serial_number: macos::sysctl_string("hw.serialnumber"),
+                l4t: None,
+                jetpack: None,
+            },
+            libraries: LibraryVersions {
+                cuda: None,
+                cudnn: None,
+                tensorrt: None,
+                other: std::collections::HashMap::new(),
+            },
+        })
     }
 
     pub(super) fn read_uptime() -> Result<Duration> {
-        Err(unsupported("uptime"))
+        use crate::platform::macos;
+
+        // kern.boottime prints `{ sec = 1754500000, usec = 123456 } ...`
+        let raw = macos::sysctl_string("kern.boottime").ok_or_else(|| unsupported("uptime"))?;
+        let boot_secs: u64 = raw
+            .split("sec = ")
+            .nth(1)
+            .and_then(|s| s.split(|c: char| !c.is_ascii_digit()).next())
+            .and_then(|s| s.parse().ok())
+            .ok_or_else(|| unsupported("uptime: kern.boottime was not understood"))?;
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+
+        // A boot time in the future means the two clocks disagree; reporting a
+        // saturated zero is better than a wrapped duration of 584 million years.
+        Ok(Duration::from_secs(now.saturating_sub(boot_secs)))
     }
 
     pub(super) fn read_process_stats() -> Result<ProcessStats> {

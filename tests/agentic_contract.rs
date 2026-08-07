@@ -17,12 +17,14 @@ fn simon() -> Command {
 
 /// Whether this platform has readers that produce live hardware values.
 ///
-/// simon has CPU and memory readers for Linux and Windows and none for macOS —
-/// `CpuStats::new` and `MemoryStats::new` return empty there, and `stats::Simon`
-/// reports `UnsupportedPlatform` outright. Tests that assert something *about a
-/// reading* have nothing to assert where no reading is produced, and gating them
-/// on this says so once, by name, instead of scattering `cfg(target_os)` through
-/// the file as if each site were its own special case.
+/// The agent surface reads through `Simon::snapshot`, which requires every reader
+/// to succeed. macOS gained CPU, memory and uptime readers in 3.1.0, but GPU,
+/// power and temperature are still unimplemented there, so a snapshot never
+/// populates and the agent surface has no values to report. Tests that assert
+/// something *about a reading* have nothing to assert where no reading is
+/// produced, and gating them on this says so once, by name, instead of scattering
+/// `cfg(target_os)` through the file as if each site were its own special case.
+/// The macOS readers that do exist are asserted in `tests/macos_readers.rs`.
 ///
 /// This gates assertions about *values*. It deliberately does not gate the
 /// contract itself: the schema, the id vocabulary, exit codes for unknown ids, and

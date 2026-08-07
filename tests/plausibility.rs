@@ -42,9 +42,13 @@ const SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(90);
 
 /// Whether this platform has readers that produce live hardware values.
 ///
-/// simon has CPU and memory readers for Linux and Windows and none for macOS, so
-/// assertions that a reading is non-zero have nothing to hold onto there. This
-/// names that once rather than repeating a cfg at each site.
+/// This gates assertions that a *snapshot* carries readings. macOS gained CPU,
+/// memory and uptime readers in 3.1.0, but `Simon::snapshot` requires every reader
+/// to succeed and GPU, power and temperature are still unimplemented there, so a
+/// snapshot never populates. The macOS readers that do exist are asserted directly
+/// in `tests/macos_readers.rs` instead.
+///
+/// This names the gap once rather than repeating a cfg at each site.
 fn platform_has_hardware_readers() -> bool {
     cfg!(any(target_os = "linux", target_os = "windows"))
 }

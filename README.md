@@ -1013,17 +1013,23 @@ cargo run --release --features full --example agent_simple
 | -------- | --- | ------ | ---- | ------------ | --------- | ----------- | ----------- | ------- | ----- | --------- | ------- | --- |
 | Linux    | ✅   | ✅      | ✅    | ✅            | ✅         | ✅           | ❌           | ✅       | ✅     | ✅         | ✅       | ✅   |
 | Windows  | ✅   | ✅      | ✅    | ✅            | ✅         | ✅           | ❌           | ✅       | ✅     | ✅         | ✅       | ✅   |
-| macOS    | ❌   | ❌      | ✅    | ❌            | ❌         | ❌           | ✅           | ✅       | ✅     | ✅         | ✅       | ✅   |
+| macOS    | 🚧   | 🚧      | ✅    | ❌            | ❌         | ❌           | ✅           | ✅       | ✅     | ✅         | ✅       | ✅   |
 
 ✅ Fully Supported | 🚧 Partial/In Progress | ❌ Not Supported
 
-> **macOS CPU and memory are not implemented.** This table claimed both as
-> supported through 2.1.2. There are readers for Linux and Windows and none for
-> macOS: `CpuStats::new` and `MemoryStats::new` return empty there, and
-> `stats::Simon`'s platform functions report `UnsupportedPlatform`. The claim
-> survived because the crate could not build on macOS at all, so nothing ever
-> exercised it. Contributions implementing these against sysctl and IOKit are
-> welcome — see Contributing.
+> **macOS CPU and memory are partial.** As of 3.1.0 `stats::Simon` reads CPU
+> utilisation, memory, swap, uptime and board info on macOS by parsing `top`,
+> `vm_stat` and `sysctl`. Two things are deliberately absent: per-core utilisation,
+> because `top` reports one aggregate and copying it into each core would present
+> an average as a measurement; and nice time, which no macOS command-line tool
+> separates. Both need `host_processor_info`.
+>
+> `Simon::snapshot()` still fails on macOS because it requires every reader, and
+> GPU, power and temperature remain unimplemented there. Use `Simon::cpu()`,
+> `Simon::memory()` and `Simon::uptime()`, which read only what works. The table
+> claimed full CPU and memory support through 2.1.2, when neither existed; that
+> claim survived because the crate could not build on macOS at all, so nothing ever
+> exercised it.
 >
 > macOS disk support covers enumeration, device info and health. Per-device I/O
 > counters are not available: `iostat` reports rates rather than the cumulative

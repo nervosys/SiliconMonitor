@@ -6,5 +6,10 @@ pub mod linux;
 #[cfg(windows)]
 pub mod windows;
 
+// Not target-gated: the parsers are pure functions over captured command output,
+// and gating them would mean their tests only ran on the one platform where no one
+// here can run anything. See the module comment.
+pub mod macos;
+
 // Common utilities
 pub mod common;

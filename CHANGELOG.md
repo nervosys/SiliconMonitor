@@ -7,9 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [3.1.0] - 2026-08-06
 
-Windows NVMe drives are now read from the controller instead of from WMI.
+Windows NVMe drives are now read from the controller instead of from WMI, and
+macOS reads CPU and memory for the first time.
 
 ### Added
+
+- **macOS CPU and memory readers.** `stats::Simon` now reads CPU utilisation,
+  memory, swap, uptime and board information on macOS, by parsing `top`, `vm_stat`
+  and `sysctl`. Listed as a known gap since 3.0.0 and as a false claim in the
+  platform table before that.
+
+  Two things are deliberately not measured:
+
+  - **Per-core utilisation.** `top` reports one aggregate for the package. Cores
+    are enumerated with their identity and `None` for utilisation rather than each
+    receiving a copy of the average, which would read as measurement.
+  - **Nice time.** No macOS command-line tool separates it. `CpuTotal::nice` is not
+    an `Option`, so it is reported as 0.0 — the one number in that module which is
+    a convention rather than a reading, and it is marked as such in the source.
+
+  Both would come from `host_processor_info`. That is Mach FFI, and this code was
+  written by cross-compilation from a Windows machine — an unrun `unsafe` block
+  reading a structure at the wrong offset produces plausible wrong numbers, which
+  is the failure this project spent 3.0.0 removing. Parsing documented textual
+  output can be tested; `tests/macos_readers.rs` runs on `macos-latest` on every
+  push and asserts what a reading has to satisfy to be one.
+
+- `Simon::cpu()`, `Simon::memory()` and `Simon::uptime()`, which read one thing
+  each. `Simon::snapshot()` requires every reader to succeed, so on macOS — where
+  GPU, power and temperature are still unimplemented — it fails and takes the
+  working readers down with it. These accessors expose what works without the rest
+  having to pretend.
+
+- `platform::macos`, parsers for `top`, `vm_stat` and `vm.swapusage` with 12 unit
+  tests over captured output. Not target-gated, so they are tested on all three
+  platforms rather than only on the one nobody here can run.
 
 - **NVMe passthrough on Windows** via `DeviceIoControl` with
   `StorageDeviceProtocolSpecificProperty`, issuing Identify Controller and the
