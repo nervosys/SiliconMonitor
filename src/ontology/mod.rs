@@ -88,6 +88,7 @@ pub enum Unit {
     Volts,
     Rpm,
     Seconds,
+    Hours,
     Milliseconds,
     Count,
     Identifier,
@@ -108,6 +109,7 @@ impl Unit {
             Self::Volts => "volts",
             Self::Rpm => "rpm",
             Self::Seconds => "seconds",
+            Self::Hours => "hours",
             Self::Milliseconds => "milliseconds",
             Self::Count => "count",
             Self::Identifier => "identifier",
@@ -570,6 +572,83 @@ impl Ontology {
             "Swap or pagefile currently in use.",
         ));
 
+        add(Entity::new(
+            "cpu.cache.l1d",
+            D::Cpu,
+            K::Identity,
+            Some(U::Bytes),
+            P::Measured,
+            true,
+            "Total L1 data cache across all cores. Reported in bytes, though the \
+             platform sources state it in KiB, so that every capacity in this \
+             ontology carries the same unit.",
+        ));
+        add(Entity::new(
+            "cpu.cache.l1i",
+            D::Cpu,
+            K::Identity,
+            Some(U::Bytes),
+            P::Measured,
+            true,
+            "Total L1 instruction cache across all cores.",
+        ));
+        add(Entity::new(
+            "cpu.cache.l2",
+            D::Cpu,
+            K::Identity,
+            Some(U::Bytes),
+            P::Measured,
+            true,
+            "Total L2 cache.",
+        ));
+        add(Entity::new(
+            "cpu.cache.l3",
+            D::Cpu,
+            K::Identity,
+            Some(U::Bytes),
+            P::Measured,
+            true,
+            "Total L3 cache. Null on parts with no last-level cache to report.",
+        ));
+        add(Entity::new(
+            "cpu.cache.{n}.level",
+            D::Cpu,
+            K::Identity,
+            Some(U::Identifier),
+            P::Measured,
+            true,
+            "Cache level of one cache instance — l1, l2, l3, l4.",
+        ));
+        add(Entity::new(
+            "cpu.cache.{n}.size",
+            D::Cpu,
+            K::Identity,
+            Some(U::Bytes),
+            P::Measured,
+            true,
+            "Size of one cache instance.",
+        ));
+        add(Entity::new(
+            "cpu.cache.{n}.line_size",
+            D::Cpu,
+            K::Identity,
+            Some(U::Bytes),
+            P::Measured,
+            true,
+            "Cache line size. The unit of false sharing, and the reason this is \
+             exposed per instance rather than assumed to be 64 bytes.",
+        ));
+        add(Entity::new(
+            "cpu.cache.{n}.shared_cpus",
+            D::Cpu,
+            K::Identity,
+            Some(U::Text),
+            P::Measured,
+            true,
+            "Which logical processors share this cache, as a range list. Null where \
+             the platform does not publish the sharing map.",
+        ));
+
         // ── Disk ─────────────────────────────────────────────────────────────
         add(Entity::new(
             "disk.{n}.model",
@@ -618,6 +697,167 @@ impl Ontology {
             "Mount point of a partition that genuinely resides on this device. A \
              device holding no mounted volume reports none rather than every volume \
              on the system.",
+        ));
+        add(Entity::new(
+            "disk.{n}.serial",
+            D::Disk,
+            K::Identity,
+            Some(U::Text),
+            P::Measured,
+            true,
+            "Drive serial number. Null where the platform will not disclose it \
+             without elevation.",
+        ));
+        add(Entity::new(
+            "disk.{n}.kind",
+            D::Disk,
+            K::Identity,
+            Some(U::Text),
+            P::Measured,
+            true,
+            "Transport and medium — nvme_ssd, sata_ssd, sata_hdd, and so on. \
+             Distinct from the SMART media type, which describes the medium alone.",
+        ));
+        add(Entity::new(
+            "disk.{n}.health",
+            D::Disk,
+            K::Measurement,
+            Some(U::Text),
+            P::Measured,
+            true,
+            "Health verdict — healthy, warning, critical, failed, unknown. Derived \
+             from the drive's own report, never from the device merely existing. \
+             `unknown` is a real answer and means no counter could be read.",
+        ));
+        add(Entity::new(
+            "disk.{n}.temperature",
+            D::Disk,
+            K::Measurement,
+            Some(U::Celsius),
+            P::Measured,
+            true,
+            "Drive temperature, from the NVMe health log or ATA attribute 194. \
+             Null on devices that expose no thermal sensor.",
+        ));
+        add(Entity::new(
+            "disk.{n}.smart.passed",
+            D::Disk,
+            K::Measurement,
+            None,
+            P::Measured,
+            true,
+            "The drive's own pass/fail verdict on itself — NVMe critical warning \
+             bits, or the ATA failure prediction. Not a judgement computed from the \
+             counters below.",
+        ));
+        add(Entity::new(
+            "disk.{n}.smart.power_on_hours",
+            D::Disk,
+            K::Measurement,
+            Some(U::Hours),
+            P::Measured,
+            true,
+            "Lifetime powered-on hours. A minority of ATA drives report this \
+             attribute in minutes and nothing in the structure distinguishes them.",
+        ));
+        add(Entity::new(
+            "disk.{n}.smart.power_cycles",
+            D::Disk,
+            K::Measurement,
+            Some(U::Count),
+            P::Measured,
+            true,
+            "Lifetime power cycle count.",
+        ));
+        add(Entity::new(
+            "disk.{n}.smart.reallocated_sectors",
+            D::Disk,
+            K::Measurement,
+            Some(U::Count),
+            P::Measured,
+            true,
+            "Sectors the drive has remapped. Null on NVMe, which has no sector \
+             reallocation concept — that is an ATA notion, and zero would assert a \
+             clean count that was never measured.",
+        ));
+        add(Entity::new(
+            "disk.{n}.smart.pending_sectors",
+            D::Disk,
+            K::Measurement,
+            Some(U::Count),
+            P::Measured,
+            true,
+            "Sectors awaiting remap — data at risk now. Null on NVMe, for the same \
+             reason as the reallocated count.",
+        ));
+        add(Entity::new(
+            "disk.{n}.smart.uncorrectable_sectors",
+            D::Disk,
+            K::Measurement,
+            Some(U::Count),
+            P::Measured,
+            true,
+            "Uncorrectable sectors on ATA; media errors on NVMe.",
+        ));
+        add(Entity::new(
+            "disk.{n}.nvme.version",
+            D::Disk,
+            K::Identity,
+            Some(U::Text),
+            P::Measured,
+            true,
+            "NVMe specification version the controller reports. Null on non-NVMe.",
+        ));
+        add(Entity::new(
+            "disk.{n}.nvme.percentage_used",
+            D::Disk,
+            K::Measurement,
+            Some(U::Percent),
+            P::Measured,
+            true,
+            "Share of rated write endurance consumed. May legitimately exceed 100 \
+             on a drive past its rating, which is a reading and not an error.",
+        ));
+        add(Entity::new(
+            "disk.{n}.nvme.data_units_written",
+            D::Disk,
+            K::Measurement,
+            Some(U::Count),
+            P::Measured,
+            true,
+            "Lifetime data units written, in 1000x512-byte units as NVMe defines \
+             them. Reported in the drive's own unit rather than converted, so that \
+             the number matches what other NVMe tools show.",
+        ));
+        add(Entity::new(
+            "disk.{n}.nvme.data_units_read",
+            D::Disk,
+            K::Measurement,
+            Some(U::Count),
+            P::Measured,
+            true,
+            "Lifetime data units read, in the same units as the written count.",
+        ));
+        add(Entity::new(
+            "disk.{n}.nvme.power_state",
+            D::Disk,
+            K::Measurement,
+            Some(U::Identifier),
+            P::Measured,
+            true,
+            "Current NVMe power state index. State 0 is both the active state and \
+             what an unread field would look like, so this is null unless the \
+             controller answered Get Features.",
+        ));
+        add(Entity::new(
+            "disk.{n}.nvme.critical_warnings",
+            D::Disk,
+            K::Measurement,
+            Some(U::Identifier),
+            P::Measured,
+            true,
+            "NVMe critical warning bitfield. Zero is a reading — a drive with \
+             nothing wrong — and is reported as such rather than omitted.",
         ));
 
         // ── Network ──────────────────────────────────────────────────────────
@@ -789,6 +1029,102 @@ impl Ontology {
             P::Measured,
             true,
             "Baseboard product name from SMBIOS.",
+        ));
+        add(Entity::new(
+            "board.firmware.vendor",
+            D::Board,
+            K::Identity,
+            Some(U::Text),
+            P::Measured,
+            true,
+            "System firmware vendor, from SMBIOS.",
+        ));
+        add(Entity::new(
+            "board.firmware.product",
+            D::Board,
+            K::Identity,
+            Some(U::Text),
+            P::Measured,
+            true,
+            "System product name, from SMBIOS.",
+        ));
+        add(Entity::new(
+            "board.firmware.boot_mode",
+            D::Board,
+            K::Identity,
+            Some(U::Identifier),
+            P::Measured,
+            true,
+            "Whether the machine booted UEFI or legacy BIOS. Determines whether \
+             Secure Boot is even applicable.",
+        ));
+        add(Entity::new(
+            "board.firmware.{n}.component",
+            D::Board,
+            K::Identity,
+            Some(U::Identifier),
+            P::Measured,
+            true,
+            "Name of one component in the firmware inventory — BIOS, ME, a device \
+             option ROM.",
+        ));
+        add(Entity::new(
+            "board.firmware.{n}.version",
+            D::Board,
+            K::Identity,
+            Some(U::Text),
+            P::Measured,
+            true,
+            "Installed version of that component.",
+        ));
+        add(Entity::new(
+            "board.tpm.present",
+            D::Board,
+            K::Identity,
+            None,
+            P::Measured,
+            false,
+            "Whether a TPM was enumerated at all. False is a reading: the absence \
+             of a TPM is a fact about the machine, distinct from being unable to \
+             look.",
+        ));
+        add(Entity::new(
+            "board.tpm.version",
+            D::Board,
+            K::Identity,
+            Some(U::Identifier),
+            P::Measured,
+            true,
+            "TPM specification version. Null when no TPM is present.",
+        ));
+        add(Entity::new(
+            "board.tpm.manufacturer",
+            D::Board,
+            K::Identity,
+            Some(U::Text),
+            P::Measured,
+            true,
+            "TPM manufacturer string.",
+        ));
+        add(Entity::new(
+            "board.tpm.status",
+            D::Board,
+            K::Measurement,
+            Some(U::Identifier),
+            P::Measured,
+            true,
+            "Whether the TPM is enabled, activated and owned. A present but \
+             disabled TPM cannot attest anything, so presence alone is not the \
+             question an agent should ask.",
+        ));
+        add(Entity::new(
+            "board.tpm.measured_boot",
+            D::Board,
+            K::Measurement,
+            None,
+            P::Measured,
+            true,
+            "Whether platform integrity measurements are active.",
         ));
         add(Entity::new(
             "board.manufacturer",

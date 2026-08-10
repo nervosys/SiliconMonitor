@@ -223,6 +223,10 @@ pub struct Coverage {
 // cannot. None of them invent a value on failure.
 
 fn resolve_cpu(out: &mut Vec<Reading>) {
+    // Cache topology is independent of the sampling below and must still resolve
+    // when the CPU reader fails, so it runs before the early return.
+    resolve_cpu_cache(out);
+
     let stats = read_cpu_stats();
 
     let Some(stats) = stats else {
@@ -433,6 +437,202 @@ fn resolve_board(out: &mut Vec<Reading>) {
                 ));
             }
         }
+    }
+
+    resolve_firmware(out);
+    resolve_tpm(out);
+}
+
+fn resolve_firmware(out: &mut Vec<Reading>) {
+    const IDS: [&str; 3] = [
+        "board.firmware.vendor",
+        "board.firmware.product",
+        "board.firmware.boot_mode",
+    ];
+
+    let inventory = match crate::firmware::FirmwareInventory::new() {
+        Ok(i) => i,
+        Err(e) => {
+            for id in IDS {
+                out.push(Reading::unavailable(
+                    id,
+                    Some(Unit::Text),
+                    format!("firmware inventory unavailable: {e}"),
+                ));
+            }
+            return;
+        }
+    };
+
+    push_text(out, "board.firmware.vendor", inventory.system_vendor());
+    push_text(out, "board.firmware.product", inventory.system_product());
+    push_id(
+        out,
+        "board.firmware.boot_mode",
+        &format!("{:?}", inventory.boot_mode()).to_lowercase(),
+    );
+
+    for (i, entry) in inventory.items().iter().enumerate() {
+        push_id(
+            out,
+            format!("board.firmware.{i}.component"),
+            &format!("{:?}", entry.component).to_lowercase(),
+        );
+        push_text(out, format!("board.firmware.{i}.version"), &entry.version);
+    }
+}
+
+fn resolve_tpm(out: &mut Vec<Reading>) {
+    const DETAIL_IDS: [&str; 4] = [
+        "board.tpm.version",
+        "board.tpm.manufacturer",
+        "board.tpm.status",
+        "board.tpm.measured_boot",
+    ];
+
+    let monitor = match crate::tpm::TpmMonitor::new() {
+        Ok(m) => m,
+        Err(e) => {
+            // Not knowing whether a TPM exists is different from knowing there is
+            // none, so `present` goes unavailable here rather than false.
+            out.push(Reading::unavailable(
+                "board.tpm.present",
+                None,
+                format!("TPM enumeration failed: {e}"),
+            ));
+            for id in DETAIL_IDS {
+                out.push(Reading::unavailable(
+                    id,
+                    None,
+                    format!("TPM enumeration failed: {e}"),
+                ));
+            }
+            return;
+        }
+    };
+
+    // A successful enumeration that found nothing is a reading: this machine has
+    // no TPM. That is exactly the case `present` exists to state.
+    out.push(Reading::measured(
+        "board.tpm.present",
+        serde_json::json!(monitor.has_tpm()),
+        None,
+    ));
+
+    let Some(tpm) = monitor.tpm() else {
+        for id in DETAIL_IDS {
+            out.push(Reading::unavailable(
+                id,
+                None,
+                "no TPM present on this machine",
+            ));
+        }
+        return;
+    };
+
+    // `Unknown` on either of these is the reader having failed to determine the
+    // value, not the device reporting "unknown". Passing it through as a measured
+    // identifier would let an agent conclude a TPM's state had been established
+    // when it had not — and for a security property that is the wrong way to be
+    // wrong. Presence is separately reported above and stays true either way.
+    use crate::tpm::{TpmStatus, TpmVersion};
+    match tpm.version {
+        TpmVersion::Unknown => out.push(Reading::unavailable(
+            "board.tpm.version",
+            Some(Unit::Identifier),
+            "a TPM is present but its specification version could not be determined",
+        )),
+        v => push_id(out, "board.tpm.version", &format!("{v:?}").to_lowercase()),
+    }
+    push_text(out, "board.tpm.manufacturer", &tpm.manufacturer);
+    match tpm.status {
+        TpmStatus::Unknown => out.push(Reading::unavailable(
+            "board.tpm.status",
+            Some(Unit::Identifier),
+            "a TPM is present but whether it is enabled could not be determined",
+        )),
+        s => push_id(out, "board.tpm.status", &format!("{s:?}").to_lowercase()),
+    }
+    out.push(Reading::measured(
+        "board.tpm.measured_boot",
+        serde_json::json!(tpm.measured_boot),
+        None,
+    ));
+}
+
+fn resolve_cpu_cache(out: &mut Vec<Reading>) {
+    const TOTALS: [&str; 4] = [
+        "cpu.cache.l1d",
+        "cpu.cache.l1i",
+        "cpu.cache.l2",
+        "cpu.cache.l3",
+    ];
+
+    let monitor = match crate::cpu_cache::CpuCacheMonitor::new() {
+        Ok(m) => m,
+        Err(e) => {
+            for id in TOTALS {
+                out.push(Reading::unavailable(
+                    id,
+                    Some(Unit::Bytes),
+                    format!("cache topology unavailable: {e}"),
+                ));
+            }
+            return;
+        }
+    };
+
+    let topology = monitor.topology();
+    // The platform sources state these in KiB. Converting here keeps every
+    // capacity in the ontology in bytes, so an agent never has to ask which unit a
+    // particular size field happens to use.
+    let kib = |v: u64| (v > 0).then(|| serde_json::json!(v * 1024));
+    for (id, value) in TOTALS.iter().zip([
+        topology.total_l1d_kb,
+        topology.total_l1i_kb,
+        topology.total_l2_kb,
+        topology.total_l3_kb,
+    ]) {
+        push_opt(
+            out,
+            *id,
+            kib(value),
+            Some(Unit::Bytes),
+            "no aggregate was reported for this level; some platforms publish a \
+             combined L1 rather than separate data and instruction figures, in \
+             which case the per-instance entities below carry the sizes",
+        );
+    }
+
+    for (i, cache) in monitor.caches().iter().enumerate() {
+        let base = format!("cpu.cache.{i}");
+        push_id(
+            out,
+            format!("{base}.level"),
+            &format!("{:?}", cache.level).to_lowercase(),
+        );
+        push_opt(
+            out,
+            format!("{base}.size"),
+            kib(cache.size_kb),
+            Some(Unit::Bytes),
+            "the platform reported no size for this cache",
+        );
+        push_opt(
+            out,
+            format!("{base}.line_size"),
+            (cache.line_size > 0).then(|| serde_json::json!(cache.line_size)),
+            Some(Unit::Bytes),
+            "the platform reported no line size for this cache",
+        );
+        push_opt(
+            out,
+            format!("{base}.shared_cpus"),
+            (!cache.shared_cpu_list.trim().is_empty())
+                .then(|| serde_json::json!(cache.shared_cpu_list)),
+            Some(Unit::Text),
+            "the platform does not publish which processors share this cache",
+        );
     }
 }
 
@@ -815,6 +1015,219 @@ fn resolve_disk(out: &mut Vec<Reading>) {
                         format!("I/O statistics read failed: {e}"),
                     ));
                 }
+            }
+        }
+
+        resolve_disk_health(out, &base, disk.as_ref());
+    }
+}
+
+/// Health, SMART and NVMe entities for one drive.
+///
+/// Split out because the three readers fail independently and each has its own
+/// reason to have nothing to say — a SATA drive has no NVMe log page, an NVMe
+/// drive has no sector reallocation concept, and a USB bridge may tunnel neither.
+/// An agent needs those told apart, so each absence carries the reason rather than
+/// the row being omitted.
+fn resolve_disk_health(out: &mut Vec<Reading>, base: &str, disk: &dyn crate::disk::DiskDevice) {
+    // Spelled out rather than derived from `{:?}`, which lowercases `NvmeSsd` to
+    // `nvmessd` — a token no reader would guess and no id elsewhere resembles.
+    use crate::disk::DiskType;
+    let kind = match disk.disk_type() {
+        DiskType::NvmeSsd => Some("nvme_ssd"),
+        DiskType::SataSsd => Some("sata_ssd"),
+        DiskType::SataHdd => Some("sata_hdd"),
+        DiskType::Scsi => Some("scsi"),
+        DiskType::Usb => Some("usb"),
+        DiskType::Virtual => Some("virtual"),
+        DiskType::Unknown => None,
+    };
+    push_opt(
+        out,
+        format!("{base}.kind"),
+        kind.map(|k| serde_json::json!(k)),
+        Some(Unit::Text),
+        "the platform did not classify this device's transport or medium",
+    );
+
+    match disk.info() {
+        Ok(info) => push_opt(
+            out,
+            format!("{base}.serial"),
+            info.serial.as_ref().map(|s| serde_json::json!(s)),
+            Some(Unit::Text),
+            "the platform did not disclose a serial number for this device",
+        ),
+        Err(e) => out.push(Reading::unavailable(
+            format!("{base}.serial"),
+            Some(Unit::Text),
+            format!("device info read failed: {e}"),
+        )),
+    }
+
+    // `Unknown` is the absence of a verdict, not a verdict of "unknown". Passing it
+    // through as a measured string would let an agent record a health check it
+    // never actually got — the same shape as reporting an access error as 0 °C.
+    use crate::disk::DiskHealth;
+    match disk.health() {
+        Ok(DiskHealth::Unknown) => out.push(Reading::unavailable(
+            format!("{base}.health"),
+            Some(Unit::Text),
+            "no counter this device exposes yielded a health verdict",
+        )),
+        Ok(h) => push_text(
+            out,
+            format!("{base}.health"),
+            &format!("{h:?}").to_lowercase(),
+        ),
+        Err(e) => out.push(Reading::unavailable(
+            format!("{base}.health"),
+            Some(Unit::Text),
+            format!("health read failed: {e}"),
+        )),
+    }
+
+    const SMART_FIELDS: [&str; 7] = [
+        "temperature",
+        "smart.passed",
+        "smart.power_on_hours",
+        "smart.power_cycles",
+        "smart.reallocated_sectors",
+        "smart.pending_sectors",
+        "smart.uncorrectable_sectors",
+    ];
+
+    match disk.smart_info() {
+        Ok(s) => {
+            push_opt(
+                out,
+                format!("{base}.temperature"),
+                s.temperature.map(|t| serde_json::json!(t)),
+                Some(Unit::Celsius),
+                "this device exposes no thermal sensor",
+            );
+            out.push(Reading::measured(
+                format!("{base}.smart.passed"),
+                serde_json::json!(s.passed),
+                None,
+            ));
+            push_opt(
+                out,
+                format!("{base}.smart.power_on_hours"),
+                s.power_on_hours.map(|v| serde_json::json!(v)),
+                Some(Unit::Hours),
+                "the drive did not report a power-on hour count",
+            );
+            push_opt(
+                out,
+                format!("{base}.smart.power_cycles"),
+                s.power_cycle_count.map(|v| serde_json::json!(v)),
+                Some(Unit::Count),
+                "the drive did not report a power cycle count",
+            );
+            // NVMe has no sector reallocation concept. Reporting 0 here would
+            // assert a clean count that was never measured, which is exactly the
+            // substitution this module exists to refuse.
+            push_opt(
+                out,
+                format!("{base}.smart.reallocated_sectors"),
+                s.reallocated_sectors.map(|v| serde_json::json!(v)),
+                Some(Unit::Count),
+                "not an NVMe concept; on ATA, the drive did not report attribute 5",
+            );
+            push_opt(
+                out,
+                format!("{base}.smart.pending_sectors"),
+                s.pending_sectors.map(|v| serde_json::json!(v)),
+                Some(Unit::Count),
+                "not an NVMe concept; on ATA, the drive did not report attribute 197",
+            );
+            push_opt(
+                out,
+                format!("{base}.smart.uncorrectable_sectors"),
+                s.uncorrectable_sectors.map(|v| serde_json::json!(v)),
+                Some(Unit::Count),
+                "the drive did not report an uncorrectable count",
+            );
+        }
+        Err(e) => {
+            // On Windows this is the unelevated case for devices that reach the
+            // WMI fallback, and the error says so. Naming the reason is the whole
+            // point: a caller can tell "needs elevation" from "no such sensor".
+            for suffix in SMART_FIELDS {
+                out.push(Reading::unavailable(
+                    format!("{base}.{suffix}"),
+                    None,
+                    format!("SMART read failed: {e}"),
+                ));
+            }
+        }
+    }
+
+    const NVME_FIELDS: [&str; 6] = [
+        "nvme.version",
+        "nvme.percentage_used",
+        "nvme.data_units_written",
+        "nvme.data_units_read",
+        "nvme.power_state",
+        "nvme.critical_warnings",
+    ];
+
+    match disk.nvme_info() {
+        Ok(n) => {
+            push_opt(
+                out,
+                format!("{base}.nvme.version"),
+                n.nvme_version.as_ref().map(|v| serde_json::json!(v)),
+                Some(Unit::Text),
+                "the controller did not report a specification version",
+            );
+            push_opt(
+                out,
+                format!("{base}.nvme.percentage_used"),
+                n.percentage_used.map(|v| serde_json::json!(v)),
+                Some(Unit::Percent),
+                "the controller did not report a wear figure",
+            );
+            push_opt(
+                out,
+                format!("{base}.nvme.data_units_written"),
+                n.data_units_written.map(|v| serde_json::json!(v)),
+                Some(Unit::Count),
+                "the controller did not report a written data unit count",
+            );
+            push_opt(
+                out,
+                format!("{base}.nvme.data_units_read"),
+                n.data_units_read.map(|v| serde_json::json!(v)),
+                Some(Unit::Count),
+                "the controller did not report a read data unit count",
+            );
+            push_opt(
+                out,
+                format!("{base}.nvme.power_state"),
+                n.power_state.map(|v| serde_json::json!(v)),
+                Some(Unit::Identifier),
+                "the controller does not implement Get Features for power management",
+            );
+            push_opt(
+                out,
+                format!("{base}.nvme.critical_warnings"),
+                n.critical_warnings.map(|v| serde_json::json!(v)),
+                Some(Unit::Identifier),
+                "the controller did not serve the SMART/Health log page",
+            );
+        }
+        Err(e) => {
+            // `NotSupported` here is the device declining the NVMe protocol, which
+            // is how a SATA or USB device answers. That is a fact about the device,
+            // not a failure of the query, and the note says which.
+            for suffix in NVME_FIELDS {
+                out.push(Reading::unavailable(
+                    format!("{base}.{suffix}"),
+                    None,
+                    format!("no NVMe controller data: {e}"),
+                ));
             }
         }
     }

@@ -80,6 +80,19 @@ feature stayed broken through eight published versions.
    what remains to benefit is USB storage — and every Linux machine, where a
    sweep spawns `smartctl` once per drive and the old shape was quadratic.
 
+5. **The ontology names 94 entities; the library has ~88 subsystem modules.**
+   3.3.0 added 34 — disk SMART/health/NVMe, CPU cache topology, firmware and TPM —
+   but USB and PCI inventory, NUMA, RAPL, sensors, virtualization, EDAC and others
+   are readable through the library and `simon cli` while remaining invisible to
+   `describe`, `get` and `snapshot`.
+
+   The sweep is deliberately phased. Each entity needs a declaration in
+   `ontology/mod.rs`, a resolver arm in `resolve.rs`, and a provenance that is
+   *true* — and the recurring mistake, hit three times in 3.3.0 alone, is passing
+   an enum's `Unknown` variant through as a measured value. An id that resolves to
+   a confident guess is worse for an agent than one that does not exist, so add a
+   domain only when its resolver can say why each absence is absent.
+
 ## The plan for what is left
 
 Everything remaining is blocked on hardware this project does not have. That is

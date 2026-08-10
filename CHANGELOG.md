@@ -8,9 +8,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [3.3.0] - 2026-08-10
 
 SATA SMART attributes no longer need Administrator — by a different control code
-than the one that was planned for it.
+than the one that was planned for it — and the agent-facing ontology grew by half
+to name what the disk work had built.
 
 ### Added
+
+- **34 new ontology entities**, taking `simon describe` from 60 to 94. An agent
+  could read a drive's endurance through the library but could not discover it
+  through `describe`, `get` or `snapshot`, which is the surface the agentic
+  contract is written against.
+
+  - **Disk** gained 15: `health`, `temperature`, `serial`, `kind`, the six
+    `smart.*` counters, and six `nvme.*` fields including wear, data units and
+    critical warnings. This is the 3.3.0 SMART work made discoverable.
+  - **CPU** gained 8 for cache topology — per-level totals and per-instance size,
+    line size and sharing map. Sizes are converted to bytes, because the platform
+    sources state them in KiB and every other capacity in the ontology is bytes.
+  - **Board** gained 11: firmware vendor, product, boot mode and a per-component
+    inventory, plus TPM presence, version, manufacturer, status and measured-boot
+    state.
+
+  Three of these resolvers initially passed an enum's `Unknown` variant through as
+  a measured string — `disk.{n}.health`, `board.tpm.version` and
+  `board.tpm.status`. That is the same error as reporting an access denial as
+  0 °C: it lets an agent record a health or attestation check that never
+  succeeded. All three now resolve to `unavailable` with the reason. `DiskType`
+  was also being rendered by `{:?}`, which lowercased `NvmeSsd` to `nvmessd`; the
+  mapping is now spelled out.
+
+- **`Unit::Hours`**, so lifetime power-on counts are not misstated in seconds.
 
 - **ATA SMART attributes on Windows, unelevated**, via
   `IOCTL_STORAGE_PREDICT_FAILURE`. The full attribute table, the drive's own

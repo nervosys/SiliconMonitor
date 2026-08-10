@@ -189,6 +189,22 @@ mistakes a plausible constant for a live reading:
 }
 ```
 
+Coverage is deliberately reported rather than claimed. `simon describe` prints
+the entity count, and the ontology currently names **94 entities across 10
+domains** — cpu (including cache topology), gpu, memory, disk (including SMART,
+health and NVMe endurance), network, power, thermal, process, system, and board
+(including firmware inventory and TPM state). On this machine those expand to 245
+resolved readings and 128 that are unavailable-with-a-reason.
+
+It does not yet name everything the library can read. simon has around 88
+subsystem modules, and the ones without ontology entities — USB and PCI
+inventory, NUMA topology, RAPL, sensors, virtualization, EDAC, and others — are
+reachable through the library and the `cli` subcommands but not yet through
+`describe`, `get` and `snapshot`. That gap is being closed in phases; entities
+are added only once a resolver can state a real provenance for them, because an
+id that resolves to a confident guess is worse for an agent than one that does
+not exist.
+
 See **[AGENTS.md](AGENTS.md)** for the full contract: exit codes, the write
 surface, and how to read the TUI and GUI without a terminal or display.
 
