@@ -404,8 +404,14 @@ impl PciDeviceMonitor {
                         // Infer class from name
                         let class = Self::infer_class_from_name(&name);
 
+                        // The PnP id is a device-instance path, not an address, and
+                        // its tail is a volatile instance id — unusable as a stable
+                        // key. The registry holds the real bus/device/function and
+                        // the bound driver, both readable unelevated.
+                        let (bdf, service) = Self::registry_location_and_service(pnp_id);
+
                         self.devices.push(PciDeviceInfo {
-                            address: pnp_id.to_string(),
+                            address: bdf.unwrap_or_else(|| pnp_id.to_string()),
                             vendor_id,
                             device_id,
                             subsystem_vendor_id: subsys_id.clone(),
@@ -414,7 +420,7 @@ impl PciDeviceMonitor {
                             class,
                             vendor_name,
                             device_name: name,
-                            driver: String::new(),
+                            driver: service.unwrap_or_default(),
                             kernel_module: String::new(),
                             revision: String::new(),
                             iommu_group: None,
@@ -428,6 +434,73 @@ impl PciDeviceMonitor {
                 }
             }
         }
+    }
+
+    /// Bus/device/function and bound driver for one PnP device, from the registry.
+    ///
+    /// `HKLM\SYSTEM\CurrentControlSet\Enum\<pnp id>` holds both, and is readable
+    /// without elevation. `LocationInformation` is a resource string whose tail is
+    /// the decimal triple:
+    ///
+    /// ```text
+    /// @System32\drivers\pci.sys,#65536;PCI bus %1, device %2, function %3;(122,0,0)
+    /// ```
+    ///
+    /// The leading text is a format template — parsing the `%1` placeholders would
+    /// yield nothing. Only the parenthesised tail carries values.
+    ///
+    /// Returns the address in the conventional `domain:bus:device.function` form so
+    /// it matches what `lspci` prints and what the Linux reader produces. Windows
+    /// exposes no segment/domain number here; it is 0 on all but a handful of very
+    /// large systems, and stating 0000 is better than inventing a fourth format.
+    #[cfg(target_os = "windows")]
+    fn registry_location_and_service(pnp_id: &str) -> (Option<String>, Option<String>) {
+        use winreg::enums::*;
+        use winreg::RegKey;
+
+        if pnp_id.is_empty() {
+            return (None, None);
+        }
+
+        let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+        let path = format!(r"SYSTEM\CurrentControlSet\Enum\{pnp_id}");
+        let Ok(key) = hklm.open_subkey_with_flags(&path, KEY_READ) else {
+            return (None, None);
+        };
+
+        let bdf = key
+            .get_value::<String, _>("LocationInformation")
+            .ok()
+            .and_then(|loc| Self::parse_location_bdf(&loc));
+
+        // A device with no service has no driver bound — a real and interesting
+        // state. An empty string is stored as absent so callers cannot confuse
+        // "unbound" with "not looked up".
+        let service = key
+            .get_value::<String, _>("Service")
+            .ok()
+            .filter(|s| !s.trim().is_empty());
+
+        (bdf, service)
+    }
+
+    /// Extract `0000:7a:00.0` from a `LocationInformation` resource string.
+    #[cfg(target_os = "windows")]
+    fn parse_location_bdf(location: &str) -> Option<String> {
+        let open = location.rfind('(')?;
+        let close = location.rfind(')')?;
+        if close <= open + 1 {
+            return None;
+        }
+        let mut parts = location[open + 1..close].split(',');
+        let bus: u32 = parts.next()?.trim().parse().ok()?;
+        let device: u32 = parts.next()?.trim().parse().ok()?;
+        let function: u32 = parts.next()?.trim().parse().ok()?;
+        // A fourth field would mean this is not the triple we think it is.
+        if parts.next().is_some() {
+            return None;
+        }
+        Some(format!("0000:{bus:02x}:{device:02x}.{function}"))
     }
 
     #[cfg(target_os = "windows")]
@@ -621,6 +694,42 @@ impl std::fmt::Display for PciClass {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The address must come out in the same form `lspci` and the Linux reader
+    /// use, or the id space differs by platform for no reason.
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn a_location_string_yields_a_conventional_bdf() {
+        let loc = r"@System32\drivers\pci.sys,#65536;PCI bus %1, device %2, function %3;(122,0,0)";
+        assert_eq!(
+            PciDeviceMonitor::parse_location_bdf(loc),
+            Some("0000:7a:00.0".to_string())
+        );
+        // Single-digit values still pad, so ids sort and compare as text.
+        let loc2 = r"@System32\drivers\pci.sys,#65536;PCI bus %1, device %2, function %3;(0,2,1)";
+        assert_eq!(
+            PciDeviceMonitor::parse_location_bdf(loc2),
+            Some("0000:00:02.1".to_string())
+        );
+    }
+
+    /// The template text contains `%1` placeholders and commas of its own. Reading
+    /// those instead of the parenthesised tail would produce a confident wrong
+    /// address, which is worse than none.
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn a_location_string_without_a_value_triple_is_refused() {
+        assert_eq!(
+            PciDeviceMonitor::parse_location_bdf("PCI bus %1, device %2, function %3"),
+            None
+        );
+        assert_eq!(PciDeviceMonitor::parse_location_bdf(""), None);
+        assert_eq!(PciDeviceMonitor::parse_location_bdf("()"), None);
+        assert_eq!(PciDeviceMonitor::parse_location_bdf("(1,2)"), None);
+        // A four-field tail is not the triple this parser is reading.
+        assert_eq!(PciDeviceMonitor::parse_location_bdf("(1,2,3,4)"), None);
+        assert_eq!(PciDeviceMonitor::parse_location_bdf("(a,b,c)"), None);
+    }
 
     #[test]
     fn test_monitor_creation() {

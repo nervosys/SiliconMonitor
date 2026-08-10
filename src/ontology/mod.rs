@@ -174,6 +174,7 @@ pub enum Domain {
     Process,
     System,
     Board,
+    Pci,
     Usb,
 }
 
@@ -189,6 +190,7 @@ impl Domain {
         Domain::Process,
         Domain::System,
         Domain::Board,
+        Domain::Pci,
         Domain::Usb,
     ];
 
@@ -204,6 +206,7 @@ impl Domain {
             Self::Process => "process",
             Self::System => "system",
             Self::Board => "board",
+            Self::Pci => "pci",
             Self::Usb => "usb",
         }
     }
@@ -773,6 +776,97 @@ impl Ontology {
             "Operating voltage.",
         ));
 
+        // ── PCI ──────────────────────────────────────────────────────────────
+        add(Entity::new(
+            "pci.{addr}.vendor",
+            D::Pci,
+            K::Identity,
+            Some(U::Text),
+            P::Measured,
+            true,
+            "Vendor name. The id segment is the BDF address — domain, bus, device \
+             and function — with separators replaced, so it is the same identifier \
+             `lspci` prints and is stable across reboots.",
+        ));
+        add(Entity::new(
+            "pci.{addr}.device",
+            D::Pci,
+            K::Identity,
+            Some(U::Text),
+            P::Measured,
+            true,
+            "Device name as the vendor and device id pair decodes to.",
+        ));
+        add(Entity::new(
+            "pci.{addr}.class",
+            D::Pci,
+            K::Identity,
+            Some(U::Identifier),
+            P::Measured,
+            true,
+            "Decoded PCI class — what kind of device this is.",
+        ));
+        add(Entity::new(
+            "pci.{addr}.driver",
+            D::Pci,
+            K::Identity,
+            Some(U::Text),
+            P::Measured,
+            true,
+            "Driver bound to the device. Null when none is, which is the \
+             interesting case: an unclaimed device is a device that does not work.",
+        ));
+        add(Entity::new(
+            "pci.{addr}.link.width",
+            D::Pci,
+            K::Identity,
+            Some(U::Identifier),
+            P::Measured,
+            true,
+            "Negotiated PCIe link width — x1, x4, x16. Unavailable on Windows, \
+             which exposes no link state through the interfaces simon uses.",
+        ));
+        add(Entity::new(
+            "pci.{addr}.link.max_width",
+            D::Pci,
+            K::Limit,
+            Some(U::Identifier),
+            P::Measured,
+            true,
+            "Maximum width the device supports. Compare against the negotiated \
+             width: a x16 card trained at x4 is the classic silent performance \
+             fault this pair exists to expose.",
+        ));
+        add(Entity::new(
+            "pci.{addr}.link.speed",
+            D::Pci,
+            K::Identity,
+            Some(U::Identifier),
+            P::Measured,
+            true,
+            "Negotiated link speed, as the transfer rate the device reports — \
+             8.0 GT/s, 16.0 GT/s.",
+        ));
+        add(Entity::new(
+            "pci.{addr}.link.max_speed",
+            D::Pci,
+            K::Limit,
+            Some(U::Identifier),
+            P::Measured,
+            true,
+            "Maximum link speed the device supports.",
+        ));
+        add(Entity::new(
+            "pci.{addr}.numa_node",
+            D::Pci,
+            K::Identity,
+            Some(U::Count),
+            P::Measured,
+            true,
+            "NUMA node this device is attached to. Null on machines with no NUMA \
+             affinity to report — the reader's -1 sentinel is not a node number.",
+        ));
+
         // ── USB ──────────────────────────────────────────────────────────────
         add(Entity::new(
             "usb.{addr}.product",
@@ -847,8 +941,11 @@ impl Ontology {
             K::Identity,
             Some(U::Bytes),
             P::Measured,
-            false,
-            "Raw device capacity.",
+            true,
+            "Raw device capacity, before any partitioning. Nullable because a \
+             device can genuinely decline to report one — a USB mass-storage \
+             gadget with no medium presents as a drive of unstated size, and zero \
+             would claim it holds nothing.",
         ));
         add(Entity::new(
             "disk.{n}.read_rate",
@@ -1024,7 +1121,7 @@ impl Ontology {
             "disk.{n}.nvme.power_state",
             D::Disk,
             K::Measurement,
-            Some(U::Identifier),
+            Some(U::Count),
             P::Measured,
             true,
             "Current NVMe power state index. State 0 is both the active state and \
@@ -1035,7 +1132,7 @@ impl Ontology {
             "disk.{n}.nvme.critical_warnings",
             D::Disk,
             K::Measurement,
-            Some(U::Identifier),
+            Some(U::Count),
             P::Measured,
             true,
             "NVMe critical warning bitfield. Zero is a reading — a drive with \
@@ -1422,6 +1519,30 @@ impl Ontology {
     /// `gpu.0.name`. A consumer expands these against the live instance count.
     pub fn is_template(id: &str) -> bool {
         id.contains('{')
+    }
+
+    /// The entity a concrete id belongs to, resolving templates.
+    ///
+    /// `gpu.0.name` finds `gpu.{n}.name`; an exact id finds itself. This is the
+    /// inverse of expansion, and the lookup an agent needs when it holds a reading
+    /// and wants the schema behind it — the unit it is in, whether it may be null,
+    /// and the range it must fall inside.
+    ///
+    /// Segment count must match, so `disk.0.smart.passed` cannot match
+    /// `disk.{n}.model`. A `{placeholder}` segment matches any single segment.
+    pub fn template_for(&self, concrete: &str) -> Option<&Entity> {
+        if let Some(e) = self.get(concrete) {
+            return Some(e);
+        }
+        let parts: Vec<&str> = concrete.split('.').collect();
+        self.entities.values().find(|e| {
+            let tparts: Vec<&str> = e.id.split('.').collect();
+            tparts.len() == parts.len()
+                && tparts
+                    .iter()
+                    .zip(&parts)
+                    .all(|(t, c)| t.starts_with('{') || t == c)
+        })
     }
 
     /// Expand a template id for a concrete instance.

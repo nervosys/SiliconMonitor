@@ -103,6 +103,7 @@ pub fn snapshot() -> Vec<Reading> {
     resolve_process(&mut out);
     resolve_thermal(&mut out);
     resolve_power(&mut out);
+    resolve_pci(&mut out);
     resolve_usb(&mut out);
 
     // Anything the ontology names but nothing above produced.
@@ -254,6 +255,31 @@ fn resolve_cpu(out: &mut Vec<Reading>) {
         serde_json::json!(stats.cores.len()),
         Some(Unit::Count),
     ));
+
+    // Declared since the ontology was written and never resolved — the CPU stats
+    // reader counts logical processors only, so nothing filled it and the entity
+    // fell through to the unbound sweep. Found by
+    // `tests/ontology_conformance.rs::non_nullable_entities_are_never_null`, which
+    // is the whole argument for deriving tests from the schema: a declared,
+    // non-nullable id that no resolver touched is invisible to a hand-written suite.
+    match crate::cpu_microarch::CpuMicroarchMonitor::new() {
+        Ok(m) if m.report().physical_cores > 0 => out.push(Reading::measured(
+            "cpu.cores.physical",
+            serde_json::json!(m.report().physical_cores),
+            Some(Unit::Count),
+        )),
+        Ok(_) => out.push(Reading::unavailable(
+            "cpu.cores.physical",
+            Some(Unit::Count),
+            "the platform reported no physical core count distinct from the \
+             logical one",
+        )),
+        Err(e) => out.push(Reading::unavailable(
+            "cpu.cores.physical",
+            Some(Unit::Count),
+            format!("microarchitecture reader unavailable: {e}"),
+        )),
+    }
 
     match stats.cores.first().map(|c| c.model.as_str()) {
         // An empty model string is a failed read, not a CPU without a name.
@@ -563,6 +589,91 @@ fn resolve_tpm(out: &mut Vec<Reading>) {
         serde_json::json!(tpm.measured_boot),
         None,
     ));
+}
+
+fn resolve_pci(out: &mut Vec<Reading>) {
+    let monitor = match crate::pci_devices::PciDeviceMonitor::new() {
+        Ok(m) => m,
+        Err(e) => {
+            out.push(Reading::unavailable(
+                "pci.<none>",
+                None,
+                format!("PCI enumeration failed: {e}"),
+            ));
+            return;
+        }
+    };
+    if monitor.devices().is_empty() {
+        out.push(Reading::unavailable(
+            "pci.<none>",
+            None,
+            "no PCI devices enumerated on this machine",
+        ));
+        return;
+    }
+
+    for dev in monitor.devices() {
+        let base = format!("pci.{}", id_segment(&dev.address));
+        push_text(out, format!("{base}.vendor"), &dev.vendor_name);
+        push_text(out, format!("{base}.device"), &dev.device_name);
+        push_id(
+            out,
+            format!("{base}.class"),
+            &format!("{:?}", dev.class).to_lowercase(),
+        );
+        push_opt(
+            out,
+            format!("{base}.driver"),
+            (!dev.driver.trim().is_empty()).then(|| serde_json::json!(dev.driver)),
+            Some(Unit::Text),
+            "no driver is bound to this device",
+        );
+
+        match &dev.link_info {
+            Some(link) => {
+                for (suffix, value) in [
+                    ("link.width", &link.width),
+                    ("link.max_width", &link.max_width),
+                    ("link.speed", &link.speed),
+                    ("link.max_speed", &link.max_speed),
+                ] {
+                    push_opt(
+                        out,
+                        format!("{base}.{suffix}"),
+                        (!value.trim().is_empty()).then(|| serde_json::json!(value)),
+                        Some(Unit::Identifier),
+                        "the device did not report this link property",
+                    );
+                }
+            }
+            None => {
+                for suffix in [
+                    "link.width",
+                    "link.max_width",
+                    "link.speed",
+                    "link.max_speed",
+                ] {
+                    out.push(Reading::unavailable(
+                        format!("{base}.{suffix}"),
+                        Some(Unit::Identifier),
+                        "no link state: the device is not PCIe, or this platform \
+                         exposes none — Windows reports link training nowhere simon \
+                         can reach unelevated",
+                    ));
+                }
+            }
+        }
+
+        // The reader uses -1 for "no affinity". Passing that through would give an
+        // agent a node number that does not exist.
+        push_opt(
+            out,
+            format!("{base}.numa_node"),
+            (dev.numa_node >= 0).then(|| serde_json::json!(dev.numa_node)),
+            Some(Unit::Count),
+            "the platform reports no NUMA affinity for this device",
+        );
+    }
 }
 
 fn resolve_usb(out: &mut Vec<Reading>) {
@@ -1121,18 +1232,7 @@ pub fn validate(readings: &[Reading]) -> Vec<String> {
 
 /// Find the entity for a concrete id, matching `gpu.0.name` against `gpu.{n}.name`.
 fn lookup_template<'a>(ontology: &'a Ontology, concrete: &str) -> Option<&'a Entity> {
-    if let Some(e) = ontology.get(concrete) {
-        return Some(e);
-    }
-    let parts: Vec<&str> = concrete.split('.').collect();
-    ontology.entities.values().find(|e| {
-        let tparts: Vec<&str> = e.id.split('.').collect();
-        tparts.len() == parts.len()
-            && tparts
-                .iter()
-                .zip(&parts)
-                .all(|(t, c)| t.starts_with('{') || t == c)
-    })
+    ontology.template_for(concrete)
 }
 
 /// Number of processes reported. Enumerating every process would make a snapshot
@@ -1411,14 +1511,14 @@ fn resolve_disk_health(out: &mut Vec<Reading>, base: &str, disk: &dyn crate::dis
                 out,
                 format!("{base}.nvme.power_state"),
                 n.power_state.map(|v| serde_json::json!(v)),
-                Some(Unit::Identifier),
+                Some(Unit::Count),
                 "the controller does not implement Get Features for power management",
             );
             push_opt(
                 out,
                 format!("{base}.nvme.critical_warnings"),
                 n.critical_warnings.map(|v| serde_json::json!(v)),
-                Some(Unit::Identifier),
+                Some(Unit::Count),
                 "the controller did not serve the SMART/Health log page",
             );
         }

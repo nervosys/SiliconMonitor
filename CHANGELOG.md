@@ -5,6 +5,66 @@ All notable changes to Silicon Monitor will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.5.0] - 2026-08-10
+
+Tests generated from the ontology instead of written per feature — and the three
+defects they found on their first run.
+
+### Added
+
+- **`tests/ontology_conformance.rs`**, 21 tests that name nothing they check.
+  They ask the ontology what exists, resolve it, and assert the rules the ontology
+  documents about itself: that every declared entity is reachable, every reading
+  traces back to the schema, every absence carries a usable reason, provenance and
+  value never contradict, a `nullable: false` entity is never null, a value's JSON
+  type matches its unit, nothing violates its declared range, and no enum's
+  `Unknown` is dressed as a measurement.
+
+  A domain added next year is covered by all of it on the commit that adds it,
+  with no edit to the file. That is the point: the failure mode of a hand-written
+  suite is that the newest reader is the least tested one, and this project has
+  shipped five `Unknown`-as-measured entities across two releases, each caught by
+  eye.
+
+  Includes a coverage report (`-- --nocapture`) of declared, resolved and
+  unavailable counts per domain, so the README's claims about reach can be checked
+  rather than trusted, and a `the_harness_has_something_to_test` guard — a suite
+  that derives its cases from data passes vacuously if the data collapses.
+
+- **`Ontology::template_for`**, mapping a concrete id back to its entity —
+  `gpu.0.name` to `gpu.{n}.name`. The inverse of expansion, and what an agent
+  holding a reading needs to find its unit, nullability and range. It already
+  existed privately in the resolver; the conformance tests need it, and so does
+  anyone consuming a snapshot.
+
+- **The PCI domain**, 10 entities, unblocked by the reader fix below.
+
+### Fixed
+
+- **The Windows PCI reader reported a device-instance path as the address and
+  never reported the bound driver.** Both now come from
+  `HKLM\SYSTEM\CurrentControlSet\Enum`, readable unelevated:
+  `LocationInformation` carries the bus/device/function triple in its
+  parenthesised tail, and `Service` carries the driver. Addresses are now
+  conventional BDF — `0000:7a:00.0`, what `lspci` prints and what the Linux reader
+  produces — so ids are stable across reboots. 49 of 64 devices on the development
+  machine now report a driver where none did before.
+
+  This is what 3.4.0 withheld the PCI ontology domain over. It ships now.
+
+- **`cpu.cores.physical` was declared and never resolved.** Nothing filled it, so
+  it fell through to the unbound sweep as `unavailable` on every machine, despite
+  being declared non-nullable. Found by `non_nullable_entities_are_never_null` —
+  precisely the class a hand-written suite cannot see, because there is nothing to
+  write a test *about*. Now read from the microarchitecture reader.
+
+- **`disk.{n}.nvme.power_state` and `.critical_warnings` were declared
+  `identifier`** — a string unit — while resolving to numbers, so a consumer
+  trusting the schema would have parsed them wrongly. Both are `count` now.
+
+- **`disk.{n}.capacity` was declared non-nullable** but a USB mass-storage gadget
+  with no medium reports no capacity at all. It is nullable, and says why.
+
 ## [3.4.0] - 2026-08-10
 
 The ontology sweep continues: memory slot topology and USB inventory, and one

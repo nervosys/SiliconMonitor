@@ -190,24 +190,39 @@ mistakes a plausible constant for a live reading:
 ```
 
 Coverage is deliberately reported rather than claimed. `simon describe` prints
-the entity count, and the ontology currently names **113 entities across 11
+the entity count, and the ontology currently names **123 entities across 12
 domains** — cpu (including cache topology), gpu, memory (including per-slot DIMM
 topology), disk (including SMART, health and NVMe endurance), network, power,
-thermal, process, system, board (including firmware inventory and TPM state), and
-usb. On one desktop those expand to 440 resolved readings and 185 that are
+thermal, process, system, board (including firmware inventory and TPM state), pci
+and usb. On one desktop those expand to 682 resolved readings and 519 that are
 unavailable-with-a-reason.
 
 It does not yet name everything the library can read. simon has around 88
-subsystem modules, and the ones without ontology entities — PCI inventory, NUMA
-topology, RAPL, sensors, virtualization, EDAC, and others — are reachable through
-the library and the `cli` subcommands but not yet through `describe`, `get` and
-`snapshot`. That gap is being closed in phases, and a phase ships only when its
-resolver can state a true provenance for every field. PCI was written and then
-withheld for exactly that reason: the Windows reader returns a device-instance
-path rather than a BDF address, so the ids would not have been stable across
-reboots, and it never populates the driver binding, so "no driver is bound" would
-have been asserted about devices that plainly have one. An id that resolves to a
-confident guess is worse for an agent than one that does not exist.
+subsystem modules, and the ones without ontology entities — NUMA topology, RAPL,
+sensors, virtualization, EDAC, and others — are reachable through the library and
+the `cli` subcommands but not yet through `describe`, `get` and `snapshot`. That
+gap is being closed in phases, and a phase ships only when its resolver can state
+a true provenance for every field. An id that resolves to a confident guess is
+worse for an agent than one that does not exist.
+
+#### The ontology tests the ontology
+
+`tests/ontology_conformance.rs` names nothing it checks. It asks the ontology
+what exists, resolves it, and asserts the rules the ontology documents about
+itself — every declared entity reachable, every reading traceable to the schema,
+every absence carrying a reason, no `nullable: false` entity resolving to null,
+every value's JSON type matching its unit, nothing outside its declared range,
+and no enum's `Unknown` dressed up as a measurement.
+
+A domain added later is covered by all of it on the commit that adds it, with no
+edit to the file — which matters because the failure mode of a hand-written suite
+is that the newest reader is the least tested one. It found three defects on its
+first run, including an entity that had been declared since the ontology was
+written and that no resolver had ever filled.
+
+```bash
+cargo test --test ontology_conformance -- --nocapture   # includes a coverage table
+```
 
 See **[AGENTS.md](AGENTS.md)** for the full contract: exit codes, the write
 surface, and how to read the TUI and GUI without a terminal or display.

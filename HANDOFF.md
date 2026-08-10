@@ -1,6 +1,6 @@
 # Status
 
-Current as of 3.4.0. This file is excluded from the published crate
+Current as of 3.5.0. This file is excluded from the published crate
 (`Cargo.toml`'s `exclude` list) and is for whoever picks the work up next.
 
 ## Released
@@ -13,6 +13,7 @@ Current as of 3.4.0. This file is excluded from the published crate
 | 3.2.0 | macOS per-core CPU, NVMe current power state, `--all-targets` in the feature job. Published, tagged. |
 | 3.3.0 | Windows ATA SMART (unelevated), shared SMART collector, ontology to 94 entities. Published, tagged `v3.3.0`. The ATA parse is unverified against real SATA hardware — see open work 1. |
 | 3.4.0 | DIMM slot topology and USB in the ontology (113 entities). Published, tagged `v3.4.0`. |
+| 3.5.0 | Ontology-driven conformance tests, Windows PCI reader fixed, PCI domain (123 entities). Published, tagged `v3.5.0`. |
 | 2.1.5 | Committed, never published. Documentation only; superseded by 3.0.0. |
 
 ## Verification that is worth repeating
@@ -81,37 +82,39 @@ feature stayed broken through eight published versions.
    what remains to benefit is USB storage — and every Linux machine, where a
    sweep spawns `smartctl` once per drive and the old shape was quadratic.
 
-5. **The ontology names 113 entities; the library has ~88 subsystem modules.**
+5. **The ontology names 123 entities; the library has ~88 subsystem modules.**
    3.3.0 added 34 (disk SMART/health/NVMe, CPU cache, firmware, TPM) and 3.4.0
-   added 19 more (DIMM slot topology, USB). PCI, NUMA, RAPL, sensors,
+   added 19 more (DIMM slot topology, USB), 3.5.0 added PCI. NUMA, RAPL, sensors,
    virtualization and EDAC remain readable through the library and `simon cli`
    while invisible to `describe`, `get` and `snapshot`.
 
-   **When adding a resolver, check the `Unknown` variant first.** Five entities
-   across two releases shipped an enum's `Unknown` through as a *measured* value —
-   `disk.{n}.health`, `board.tpm.version`, `board.tpm.status`,
-   `usb.{addr}.class`, `usb.{addr}.speed`. Every one lets an agent record a check
-   that never succeeded, which is the same error as reporting an access denial as
-   0 °C. `Unknown` from a reader almost always means "not determined", and belongs
-   in `Reading::unavailable` with the reason.
+   **`tests/ontology_conformance.rs` now checks the things that used to need an
+   eye.** Five entities across 3.3.0 and 3.4.0 shipped an enum's `Unknown` through
+   as a *measured* value, each caught in review; that class is now caught by
+   construction, along with non-nullable nulls, unit/JSON-type mismatches and
+   absences with no stated reason. Run it before adding a domain and after — it
+   found three defects on its first run, one of them an entity declared since the
+   ontology was written that no resolver had ever touched.
 
    An id that resolves to a confident guess is worse for an agent than one that
    does not exist, so add a domain only when its resolver can say why each absence
    is absent.
 
-6. **The Windows PCI reader blocks the PCI ontology domain.** The domain was
-   written and withheld in 3.4.0 for two reasons, both in
-   `src/pci_devices/`, not in the ontology:
+6. ~~**The Windows PCI reader blocks the PCI ontology domain.**~~ Fixed in 3.5.0.
+   The reader reported a device-instance path as the address and never reported a
+   bound driver, so 3.4.0 withheld the domain rather than ship unstable ids and a
+   false "no driver is bound". Both now come from
+   `HKLM\SYSTEM\CurrentControlSet\Enum`, which is readable unelevated:
+   `LocationInformation`'s parenthesised tail carries the bus/device/function
+   triple, and `Service` carries the driver. Addresses are conventional BDF
+   (`0000:7a:00.0`) and the domain ships.
 
-   - `PciDeviceInfo::address` is a Windows device-instance path
-     (`PCI\VEN_1002&DEV_13C0&SUBSYS_...\4&1ebe6a9c&0&0041`), not a BDF. The tail
-     is a volatile instance id, so ids keyed on it would not survive a reboot —
-     and ontology ids may be added to but never repurposed.
-   - `driver` is never populated on Windows, so the resolver reported "no driver
-     is bound" for every device on a machine where they all plainly are.
-
-   Fix those two fields and the domain is a short patch: the declarations and
-   resolver were working, and are recoverable from the 3.4.0 development history.
+   Still open on Windows: PCIe link width and speed. `link_info` is `None` for
+   every device, so `pci.{addr}.link.*` is uniformly unavailable — which loses the
+   negotiated-versus-maximum comparison that catches a x16 card trained at x4. The
+   values live in PCIe capability config space; reading it needs either a driver
+   or `SetupDiGetDeviceRegistryProperty` paths simon does not use yet. Linux gets
+   them from sysfs already.
 
 ## The plan for what is left
 
@@ -183,12 +186,11 @@ an NVMe drive. Twenty minutes.* `cargo run --example disk_monitor` against
 code has passed CI, but CI has no drive. The quadratic collector shape fixed in
 3.3.0 was worst on Linux, so this is also the first real check of that.
 
-**E. Fix the Windows PCI reader, then ship the PCI ontology domain.** *Needs:
-nothing but a Windows box. Half a day.* Open work 6 has the two defects:
-`address` should be a BDF (`SetupDiGetDeviceRegistryProperty` with
-`SPDRP_BUSNUMBER`, `SPDRP_ADDRESS` gives bus, device and function), and `driver`
-should be populated from `SPDRP_SERVICE`. The ontology side is already known to
-work — declarations and resolver are in the 3.4.0 history.
+**E. Read PCIe link state on Windows.** *Needs: nothing but a Windows box.* The
+address and driver halves of this are done (open work 6); link width and speed
+remain `None` for every device, so `pci.{addr}.link.*` never resolves and the
+negotiated-versus-maximum comparison — the one that catches a x16 card trained at
+x4 — is unavailable on Windows. Linux already reads it from sysfs.
 
 **F. Continue the ontology sweep.** *Needs: nothing. Ongoing.* NUMA, RAPL,
 sensors, virtualization and EDAC are the remaining clusters with readers behind
@@ -215,6 +217,7 @@ have produced, and is already reported.
 | `disk::ata_smart::tests` | ATA structure misparses: bad checksum accepted, zero-filled buffer read as a clean drive, temperature taken from the full 48-bit raw, table truncated at the first gap |
 | `tests/plausibility.rs` | Physically impossible readings |
 | `tests/agentic_contract.rs` | Schema/resolver disagreement on the agent surface |
+| `tests/ontology_conformance.rs` | Anything a new entity can get wrong: unreachable ids, absences with no reason, non-nullable nulls, values whose JSON type contradicts their unit, `Unknown` dressed as a measurement. Derives its cases from the ontology, so a domain added later is covered without editing it |
 
 Each was checked against a deliberate break before being kept, because a test
 that cannot fail is worse than none.
