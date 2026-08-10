@@ -5,6 +5,53 @@ All notable changes to Silicon Monitor will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.7.0] - 2026-08-10
+
+The last of the ontology sweep that can be written without hardware this project
+does not have, and one reading withdrawn for being wrong.
+
+### Added
+
+- **11 entities across three clusters**, 123 to 134.
+
+  - **Virtualization** (4): platform, hypervisor, detection method, and whether
+    the CPU exposes hardware virtualization. The detection method is recorded
+    because virtualization detection is inference, and an agent weighing it should
+    see what it rests on.
+  - **NUMA** (4): node count, whether access is genuinely non-uniform, and per
+    node the processor count and attached memory. A single-node machine reports
+    `is_numa: false`, which is a reading; a machine the reader could not inspect
+    reports nothing.
+  - **ECC** (3): whether error correction is active and reporting, plus
+    correctable and uncorrectable counts. Distinct from the per-slot `ecc` entity
+    added in 3.4.0, which says the modules *carry* ECC bits: hardware capable of
+    correction that is not reporting corrections is indistinguishable from
+    hardware doing nothing.
+
+### Fixed
+
+- **`system.virtualization.platform` called a bare-metal desktop a virtual
+  machine.** With virtualization-based security enabled — the Windows 11 default —
+  the host OS runs as the Hyper-V *root partition*, so CPUID reports
+  "Microsoft Hv" on real hardware exactly as it does inside a guest. The
+  development machine, an ASUS desktop, was detected as a VM for this reason.
+
+  Telling the two apart needs the partition privilege mask from Hyper-V CPUID leaf
+  0x40000003, which simon does not read. Rather than guess, the entity resolves to
+  `unavailable` with that explanation whenever Hyper-V is the detected hypervisor.
+  This is the entity an agent consults before trusting every other reading, which
+  makes it the worst possible place for a confident guess.
+
+  The underlying `VirtMonitor::is_virtual_machine()` still returns `true` in this
+  case for its other callers; that is recorded as open work rather than changed
+  here, because its blast radius is wider than the ontology.
+
+- **`system.virtualization.hardware_support` reported `false` on a CPU that
+  supports AMD-V.** A running hypervisor masks the virtualization bits from CPUID,
+  so `false` under one means "not visible", not "not supported" — the reading told
+  an agent this CPU cannot virtualize while it was actively virtualizing. It is
+  now `unavailable` with the reason whenever a hypervisor is present.
+
 ## [3.6.0] - 2026-08-10
 
 PCIe link state on Windows, which completes the PCI domain.

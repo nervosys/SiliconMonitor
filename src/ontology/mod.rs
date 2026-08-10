@@ -776,6 +776,125 @@ impl Ontology {
             "Operating voltage.",
         ));
 
+        // ── Virtualization ───────────────────────────────────────────────────
+        add(Entity::new(
+            "system.virtualization.platform",
+            D::System,
+            K::Identity,
+            Some(U::Identifier),
+            P::Measured,
+            true,
+            "Whether this is bare metal, a virtual machine, or a container. The \
+             first thing an agent needs before trusting any other reading: a \
+             guest's view of its own hardware is the hypervisor's choice, not the \
+             silicon's.",
+        ));
+        add(Entity::new(
+            "system.virtualization.hypervisor",
+            D::System,
+            K::Identity,
+            Some(U::Identifier),
+            P::Measured,
+            true,
+            "Which hypervisor, when one was detected. Null on bare metal, which is \
+             an answer rather than a gap.",
+        ));
+        add(Entity::new(
+            "system.virtualization.detection_method",
+            D::System,
+            K::Identity,
+            Some(U::Text),
+            P::Measured,
+            true,
+            "How the platform was determined — CPUID leaf, DMI string, kernel \
+             file. Recorded because virtualization detection is inference, and an \
+             agent weighing it should see what it rests on.",
+        ));
+        add(Entity::new(
+            "system.virtualization.hardware_support",
+            D::System,
+            K::Identity,
+            None,
+            P::Measured,
+            true,
+            "Whether the CPU exposes hardware virtualization (VT-x or AMD-V). \
+             Independent of whether this machine is itself virtualized.",
+        ));
+
+        // ── NUMA ─────────────────────────────────────────────────────────────
+        add(Entity::new(
+            "memory.numa.nodes",
+            D::Memory,
+            K::Identity,
+            Some(U::Count),
+            P::Measured,
+            true,
+            "Number of NUMA nodes. One means uniform memory access, which is a \
+             reading and not an absence.",
+        ));
+        add(Entity::new(
+            "memory.numa.is_numa",
+            D::Memory,
+            K::Identity,
+            None,
+            P::Measured,
+            true,
+            "Whether memory access is genuinely non-uniform. A single-node machine \
+             reports false; a machine the reader could not inspect reports nothing.",
+        ));
+        add(Entity::new(
+            "memory.numa.{n}.cpus",
+            D::Memory,
+            K::Identity,
+            Some(U::Count),
+            P::Measured,
+            true,
+            "Logical processors belonging to this NUMA node.",
+        ));
+        add(Entity::new(
+            "memory.numa.{n}.memory",
+            D::Memory,
+            K::Identity,
+            Some(U::Bytes),
+            P::Measured,
+            true,
+            "Memory attached to this NUMA node.",
+        ));
+
+        // ── ECC ──────────────────────────────────────────────────────────────
+        add(Entity::new(
+            "memory.ecc.active",
+            D::Memory,
+            K::Identity,
+            None,
+            P::Measured,
+            true,
+            "Whether ECC is enabled and reporting. Distinct from whether the \
+             modules carry ECC bits — see the per-slot `ecc` entity — because \
+             hardware capable of correction that is not reporting corrections is \
+             indistinguishable from hardware doing nothing.",
+        ));
+        add(Entity::new(
+            "memory.ecc.correctable_errors",
+            D::Memory,
+            K::Measurement,
+            Some(U::Count),
+            P::Measured,
+            true,
+            "Corrected memory errors since boot. Zero is a reading and a good one; \
+             a rising count is the earliest warning a DIMM gives.",
+        ));
+        add(Entity::new(
+            "memory.ecc.uncorrectable_errors",
+            D::Memory,
+            K::Measurement,
+            Some(U::Count),
+            P::Measured,
+            true,
+            "Uncorrectable memory errors since boot. Any non-zero value means data \
+             was lost.",
+        ));
+
         // ── PCI ──────────────────────────────────────────────────────────────
         add(Entity::new(
             "pci.{addr}.vendor",

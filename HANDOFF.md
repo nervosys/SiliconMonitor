@@ -1,6 +1,6 @@
 # Status
 
-Current as of 3.6.0. This file is excluded from the published crate
+Current as of 3.7.0. This file is excluded from the published crate
 (`Cargo.toml`'s `exclude` list) and is for whoever picks the work up next.
 
 ## Released
@@ -15,6 +15,7 @@ Current as of 3.6.0. This file is excluded from the published crate
 | 3.4.0 | DIMM slot topology and USB in the ontology (113 entities). Published, tagged `v3.4.0`. |
 | 3.5.0 | Ontology-driven conformance tests, Windows PCI reader fixed, PCI domain (123 entities). Published, tagged `v3.5.0`. |
 | 3.6.0 | PCIe link state on Windows via cfgmgr32; the PCI domain fully resolves. Published, tagged `v3.6.0`. |
+| 3.7.0 | Virtualization, NUMA and ECC in the ontology (134 entities); two misleading virtualization readings withdrawn. Published, tagged `v3.7.0`. |
 | 2.1.5 | Committed, never published. Documentation only; superseded by 3.0.0. |
 
 ## Verification that is worth repeating
@@ -83,11 +84,17 @@ feature stayed broken through eight published versions.
    what remains to benefit is USB storage — and every Linux machine, where a
    sweep spawns `smartctl` once per drive and the old shape was quadratic.
 
-5. **The ontology names 123 entities; the library has ~88 subsystem modules.**
-   3.3.0 added 34 (disk SMART/health/NVMe, CPU cache, firmware, TPM) and 3.4.0
-   added 19 more (DIMM slot topology, USB), 3.5.0 added PCI. NUMA, RAPL, sensors,
-   virtualization and EDAC remain readable through the library and `simon cli`
-   while invisible to `describe`, `get` and `snapshot`.
+5. **The ontology names 134 entities; the library has ~88 subsystem modules.**
+   3.3.0 added 34 (disk SMART/health/NVMe, CPU cache, firmware, TPM), 3.4.0 added
+   19 (DIMM slot topology, USB), 3.5.0 added PCI, 3.7.0 added virtualization, NUMA
+   and ECC.
+
+   What is left is mostly readers that answer nothing on a desktop, and so cannot
+   be verified here: RAPL energy counters (Linux MSR interface), environmental
+   sensors (accelerometer, ambient light — laptop and tablet hardware), cgroup and
+   container accounting, and the datacenter and fleet modules. Each is a phase of
+   the same shape as the ones above; none should be declared until someone can
+   watch its resolver answer on hardware that has the thing.
 
    **`tests/ontology_conformance.rs` now checks the things that used to need an
    eye.** Five entities across 3.3.0 and 3.4.0 shipped an enum's `Unknown` through
@@ -101,7 +108,18 @@ feature stayed broken through eight published versions.
    does not exist, so add a domain only when its resolver can say why each absence
    is absent.
 
-6. ~~**The Windows PCI reader blocks the PCI ontology domain.**~~ Fixed in 3.5.0.
+6. **`VirtMonitor::is_virtual_machine()` returns true on a Hyper-V root
+   partition.** With virtualization-based security on — the Windows 11 default —
+   a bare-metal host reports the "Microsoft Hv" CPUID signature exactly as a guest
+   does, so every caller of this method sees a desktop as a VM. 3.7.0 works around
+   it in the ontology resolver, which reports `unavailable` with the reason rather
+   than guessing; the method itself is unchanged because its blast radius is wider.
+
+   The fix is Hyper-V CPUID leaf 0x40000003: the partition privilege mask
+   distinguishes a root partition from a guest. Doing it in the detector would let
+   the ontology drop its special case and would correct every other caller at once.
+
+7. ~~**The Windows PCI reader blocks the PCI ontology domain.**~~ Fixed in 3.5.0.
    The reader reported a device-instance path as the address and never reported a
    bound driver, so 3.4.0 withheld the domain rather than ship unstable ids and a
    false "no driver is bound". Both now come from
@@ -189,7 +207,7 @@ an NVMe drive. Twenty minutes.* `cargo run --example disk_monitor` against
 code has passed CI, but CI has no drive. The quadratic collector shape fixed in
 3.3.0 was worst on Linux, so this is also the first real check of that.
 
-**E.** ~~Read PCIe link state on Windows.~~ Done in 3.6.0; see open work 6 for the
+**E.** ~~Read PCIe link state on Windows.~~ Done in 3.6.0; see open work 7 for the
 two routes that do not work and why.
 
 **F. Continue the ontology sweep.** *Needs: nothing. Ongoing.* NUMA, RAPL,

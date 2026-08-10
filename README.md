@@ -190,12 +190,12 @@ mistakes a plausible constant for a live reading:
 ```
 
 Coverage is deliberately reported rather than claimed. `simon describe` prints
-the entity count, and the ontology currently names **123 entities across 12
+the entity count, and the ontology currently names **134 entities across 12
 domains** — cpu (including cache topology), gpu, memory (including per-slot DIMM
-topology), disk (including SMART, health and NVMe endurance), network, power,
-thermal, process, system, board (including firmware inventory and TPM state), pci
+topology, NUMA layout and ECC error counts), disk (including SMART, health and NVMe endurance), network, power,
+thermal, process, system (including virtualization posture), board (including firmware inventory and TPM state), pci
 (including negotiated versus maximum PCIe link width and speed) and usb. On one
-desktop those expand to 682 resolved readings and 519 that are
+desktop those expand to 780 resolved readings and 432 that are
 unavailable-with-a-reason.
 
 Some of those readings are worth having precisely because nothing else reports

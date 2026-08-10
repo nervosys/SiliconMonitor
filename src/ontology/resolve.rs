@@ -103,6 +103,9 @@ pub fn snapshot() -> Vec<Reading> {
     resolve_process(&mut out);
     resolve_thermal(&mut out);
     resolve_power(&mut out);
+    resolve_virtualization(&mut out);
+    resolve_numa(&mut out);
+    resolve_ecc(&mut out);
     resolve_pci(&mut out);
     resolve_usb(&mut out);
 
@@ -588,6 +591,217 @@ fn resolve_tpm(out: &mut Vec<Reading>) {
         "board.tpm.measured_boot",
         serde_json::json!(tpm.measured_boot),
         None,
+    ));
+}
+
+fn resolve_virtualization(out: &mut Vec<Reading>) {
+    const IDS: [&str; 4] = [
+        "system.virtualization.platform",
+        "system.virtualization.hypervisor",
+        "system.virtualization.detection_method",
+        "system.virtualization.hardware_support",
+    ];
+
+    let monitor = match crate::virtualization::VirtMonitor::new() {
+        Ok(m) => m,
+        Err(e) => {
+            for id in IDS {
+                out.push(Reading::unavailable(
+                    id,
+                    None,
+                    format!("virtualization detection unavailable: {e}"),
+                ));
+            }
+            return;
+        }
+    };
+
+    let hypervisor = monitor.hypervisor();
+
+    // Hyper-V is the one case simon cannot call. When virtualization-based
+    // security is on — the Windows 11 default — the host OS runs as the Hyper-V
+    // *root partition*, so CPUID reports "Microsoft Hv" on a bare-metal
+    // workstation exactly as it does inside a guest. The development machine, an
+    // ASUS desktop, is detected as a virtual machine for this reason, and its
+    // AMD-V support reads as absent because the hypervisor masks SVM from the root
+    // partition.
+    //
+    // Distinguishing the two needs the partition privilege mask from Hyper-V
+    // CPUID leaf 0x40000003, which simon does not read yet. Until it does, saying
+    // "virtual machine" here would be a guess presented as a determination — and
+    // this is the entity an agent consults before trusting every other reading, so
+    // it is the worst possible place for one.
+    let is_hyperv = matches!(
+        hypervisor.as_ref().map(|h| &h.hypervisor),
+        Some(crate::virtualization::Hypervisor::HyperV)
+    );
+
+    if is_hyperv {
+        out.push(Reading::unavailable(
+            "system.virtualization.platform",
+            Some(Unit::Identifier),
+            "a Hyper-V hypervisor is present, but simon cannot yet tell a root \
+             partition (bare metal with virtualization-based security) from a \
+             guest VM; both report the same CPUID signature",
+        ));
+    } else {
+        // Bare metal is a determination, not a failure to detect one.
+        let platform = if monitor.is_container() {
+            "container"
+        } else if monitor.is_virtual_machine() {
+            "virtual_machine"
+        } else {
+            "bare_metal"
+        };
+        push_id(out, "system.virtualization.platform", platform);
+    }
+
+    match hypervisor {
+        Some(h) => {
+            push_id(
+                out,
+                "system.virtualization.hypervisor",
+                &format!("{:?}", h.hypervisor).to_lowercase(),
+            );
+            push_text(
+                out,
+                "system.virtualization.detection_method",
+                &h.detection_method,
+            );
+        }
+        None => {
+            out.push(Reading::unavailable(
+                "system.virtualization.hypervisor",
+                Some(Unit::Identifier),
+                "no hypervisor detected; this machine appears to be bare metal",
+            ));
+            out.push(Reading::unavailable(
+                "system.virtualization.detection_method",
+                Some(Unit::Text),
+                "no hypervisor was detected, so no detection method applied",
+            ));
+        }
+    }
+
+    // A running hypervisor masks the virtualization bits from CPUID, so a `false`
+    // here under one means "not visible", not "not supported" — reporting it would
+    // tell an agent this CPU cannot virtualize while it is actively virtualizing.
+    match monitor.cpu_capabilities() {
+        Some(c) if !is_hyperv => out.push(Reading::measured(
+            "system.virtualization.hardware_support",
+            serde_json::json!(c.hardware_virt),
+            None,
+        )),
+        Some(_) => out.push(Reading::unavailable(
+            "system.virtualization.hardware_support",
+            None,
+            "a hypervisor is masking the CPU virtualization bits from CPUID; \
+             absence here would not mean the hardware lacks them",
+        )),
+        None => out.push(Reading::unavailable(
+            "system.virtualization.hardware_support",
+            None,
+            "the platform did not report CPU virtualization capabilities",
+        )),
+    }
+}
+
+fn resolve_numa(out: &mut Vec<Reading>) {
+    let monitor = match crate::numa::NumaMonitor::new() {
+        Ok(m) => m,
+        Err(e) => {
+            for id in ["memory.numa.nodes", "memory.numa.is_numa"] {
+                out.push(Reading::unavailable(
+                    id,
+                    None,
+                    format!("NUMA topology unavailable: {e}"),
+                ));
+            }
+            return;
+        }
+    };
+
+    let summary = monitor.summary();
+    out.push(Reading::measured(
+        "memory.numa.nodes",
+        serde_json::json!(summary.node_count),
+        Some(Unit::Count),
+    ));
+    out.push(Reading::measured(
+        "memory.numa.is_numa",
+        serde_json::json!(summary.is_numa),
+        None,
+    ));
+
+    for node in monitor.nodes() {
+        let base = format!("memory.numa.{}", node.id);
+        out.push(Reading::measured(
+            format!("{base}.cpus"),
+            serde_json::json!(node.cpus.len()),
+            Some(Unit::Count),
+        ));
+        push_opt(
+            out,
+            format!("{base}.memory"),
+            (node.memory_total_bytes > 0).then(|| serde_json::json!(node.memory_total_bytes)),
+            Some(Unit::Bytes),
+            "the platform reported no memory total for this node",
+        );
+    }
+}
+
+fn resolve_ecc(out: &mut Vec<Reading>) {
+    const IDS: [&str; 3] = [
+        "memory.ecc.active",
+        "memory.ecc.correctable_errors",
+        "memory.ecc.uncorrectable_errors",
+    ];
+
+    let monitor = match crate::edac::EdacMonitor::new() {
+        Ok(m) => m,
+        Err(e) => {
+            // On Windows and macOS there is no EDAC equivalent simon reads, so
+            // this is the common path. The note says so rather than implying the
+            // machine has no ECC — which would be a claim about the hardware
+            // rather than about the reader.
+            for id in IDS {
+                out.push(Reading::unavailable(
+                    id,
+                    None,
+                    format!("no ECC error reporting interface available here: {e}"),
+                ));
+            }
+            return;
+        }
+    };
+
+    let overview = monitor.overview();
+    if overview.total_controllers == 0 {
+        for id in IDS {
+            out.push(Reading::unavailable(
+                id,
+                None,
+                "no memory controller exposed ECC reporting; the platform interface \
+                 exists but enumerated nothing",
+            ));
+        }
+        return;
+    }
+
+    out.push(Reading::measured(
+        "memory.ecc.active",
+        serde_json::json!(overview.ecc_active),
+        None,
+    ));
+    out.push(Reading::measured(
+        "memory.ecc.correctable_errors",
+        serde_json::json!(overview.total_ce),
+        Some(Unit::Count),
+    ));
+    out.push(Reading::measured(
+        "memory.ecc.uncorrectable_errors",
+        serde_json::json!(overview.total_ue),
+        Some(Unit::Count),
     ));
 }
 
