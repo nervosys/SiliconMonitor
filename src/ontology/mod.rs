@@ -174,6 +174,7 @@ pub enum Domain {
     Process,
     System,
     Board,
+    Usb,
 }
 
 impl Domain {
@@ -188,6 +189,7 @@ impl Domain {
         Domain::Process,
         Domain::System,
         Domain::Board,
+        Domain::Usb,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -202,6 +204,7 @@ impl Domain {
             Self::Process => "process",
             Self::System => "system",
             Self::Board => "board",
+            Self::Usb => "usb",
         }
     }
 
@@ -647,6 +650,185 @@ impl Ontology {
             true,
             "Which logical processors share this cache, as a range list. Null where \
              the platform does not publish the sharing map.",
+        ));
+
+        // ── Memory modules ───────────────────────────────────────────────────
+        add(Entity::new(
+            "memory.dimm.{n}.locator",
+            D::Memory,
+            K::Identity,
+            Some(U::Text),
+            P::Measured,
+            true,
+            "Slot label as silkscreened on the board — DIMM_A1, ChannelA-DIMM0. \
+             The id index is enumeration order; this is what a human replacing the \
+             module needs.",
+        ));
+        add(Entity::new(
+            "memory.dimm.{n}.populated",
+            D::Memory,
+            K::Identity,
+            None,
+            P::Measured,
+            false,
+            "Whether this slot holds a module. False is a reading, and the reason \
+             the fields below may be absent for a slot that genuinely exists.",
+        ));
+        add(Entity::new(
+            "memory.dimm.{n}.capacity",
+            D::Memory,
+            K::Identity,
+            Some(U::Bytes),
+            P::Measured,
+            true,
+            "Module capacity. Null for an empty slot rather than zero, since zero \
+             would read as a module of no size.",
+        ));
+        add(Entity::new(
+            "memory.dimm.{n}.speed",
+            D::Memory,
+            K::Identity,
+            Some(U::Count),
+            P::Measured,
+            true,
+            "Rated speed in MT/s. Counted rather than given a frequency unit \
+             because megatransfers are not megahertz — DDR transfers twice per \
+             clock, and conflating them halves or doubles every figure.",
+        ));
+        add(Entity::new(
+            "memory.dimm.{n}.configured_speed",
+            D::Memory,
+            K::Identity,
+            Some(U::Count),
+            P::Measured,
+            true,
+            "Speed the module is actually running at, in MT/s. Differs from the \
+             rated speed whenever the board declined to train at the module's \
+             profile, which is the useful thing to notice.",
+        ));
+        add(Entity::new(
+            "memory.dimm.{n}.type",
+            D::Memory,
+            K::Identity,
+            Some(U::Identifier),
+            P::Measured,
+            true,
+            "Memory technology — ddr4, ddr5, lpddr5.",
+        ));
+        add(Entity::new(
+            "memory.dimm.{n}.manufacturer",
+            D::Memory,
+            K::Identity,
+            Some(U::Text),
+            P::Measured,
+            true,
+            "Module manufacturer from SPD.",
+        ));
+        add(Entity::new(
+            "memory.dimm.{n}.part_number",
+            D::Memory,
+            K::Identity,
+            Some(U::Text),
+            P::Measured,
+            true,
+            "Module part number from SPD.",
+        ));
+        add(Entity::new(
+            "memory.dimm.{n}.ecc",
+            D::Memory,
+            K::Identity,
+            None,
+            P::Derived,
+            true,
+            "Whether the module carries ECC, from the total data width exceeding \
+             the usable width — 72 bits against 64. Derived rather than measured \
+             because no SMBIOS field states it directly.",
+        )
+        .derived(&["memory.dimm.{n}.data_width", "memory.dimm.{n}.total_width"]));
+        add(Entity::new(
+            "memory.dimm.{n}.data_width",
+            D::Memory,
+            K::Identity,
+            Some(U::Count),
+            P::Measured,
+            true,
+            "Usable data width in bits.",
+        ));
+        add(Entity::new(
+            "memory.dimm.{n}.total_width",
+            D::Memory,
+            K::Identity,
+            Some(U::Count),
+            P::Measured,
+            true,
+            "Total width in bits, including any ECC bits.",
+        ));
+        add(Entity::new(
+            "memory.dimm.{n}.voltage",
+            D::Memory,
+            K::Identity,
+            Some(U::Volts),
+            P::Measured,
+            true,
+            "Operating voltage.",
+        ));
+
+        // ── USB ──────────────────────────────────────────────────────────────
+        add(Entity::new(
+            "usb.{addr}.product",
+            D::Usb,
+            K::Identity,
+            Some(U::Text),
+            P::Measured,
+            true,
+            "Product string as the device reports it. The id segment is bus and \
+             port, which survives re-enumeration where an index does not.",
+        ));
+        add(Entity::new(
+            "usb.{addr}.manufacturer",
+            D::Usb,
+            K::Identity,
+            Some(U::Text),
+            P::Measured,
+            true,
+            "Manufacturer string. Null on devices that publish none.",
+        ));
+        add(Entity::new(
+            "usb.{addr}.vendor_id",
+            D::Usb,
+            K::Identity,
+            Some(U::Identifier),
+            P::Measured,
+            true,
+            "USB vendor id, four hex digits.",
+        ));
+        add(Entity::new(
+            "usb.{addr}.product_id",
+            D::Usb,
+            K::Identity,
+            Some(U::Identifier),
+            P::Measured,
+            true,
+            "USB product id, four hex digits.",
+        ));
+        add(Entity::new(
+            "usb.{addr}.class",
+            D::Usb,
+            K::Identity,
+            Some(U::Identifier),
+            P::Measured,
+            true,
+            "Device class — hid, mass_storage, hub, and so on.",
+        ));
+        add(Entity::new(
+            "usb.{addr}.speed",
+            D::Usb,
+            K::Identity,
+            Some(U::Identifier),
+            P::Measured,
+            true,
+            "Negotiated bus speed — low, full, high, super. A super-speed device \
+             on a high-speed port reports high, which is how a wrong cable shows.",
         ));
 
         // ── Disk ─────────────────────────────────────────────────────────────
@@ -1495,6 +1677,11 @@ pub mod labels {
         match domain {
             "cpu" => "CPU".to_string(),
             "gpu" => "GPU".to_string(),
+            // Added with the `usb` domain in 3.4.0. Without it the GUI's existing
+            // "USB Devices" heading and the ontology's `Usb` disagreed, which is
+            // precisely what `hardcoded_headings_do_not_contradict_the_ontology`
+            // exists to catch — and did, on the commit that introduced the domain.
+            "usb" => "USB".to_string(),
             _ => title_case(domain),
         }
     }

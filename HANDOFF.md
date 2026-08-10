@@ -1,6 +1,6 @@
 # Status
 
-Current as of 3.3.0. This file is excluded from the published crate
+Current as of 3.4.0. This file is excluded from the published crate
 (`Cargo.toml`'s `exclude` list) and is for whoever picks the work up next.
 
 ## Released
@@ -12,6 +12,7 @@ Current as of 3.3.0. This file is excluded from the published crate
 | 3.1.0 | Windows NVMe passthrough (unelevated) and macOS CPU/memory. Published, tagged. |
 | 3.2.0 | macOS per-core CPU, NVMe current power state, `--all-targets` in the feature job. Published, tagged. |
 | 3.3.0 | Windows ATA SMART (unelevated), shared SMART collector, ontology to 94 entities. Published, tagged `v3.3.0`. The ATA parse is unverified against real SATA hardware — see open work 1. |
+| 3.4.0 | DIMM slot topology and USB in the ontology (113 entities). Published, tagged `v3.4.0`. |
 | 2.1.5 | Committed, never published. Documentation only; superseded by 3.0.0. |
 
 ## Verification that is worth repeating
@@ -80,25 +81,47 @@ feature stayed broken through eight published versions.
    what remains to benefit is USB storage — and every Linux machine, where a
    sweep spawns `smartctl` once per drive and the old shape was quadratic.
 
-5. **The ontology names 94 entities; the library has ~88 subsystem modules.**
-   3.3.0 added 34 — disk SMART/health/NVMe, CPU cache topology, firmware and TPM —
-   but USB and PCI inventory, NUMA, RAPL, sensors, virtualization, EDAC and others
-   are readable through the library and `simon cli` while remaining invisible to
-   `describe`, `get` and `snapshot`.
+5. **The ontology names 113 entities; the library has ~88 subsystem modules.**
+   3.3.0 added 34 (disk SMART/health/NVMe, CPU cache, firmware, TPM) and 3.4.0
+   added 19 more (DIMM slot topology, USB). PCI, NUMA, RAPL, sensors,
+   virtualization and EDAC remain readable through the library and `simon cli`
+   while invisible to `describe`, `get` and `snapshot`.
 
-   The sweep is deliberately phased. Each entity needs a declaration in
-   `ontology/mod.rs`, a resolver arm in `resolve.rs`, and a provenance that is
-   *true* — and the recurring mistake, hit three times in 3.3.0 alone, is passing
-   an enum's `Unknown` variant through as a measured value. An id that resolves to
-   a confident guess is worse for an agent than one that does not exist, so add a
-   domain only when its resolver can say why each absence is absent.
+   **When adding a resolver, check the `Unknown` variant first.** Five entities
+   across two releases shipped an enum's `Unknown` through as a *measured* value —
+   `disk.{n}.health`, `board.tpm.version`, `board.tpm.status`,
+   `usb.{addr}.class`, `usb.{addr}.speed`. Every one lets an agent record a check
+   that never succeeded, which is the same error as reporting an access denial as
+   0 °C. `Unknown` from a reader almost always means "not determined", and belongs
+   in `Reading::unavailable` with the reason.
+
+   An id that resolves to a confident guess is worse for an agent than one that
+   does not exist, so add a domain only when its resolver can say why each absence
+   is absent.
+
+6. **The Windows PCI reader blocks the PCI ontology domain.** The domain was
+   written and withheld in 3.4.0 for two reasons, both in
+   `src/pci_devices/`, not in the ontology:
+
+   - `PciDeviceInfo::address` is a Windows device-instance path
+     (`PCI\VEN_1002&DEV_13C0&SUBSYS_...\4&1ebe6a9c&0&0041`), not a BDF. The tail
+     is a volatile instance id, so ids keyed on it would not survive a reboot —
+     and ontology ids may be added to but never repurposed.
+   - `driver` is never populated on Windows, so the resolver reported "no driver
+     is bound" for every device on a machine where they all plainly are.
+
+   Fix those two fields and the domain is a short patch: the declarations and
+   resolver were working, and are recoverable from the 3.4.0 development history.
 
 ## The plan for what is left
 
-Everything remaining is blocked on hardware this project does not have. That is
-the single fact to take from this section: there is no more code to write that
-would be honest to write. Each item below is a *verification* task with a
-concrete recipe, ordered by what it unblocks.
+Items A–D are blocked on hardware this project does not have, and are
+*verification* tasks with concrete recipes. E and F are ordinary software work
+that anyone can pick up on any machine.
+
+(This section previously opened by claiming everything left was hardware-blocked.
+That was true when it was written and stopped being true one release later, which
+is worth noticing: the sentence survived a commit that invalidated it.)
 
 **A. Verify the ATA path against a real SATA drive.** *Needs: any SATA SSD or
 HDD, on Windows. Half an hour.* **This is now retrospective.** The
@@ -159,6 +182,19 @@ an NVMe drive. Twenty minutes.* `cargo run --example disk_monitor` against
 `nvme list` and `smartctl -A`. The sysfs paths are documented kernel ABI and the
 code has passed CI, but CI has no drive. The quadratic collector shape fixed in
 3.3.0 was worst on Linux, so this is also the first real check of that.
+
+**E. Fix the Windows PCI reader, then ship the PCI ontology domain.** *Needs:
+nothing but a Windows box. Half a day.* Open work 6 has the two defects:
+`address` should be a BDF (`SetupDiGetDeviceRegistryProperty` with
+`SPDRP_BUSNUMBER`, `SPDRP_ADDRESS` gives bus, device and function), and `driver`
+should be populated from `SPDRP_SERVICE`. The ontology side is already known to
+work — declarations and resolver are in the 3.4.0 history.
+
+**F. Continue the ontology sweep.** *Needs: nothing. Ongoing.* NUMA, RAPL,
+sensors, virtualization and EDAC are the remaining clusters with readers behind
+them. Add a domain per change, verify each field resolves to a true provenance on
+the machine at hand, and check the `Unknown` variant first — see open work 5 for
+why that is the standing instruction.
 
 **Deliberately not planned:** SMART failure thresholds on Windows. They come from
 SMART READ THRESHOLDS, which has no `IOCTL_STORAGE_*` equivalent, so the only

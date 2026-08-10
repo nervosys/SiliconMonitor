@@ -5,6 +5,62 @@ All notable changes to Silicon Monitor will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.4.0] - 2026-08-10
+
+The ontology sweep continues: memory slot topology and USB inventory, and one
+domain deliberately withheld.
+
+### Added
+
+- **19 more ontology entities**, 94 to 113, and an eleventh domain.
+
+  - **Memory** gained 12 for per-slot DIMM topology — locator, populated,
+    capacity, rated and configured speed, type, manufacturer, part number, ECC,
+    data and total width, voltage. Speeds are counted in MT/s rather than given a
+    frequency unit, because megatransfers are not megahertz and conflating them
+    halves or doubles every figure. ECC is `derived`, not measured: no SMBIOS
+    field states it, and it is inferred from the total width exceeding the data
+    width — so it resolves to `unavailable` when either width is unknown, rather
+    than to "no ECC" from two zeros being equal.
+  - **USB**, a new domain, gained 6 — product, manufacturer, vendor and product
+    ids, class and negotiated speed. Ids are keyed on bus and port rather than
+    enumeration order, which shifts when an unrelated device is unplugged and
+    would silently repoint every id.
+
+  An empty DIMM slot resolves every field to `unavailable` with "this slot is
+  empty" rather than to zeros, which would describe a module of no size running
+  at no speed.
+
+### Withheld
+
+- **The PCI domain was written, tested, and not shipped.** On Windows the reader
+  returns a device-instance path rather than a BDF address, and that path embeds
+  a volatile instance id — so `pci.{addr}` would not have been stable across
+  reboots, and ontology ids are a contract that may be added to but never
+  repurposed. The same reader never populates the driver binding, so the resolver
+  asserted "no driver is bound to this device" about every device on a machine
+  where they plainly are.
+
+  Fixing the Windows PCI reader is the prerequisite, not the ontology work; the
+  declarations and resolver are straightforward once the address and driver
+  fields are right. Recorded in HANDOFF.md.
+
+### Fixed
+
+- **The GUI's "USB Devices" heading contradicted the new `usb` domain**, which
+  the ontology title-cased to `Usb`. Caught by
+  `hardcoded_headings_do_not_contradict_the_ontology` on the commit that added the
+  domain — the guardrail working exactly as intended, since a heading that spells
+  a domain differently from its id space is what stops a user correlating what
+  they see with what an agent can query. `USB` joins `CPU` and `GPU` in the
+  acronym table.
+
+- **`usb.{addr}.class` and `.speed` passed an `Unknown` enum variant through as a
+  measured identifier** — the fourth and fifth occurrences of that shape in two
+  releases, after `disk.{n}.health` and the two TPM fields in 3.3.0. Both now
+  resolve to `unavailable` with the reason. The pattern is now called out in
+  HANDOFF.md as the thing to check first when adding a resolver.
+
 ## [3.3.0] - 2026-08-10
 
 SATA SMART attributes no longer need Administrator — by a different control code

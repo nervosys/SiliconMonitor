@@ -103,6 +103,7 @@ pub fn snapshot() -> Vec<Reading> {
     resolve_process(&mut out);
     resolve_thermal(&mut out);
     resolve_power(&mut out);
+    resolve_usb(&mut out);
 
     // Anything the ontology names but nothing above produced.
     let produced: std::collections::HashSet<&str> = out.iter().map(|r| r.id.as_str()).collect();
@@ -311,6 +312,10 @@ fn resolve_cpu(out: &mut Vec<Reading>) {
 }
 
 fn resolve_memory(out: &mut Vec<Reading>) {
+    // Slot topology is read from SMBIOS and is independent of the usage figures
+    // below, so it runs first and still resolves if those fail.
+    resolve_memory_dimms(out);
+
     let Some(stats) = read_memory_stats() else {
         for (id, unit) in [
             ("memory.total", Unit::Bytes),
@@ -558,6 +563,205 @@ fn resolve_tpm(out: &mut Vec<Reading>) {
         serde_json::json!(tpm.measured_boot),
         None,
     ));
+}
+
+fn resolve_usb(out: &mut Vec<Reading>) {
+    let monitor = match crate::usb::UsbMonitor::new() {
+        Ok(m) => m,
+        Err(e) => {
+            out.push(Reading::unavailable(
+                "usb.<none>",
+                None,
+                format!("USB enumeration failed: {e}"),
+            ));
+            return;
+        }
+    };
+    if monitor.devices().is_empty() {
+        out.push(Reading::unavailable(
+            "usb.<none>",
+            None,
+            "no USB devices enumerated on this machine",
+        ));
+        return;
+    }
+
+    for dev in monitor.devices() {
+        // Bus and port rather than enumeration order: an index shifts when an
+        // unrelated device is unplugged, which would silently repoint every id.
+        let base = format!("usb.{}_{}", dev.bus_number, dev.port_number);
+        push_opt(
+            out,
+            format!("{base}.product"),
+            dev.product
+                .as_ref()
+                .or(dev.description.as_ref())
+                .map(|p| serde_json::json!(p)),
+            Some(Unit::Text),
+            "the device publishes no product string",
+        );
+        push_opt(
+            out,
+            format!("{base}.manufacturer"),
+            dev.manufacturer.as_ref().map(|m| serde_json::json!(m)),
+            Some(Unit::Text),
+            "the device publishes no manufacturer string",
+        );
+        push_id(
+            out,
+            format!("{base}.vendor_id"),
+            &format!("{:04x}", dev.vendor_id),
+        );
+        push_id(
+            out,
+            format!("{base}.product_id"),
+            &format!("{:04x}", dev.product_id),
+        );
+        // `Unknown` on either of these is the descriptor not having been read, not
+        // a device that identifies itself as unknown. Third occurrence of this
+        // shape in one sweep, which is why it is called out in the handoff.
+        use crate::usb::{UsbDeviceClass, UsbSpeed};
+        match dev.class {
+            UsbDeviceClass::Unknown => out.push(Reading::unavailable(
+                format!("{base}.class"),
+                Some(Unit::Identifier),
+                "the device class descriptor was not readable",
+            )),
+            c => push_id(
+                out,
+                format!("{base}.class"),
+                &format!("{c:?}").to_lowercase(),
+            ),
+        }
+        match dev.speed {
+            UsbSpeed::Unknown => out.push(Reading::unavailable(
+                format!("{base}.speed"),
+                Some(Unit::Identifier),
+                "the platform did not report a negotiated bus speed",
+            )),
+            s => push_id(
+                out,
+                format!("{base}.speed"),
+                &format!("{s:?}").to_lowercase(),
+            ),
+        }
+    }
+}
+
+fn resolve_memory_dimms(out: &mut Vec<Reading>) {
+    const PER_SLOT: [&str; 10] = [
+        "capacity",
+        "speed",
+        "configured_speed",
+        "type",
+        "manufacturer",
+        "part_number",
+        "ecc",
+        "data_width",
+        "total_width",
+        "voltage",
+    ];
+
+    let monitor = match crate::memory_topology::MemoryTopologyMonitor::new() {
+        Ok(m) => m,
+        Err(e) => {
+            out.push(Reading::unavailable(
+                "memory.dimm.0.locator",
+                Some(Unit::Text),
+                format!("memory topology unavailable: {e}"),
+            ));
+            return;
+        }
+    };
+
+    for (i, dimm) in monitor.topology().dimms.iter().enumerate() {
+        let base = format!("memory.dimm.{i}");
+        push_text(out, format!("{base}.locator"), &dimm.locator);
+        out.push(Reading::measured(
+            format!("{base}.populated"),
+            serde_json::json!(dimm.populated),
+            None,
+        ));
+
+        // An empty slot is a real slot with nothing in it. Reporting zeros for its
+        // capacity and speed would describe a module of no size running at no
+        // speed, which is not what the board is telling us.
+        if !dimm.populated {
+            for suffix in PER_SLOT {
+                out.push(Reading::unavailable(
+                    format!("{base}.{suffix}"),
+                    None,
+                    "this slot is empty",
+                ));
+            }
+            continue;
+        }
+
+        push_opt(
+            out,
+            format!("{base}.capacity"),
+            (dimm.capacity_bytes > 0).then(|| serde_json::json!(dimm.capacity_bytes)),
+            Some(Unit::Bytes),
+            "SMBIOS reported no capacity for a slot it marked populated",
+        );
+        push_opt(
+            out,
+            format!("{base}.speed"),
+            (dimm.speed_mts > 0).then(|| serde_json::json!(dimm.speed_mts)),
+            Some(Unit::Count),
+            "SMBIOS reported no rated speed",
+        );
+        push_opt(
+            out,
+            format!("{base}.configured_speed"),
+            (dimm.configured_speed_mts > 0).then(|| serde_json::json!(dimm.configured_speed_mts)),
+            Some(Unit::Count),
+            "SMBIOS reported no configured speed",
+        );
+        push_id(
+            out,
+            format!("{base}.type"),
+            &format!("{:?}", dimm.memory_type).to_lowercase(),
+        );
+        push_text(out, format!("{base}.manufacturer"), &dimm.manufacturer);
+        push_text(out, format!("{base}.part_number"), &dimm.part_number);
+        push_opt(
+            out,
+            format!("{base}.data_width"),
+            (dimm.data_width_bits > 0).then(|| serde_json::json!(dimm.data_width_bits)),
+            Some(Unit::Count),
+            "SMBIOS reported no data width",
+        );
+        push_opt(
+            out,
+            format!("{base}.total_width"),
+            (dimm.total_width_bits > 0).then(|| serde_json::json!(dimm.total_width_bits)),
+            Some(Unit::Count),
+            "SMBIOS reported no total width",
+        );
+        // ECC is the widths differing, so it can only be stated when both are
+        // known. Two zeros are equal, and would otherwise report "no ECC".
+        if dimm.total_width_bits > 0 && dimm.data_width_bits > 0 {
+            out.push(Reading::derived(
+                format!("{base}.ecc"),
+                serde_json::json!(dimm.total_width_bits > dimm.data_width_bits),
+                None,
+            ));
+        } else {
+            out.push(Reading::unavailable(
+                format!("{base}.ecc"),
+                None,
+                "ECC is inferred from the data and total widths, and one is unknown",
+            ));
+        }
+        push_opt(
+            out,
+            format!("{base}.voltage"),
+            (dimm.voltage > 0.0).then(|| serde_json::json!(dimm.voltage)),
+            Some(Unit::Volts),
+            "SMBIOS reported no operating voltage",
+        );
+    }
 }
 
 fn resolve_cpu_cache(out: &mut Vec<Reading>) {
