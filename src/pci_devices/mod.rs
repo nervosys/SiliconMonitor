@@ -424,7 +424,7 @@ impl PciDeviceMonitor {
                             kernel_module: String::new(),
                             revision: String::new(),
                             iommu_group: None,
-                            link_info: None,
+                            link_info: Self::devnode_link_info(pnp_id),
                             sriov_capable: false,
                             sriov_vfs: 0,
                             numa_node: -1,
@@ -482,6 +482,118 @@ impl PciDeviceMonitor {
             .filter(|s| !s.trim().is_empty());
 
         (bdf, service)
+    }
+
+    /// PCIe link state for one device, from the device node property store.
+    ///
+    /// The Windows PCI driver publishes negotiated and maximum link speed and
+    /// width as `DEVPKEY_PciDevice_*` properties. `Get-PnpDeviceProperty` reads the
+    /// same values but costs about 0.4 s per device — 25 s across the 64 devices of
+    /// the development machine, which is not a price a snapshot can pay. These are
+    /// two `cfgmgr32` calls per device instead.
+    ///
+    /// Returns `None` for a device with no PCIe capability — a plain PCI or
+    /// integrated device — which is a fact about the device, not a failure.
+    #[cfg(target_os = "windows")]
+    fn devnode_link_info(pnp_id: &str) -> Option<PciLinkInfo> {
+        use std::os::windows::ffi::OsStrExt;
+        use windows::core::GUID;
+        use windows::core::PCWSTR;
+        use windows::Win32::Devices::DeviceAndDriverInstallation::{
+            CM_Get_DevNode_PropertyW, CM_Locate_DevNodeW, CM_LOCATE_DEVNODE_NORMAL, CR_SUCCESS,
+        };
+        use windows::Win32::Devices::Properties::{DEVPROPKEY, DEVPROPTYPE};
+
+        // {3AB22E31-8264-4B4E-9AF5-A8D2D8E33E62}, the PCI device property class.
+        // The property ids below were read off a live device rather than taken
+        // from memory: `Get-PnpDeviceProperty` reports the raw key alongside the
+        // friendly name, and a wrong id here would return a real number from the
+        // wrong property — plausible, and wrong, which is the failure this project
+        // spends its comments on.
+        const PCI_DEVICE_FMTID: GUID = GUID::from_u128(0x3ab22e31_8264_4b4e_9af5_a8d2d8e33e62);
+        const PID_CURRENT_LINK_SPEED: u32 = 9;
+        const PID_CURRENT_LINK_WIDTH: u32 = 10;
+        const PID_MAX_LINK_SPEED: u32 = 11;
+        const PID_MAX_LINK_WIDTH: u32 = 12;
+
+        let wide: Vec<u16> = std::ffi::OsStr::new(pnp_id)
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+
+        let mut devinst = 0u32;
+        // SAFETY: `wide` is a NUL-terminated UTF-16 string that outlives the call.
+        let located = unsafe {
+            CM_Locate_DevNodeW(
+                &mut devinst,
+                PCWSTR(wide.as_ptr()),
+                CM_LOCATE_DEVNODE_NORMAL,
+            )
+        };
+        if located != CR_SUCCESS {
+            return None;
+        }
+
+        let read_u32 = |pid: u32| -> Option<u32> {
+            let key = DEVPROPKEY {
+                fmtid: PCI_DEVICE_FMTID,
+                pid,
+            };
+            let mut value = 0u32;
+            let mut ty = DEVPROPTYPE::default();
+            let mut len = std::mem::size_of::<u32>() as u32;
+            // SAFETY: the buffer is exactly the size reported in `len`, and the
+            // call writes at most that many bytes.
+            let ret = unsafe {
+                CM_Get_DevNode_PropertyW(
+                    devinst,
+                    &key,
+                    &mut ty,
+                    Some(&mut value as *mut u32 as *mut u8),
+                    &mut len,
+                    0,
+                )
+            };
+            (ret == CR_SUCCESS).then_some(value)
+        };
+
+        // Width is the reliable signal that this is a PCIe device at all: a device
+        // without the capability has neither property, and reporting a speed with
+        // no width would describe half a link.
+        let current_width = read_u32(PID_CURRENT_LINK_WIDTH)?;
+        let max_width = read_u32(PID_MAX_LINK_WIDTH).unwrap_or(current_width);
+        let current_speed = read_u32(PID_CURRENT_LINK_SPEED).unwrap_or(0);
+        let max_speed = read_u32(PID_MAX_LINK_SPEED).unwrap_or(current_speed);
+
+        Some(PciLinkInfo {
+            speed: Self::link_speed_label(current_speed),
+            width: format!("x{current_width}"),
+            max_speed: Self::link_speed_label(max_speed),
+            max_width: format!("x{max_width}"),
+            generation: current_speed.min(u8::MAX as u32) as u8,
+        })
+    }
+
+    /// Render a PCIe link speed encoding as the transfer rate it denotes.
+    ///
+    /// The property holds a generation number, not a rate: 4 means Gen 4, which is
+    /// 16 GT/s. Reporting the 4 as though it were a rate — the obvious mistake —
+    /// would describe a Gen 4 link as slower than Gen 1.
+    #[cfg(target_os = "windows")]
+    fn link_speed_label(encoding: u32) -> String {
+        match encoding {
+            1 => "2.5 GT/s".to_string(),
+            2 => "5.0 GT/s".to_string(),
+            3 => "8.0 GT/s".to_string(),
+            4 => "16.0 GT/s".to_string(),
+            5 => "32.0 GT/s".to_string(),
+            6 => "64.0 GT/s".to_string(),
+            // A generation this code predates. The number is still the truth the
+            // device reported, so it is passed through labelled rather than
+            // dropped or guessed at.
+            other if other > 0 => format!("PCIe gen {other}"),
+            _ => String::new(),
+        }
     }
 
     /// Extract `0000:7a:00.0` from a `LocationInformation` resource string.
@@ -694,6 +806,28 @@ impl std::fmt::Display for PciClass {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The property holds a PCIe *generation*, not a transfer rate. Reporting the
+    /// raw 4 would describe a Gen 4 link as slower than Gen 1 — a number that is
+    /// wrong while looking entirely reasonable.
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn link_speed_encodings_render_as_transfer_rates() {
+        assert_eq!(PciDeviceMonitor::link_speed_label(1), "2.5 GT/s");
+        assert_eq!(PciDeviceMonitor::link_speed_label(3), "8.0 GT/s");
+        assert_eq!(PciDeviceMonitor::link_speed_label(4), "16.0 GT/s");
+        assert_eq!(PciDeviceMonitor::link_speed_label(6), "64.0 GT/s");
+    }
+
+    /// A generation newer than this table is still a real reading. Dropping it
+    /// would lose information; guessing a rate for it would invent one.
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn an_unknown_generation_is_labelled_rather_than_guessed() {
+        assert_eq!(PciDeviceMonitor::link_speed_label(7), "PCIe gen 7");
+        // Zero is the absence of a reading, not a speed.
+        assert_eq!(PciDeviceMonitor::link_speed_label(0), "");
+    }
 
     /// The address must come out in the same form `lspci` and the Linux reader
     /// use, or the id space differs by platform for no reason.

@@ -194,8 +194,14 @@ the entity count, and the ontology currently names **123 entities across 12
 domains** — cpu (including cache topology), gpu, memory (including per-slot DIMM
 topology), disk (including SMART, health and NVMe endurance), network, power,
 thermal, process, system, board (including firmware inventory and TPM state), pci
-and usb. On one desktop those expand to 682 resolved readings and 519 that are
+(including negotiated versus maximum PCIe link width and speed) and usb. On one
+desktop those expand to 682 resolved readings and 519 that are
 unavailable-with-a-reason.
+
+Some of those readings are worth having precisely because nothing else reports
+them. `pci.{addr}.link.width` against `pci.{addr}.link.max_width` on the
+development machine shows a card negotiated at **x8 in a x16-capable slot** —
+half its bandwidth, and not an error anywhere in the system.
 
 It does not yet name everything the library can read. simon has around 88
 subsystem modules, and the ones without ontology entities — NUMA topology, RAPL,

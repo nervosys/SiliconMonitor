@@ -5,6 +5,43 @@ All notable changes to Silicon Monitor will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.6.0] - 2026-08-10
+
+PCIe link state on Windows, which completes the PCI domain.
+
+### Added
+
+- **Negotiated and maximum PCIe link speed and width on Windows**, so
+  `pci.{addr}.link.*` resolves rather than being uniformly unavailable. This
+  restores the comparison the entity pair exists for: on the development machine
+  `0000:01:00.0` reports **x8 against a maximum of x16** — a card in a slot that
+  trained at half width, which nothing in the system reports as an error.
+
+  The values come from the PCI driver's device node properties
+  (`DEVPKEY_PciDevice_CurrentLinkSpeed` and its three siblings) read through
+  `CM_Get_DevNode_PropertyW`. The obvious route, `Get-PnpDeviceProperty`, reads
+  exactly the same data and was measured at **25 s across 64 devices** — 0.4 s per
+  device, a price a snapshot cannot pay. Two `cfgmgr32` calls per device instead:
+  the whole PCI monitor, PowerShell enumeration included, now costs **0.62 s**.
+
+  The property ids were read off a live device rather than recalled — the raw
+  `{GUID} pid` is printed alongside the friendly name by `Get-PnpDeviceProperty`,
+  and a wrong id returns a real number from the wrong property, which is plausible
+  and wrong. The registry route was tried first and rejected: the device property
+  store under `Enum\...\Properties` is ACL-blocked for a normal user, and
+  unelevated operation is not negotiable here.
+
+  23 of 64 devices report link state; the rest are host bridges and other non-PCIe
+  devices, which report none because they have none.
+
+### Fixed
+
+- **A PCIe link speed encoding is a generation, not a rate.** The property holds
+  `4` for a Gen 4 link; reporting that as the speed would describe a 16 GT/s link
+  as slower than a Gen 1 one. Encodings 1–6 render as their transfer rates, and a
+  generation newer than the table is passed through labelled rather than dropped
+  or guessed at.
+
 ## [3.5.0] - 2026-08-10
 
 Tests generated from the ontology instead of written per feature — and the three

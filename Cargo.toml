@@ -1,6 +1,6 @@
 [package]
 name = "silicon-monitor"
-version = "3.5.0"
+version = "3.6.0"
 edition = "2021"
 rust-version = "1.70"
 default-run = "simon"
@@ -152,6 +152,11 @@ windows = { version = "0.58", features = [
     "Win32_System_IO",
     "Win32_System_Ioctl",
     "Win32_Storage_FileSystem",
+    # PCIe link state comes from the device node property store via cfgmgr32.
+    # `Get-PnpDeviceProperty` reads the same data and costs 25 s across 64
+    # devices; these calls cost microseconds.
+    "Win32_Devices_DeviceAndDriverInstallation",
+    "Win32_Devices_Properties",
     "Win32_NetworkManagement_IpHelper",
     "Win32_Networking_WinSock",
     "Win32_Graphics_Dxgi",

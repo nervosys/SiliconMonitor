@@ -1,6 +1,6 @@
 # Status
 
-Current as of 3.5.0. This file is excluded from the published crate
+Current as of 3.6.0. This file is excluded from the published crate
 (`Cargo.toml`'s `exclude` list) and is for whoever picks the work up next.
 
 ## Released
@@ -14,6 +14,7 @@ Current as of 3.5.0. This file is excluded from the published crate
 | 3.3.0 | Windows ATA SMART (unelevated), shared SMART collector, ontology to 94 entities. Published, tagged `v3.3.0`. The ATA parse is unverified against real SATA hardware — see open work 1. |
 | 3.4.0 | DIMM slot topology and USB in the ontology (113 entities). Published, tagged `v3.4.0`. |
 | 3.5.0 | Ontology-driven conformance tests, Windows PCI reader fixed, PCI domain (123 entities). Published, tagged `v3.5.0`. |
+| 3.6.0 | PCIe link state on Windows via cfgmgr32; the PCI domain fully resolves. Published, tagged `v3.6.0`. |
 | 2.1.5 | Committed, never published. Documentation only; superseded by 3.0.0. |
 
 ## Verification that is worth repeating
@@ -109,12 +110,14 @@ feature stayed broken through eight published versions.
    triple, and `Service` carries the driver. Addresses are conventional BDF
    (`0000:7a:00.0`) and the domain ships.
 
-   Still open on Windows: PCIe link width and speed. `link_info` is `None` for
-   every device, so `pci.{addr}.link.*` is uniformly unavailable — which loses the
-   negotiated-versus-maximum comparison that catches a x16 card trained at x4. The
-   values live in PCIe capability config space; reading it needs either a driver
-   or `SetupDiGetDeviceRegistryProperty` paths simon does not use yet. Linux gets
-   them from sysfs already.
+   PCIe link width and speed followed in 3.6.0, from the device node property
+   store via `CM_Get_DevNode_PropertyW`. Two notes for anyone extending this:
+   `Get-PnpDeviceProperty` reads the same values and costs 0.4 s per device (25 s
+   here, against 0.62 s for the whole monitor via `cfgmgr32`), and the registry
+   property store under `Enum\...\Properties` is ACL-blocked unelevated, so
+   neither is a shortcut. The remaining `DEVPKEY_PciDevice_*` properties — payload
+   sizes, AER capability, ARI and ATS support, SR-IOV — are readable by the same
+   two calls with a different pid, if anyone wants them.
 
 ## The plan for what is left
 
@@ -186,11 +189,8 @@ an NVMe drive. Twenty minutes.* `cargo run --example disk_monitor` against
 code has passed CI, but CI has no drive. The quadratic collector shape fixed in
 3.3.0 was worst on Linux, so this is also the first real check of that.
 
-**E. Read PCIe link state on Windows.** *Needs: nothing but a Windows box.* The
-address and driver halves of this are done (open work 6); link width and speed
-remain `None` for every device, so `pci.{addr}.link.*` never resolves and the
-negotiated-versus-maximum comparison — the one that catches a x16 card trained at
-x4 — is unavailable on Windows. Linux already reads it from sysfs.
+**E.** ~~Read PCIe link state on Windows.~~ Done in 3.6.0; see open work 6 for the
+two routes that do not work and why.
 
 **F. Continue the ontology sweep.** *Needs: nothing. Ongoing.* NUMA, RAPL,
 sensors, virtualization and EDAC are the remaining clusters with readers behind
