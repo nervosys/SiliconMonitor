@@ -1,6 +1,6 @@
 # Status
 
-Current as of 3.7.0. This file is excluded from the published crate
+Current as of 3.8.0. This file is excluded from the published crate
 (`Cargo.toml`'s `exclude` list) and is for whoever picks the work up next.
 
 ## Released
@@ -16,6 +16,7 @@ Current as of 3.7.0. This file is excluded from the published crate
 | 3.5.0 | Ontology-driven conformance tests, Windows PCI reader fixed, PCI domain (123 entities). Published, tagged `v3.5.0`. |
 | 3.6.0 | PCIe link state on Windows via cfgmgr32; the PCI domain fully resolves. Published, tagged `v3.6.0`. |
 | 3.7.0 | Virtualization, NUMA and ECC in the ontology (134 entities); two misleading virtualization readings withdrawn. Published, tagged `v3.7.0`. |
+| 3.8.0 | `simon tune`: use-case detection and profile recommendations, with an automatic server. Recommend-only by default. Published, tagged `v3.8.0`. |
 | 2.1.5 | Committed, never published. Documentation only; superseded by 3.0.0. |
 
 ## Verification that is worth repeating
@@ -136,6 +137,27 @@ feature stayed broken through eight published versions.
    neither is a shortcut. The remaining `DEVPKEY_PciDevice_*` properties — payload
    sizes, AER capability, ARI and ATS support, SR-IOV — are readable by the same
    two calls with a different pid, if anyone wants them.
+
+8. **`simon tune`'s policy table covers five settings, and its game detection is
+   a name table.** Both are deliberate first cuts, and both are where the feature
+   grows.
+
+   The policy table in `tuning::policy_for` is keyed on setting id, not on a
+   category, because two vendors' "performance mode" are not interchangeable —
+   pretending otherwise is how a tuner writes one vendor's value into another's
+   register. Adding a setting means adding an apply handler first: a policy for
+   something unwritable produces advice nobody can take, which is why the planner
+   records it under `skipped` rather than recommending it.
+
+   Game detection matches launcher and engine process names, which will miss most
+   games. It is used only as corroborating evidence and carries lower confidence
+   than an identified AI framework for that reason. The right answer is to ask
+   the graphics driver what is presenting full-screen; that is not implemented.
+
+   **The rule to preserve:** a proposed value comes from what the driver declared
+   — a `choices` entry or the reported `default` — never from this crate and never
+   from a model. `tuning::tests::a_recommendation_never_proposes_a_value_the_driver_did_not_offer`
+   is the test that keeps it true. A model may classify; it may not pick numbers.
 
 ## The plan for what is left
 

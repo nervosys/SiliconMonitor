@@ -136,6 +136,19 @@ Writing requires `--confirm`; the library never prompts and never elevates itsel
 The write surface is generated from the handler registry, so the schema cannot
 advertise a write the binary will reject.
 
+`simon tune` obeys the same contract, including in its automatic mode. It detects
+what the machine is being used for and recommends profile settings; `--watch N`
+re-evaluates on an interval. It **writes nothing** unless given both `--apply` and
+`--confirm`, and even then goes through the same audited path. Unattended
+application is capped below the risk tier covering power, thermal, voltage and
+MSR writes — `--max-risk dangerous` is rejected rather than clamped.
+
+Every proposed value comes from what the driver declared: an entry in the
+setting's own choice list, or its reported default. `basis` on each
+recommendation says which. A setting whose provider enumerates no choices is
+skipped with a reason rather than given a constructed value, so an agent reading
+a plan can verify every number in it against the hardware that offered it.
+
 ## Reading the interactive surfaces
 
 The TUI and GUI draw to a terminal and a window respectively, neither of which an

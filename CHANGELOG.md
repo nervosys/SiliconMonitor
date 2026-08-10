@@ -5,6 +5,79 @@ All notable changes to Silicon Monitor will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.8.0] - 2026-08-10
+
+Use-case detection and hardware profile recommendations, with an automatic
+server. AI and gaming are the first cases covered.
+
+### Added
+
+- **`simon tune`** — detects what the machine is being used for (AI training, AI
+  inference, gaming, interactive, idle) and recommends the profile settings that
+  suit it. `--watch N` turns it into the automatic server, re-evaluating every N
+  seconds. `-f json` for the machine-facing form.
+
+  **It recommends and writes nothing by default.** Applying needs `--apply` *and*
+  `--confirm`, and every write goes through `profile::apply::apply_setting`,
+  which refuses without confirmation and writes an audit record — the contract
+  AGENTS.md states, which a server that quietly rewrote power settings would have
+  made false.
+
+- **Proposed values come from the hardware, never from a model.** This is the
+  central constraint of the design. `Recommendation::basis` records where each
+  value came from — an entry in the setting's own driver-declared choice list, or
+  its reported default — and a setting that enumerates no choices is *skipped
+  with a reason* rather than given a plausible-looking GUID or governor name.
+  `tuning::tests::a_recommendation_never_proposes_a_value_the_driver_did_not_offer`
+  makes that enforceable.
+
+  The tempting design is to ask a language model for a power limit. That produces
+  a number with no provenance that cannot be checked against anything the
+  hardware said — the failure this repository's ontology exists to prevent, and
+  worse here than in a reading, because a reading is only believed while a
+  setting is *written*. A model may classify the workload, where being wrong
+  costs a suboptimal profile. It may not choose values.
+
+- **A local model classifies where one is running.** `tuning::classify` asks
+  Ollama or LM Studio to pick among the `UseCase` variants, given the same signal
+  summary the heuristics see, and parses the answer through `UseCase::parse`.
+  Anything unrecognised is discarded and the deterministic path answers instead —
+  the model cannot widen the answer space, only choose within it, so the worst
+  outcome is a wrong label rather than an unknown one. Only local backends are
+  considered: a description of what someone is doing at their desk is not
+  something to post to a hosted provider silently. Every fallback records its
+  reason in the evidence, so "no model was involved" is never silent.
+
+- **Classification carries its evidence.** Every verdict reports the observations
+  behind it and a coarse confidence: an identified AI framework outranks
+  utilisation (a training run between batches is not idle), a known game
+  executable is weaker evidence because the name table is necessarily incomplete,
+  and unattributed GPU load is reported at 0.4 confidence rather than confidently
+  mislabelled.
+
+### Safety
+
+- Unattended application is capped at `SettingRisk::Moderate` by a constant, not
+  a parameter. `--max-risk dangerous` is **rejected with an explanation rather
+  than clamped**, because a caller who asked for it has a different model of what
+  the command does and clamping would let them keep it. `Dangerous` covers power,
+  thermal, voltage and MSR writes; no unattended loop in simon writes one.
+- `--apply` without `--confirm` exits 2 and writes nothing.
+
+### Fixed
+
+- **Signal collection resolved the entire ontology to read one number.** Getting
+  CPU utilisation via `ontology::resolve::snapshot()` meant enumerating every
+  disk's SMART, every PCI device and every USB descriptor on every tuning cycle.
+  It now reads the platform CPU stats directly: the module's own test suite went
+  from 31.9 s to 3.2 s, and a cycle is 2.55 s.
+
+- **A timing assertion in the new tests was load-dependent.** It bounded absolute
+  wall-clock at 5 s, passed when run alone, and failed inside the full suite,
+  where hundreds of tests run in parallel and a cycle takes ~2.5 s. The property
+  being asserted is that a stop request cuts the sleep short, so it now compares
+  against a deliberately long interval instead of a small absolute time.
+
 ## [3.7.0] - 2026-08-10
 
 The last of the ontology sweep that can be written without hardware this project

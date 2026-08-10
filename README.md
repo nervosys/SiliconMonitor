@@ -151,6 +151,47 @@ let response = agent.ask("How much power am I using?", &monitor)?;
 - See [docs/AI_AGENT.md](docs/AI_AGENT.md) for the agent itself, [AI_INTEGRATION.md](AI_INTEGRATION.md) for model providers, and [AGENTS.md](AGENTS.md) for driving simon programmatically
 
 
+### Use-case tuning
+
+`simon tune` works out what the machine is being used for — AI training, AI
+inference, gaming, interactive, idle — and recommends the hardware profile
+settings that suit it. `--watch N` turns it into the automatic server.
+
+```bash
+simon tune                      # classify and recommend; writes nothing
+simon tune --watch 60           # the server: re-evaluate every minute
+simon tune --as gaming          # plan for a use case without waiting for it
+simon tune -f json              # the machine-facing form
+```
+
+```
+Use case: ai_training  (confidence 90%, from signals)
+  · busiest GPU at 97% utilisation; CPU at 22%; AI workload detected (pytorch) doing training
+  · an AI framework was identified in a running process
+
+Recommended (1):
+  Active Power Scheme [Safe]
+    381b4222-... -> 8c5e7fda-...
+    basis: the driver's own choice "High performance" for this setting
+    why:   AI work is bursty on the CPU while the GPU waits on it; core parking
+           adds latency to every dispatch
+```
+
+**Two properties worth knowing before trusting it.**
+
+It recommends and writes nothing by default. Applying needs `--apply` *and*
+`--confirm`, goes through the audited apply layer, and is capped below the risk
+tier that covers power, thermal and voltage writes — `--max-risk dangerous` is
+rejected, not clamped.
+
+Every proposed value comes from what the driver itself declared, never from a
+model. A language model may classify the workload, where being wrong costs a
+suboptimal profile; it does not choose values, because a number with no
+provenance cannot be checked against anything the hardware said. `basis` on each
+recommendation records where the value came from, and a setting whose provider
+enumerates no choices is skipped with a reason rather than given a
+plausible-looking one.
+
 ### AI Agent Discoverability & Hardware Ontology
 
 Silicon Monitor is designed from the ground up to be **discoverable by AI agents**. It provides a structured hardware ontology that allows agents to understand what monitoring capabilities are available and how to query them.

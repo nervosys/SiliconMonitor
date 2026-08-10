@@ -3674,7 +3674,7 @@ dependencies = [
 
 [[package]]
 name = "silicon-monitor"
-version = "3.7.0"
+version = "3.8.0"
 dependencies = [
  "arc-swap",
  "async-trait",

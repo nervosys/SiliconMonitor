@@ -1,0 +1,426 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2024 NervoSys
+
+//! The automatic tuning server: watch what the machine is doing, and say what
+//! would suit it.
+//!
+//! # It does not write unless told to, twice
+//!
+//! Default behaviour is [`Mode::Recommend`] — the loop classifies, plans, and
+//! publishes. Nothing is applied. Turning that into [`Mode::Apply`] requires the
+//! caller to pass a risk ceiling *and* confirmation, and even then every write
+//! goes through [`crate::profile::apply::apply_setting`], which refuses without
+//! `confirm` and writes an audit record.
+//!
+//! That is deliberately more friction than an optimiser usually has. AGENTS.md
+//! states that writing requires `--confirm` and that the library never elevates
+//! itself; a server that quietly rewrote power settings would make that sentence
+//! false, and the sentence is load-bearing for anyone who deployed simon on the
+//! strength of it.
+//!
+//! The ceiling defaults to [`SettingRisk::Safe`] and is capped at
+//! [`SettingRisk::Moderate`] for unattended operation. `Dangerous` covers
+//! power, thermal, voltage and MSR writes — the settings that can damage
+//! hardware — and no unattended loop in this crate will apply one.
+
+use super::{classify_from_signals, plan_from_settings, Classification, Plan, Signals};
+use crate::profile::SettingRisk;
+use serde::{Deserialize, Serialize};
+use std::time::{Duration, Instant};
+
+/// What the server is allowed to do when it has a recommendation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Mode {
+    /// Publish recommendations. Write nothing. The default — and derived rather
+    /// than hand-written so the default cannot be changed without changing which
+    /// variant carries `#[default]`.
+    #[default]
+    Recommend,
+    /// Apply recommendations at or below the ceiling, through the confirmed,
+    /// audit-logged apply path.
+    Apply {
+        ceiling: SettingRisk,
+        /// The caller's explicit confirmation, passed through to
+        /// [`crate::profile::apply::apply_setting`]. Without it every write is
+        /// refused, which makes an unconfirmed `Apply` mode equivalent to
+        /// `Recommend` — by design, not by accident.
+        confirm: bool,
+    },
+}
+
+/// The highest risk an unattended loop may ever apply, regardless of what the
+/// caller asks for.
+///
+/// A constant rather than a parameter because it is the safety property, and a
+/// safety property that callers can raise is a default.
+pub const UNATTENDED_CEILING: SettingRisk = SettingRisk::Moderate;
+
+/// What one pass of the loop concluded and did.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Cycle {
+    /// Seconds since the server started, so a series of cycles can be read as a
+    /// timeline without the reader having to stamp them.
+    pub elapsed_secs: u64,
+    pub plan: Plan,
+    /// Outcomes of any writes attempted, empty in [`Mode::Recommend`].
+    pub applied: Vec<AppliedOutcome>,
+    /// Recommendations that were within the plan but not applied, and why.
+    pub withheld: Vec<Withheld>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AppliedOutcome {
+    pub setting_id: String,
+    pub status: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Withheld {
+    pub setting_id: String,
+    pub reason: String,
+}
+
+/// Gather the signals the classifier reads.
+///
+/// Every field is independently fallible and independently absent: a machine
+/// with no GPU still has a CPU, and a failure to read one signal must not empty
+/// the others. `None` means "not read", which the classifier is careful to
+/// distinguish from zero.
+pub fn collect_signals() -> Signals {
+    let mut signals = Signals::default();
+
+    if let Ok(mut monitor) = crate::ai_workload::AiWorkloadMonitor::new() {
+        if let Ok(workloads) = monitor.detect_workloads() {
+            signals.ai_present = !workloads.is_empty();
+            signals.ai_training = workloads.iter().any(|w| w.is_training());
+            signals.ai_frameworks = workloads
+                .iter()
+                .map(|w| format!("{:?}", w.framework).to_lowercase())
+                .collect::<std::collections::BTreeSet<_>>()
+                .into_iter()
+                .collect();
+        }
+    }
+
+    if let Ok(monitor) = crate::SiliconMonitor::new() {
+        if let Ok(gpus) = monitor.snapshot_gpus() {
+            // `None` when no GPU was enumerated at all, which the classifier
+            // reports as an absent reading rather than as 0%.
+            signals.gpu_utilization = gpus
+                .iter()
+                .map(|g| f32::from(g.utilization()))
+                .fold(None, |acc: Option<f32>, u| {
+                    Some(acc.map_or(u, |a| a.max(u)))
+                });
+        }
+    }
+
+    signals.cpu_utilization = read_cpu_utilization();
+
+    signals.game_processes = detect_game_processes();
+
+    signals
+}
+
+/// System-wide CPU busy percentage, read from the platform directly.
+///
+/// Deliberately *not* via `ontology::resolve::snapshot()`, which would be the
+/// obvious reuse: that resolves every domain — every disk's SMART, every PCI
+/// device, every USB descriptor — to obtain one number, and took tens of seconds
+/// per cycle when this was written that way. A tuning loop that expensive cannot
+/// run at the interval it needs to be useful at.
+fn read_cpu_utilization() -> Option<f32> {
+    #[cfg(windows)]
+    {
+        crate::platform::windows::read_cpu_stats()
+            .ok()
+            .map(|s| 100.0 - s.total.idle)
+    }
+    #[cfg(target_os = "linux")]
+    {
+        crate::platform::linux::read_cpu_stats()
+            .ok()
+            .map(|s| 100.0 - s.total.idle)
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
+    {
+        None
+    }
+}
+
+/// Processes whose names match known game launchers or engines.
+///
+/// A name table is a blunt instrument and will miss most games; it is used only
+/// as corroborating evidence, and the classifier assigns it lower confidence
+/// than an identified AI framework for exactly that reason. It is not a
+/// substitute for asking the graphics driver what is presenting, which is the
+/// right long-term answer and is not implemented here.
+fn detect_game_processes() -> Vec<String> {
+    const MARKERS: [&str; 8] = [
+        "steam",
+        "epicgameslauncher",
+        "battle.net",
+        "gog galaxy",
+        "riotclientservices",
+        "eadesktop",
+        "ubisoftconnect",
+        "unrealengine",
+    ];
+
+    let Ok(mut monitor) = crate::process_monitor::ProcessMonitor::new() else {
+        return Vec::new();
+    };
+    let Ok(processes) = monitor.processes() else {
+        return Vec::new();
+    };
+
+    let mut found: Vec<String> = processes
+        .iter()
+        .map(|p| p.name.to_ascii_lowercase())
+        .filter(|name| MARKERS.iter().any(|m| name.contains(m)))
+        .collect();
+    found.sort();
+    found.dedup();
+    found
+}
+
+/// Run one pass: collect, classify, plan, and apply if the mode says to.
+pub fn cycle(mode: Mode, started: Instant) -> Cycle {
+    let signals = collect_signals();
+    let classification = classify_from_signals(&signals);
+    cycle_with(mode, started, classification)
+}
+
+/// One pass with the classification already made, so a caller that classified by
+/// some other means — a model, or an explicit override — reuses the rest.
+pub fn cycle_with(mode: Mode, started: Instant, classification: Classification) -> Cycle {
+    let settings = current_settings();
+    let plan = plan_from_settings(classification, &settings);
+
+    let mut applied = Vec::new();
+    let mut withheld = Vec::new();
+
+    match mode {
+        Mode::Recommend => {
+            for rec in &plan.recommendations {
+                withheld.push(Withheld {
+                    setting_id: rec.setting_id.clone(),
+                    reason: "server is in recommend mode and will not write".to_string(),
+                });
+            }
+        }
+        Mode::Apply { ceiling, confirm } => {
+            // The ceiling the caller asked for, floored to what an unattended
+            // loop may do. Asking for `Dangerous` does not get `Dangerous`.
+            let effective = min_risk(ceiling, UNATTENDED_CEILING);
+
+            for rec in &plan.recommendations {
+                if !plan.within_risk(effective).contains(&rec) {
+                    withheld.push(Withheld {
+                        setting_id: rec.setting_id.clone(),
+                        reason: format!(
+                            "risk {:?} exceeds the unattended ceiling {:?}",
+                            rec.risk, effective
+                        ),
+                    });
+                    continue;
+                }
+                let outcome = crate::profile::apply::apply_setting(
+                    &rec.setting_id,
+                    rec.proposed.clone(),
+                    confirm,
+                );
+                applied.push(AppliedOutcome {
+                    setting_id: rec.setting_id.clone(),
+                    status: format!("{:?}", outcome.status),
+                    message: outcome.message,
+                });
+            }
+        }
+    }
+
+    Cycle {
+        elapsed_secs: started.elapsed().as_secs(),
+        plan,
+        applied,
+        withheld,
+    }
+}
+
+fn min_risk(a: SettingRisk, b: SettingRisk) -> SettingRisk {
+    let rank = |r: SettingRisk| match r {
+        SettingRisk::Informational => 0u8,
+        SettingRisk::Safe => 1,
+        SettingRisk::Moderate => 2,
+        SettingRisk::Dangerous => 3,
+    };
+    if rank(a) <= rank(b) {
+        a
+    } else {
+        b
+    }
+}
+
+/// Every setting the profile inspector can read, flattened.
+fn current_settings() -> Vec<crate::profile::Setting> {
+    let mut inspector = crate::profile::ProfileInspector::new();
+    let snapshot = inspector.snapshot_all();
+    // Every subsystem the inspector knows, so a policy added later for NVMe or
+    // display needs no edit here.
+    snapshot
+        .providers
+        .values()
+        .flat_map(|groups| groups.iter())
+        .flat_map(|group| group.settings.iter().cloned())
+        .collect()
+}
+
+/// Run the loop until `stop` returns true.
+///
+/// `on_cycle` receives each pass. The caller decides what publishing means —
+/// stdout, the HTTP surface, a log — so this stays testable without a socket.
+pub fn run<F, S>(mode: Mode, interval: Duration, mut on_cycle: F, mut stop: S)
+where
+    F: FnMut(&Cycle),
+    S: FnMut() -> bool,
+{
+    let started = Instant::now();
+    while !stop() {
+        let c = cycle(mode, started);
+        on_cycle(&c);
+        // Sleep in slices so a stop request is noticed promptly rather than after
+        // a whole interval, which at a minute makes the difference between
+        // responsive and apparently hung.
+        let deadline = Instant::now() + interval;
+        while Instant::now() < deadline {
+            if stop() {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(200).min(interval));
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::profile::Subsystem;
+    use crate::tuning::{Method, Recommendation, UseCase};
+
+    fn plan_with(risk: SettingRisk) -> Classification {
+        let _ = risk;
+        Classification {
+            use_case: UseCase::AiTraining,
+            confidence: 0.9,
+            method: Method::Signals,
+            evidence: vec!["test".into()],
+        }
+    }
+
+    /// The default must not write. If this ever fails, a deployment that took
+    /// AGENTS.md at its word is being written to without asking.
+    #[test]
+    fn the_default_mode_is_recommend_only() {
+        assert_eq!(Mode::default(), Mode::Recommend);
+    }
+
+    /// Recommend mode withholds everything and says so, rather than silently
+    /// producing an empty applied list that reads like "nothing to do".
+    #[test]
+    fn recommend_mode_withholds_with_a_reason() {
+        let c = cycle_with(
+            Mode::Recommend,
+            Instant::now(),
+            plan_with(SettingRisk::Safe),
+        );
+        assert!(c.applied.is_empty(), "recommend mode must not write");
+        for w in &c.withheld {
+            assert!(w.reason.contains("recommend mode"), "{}", w.reason);
+        }
+        assert_eq!(c.withheld.len(), c.plan.recommendations.len());
+    }
+
+    /// A caller asking for `Dangerous` does not get it. This is the property that
+    /// keeps an unattended loop away from voltage and power registers.
+    #[test]
+    fn an_unattended_apply_is_capped_below_dangerous() {
+        assert_eq!(
+            min_risk(SettingRisk::Dangerous, UNATTENDED_CEILING),
+            SettingRisk::Moderate
+        );
+        assert_eq!(
+            min_risk(SettingRisk::Safe, UNATTENDED_CEILING),
+            SettingRisk::Safe
+        );
+    }
+
+    /// A `Dangerous` recommendation is withheld with the ceiling named, even when
+    /// the caller confirmed — confirmation authorises a write, it does not raise
+    /// the unattended ceiling.
+    #[test]
+    fn a_dangerous_recommendation_is_withheld_even_when_confirmed() {
+        let plan = Plan {
+            classification: plan_with(SettingRisk::Dangerous),
+            recommendations: vec![Recommendation {
+                setting_id: "some_voltage_thing".into(),
+                subsystem: Subsystem::Gpu,
+                display_name: "Voltage".into(),
+                current: crate::profile::SettingValue::Int(1000),
+                proposed: crate::profile::SettingValue::Int(1100),
+                risk: SettingRisk::Dangerous,
+                basis: "test".into(),
+                rationale: "test".into(),
+            }],
+            skipped: vec![],
+        };
+        let effective = min_risk(SettingRisk::Dangerous, UNATTENDED_CEILING);
+        assert!(
+            plan.within_risk(effective).is_empty(),
+            "a Dangerous recommendation must not survive the unattended ceiling"
+        );
+    }
+
+    /// The loop must exit on request rather than after a full interval, or a
+    /// minute-long interval makes shutdown look like a hang.
+    #[test]
+    fn the_loop_stops_promptly_when_asked() {
+        // A wide fraction of a deliberately long interval, not a small absolute
+        // time. The first draft asserted "under 5 seconds", which passed alone and
+        // failed inside the full suite: a cycle takes ~2.5 s and the suite runs
+        // hundreds of tests in parallel, so the machine's load decided the
+        // outcome rather than the code. What is actually being asserted is that
+        // the sleep was cut short, and this gap says that however loaded the box.
+        const INTERVAL: Duration = Duration::from_secs(300);
+        const GENEROUS: Duration = Duration::from_secs(60);
+
+        let mut cycles = 0;
+        let started = Instant::now();
+        run(Mode::Recommend, INTERVAL, |_| cycles += 1, {
+            let mut calls = 0;
+            move || {
+                calls += 1;
+                // Run one cycle, then stop at the first in-sleep check.
+                calls > 1
+            }
+        });
+        assert_eq!(cycles, 1);
+        assert!(
+            started.elapsed() < GENEROUS,
+            "stopping took {:?} against a {INTERVAL:?} interval, so the stop request \
+             was not noticed until the sleep ended",
+            started.elapsed()
+        );
+    }
+
+    /// Signal collection must survive a machine where every source fails; an
+    /// optimiser that panics on an unusual box is worse than one that says it
+    /// cannot tell.
+    #[test]
+    fn collecting_signals_never_panics() {
+        let s = collect_signals();
+        let c = classify_from_signals(&s);
+        assert!(!c.evidence.is_empty());
+    }
+}

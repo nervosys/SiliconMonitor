@@ -123,6 +123,47 @@ enum Commands {
         #[command(subcommand)]
         action: ProfileSubcommand,
     },
+    /// Detect what the machine is being used for and recommend a hardware profile
+    ///
+    /// Reports the use case — AI training, AI inference, gaming, interactive,
+    /// idle — with the evidence behind it, then the settings that would suit it.
+    ///
+    /// **Recommends by default and writes nothing.** Every proposed value comes
+    /// from what the driver itself declared: an entry in the setting's own choice
+    /// list, or its reported default. Applying requires both `--apply` and
+    /// `--confirm`, goes through the audited apply layer, and is capped below the
+    /// risk tier that covers power, thermal and voltage writes.
+    Tune {
+        /// Re-evaluate every N seconds instead of once — the automatic server.
+        /// Still recommend-only unless `--apply` is also given.
+        #[arg(long, value_name = "SECONDS")]
+        watch: Option<u64>,
+
+        /// Apply the recommendations rather than only printing them. Requires
+        /// `--confirm`; without it every write is refused by the apply layer.
+        #[arg(long)]
+        apply: bool,
+
+        /// Explicit confirmation for writes, as `simon profile set` requires.
+        #[arg(long)]
+        confirm: bool,
+
+        /// Highest risk tier to apply unattended: safe or moderate. `dangerous`
+        /// is not accepted — those settings can destabilize hardware and no
+        /// unattended loop in simon writes one.
+        #[arg(long, value_name = "TIER", default_value = "safe")]
+        max_risk: String,
+
+        /// Assume this use case instead of detecting one — for testing a profile
+        /// without waiting for the workload
+        #[arg(long, value_name = "CASE")]
+        r#as: Option<String>,
+
+        /// Output format (json or text)
+        #[arg(short, long, default_value = "text")]
+        format: String,
+    },
+
     /// Print the entity ontology: every value simon can report, with its unit and
     /// provenance
     ///
@@ -662,6 +703,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             } else {
                 simonlib::tui::run()?;
             }
+        }
+
+        Some(Commands::Tune {
+            watch,
+            apply,
+            confirm,
+            max_risk,
+            r#as,
+            format,
+        }) => {
+            handle_tune_command(*watch, *apply, *confirm, max_risk, r#as.as_deref(), format)?;
         }
 
         // CLI commands - use shared MonitoringBackend
@@ -3608,6 +3660,176 @@ fn handle_gui_script_command(source: &str) -> Result<(), Box<dyn std::error::Err
 /// that was emitted in the panel colour, which is the bug that made the Profiles
 /// tab appear dead while it rendered all nineteen of its groups.
 #[cfg(feature = "gui")]
+/// `simon tune` — classify the workload, recommend a profile, optionally apply.
+fn handle_tune_command(
+    watch: Option<u64>,
+    apply: bool,
+    confirm: bool,
+    max_risk: &str,
+    force_case: Option<&str>,
+    format: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use simonlib::profile::SettingRisk;
+    use simonlib::tuning::serve::{self, Mode};
+    use simonlib::tuning::{Classification, Method, UseCase};
+
+    // `dangerous` is rejected rather than silently clamped: a caller who asked
+    // for it has a different model of what this command does, and clamping would
+    // let them keep it.
+    let ceiling = match max_risk.trim().to_ascii_lowercase().as_str() {
+        "safe" => SettingRisk::Safe,
+        "moderate" => SettingRisk::Moderate,
+        "dangerous" => {
+            eprintln!(
+                "--max-risk dangerous is not accepted. Those settings touch power, thermal, \
+                 voltage or MSRs and can destabilize hardware; simon does not write them from \
+                 an unattended loop. Use `simon profile set` with --confirm for a single \
+                 deliberate change."
+            );
+            std::process::exit(2);
+        }
+        other => {
+            eprintln!("Unknown risk tier {other:?}. Known tiers: safe, moderate.");
+            std::process::exit(2);
+        }
+    };
+
+    if apply && !confirm {
+        eprintln!(
+            "--apply requires --confirm. Nothing was written. Run without --apply to see the \
+             recommendations first."
+        );
+        std::process::exit(2);
+    }
+
+    let mode = if apply {
+        Mode::Apply { ceiling, confirm }
+    } else {
+        Mode::Recommend
+    };
+
+    let classify = |()| -> Classification {
+        match force_case {
+            Some(name) => match UseCase::parse(name) {
+                Some(use_case) => Classification {
+                    use_case,
+                    confidence: 1.0,
+                    method: Method::Signals,
+                    evidence: vec![format!("use case forced to {name:?} on the command line")],
+                },
+                None => {
+                    eprintln!(
+                        "Unknown use case {name:?}. Known: ai_training, ai_inference, gaming, \
+                         interactive, idle."
+                    );
+                    std::process::exit(2);
+                }
+            },
+            // `classify`, not `classify_from_signals`: this asks a local model
+            // where one is running and falls back to the signal path otherwise,
+            // recording which happened in the evidence either way.
+            None => simonlib::tuning::classify(&serve::collect_signals()),
+        }
+    };
+
+    let started = std::time::Instant::now();
+    let json = format.eq_ignore_ascii_case("json");
+
+    let emit = |cycle: &serve::Cycle| {
+        if json {
+            match serde_json::to_string_pretty(cycle) {
+                Ok(s) => println!("{s}"),
+                Err(e) => eprintln!("failed to serialize cycle: {e}"),
+            }
+        } else {
+            print_tune_cycle(cycle);
+        }
+    };
+
+    match watch {
+        None => {
+            let cycle = serve::cycle_with(mode, started, classify(()));
+            emit(&cycle);
+        }
+        Some(secs) => {
+            if secs == 0 {
+                eprintln!("--watch needs a non-zero interval.");
+                std::process::exit(2);
+            }
+            if !json {
+                println!(
+                    "Watching every {secs}s in {} mode. Ctrl-C to stop.\n",
+                    if apply { "apply" } else { "recommend" }
+                );
+            }
+            // Ctrl-C sets the flag; the loop checks it between and during sleeps.
+            let running = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+            let flag = running.clone();
+            let _ = ctrlc::set_handler(move || {
+                flag.store(false, std::sync::atomic::Ordering::SeqCst);
+            });
+            serve::run(
+                mode,
+                std::time::Duration::from_secs(secs),
+                |c| emit(c),
+                || !running.load(std::sync::atomic::Ordering::SeqCst),
+            );
+        }
+    }
+
+    Ok(())
+}
+
+fn print_tune_cycle(cycle: &simonlib::tuning::serve::Cycle) {
+    use simonlib::tuning::Method;
+
+    let c = &cycle.plan.classification;
+    let method = match &c.method {
+        Method::Signals => "signals".to_string(),
+        Method::Model { backend } => format!("model ({backend})"),
+    };
+    println!(
+        "Use case: {}  (confidence {:.0}%, from {method})",
+        c.use_case.as_str(),
+        c.confidence * 100.0
+    );
+    for e in &c.evidence {
+        println!("  · {e}");
+    }
+
+    if cycle.plan.recommendations.is_empty() {
+        println!("\nNo changes recommended.");
+    } else {
+        println!("\nRecommended ({}):", cycle.plan.recommendations.len());
+        for r in &cycle.plan.recommendations {
+            println!(
+                "  {} [{:?}]\n    {} -> {}\n    basis: {}\n    why:   {}",
+                r.display_name, r.risk, r.current, r.proposed, r.basis, r.rationale
+            );
+        }
+    }
+
+    if !cycle.applied.is_empty() {
+        println!("\nApplied:");
+        for a in &cycle.applied {
+            println!("  {} — {} ({})", a.setting_id, a.status, a.message);
+        }
+    }
+    if !cycle.withheld.is_empty() {
+        println!("\nWithheld:");
+        for w in &cycle.withheld {
+            println!("  {} — {}", w.setting_id, w.reason);
+        }
+    }
+    if !cycle.plan.skipped.is_empty() {
+        println!("\nConsidered and skipped:");
+        for s in &cycle.plan.skipped {
+            println!("  {} — {}", s.setting_id, s.reason);
+        }
+    }
+    println!();
+}
+
 fn handle_gui_frame_command(tab: &str) -> Result<(), Box<dyn std::error::Error>> {
     use simonlib::gui::headless;
 
