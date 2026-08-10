@@ -524,12 +524,20 @@ and the SMART/Health log page, via `DeviceIoControl` — so temperature, power-o
 hours, wear, controller id, namespace count and critical warnings all resolve
 **without elevation**.
 
-SATA and USB devices have no such log page and fall back to WMI, where
+SATA drives have no such log page, but the storage driver will issue SMART READ
+DATA on their behalf — `IOCTL_STORAGE_PREDICT_FAILURE` — so their attribute table,
+failure prediction and sector counts also resolve without elevation. Note that
+this path has not yet been run against real ATA hardware; see
+`docs/DISK_MONITORING.md`.
+
+USB bridges that tunnel neither fall back to WMI, where
 `Get-StorageReliabilityCounter` does require elevation. Unelevated, their identity
 fields still resolve while the counters come back `None`.
 
-Calling `smart_info()` spawns one PowerShell invocation per device on Windows. To
-query every drive at once, use `simonlib::smart::SmartMonitor` directly.
+On Windows, `smart_info()` spawns a PowerShell invocation per device for any drive
+that reaches the WMI fallback — no longer NVMe or SATA, but still USB bridges and
+anything else the two passthroughs decline. To query every drive at once, use
+`simonlib::smart::SmartMonitor` directly.
 
 See `cargo run --all-features --example disk_monitor` for the full surface.
 

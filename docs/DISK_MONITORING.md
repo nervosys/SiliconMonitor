@@ -71,9 +71,11 @@ Silicon Monitor (simon) provides comprehensive disk and storage monitoring acros
 - **SMART Attributes** (`DiskDevice::smart_info`): implemented on Linux and
   Windows. The drive's own health verdict and any attributes the platform exposes
   are returned; every counter is `Option`. On Windows, NVMe drives are read from
-  the controller's SMART/Health log page and need no elevation. SATA and USB
-  devices fall back to `Get-StorageReliabilityCounter`, which does require it and
-  fails with `PermissionDenied` otherwise. Verified against four physical drives.
+  the controller's SMART/Health log page and ATA drives from the device SMART data
+  structure, both unelevated. `Get-StorageReliabilityCounter` remains as the
+  fallback for devices that answer neither — chiefly USB bridges — and it does
+  require elevation, failing with `PermissionDenied` otherwise. Verified against
+  four physical drives.
 - **NVMe Specific Info** (`DiskDevice::nvme_info`): implemented on Linux and
   Windows. On Windows this issues `DeviceIoControl` with
   `StorageDeviceProtocolSpecificProperty` for Identify Controller and the
@@ -94,19 +96,44 @@ Silicon Monitor (simon) provides comprehensive disk and storage monitoring acros
 > requires Administrator and fails with `ERROR_ACCESS_DENIED` for a normal user. A
 > query-only handle needs no access rights at all.
 >
-> SATA and USB devices still depend on `Get-StorageReliabilityCounter` and so on
-> elevation. simon reports their counters as unavailable rather than as zero — the
-> pre-3.0.0 behaviour turned an access-denied error into "0 °C, 0 power-on hours,
-> healthy" for every drive on the system.
+> The same is true of the ATA path, but for a different control code, and the
+> difference is the whole reason that path is written the way it is:
+>
+> | Control code | Access in its `CTL_CODE` | On a zero-access handle |
+> |---|---|---|
+> | `IOCTL_STORAGE_QUERY_PROPERTY` | `FILE_ANY_ACCESS` | reaches the driver |
+> | `IOCTL_STORAGE_PREDICT_FAILURE` | `FILE_ANY_ACCESS` | reaches the driver |
+> | `IOCTL_ATA_PASS_THROUGH` | `FILE_READ_ACCESS \| FILE_WRITE_ACCESS` | `ERROR_ACCESS_DENIED` |
+>
+> `IOCTL_ATA_PASS_THROUGH` is the obvious way to read SATA SMART and it cannot be
+> done unelevated: the I/O manager checks the handle's access mask before the
+> driver is reached, and a read/write handle on `\\.\PhysicalDriveN` requires
+> Administrator. Measured on all four drives of the development machine. simon
+> therefore asks `IOCTL_STORAGE_PREDICT_FAILURE` instead, whose 512
+> vendor-specific bytes are the SMART READ DATA structure for an ATA device.
+>
+> Devices that answer neither — USB bridges that do not tunnel SMART — still
+> depend on `Get-StorageReliabilityCounter` and so on elevation. simon reports
+> their counters as unavailable rather than as zero — the pre-3.0.0 behaviour
+> turned an access-denied error into "0 °C, 0 power-on hours, healthy" for every
+> drive on the system.
+>
+> **The ATA path has not been run against a SATA drive.** The development machine
+> has three NVMe drives and a USB gadget; on all of them it returns
+> `NotSupported`, which exercises the decline but not the parse. The 512-byte
+> structure is covered by `src/disk/ata_smart.rs`'s tests over synthetic buffers,
+> which run on all three CI platforms. Anyone with a SATA SSD or HDD should
+> compare against `smartctl -A` once — that is the check this has not had.
 
 ### ❌ Not Yet Implemented
 
-1. **Current NVMe power state**
-   - The available power state table comes from Identify Controller and is
-     populated; the *current* state needs Get Features (FID 0x02), a separate
-     admin command, and stays `None`
-   - ATA pass-through for SATA SMART attributes, which would remove the last
-     dependency on elevation for non-NVMe drives
+1. **SMART failure thresholds on Windows**
+   - Attribute thresholds come from SMART READ THRESHOLDS, an ATA command with no
+     `IOCTL_STORAGE_*` equivalent. Attributes read through
+     `IOCTL_STORAGE_PREDICT_FAILURE` therefore carry a threshold of 0, which is
+     also ATA's own encoding for a threshold that never trips. The drive's own
+     `PredictFailure` verdict is reported instead, and it is the same judgement the
+     thresholds would have produced
 
 2. **macOS Support**
    - IOKit `IOBlockStorageDevice` enumeration
@@ -327,20 +354,25 @@ println!("  Syscalls: {} read, {} write",
 - ioctl calls for direct device queries
 - udev integration for hotplug support
 
-### Windows (Planned)
+### Windows
 
 **Data Sources:**
 - WMI `Win32_DiskDrive` - Device enumeration and info
-- WMI `Win32_PerfRawData_PerfDisk_PhysicalDisk` - I/O statistics
-- WMI `MSStorageDriver_FailurePredictStatus` - SMART health
-- `DeviceIoControl` with `IOCTL_STORAGE_QUERY_PROPERTY` - Device properties
-- `DeviceIoControl` with `IOCTL_ATA_PASS_THROUGH` - SMART attributes
-- `DeviceIoControl` with `IOCTL_SCSI_PASS_THROUGH` - NVMe passthrough
+- WMI `Win32_PerfFormattedData_PerfDisk_PhysicalDisk` - I/O statistics
+- `Get-PhysicalDisk` / `Get-StorageReliabilityCounter` - health verdict, and the
+  elevated fallback for counters
+- `DeviceIoControl` with `IOCTL_STORAGE_QUERY_PROPERTY` and
+  `StorageDeviceProtocolSpecificProperty` - NVMe Identify, health log, Get Features
+- `DeviceIoControl` with `IOCTL_STORAGE_PREDICT_FAILURE` - ATA SMART attributes and
+  the drive's failure prediction
 
 **Challenges:**
-- Administrator privileges required for some operations
 - Different APIs for SATA vs NVMe devices
-- Complex NVMe passthrough command structures
+- Whether an operation needs Administrator is decided by the `CTL_CODE`'s access
+  bits and by the access mask the handle was opened with, not by the operation's
+  apparent privilege — see the table above. Both passthrough paths here are
+  unelevated because of that, and both would require Administrator if written the
+  obvious way
 
 ### macOS (Planned)
 

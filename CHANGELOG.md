@@ -5,6 +5,54 @@ All notable changes to Silicon Monitor will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.3.0] - 2026-08-10
+
+SATA SMART attributes no longer need Administrator — by a different control code
+than the one that was planned for it.
+
+### Added
+
+- **ATA SMART attributes on Windows, unelevated**, via
+  `IOCTL_STORAGE_PREDICT_FAILURE`. The full attribute table, the drive's own
+  failure prediction, and — for the first time on Windows at any privilege level —
+  reallocated and pending sector counts, which `Get-StorageReliabilityCounter`
+  does not expose. Wired into `DiskDevice::smart_info()`, `DiskDevice::health()`
+  and `smart::SmartMonitor`, so the collector most callers use no longer needs
+  elevation for SATA drives either.
+
+  The plan of record was `IOCTL_ATA_PASS_THROUGH`, and it cannot work: it is
+  declared `CTL_CODE(..., FILE_READ_ACCESS | FILE_WRITE_ACCESS)`, so the I/O
+  manager rejects it on the zero-access handle before the driver sees it, and a
+  read/write handle on `\\.\PhysicalDriveN` requires Administrator. Issued on the
+  handle that makes the NVMe path work it returns `ERROR_ACCESS_DENIED`, measured
+  on all four drives of the development machine.
+  `IOCTL_STORAGE_PREDICT_FAILURE` is `FILE_ANY_ACCESS` and returns the SMART READ
+  DATA structure verbatim in its vendor-specific bytes, which is the same data by
+  a route the access check permits.
+
+  **The parse has not been run against a SATA drive** — the development machine
+  has none, and on its NVMe drives and USB gadget the path returns `NotSupported`,
+  which exercises the decline only. The 512-byte structure is parsed in
+  `disk::ata_smart`, which is not target-gated, so its 14 tests over synthetic
+  buffers run on all three CI platforms. Compare against `smartctl -A` once, on
+  real ATA hardware, before trusting a number from it.
+
+### Fixed
+
+- **A drive reporting its own failure could be scored back to healthy.**
+  `SmartMonitor::infer_health` recomputed a verdict from counters and overwrote
+  whatever was already there. SMART trips on thresholds simon cannot read, so a
+  drive that predicts its own failure can still present clean counters — and did
+  present as `Good`. `Failed` is now left alone, being the one verdict that was
+  read rather than inferred.
+
+### Changed
+
+- The zero-access handle on `\\.\PhysicalDriveN` moved to `disk::windows_device`,
+  shared by the NVMe and ATA paths. The access mask is the single detail
+  unelevated operation depends on, and the two callers had no reason to state it
+  twice.
+
 ## [3.2.0] - 2026-08-07
 
 The last three fields that were `None` or a placeholder now carry readings, and

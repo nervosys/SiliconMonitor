@@ -9,25 +9,16 @@
 //!
 //! **This needs no elevation**, which is worth stating plainly because the
 //! documentation for 3.0.0 assumed the opposite and left every one of these fields
-//! `None`. The handle must be opened with a desired access of *zero*: asking for
-//! `GENERIC_READ | GENERIC_WRITE` on `\\.\PhysicalDriveN` is what requires
-//! Administrator, and it fails with `ERROR_ACCESS_DENIED` for a normal user. A
-//! query-only handle needs no access rights at all, so requesting them is what
-//! made this look like an elevated-only capability.
+//! `None`. The handle must be opened with a desired access of *zero*; that is now
+//! [`super::windows_device::Device`]'s job, and its comment explains why.
 //!
 //! Verified against four physical drives: three NVMe (Samsung 9100 PRO, 990 PRO,
 //! 970 EVO Plus) and one USB enclosure, unelevated.
 
 use super::nvme_log::{HealthLog, IdentifyController};
 use super::traits::Error;
-use std::os::windows::ffi::OsStrExt;
-use windows::core::PCWSTR;
-use windows::Win32::Foundation::{
-    CloseHandle, ERROR_ACCESS_DENIED, ERROR_INVALID_PARAMETER, HANDLE,
-};
-use windows::Win32::Storage::FileSystem::{
-    CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
-};
+use super::windows_device::Device;
+use windows::Win32::Foundation::ERROR_INVALID_PARAMETER;
 use windows::Win32::System::Ioctl::{
     NVMeDataTypeFeature, NVMeDataTypeIdentify, NVMeDataTypeLogPage, PropertyStandardQuery,
     ProtocolTypeNvme, StorageDeviceProtocolSpecificProperty, IOCTL_STORAGE_QUERY_PROPERTY,
@@ -55,47 +46,7 @@ pub(crate) struct NvmeData {
     pub power_state: Option<u8>,
 }
 
-/// Closes the device handle on every exit path, including the error ones.
-struct Device(HANDLE);
-
-impl Drop for Device {
-    fn drop(&mut self) {
-        // Nothing actionable if this fails, and it must not mask the real error.
-        let _ = unsafe { CloseHandle(self.0) };
-    }
-}
-
 impl Device {
-    fn open(index: u32) -> Result<Self, Error> {
-        let path: Vec<u16> = std::ffi::OsStr::new(&format!("\\\\.\\PhysicalDrive{index}"))
-            .encode_wide()
-            .chain(std::iter::once(0))
-            .collect();
-
-        // Desired access of 0 — see the module comment. This is the difference
-        // between working for every user and working only for Administrators.
-        let handle = unsafe {
-            CreateFileW(
-                PCWSTR(path.as_ptr()),
-                0,
-                FILE_SHARE_READ | FILE_SHARE_WRITE,
-                None,
-                OPEN_EXISTING,
-                FILE_ATTRIBUTE_NORMAL,
-                None,
-            )
-        }
-        .map_err(|e| {
-            if e.code() == ERROR_ACCESS_DENIED.to_hresult() {
-                Error::PermissionDenied(format!("opening PhysicalDrive{index}: {e}"))
-            } else {
-                Error::QueryFailed(format!("opening PhysicalDrive{index}: {e}"))
-            }
-        })?;
-
-        Ok(Self(handle))
-    }
-
     /// What one protocol-specific query returned.
     ///
     /// Log pages and Identify answer in `data`. Get Features answers in `fixed`,

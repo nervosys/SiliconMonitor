@@ -368,6 +368,30 @@ impl DiskDevice for WindowsDisk {
             }
         }
 
+        // For an ATA device the same question goes to the storage driver, which
+        // answers with the drive's own failure prediction. That prediction is a
+        // reading, so grading `Healthy` from it is not the empty-scorecard problem
+        // `smart::tests::a_drive_with_no_readable_counters_is_not_graded_healthy`
+        // guards against: here the drive was asked and said no.
+        if let Ok(ata) = crate::disk::windows_ata::query(self.disk_index) {
+            if ata.predict_failure {
+                return Ok(DiskHealth::Failed);
+            }
+            // Sectors the drive could not read and has not yet remapped are data at
+            // risk now, and it will not predict failure over them. Reallocated
+            // sectors are deliberately not graded: whether a count is alarming is
+            // the threshold's call, and SMART READ THRESHOLDS is not reachable
+            // through this ioctl.
+            if let Some(smart) = &ata.smart {
+                let at_risk = smart.pending_sectors().unwrap_or(0)
+                    + smart.uncorrectable_sectors().unwrap_or(0);
+                if at_risk > 0 {
+                    return Ok(DiskHealth::Warning);
+                }
+            }
+            return Ok(DiskHealth::Healthy);
+        }
+
         // Windows publishes a HealthStatus per physical disk; the SMART collector
         // already reads it, so ask that rather than guessing Unknown.
         match self.smart_disk() {
@@ -404,6 +428,43 @@ impl DiskDevice for WindowsDisk {
                     reallocated_sectors: None,
                     pending_sectors: None,
                     uncorrectable_sectors: Some(health.media_errors.min(u64::MAX as u128) as u64),
+                });
+            }
+        }
+
+        // SATA and USB drives have no log page, but the storage driver will issue
+        // SMART READ DATA on their behalf for an unelevated caller. This is the
+        // only path on Windows to reallocated and pending sector counts — the WMI
+        // fallback below cannot reach them at all, and needs elevation for the
+        // counters it can reach.
+        if let Ok(ata) = crate::disk::windows_ata::query(self.disk_index) {
+            if let Some(smart) = ata.smart {
+                return Ok(SmartInfo {
+                    // The drive's own prediction, not a verdict computed from the
+                    // attributes below.
+                    passed: !ata.predict_failure,
+                    attributes: smart
+                        .attributes
+                        .iter()
+                        .map(|a| SmartAttribute {
+                            id: a.id,
+                            name: a.name(),
+                            value: a.value,
+                            worst: a.worst,
+                            // SMART READ THRESHOLDS is a separate ATA command with
+                            // no ioctl of its own; 0 is ATA's own encoding for a
+                            // threshold that never trips.
+                            threshold: 0,
+                            raw_value: a.raw,
+                            critical: a.pre_fail(),
+                        })
+                        .collect(),
+                    temperature: smart.temperature_celsius().map(|c| c as f32),
+                    power_on_hours: smart.power_on_hours(),
+                    power_cycle_count: smart.power_cycle_count(),
+                    reallocated_sectors: smart.reallocated_sectors(),
+                    pending_sectors: smart.pending_sectors(),
+                    uncorrectable_sectors: smart.uncorrectable_sectors(),
                 });
             }
         }

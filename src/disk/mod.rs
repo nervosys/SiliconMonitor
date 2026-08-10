@@ -14,8 +14,9 @@
 pub mod traits;
 
 // Not target-gated. The parsers are pure byte arithmetic over structures the NVMe
-// specification defines identically everywhere, so gating them to Windows would
-// mean their tests only ever ran on one of the three platforms CI covers.
+// and ATA specifications define identically everywhere, so gating them to Windows
+// would mean their tests only ever ran on one of the three platforms CI covers.
+pub mod ata_smart;
 pub mod nvme_log;
 
 #[cfg(target_os = "linux")]
@@ -23,6 +24,16 @@ pub mod linux;
 
 #[cfg(target_os = "windows")]
 pub mod windows;
+
+// `pub(crate)` rather than private because `crate::smart` reads the same
+// structure: the SMART collector is the surface most callers use, so leaving the
+// ATA path reachable only from `disk::windows` would have meant `SmartMonitor`
+// still needing elevation for exactly the drives this was written to cover.
+#[cfg(target_os = "windows")]
+pub(crate) mod windows_ata;
+
+#[cfg(target_os = "windows")]
+mod windows_device;
 
 #[cfg(target_os = "windows")]
 mod windows_nvme;

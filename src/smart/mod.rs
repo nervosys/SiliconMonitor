@@ -198,6 +198,15 @@ impl SmartMonitor {
     /// this now leaves whatever the platform itself reported (Windows supplies a
     /// `HealthStatus`) rather than overwriting it with a computed judgement.
     fn infer_health(disk: &mut SmartDiskInfo) {
+        // A drive reporting its own failure is not something a score can talk out
+        // of. Every other verdict below is inferred from counters; this one was
+        // read from the drive, and its attributes can still look clean — SMART
+        // predicts failure from thresholds this code cannot see. Without this,
+        // `Failed` from `IOCTL_STORAGE_PREDICT_FAILURE` is scored back to `Good`.
+        if disk.health == DiskHealth::Failed {
+            return;
+        }
+
         let mut score: f32 = 100.0;
         let mut had_evidence = false;
 
@@ -619,7 +628,7 @@ Get-PhysicalDisk | ForEach-Object {
                             continue;
                         };
 
-                        self.disks.push(SmartDiskInfo {
+                        let mut disk = SmartDiskInfo {
                             device: format!(r"\\.\PhysicalDrive{device_id}"),
                             model: item["Model"].as_str().unwrap_or("").trim().to_string(),
                             serial: item["SerialNumber"]
@@ -661,11 +670,77 @@ Get-PhysicalDisk | ForEach-Object {
                             attributes: Vec::new(),
                             estimated_life_remaining: None,
                             estimated_days_remaining: None,
-                        });
+                        };
+
+                        Self::fill_from_ata(&mut disk, device_id as u32);
+                        self.disks.push(disk);
                     }
                 }
             }
         }
+    }
+
+    /// Fill in whatever the drive's own SMART structure reports, for the drives
+    /// that have one.
+    ///
+    /// The PowerShell query above reaches its counters through
+    /// `Get-StorageReliabilityCounter`, which requires elevation and leaves every
+    /// one of them `None` for a normal user. `IOCTL_STORAGE_PREDICT_FAILURE` does
+    /// not, so on a SATA drive this is the difference between a full attribute
+    /// table and nothing at all. It also reaches reallocated and pending sector
+    /// counts, which the PowerShell path cannot report at any privilege level.
+    ///
+    /// Only fields the reliability counters left empty are written. Where both can
+    /// answer, the elevated reading wins: it comes from the same drive by a path
+    /// that has been verified against hardware, and this one has not.
+    #[cfg(target_os = "windows")]
+    fn fill_from_ata(disk: &mut SmartDiskInfo, index: u32) {
+        // NVMe drives decline this ioctl, and their own log page has already been
+        // read by `disk::windows`. Asking anyway costs an open and a failed call
+        // per drive per refresh.
+        if disk.media_type == DriveMediaType::NVMe {
+            return;
+        }
+
+        let Ok(ata) = crate::disk::windows_ata::query(index) else {
+            return;
+        };
+
+        // The drive predicting its own failure outranks whatever HealthStatus
+        // Windows reported; the reverse is not true, because a drive that does not
+        // predict failure may still be one Windows has flagged.
+        if ata.predict_failure {
+            disk.health = DiskHealth::Failed;
+        }
+
+        let Some(smart) = ata.smart else {
+            return;
+        };
+
+        disk.temperature_celsius = disk.temperature_celsius.or(smart.temperature_celsius());
+        disk.power_on_hours = disk.power_on_hours.or(smart.power_on_hours());
+        disk.power_cycle_count = disk.power_cycle_count.or(smart.power_cycle_count());
+        disk.reallocated_sectors = disk.reallocated_sectors.or(smart.reallocated_sectors());
+        disk.pending_sectors = disk.pending_sectors.or(smart.pending_sectors());
+        disk.uncorrectable_errors = disk.uncorrectable_errors.or(smart.uncorrectable_sectors());
+        disk.wear_leveling_percent = disk.wear_leveling_percent.or(smart.wear_percent_used());
+        disk.total_bytes_written = disk.total_bytes_written.or(smart.total_bytes_written());
+        disk.total_bytes_read = disk.total_bytes_read.or(smart.total_bytes_read());
+
+        disk.attributes = smart
+            .attributes
+            .iter()
+            .map(|a| SmartAttribute {
+                id: u16::from(a.id),
+                name: a.name(),
+                value: u64::from(a.value),
+                worst: u64::from(a.worst),
+                // Not reachable through this ioctl — see `disk::windows_ata`.
+                threshold: 0,
+                raw_value: a.raw,
+                pre_fail: a.pre_fail(),
+            })
+            .collect();
     }
 
     #[cfg(target_os = "macos")]
@@ -863,6 +938,40 @@ mod tests {
         SmartMonitor::infer_health(&mut disk);
         assert_eq!(disk.health, DiskHealth::Good);
         assert!(disk.estimated_life_remaining.unwrap() > 80.0);
+    }
+
+    /// A drive that predicts its own failure can still have clean-looking
+    /// counters: SMART trips on thresholds this code cannot read. Scoring those
+    /// counters graded such a drive `Good` and discarded the only reading that
+    /// mattered.
+    #[test]
+    fn a_self_reported_failure_survives_inference() {
+        let mut disk = SmartDiskInfo {
+            device: r"\\.\PhysicalDrive0".into(),
+            model: "Test SSD".into(),
+            serial: "ABC".into(),
+            firmware: "1.0".into(),
+            media_type: DriveMediaType::SSD,
+            capacity_bytes: 500_000_000_000,
+            // What `IOCTL_STORAGE_PREDICT_FAILURE` reporting a prediction sets.
+            health: DiskHealth::Failed,
+            temperature_celsius: Some(30),
+            power_on_hours: Some(100),
+            power_cycle_count: Some(10),
+            reallocated_sectors: Some(0),
+            pending_sectors: Some(0),
+            uncorrectable_errors: Some(0),
+            wear_leveling_percent: Some(1.0),
+            total_bytes_written: None,
+            total_bytes_read: None,
+            nvme_percentage_used: None,
+            nvme_available_spare: None,
+            attributes: Vec::new(),
+            estimated_life_remaining: None,
+            estimated_days_remaining: None,
+        };
+        SmartMonitor::infer_health(&mut disk);
+        assert_eq!(disk.health, DiskHealth::Failed);
     }
 
     #[test]

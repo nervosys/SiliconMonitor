@@ -1,6 +1,6 @@
 # Status
 
-Current as of 3.0.1. This file is excluded from the published crate
+Current as of 3.3.0. This file is excluded from the published crate
 (`Cargo.toml`'s `exclude` list) and is for whoever picks the work up next.
 
 ## Released
@@ -10,6 +10,8 @@ Current as of 3.0.1. This file is excluded from the published crate
 | 3.0.0 | Published, tagged `v3.0.0`. SMART and NVMe support. |
 | 3.0.1 | Feature-combination fix — see CHANGELOG. |
 | 3.1.0 | Windows NVMe passthrough (unelevated) and macOS CPU/memory. Published, tagged. |
+| 3.2.0 | macOS per-core CPU, NVMe current power state, `--all-targets` in the feature job. Published, tagged. |
+| 3.3.0 | Windows ATA SMART (unelevated). Committed, not yet tagged. |
 | 2.1.5 | Committed, never published. Documentation only; superseded by 3.0.0. |
 
 ## Verification that is worth repeating
@@ -33,10 +35,24 @@ feature stayed broken through eight published versions.
 
 ## Open work
 
-1. **SATA SMART attributes still need elevation.** They go through
-   `Get-StorageReliabilityCounter`; ATA pass-through (`IOCTL_ATA_PASS_THROUGH`)
-   would remove that, the way the NVMe protocol query removed it for NVMe drives.
-   Scoped in `docs/DISK_MONITORING.md`. Every NVMe field is now read.
+1. **The Windows ATA SMART path has never met a SATA drive.** 3.3.0 reads the
+   attribute table unelevated through `IOCTL_STORAGE_PREDICT_FAILURE`, and the
+   parse in `src/disk/ata_smart.rs` is tested only against buffers this project
+   built. This machine has three NVMe drives and a USB gadget; on all four the
+   path returns `NotSupported`, which exercises the decline and nothing else.
+
+   **If you have a SATA SSD or HDD, that is the thing to use it for.** One run of
+   `cargo run --example disk_monitor` against `smartctl -A` settles it. Watch
+   power-on hours in particular: a minority of drives report that attribute in
+   minutes, and nothing in the structure says which.
+
+   Note for anyone re-reading the earlier plan: `IOCTL_ATA_PASS_THROUGH` was the
+   scoped approach and it is a dead end. Its `CTL_CODE` carries `FILE_READ_ACCESS
+   | FILE_WRITE_ACCESS`, so the access check happens before the driver is reached
+   and a read/write handle on `\\.\PhysicalDriveN` needs Administrator — measured,
+   `ERROR_ACCESS_DENIED` on all four drives. Whether an ioctl needs elevation is a
+   property of its `CTL_CODE`, and is worth reading off the definition before
+   planning around it.
 
 2. **macOS GPU, power and temperature are still unimplemented.** CPU (per-core,
    with nice time), memory, swap, uptime and board info work — `Simon::cpu()`,
@@ -61,6 +77,10 @@ feature stayed broken through eight published versions.
    costs N PowerShell invocations. Use `smart::SmartMonitor` directly for all
    drives. Documented at both call sites.
 
+   Narrower since 3.3.0: NVMe and SATA drives are answered by their passthrough
+   before the fallback is reached, so this now costs only for devices that decline
+   both — USB bridges, chiefly. It is not fixed, only less often paid.
+
 ## Guardrails, and why each exists
 
 | Test | Catches |
@@ -70,6 +90,8 @@ feature stayed broken through eight published versions.
 | `tests/macos_readers.rs` | macOS readings that are not plausible readings; runs on `macos-latest`, which is the only Mac this project has |
 | `tests/documentation_links.rs` | Broken relative links; machine identifiers in docs; documented `simon …` commands that do not exist |
 | `smart::tests::a_drive_with_no_readable_counters_is_not_graded_healthy` | Health graded from an empty scorecard |
+| `smart::tests::a_self_reported_failure_survives_inference` | A drive predicting its own failure being scored back to `Good` from clean-looking counters |
+| `disk::ata_smart::tests` | ATA structure misparses: bad checksum accepted, zero-filled buffer read as a clean drive, temperature taken from the full 48-bit raw, table truncated at the first gap |
 | `tests/plausibility.rs` | Physically impossible readings |
 | `tests/agentic_contract.rs` | Schema/resolver disagreement on the agent surface |
 
@@ -82,6 +104,14 @@ that cannot fail is worse than none.
 deleted `mut` and imports that only Linux and Windows need, silently breaking
 both (21 and 14 errors). A `cfg` block that is empty on the target being fixed
 makes bindings look unused. Six files had to be reverted.
+
+**Whether a Windows ioctl needs elevation is written in its `CTL_CODE`.** The
+access bits in the definition, and the mask the handle was opened with, decide it
+— not how privileged the operation sounds. Two capabilities were scoped as
+"needs Administrator" on the second reading and turned out not to (NVMe in 3.1.0,
+ATA in 3.3.0), and one was scoped as reachable and is not
+(`IOCTL_ATA_PASS_THROUGH`). Reading the `CTL_CODE` first would have settled all
+three in a minute each.
 
 **A manual grep is not a substitute for asking the binary.** A hand sweep for
 documented-but-nonexistent commands missed 29 of 38 cases; a test comparing docs
