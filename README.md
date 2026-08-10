@@ -534,10 +534,11 @@ USB bridges that tunnel neither fall back to WMI, where
 `Get-StorageReliabilityCounter` does require elevation. Unelevated, their identity
 fields still resolve while the counters come back `None`.
 
-On Windows, `smart_info()` spawns a PowerShell invocation per device for any drive
-that reaches the WMI fallback — no longer NVMe or SATA, but still USB bridges and
-anything else the two passthroughs decline. To query every drive at once, use
-`simonlib::smart::SmartMonitor` directly.
+Drives that reach the WMI fallback — no longer NVMe or SATA, but still USB bridges
+and anything else the two passthroughs decline — are served from one collector
+sweep shared across every drive and accessor for two seconds. A sweep is around a
+second, so this matters. Construct a `simonlib::smart::SmartMonitor` directly if
+you need a guaranteed-fresh one.
 
 See `cargo run --all-features --example disk_monitor` for the full surface.
 

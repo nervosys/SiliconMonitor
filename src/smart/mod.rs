@@ -31,6 +31,36 @@
 
 use crate::error::SimonError;
 use serde::{Deserialize, Serialize};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
+
+/// How stale a shared collector run may be before [`SmartMonitor::cached_disks`]
+/// takes another.
+///
+/// Chosen to be long enough to cover one pass over every drive — the burst this
+/// exists to collapse — and short enough that two polls a caller would consider
+/// separate are not served the same reading. `docs/DISK_MONITORING.md` suggests
+/// polling SMART about once a minute, so at this age a caller polling at any
+/// reasonable rate still gets a fresh sweep every time.
+pub const CACHE_MAX_AGE: Duration = Duration::from_secs(2);
+
+/// One shared collector run. See [`SmartMonitor::cached_disks`].
+static SMART_CACHE: OnceLock<Mutex<SmartCache>> = OnceLock::new();
+
+struct SmartCache {
+    /// When the run was taken. `None` before the first one.
+    taken: Option<Instant>,
+    disks: Arc<[SmartDiskInfo]>,
+}
+
+impl SmartCache {
+    fn empty() -> Self {
+        Self {
+            taken: None,
+            disks: Arc::from(Vec::new()),
+        }
+    }
+}
 
 /// Overall disk health assessment
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -166,6 +196,56 @@ impl SmartMonitor {
 
     pub fn disks(&self) -> &[SmartDiskInfo] {
         &self.disks
+    }
+
+    /// The whole drive list from a collector run no older than [`CACHE_MAX_AGE`],
+    /// shared process-wide.
+    ///
+    /// A collector run is expensive and enumerates *every* drive: on Windows one
+    /// PowerShell invocation, on Linux one `smartctl` invocation per drive. The
+    /// [`crate::disk::DiskDevice`] trait is per-device, so its implementations
+    /// each ran a full sweep to pick one entry out of it — `smart_info()` across N
+    /// disks cost N sweeps, and because `health()`, `smart_info()` and
+    /// `nvme_info()` each did it, a single pass over a four-drive machine spawned
+    /// a subprocess a dozen times on Windows and around fifty on Linux.
+    ///
+    /// The cache is keyed on nothing but time, because the collector takes no
+    /// arguments — there is one answer, and the only question is how old it may
+    /// be. [`CACHE_MAX_AGE`] is far below any sensible SMART polling interval
+    /// (`docs/DISK_MONITORING.md` suggests a minute), so this collapses the burst
+    /// within one pass without making consecutive polls return the same reading.
+    ///
+    /// Callers wanting a guaranteed-fresh sweep should construct a
+    /// [`SmartMonitor`] directly; this deliberately does not.
+    pub fn cached_disks() -> Arc<[SmartDiskInfo]> {
+        let cache = SMART_CACHE.get_or_init(|| Mutex::new(SmartCache::empty()));
+
+        // A poisoned lock means some other caller panicked mid-refresh. The cached
+        // list is a plain value and cannot have been left inconsistent by that, so
+        // recovering is better than propagating a panic into disk enumeration.
+        let mut cache = cache.lock().unwrap_or_else(|e| e.into_inner());
+
+        if let Some(taken) = cache.taken {
+            if taken.elapsed() < CACHE_MAX_AGE {
+                return Arc::clone(&cache.disks);
+            }
+        }
+
+        // The refresh happens with the lock held, so concurrent callers wait and
+        // then share this result rather than each spawning their own sweep. That
+        // is the entire point: the contended case is exactly the one that used to
+        // be most expensive.
+        let disks: Arc<[SmartDiskInfo]> = match Self::new() {
+            Ok(monitor) => monitor.disks.into(),
+            // A failed sweep is cached too, for the same window. Retrying it once
+            // per call would reproduce the cost this exists to remove, on the
+            // machines least able to afford it.
+            Err(_) => Arc::from(Vec::new()),
+        };
+
+        cache.taken = Some(Instant::now());
+        cache.disks = Arc::clone(&disks);
+        disks
     }
 
     /// Get disks with health warnings or worse.
@@ -908,6 +988,24 @@ mod tests {
         let _ = monitor.disks();
         let _ = monitor.unhealthy_disks();
         let _ = monitor.max_temperature();
+    }
+
+    /// Two calls in quick succession must be served by one collector run. A fresh
+    /// sweep allocates a new list, so a shared allocation is the cheapest thing a
+    /// test can observe that distinguishes the two.
+    #[test]
+    fn consecutive_calls_share_one_collector_run() {
+        let first = SmartMonitor::cached_disks();
+        let second = SmartMonitor::cached_disks();
+        assert!(Arc::ptr_eq(&first, &second));
+    }
+
+    /// The window has to be shorter than the polling interval the documentation
+    /// recommends, or a caller polling as advised would be served the same reading
+    /// twice and never know.
+    #[test]
+    fn the_cache_window_is_shorter_than_a_polling_interval() {
+        assert!(CACHE_MAX_AGE < Duration::from_secs(60));
     }
 
     #[test]

@@ -156,15 +156,14 @@ impl WindowsDisk {
 impl WindowsDisk {
     /// This drive's entry from the SMART collector, matched on physical index.
     ///
-    /// The collector enumerates every drive in one PowerShell round trip, so this
-    /// costs a subprocess per call. The trait is per-device, which makes that
-    /// unavoidable here; a caller wanting all drives should use
-    /// [`crate::smart::SmartMonitor`] directly and read the whole list once.
+    /// The collector enumerates every drive in one PowerShell round trip, so
+    /// picking one entry out of it used to cost a subprocess per call. It now
+    /// reads a run shared across every drive and every accessor —
+    /// [`crate::smart::SmartMonitor::cached_disks`] — which is what makes the
+    /// per-device trait affordable over a whole machine.
     fn smart_disk(&self) -> Option<crate::smart::SmartDiskInfo> {
         let wanted = format!(r"\\.\PhysicalDrive{}", self.disk_index);
-        crate::smart::SmartMonitor::new()
-            .ok()?
-            .disks()
+        crate::smart::SmartMonitor::cached_disks()
             .iter()
             .find(|d| d.device == wanted)
             .cloned()

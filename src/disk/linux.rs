@@ -77,14 +77,14 @@ impl LinuxDisk {
 impl LinuxDisk {
     /// This drive's entry from the SMART collector, matched on device path.
     ///
-    /// One collector run enumerates every drive, so this costs a full sweep per
-    /// call. The trait is per-device, which makes that unavoidable here; a caller
-    /// wanting all drives should use [`crate::smart::SmartMonitor`] directly.
+    /// One collector run spawns `smartctl` once per drive, so picking one entry
+    /// out of it used to cost a full sweep per call — quadratic over a machine,
+    /// and the worst case of the two platforms. It now reads a run shared across
+    /// every drive and every accessor,
+    /// [`crate::smart::SmartMonitor::cached_disks`].
     fn smart_disk(&self) -> Option<crate::smart::SmartDiskInfo> {
         let wanted = format!("/dev/{}", self.name);
-        crate::smart::SmartMonitor::new()
-            .ok()?
-            .disks()
+        crate::smart::SmartMonitor::cached_disks()
             .iter()
             .find(|d| d.device == wanted)
             .cloned()

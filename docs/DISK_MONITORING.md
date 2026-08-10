@@ -429,7 +429,11 @@ NVMe SMART / Health Information (Log Page 0x02):
 
 ## Performance Considerations
 
-- **Caching**: Device info rarely changes, should be cached
+- **Caching**: Device info rarely changes, should be cached. The SMART collector
+  is shared process-wide for `smart::CACHE_MAX_AGE` (2 s), because a sweep
+  enumerates every drive and the per-device trait would otherwise pay for a whole
+  sweep to read one entry — measured at 1.23 s per sweep on Windows, and one
+  `smartctl` spawn per drive on Linux
 - **I/O Stats**: Updated frequently (every few seconds acceptable)
 - **Temperature**: Poll every 5-30 seconds
 - **SMART**: Query every minute or on-demand

@@ -72,14 +72,80 @@ feature stayed broken through eight published versions.
    hardware. The sysfs paths (`/sys/class/nvme/<ctrl>/{model,serial,firmware_rev,cntlid}`)
    are documented kernel ABI, but tests are not a substitute for a drive.
 
-4. **`smart_disk()` spawns a subprocess per call.** The trait is per-device and
-   the collector enumerates every drive per run, so `smart_info()` across N disks
-   costs N PowerShell invocations. Use `smart::SmartMonitor` directly for all
-   drives. Documented at both call sites.
+4. ~~**`smart_disk()` spawns a subprocess per call.**~~ Fixed in 3.3.0 by
+   `SmartMonitor::cached_disks()`, which shares one sweep process-wide for 2 s.
+   A sweep is 1.23 s on this machine, and a four-drive pass could take twelve of
+   them. Two things narrowed the problem before it was fixed: NVMe and SATA drives
+   are now answered by their passthrough and never reach the collector at all, so
+   what remains to benefit is USB storage — and every Linux machine, where a
+   sweep spawns `smartctl` once per drive and the old shape was quadratic.
 
-   Narrower since 3.3.0: NVMe and SATA drives are answered by their passthrough
-   before the fallback is reached, so this now costs only for devices that decline
-   both — USB bridges, chiefly. It is not fixed, only less often paid.
+## The plan for what is left
+
+Everything remaining is blocked on hardware this project does not have. That is
+the single fact to take from this section: there is no more code to write that
+would be honest to write. Each item below is a *verification* task with a
+concrete recipe, ordered by what it unblocks.
+
+**A. Verify the ATA path, then tag 3.3.0.** *Needs: any SATA SSD or HDD, on
+Windows. Half an hour.*
+
+1. Attach the drive — internal, or a USB-SATA enclosure whose bridge tunnels
+   SMART (JMicron and ASMedia generally do; the cheapest ones do not).
+2. `cargo run --example disk_monitor`, and `smartctl -A /dev/sdX` for the same
+   drive.
+3. Compare, in this order of importance: reallocated (5), pending (197) and
+   uncorrectable (198) sector counts, since those are what `health()` grades on
+   and what no other Windows path can reach; then temperature; then power-on
+   hours.
+4. If nothing appears at all, the parse refused the structure. The likely cause
+   is the checksum — `AtaSmartData::parse` declines a structure whose final byte
+   does not make all 512 sum to zero. Dump `VendorSpecific` and check by hand
+   before loosening it, and if it must be loosened, note that smartmontools
+   warns-and-continues here and this deliberately does not.
+5. Watch power-on hours specifically. A minority of drives report that attribute
+   in minutes rather than hours and nothing in the structure says which; if the
+   number is 60× what it should be, that is what happened, and it is a per-vendor
+   quirk table, not a bug in the parse.
+
+Done when a real drive's attributes match `smartctl -A`. Then `git tag v3.3.0`.
+Until then 3.3.0 is committed but deliberately untagged.
+
+**B. Establish what macOS power and temperature can reach unelevated.** *Needs: a
+Mac. An hour, before any code.*
+
+This is research, not implementation, and doing it first is the point.
+`powermetrics` requires root, which would make the obvious implementation
+unusable in the same way `IOCTL_ATA_PASS_THROUGH` would have been — and the ATA
+work is the argument for checking first. Run, as a normal user:
+
+- `powermetrics -n1 --samplers cpu_power` — expected to fail; confirm it does.
+- `ioreg -rc AppleSmartBattery` and `ioreg -rc IOPMPowerSource` for power.
+- `ioreg -rc AppleSMC` and the `SMC` keys for temperature.
+- On Apple silicon, `IOHIDEventSystemClient` temperature sensors, which are
+  readable unelevated where SMC keys are not.
+
+Write down which of these answer without root *before* writing a reader. If none
+do, the honest outcome is a documented `NotSupported`, not an implementation that
+only works under `sudo`.
+
+**C. Validate the macOS readers that already exist.** *Needs: a Mac. Twenty
+minutes.* Compare `Simon::cpu()` and `Simon::memory()` against Activity Monitor.
+`tests/macos_readers.rs` checks readings are *plausible*, not *correct*; the
+specific thing in doubt is whether the `vm_stat` accounting matches what a user
+sees under "Memory Used", which is a different figure from free-plus-inactive.
+
+**D. Run the Linux SMART/NVMe paths on real hardware.** *Needs: a Linux box with
+an NVMe drive. Twenty minutes.* `cargo run --example disk_monitor` against
+`nvme list` and `smartctl -A`. The sysfs paths are documented kernel ABI and the
+code has passed CI, but CI has no drive. The quadratic collector shape fixed in
+3.3.0 was worst on Linux, so this is also the first real check of that.
+
+**Deliberately not planned:** SMART failure thresholds on Windows. They come from
+SMART READ THRESHOLDS, which has no `IOCTL_STORAGE_*` equivalent, so the only
+route is an elevated pass-through — giving back exactly what 3.3.0 bought. The
+drive's own `PredictFailure` verdict is the same judgement the thresholds would
+have produced, and is already reported.
 
 ## Guardrails, and why each exists
 

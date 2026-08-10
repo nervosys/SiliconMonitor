@@ -46,6 +46,26 @@ than the one that was planned for it.
   present as `Good`. `Failed` is now left alone, being the one verdict that was
   read rather than inferred.
 
+- **The SMART collector no longer re-runs per device.**
+  `SmartMonitor::cached_disks()` shares one sweep, process-wide, for
+  `CACHE_MAX_AGE` (2 s). `DiskDevice`'s implementations pick a single entry out of
+  a list that enumerates every drive, so each of `health()`, `smart_info()` and
+  `nvme_info()` used to pay for a full sweep — a subprocess on Windows, one
+  `smartctl` per drive on Linux. A four-drive machine making all three calls per
+  drive could take twelve sweeps where one would do.
+
+  A sweep measures 1.23 s on the development machine (mean of five, release
+  build); a warm `cached_disks()` call is free. The end-to-end saving depends on
+  how many drives reach the fallback at all — on a machine whose drives are all
+  NVMe or SATA, the passthroughs above already answer without a sweep, and the
+  change is not visible above timing noise. It is the machines with USB storage,
+  and every Linux machine, that were paying the twelve.
+
+  The window is deliberately far shorter than the polling interval
+  `docs/DISK_MONITORING.md` recommends, so a caller polling as advised still gets
+  a fresh sweep every time. Callers needing a guaranteed-fresh one construct a
+  `SmartMonitor` directly, as before.
+
 ### Changed
 
 - The zero-access handle on `\\.\PhysicalDriveN` moved to `disk::windows_device`,
