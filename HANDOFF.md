@@ -11,7 +11,7 @@ Current as of 3.3.0. This file is excluded from the published crate
 | 3.0.1 | Feature-combination fix — see CHANGELOG. |
 | 3.1.0 | Windows NVMe passthrough (unelevated) and macOS CPU/memory. Published, tagged. |
 | 3.2.0 | macOS per-core CPU, NVMe current power state, `--all-targets` in the feature job. Published, tagged. |
-| 3.3.0 | Windows ATA SMART (unelevated). Committed, not yet tagged. |
+| 3.3.0 | Windows ATA SMART (unelevated), shared SMART collector, ontology to 94 entities. Published, tagged `v3.3.0`. The ATA parse is unverified against real SATA hardware — see open work 1. |
 | 2.1.5 | Committed, never published. Documentation only; superseded by 3.0.0. |
 
 ## Verification that is worth repeating
@@ -100,8 +100,12 @@ the single fact to take from this section: there is no more code to write that
 would be honest to write. Each item below is a *verification* task with a
 concrete recipe, ordered by what it unblocks.
 
-**A. Verify the ATA path, then tag 3.3.0.** *Needs: any SATA SSD or HDD, on
-Windows. Half an hour.*
+**A. Verify the ATA path against a real SATA drive.** *Needs: any SATA SSD or
+HDD, on Windows. Half an hour.* **This is now retrospective.** The
+recommendation was to hold the release until this check had been made; the
+decision was to publish anyway, so 3.3.0 is on crates.io with the ATA parse
+unverified. That raises the stakes rather than removing them: a defect found here
+is a yank or a 3.3.1, not an unreleased fix.
 
 1. Attach the drive — internal, or a USB-SATA enclosure whose bridge tunnels
    SMART (JMicron and ASMedia generally do; the cheapest ones do not).
@@ -121,8 +125,10 @@ Windows. Half an hour.*
    number is 60× what it should be, that is what happened, and it is a per-vendor
    quirk table, not a bug in the parse.
 
-Done when a real drive's attributes match `smartctl -A`. Then `git tag v3.3.0`.
-Until then 3.3.0 is committed but deliberately untagged.
+Done when a real drive's attributes match `smartctl -A`. If they do not, the fix
+ships as 3.3.1; if the readings are actively wrong rather than merely absent,
+yank 3.3.0, because a wrong SMART attribute is the class of error that gets acted
+on.
 
 **B. Establish what macOS power and temperature can reach unelevated.** *Needs: a
 Mac. An hour, before any code.*
