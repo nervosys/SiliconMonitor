@@ -43,6 +43,10 @@ use std::result::Result;
 /// port delivers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tab {
+    Overview,
+    Cpu,
+    Accelerators,
+    Processes,
     Memory,
     Network,
     Disk,
@@ -52,7 +56,11 @@ pub enum Tab {
 }
 
 impl Tab {
-    pub const PORTED: [Tab; 6] = [
+    pub const PORTED: [Tab; 10] = [
+        Tab::Overview,
+        Tab::Cpu,
+        Tab::Accelerators,
+        Tab::Processes,
         Tab::Memory,
         Tab::Network,
         Tab::Disk,
@@ -63,6 +71,10 @@ impl Tab {
 
     pub fn title(self) -> &'static str {
         match self {
+            Tab::Overview => "Overview",
+            Tab::Cpu => "CPU",
+            Tab::Accelerators => "Accelerators",
+            Tab::Processes => "Processes",
             Tab::Memory => "Memory",
             Tab::Network => "Network",
             Tab::Disk => "Disk",
@@ -89,6 +101,41 @@ pub struct MemoryView {
     pub shared_mb: f64,
     /// free + buffers + cached, the same arithmetic `free -h` reports.
     pub available_mb: f64,
+}
+
+/// Per-core and aggregate CPU utilisation.
+#[derive(Debug, Clone, Default)]
+pub struct CpuView {
+    pub core_count: usize,
+    /// (core id, busy percent, governor) — busy is 100 - idle.
+    pub cores: Vec<(usize, f32, String)>,
+    pub total_busy_percent: f32,
+    pub total_user: f32,
+    pub total_system: f32,
+    pub total_idle: f32,
+}
+
+/// One accelerator: GPU, and whatever else the vendor layers report.
+#[derive(Debug, Clone, Default)]
+pub struct AcceleratorRow {
+    pub index: usize,
+    pub vendor: String,
+    pub name: String,
+    /// Absent where the device declines to report, not defaulted to zero.
+    pub utilization_percent: Option<u8>,
+    pub memory_used_mb: Option<f64>,
+    pub memory_total_mb: Option<f64>,
+    pub temperature_c: Option<f32>,
+    pub power_watts: Option<f64>,
+}
+
+/// One process row.
+#[derive(Debug, Clone, Default)]
+pub struct ProcessRow {
+    pub pid: u32,
+    pub name: String,
+    pub cpu_percent: f32,
+    pub memory_mb: f64,
 }
 
 /// One drive, reduced to what the tab draws.
@@ -148,6 +195,18 @@ pub struct NetworkView {
     pub total_tx: f64,
 }
 
+/// The at-a-glance pane: one line per subsystem, drawn from the other panes.
+///
+/// Derived in the view rather than loaded, because every number it shows is
+/// already in the model. A separate loader would let Overview and the tab it
+/// summarises disagree, which is exactly the kind of drift a single source of
+/// truth exists to prevent.
+#[derive(Debug, Clone, Default)]
+pub struct OverviewRow {
+    pub label: String,
+    pub value: String,
+}
+
 /// What a pane is currently able to show.
 ///
 /// `Loading` is a real state rather than an absence, because the 3.9.0 bug was
@@ -170,6 +229,9 @@ impl<T> Pane<T> {
 /// The application model.
 pub struct SimonApp {
     pub tab: Tab,
+    pub cpu: Pane<CpuView>,
+    pub accelerators: Pane<Vec<AcceleratorRow>>,
+    pub processes: Pane<Vec<ProcessRow>>,
     pub memory: Pane<MemoryView>,
     pub network: Pane<NetworkView>,
     pub disks: Pane<Vec<DiskRow>>,
@@ -188,6 +250,9 @@ pub enum Msg {
     SystemLoaded(Result<SystemView, String>),
     PeripheralsLoaded(Result<PeripheralsView, String>),
     ProfilesLoaded(Result<ProfilesView, String>),
+    CpuLoaded(Result<CpuView, String>),
+    AcceleratorsLoaded(Result<Vec<AcceleratorRow>, String>),
+    ProcessesLoaded(Result<Vec<ProcessRow>, String>),
 }
 
 impl Default for SimonApp {
@@ -199,7 +264,10 @@ impl Default for SimonApp {
 impl SimonApp {
     pub fn new() -> Self {
         Self {
-            tab: Tab::Memory,
+            tab: Tab::Overview,
+            cpu: Pane::Loading,
+            accelerators: Pane::Loading,
+            processes: Pane::Loading,
             memory: Pane::Loading,
             network: Pane::Loading,
             disks: Pane::Loading,
@@ -222,6 +290,9 @@ impl SimonApp {
             Command::Task(Box::new(|| Msg::SystemLoaded(read_system()))),
             Command::Task(Box::new(|| Msg::PeripheralsLoaded(read_peripherals()))),
             Command::Task(Box::new(|| Msg::ProfilesLoaded(read_profiles()))),
+            Command::Task(Box::new(|| Msg::CpuLoaded(read_cpu()))),
+            Command::Task(Box::new(|| Msg::AcceleratorsLoaded(read_accelerators()))),
+            Command::Task(Box::new(|| Msg::ProcessesLoaded(read_processes()))),
         ])
     }
 }
@@ -492,6 +563,109 @@ fn read_profiles() -> Result<ProfilesView, String> {
     })
 }
 
+/// Read per-core CPU utilisation.
+///
+/// `CpuStats::new()` is a zero-constructor — no cores, 100% idle — so this calls
+/// the per-platform reader directly. See HANDOFF.md open work 10; the same trap
+/// shipped two defects in the egui GUI.
+fn read_cpu() -> Result<CpuView, String> {
+    #[cfg(target_os = "windows")]
+    let stats = crate::platform::windows::read_cpu_stats().map_err(|e| e.to_string())?;
+    #[cfg(target_os = "linux")]
+    let stats = crate::platform::linux::cpu::read_cpu_stats().map_err(|e| e.to_string())?;
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+    return Err("no CPU reader for this platform yet".to_string());
+
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    {
+        let cores = stats
+            .cores
+            .iter()
+            .map(|c| {
+                // Busy is derived from idle rather than summing user+system+…:
+                // the fields a platform fills in vary, and idle is the one every
+                // reader here populates.
+                let busy = c.idle.map(|i| 100.0 - i).unwrap_or(0.0);
+                (c.id, busy, c.governor.clone())
+            })
+            .collect::<Vec<_>>();
+        Ok(CpuView {
+            core_count: cores.len(),
+            cores,
+            total_busy_percent: 100.0 - stats.total.idle,
+            total_user: stats.total.user,
+            total_system: stats.total.system,
+            total_idle: stats.total.idle,
+        })
+    }
+}
+
+/// Enumerate accelerators.
+///
+/// A device that declines to report a metric yields `None`, never zero. A GPU
+/// reading "0 W" and a GPU that does not expose power are different claims, and
+/// this pane is read by agents that cannot tell them apart afterwards.
+fn read_accelerators() -> Result<Vec<AcceleratorRow>, String> {
+    let _com = crate::pipeline::com_guard();
+    let collection = crate::gpu::GpuCollection::auto_detect().map_err(|e| e.to_string())?;
+
+    Ok(collection
+        .gpus()
+        .iter()
+        .enumerate()
+        .map(|(i, gpu)| {
+            let stat = gpu.static_info().ok();
+            let dyn_info = gpu.dynamic_info().ok();
+            AcceleratorRow {
+                index: stat.as_ref().map(|s| s.index).unwrap_or(i),
+                vendor: stat
+                    .as_ref()
+                    .map(|s| format!("{:?}", s.vendor))
+                    .unwrap_or_else(|| "unknown".to_string()),
+                name: stat
+                    .as_ref()
+                    .map(|s| s.name.clone())
+                    .unwrap_or_else(|| gpu.name().unwrap_or_else(|_| "unknown".to_string())),
+                utilization_percent: dyn_info.as_ref().map(|d| d.utilization),
+                memory_used_mb: dyn_info
+                    .as_ref()
+                    .map(|d| d.memory.used as f64 / 1024.0 / 1024.0),
+                memory_total_mb: dyn_info
+                    .as_ref()
+                    .map(|d| d.memory.total as f64 / 1024.0 / 1024.0),
+                temperature_c: dyn_info
+                    .as_ref()
+                    .and_then(|d| d.thermal.temperature)
+                    .map(|t| t as f32),
+                power_watts: dyn_info
+                    .as_ref()
+                    .and_then(|d| d.power.draw)
+                    .map(|w| w as f64),
+            }
+        })
+        .collect())
+}
+
+/// Read the top processes by CPU.
+///
+/// Capped at 32 rows. The cap is applied by the loader, not the view, so the
+/// model says exactly what the tab can show and a headless read cannot be
+/// misled into thinking it received the whole process table.
+fn read_processes() -> Result<Vec<ProcessRow>, String> {
+    let mut monitor = crate::process_monitor::ProcessMonitor::new().map_err(|e| e.to_string())?;
+    let procs = monitor.processes_by_cpu().map_err(|e| e.to_string())?;
+    Ok(procs
+        .into_iter()
+        .take(32)
+        .map(|p| ProcessRow {
+            pid: p.pid,
+            name: p.name,
+            cpu_percent: p.cpu_percent,
+            memory_mb: p.memory_bytes as f64 / 1024.0 / 1024.0,
+        })
+        .collect())
+}
+
 fn format_bytes(bytes: f64) -> String {
     const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
     let mut value = bytes;
@@ -546,6 +720,9 @@ impl Model for SimonApp {
                 self.system = Pane::Loading;
                 self.peripherals = Pane::Loading;
                 self.profiles = Pane::Loading;
+                self.cpu = Pane::Loading;
+                self.accelerators = Pane::Loading;
+                self.processes = Pane::Loading;
                 Self::load_all()
             }
             Msg::MemoryLoaded(Ok(v)) => {
@@ -596,6 +773,30 @@ impl Model for SimonApp {
                 self.profiles = Pane::Failed(e);
                 Command::None
             }
+            Msg::CpuLoaded(Ok(v)) => {
+                self.cpu = Pane::Ready(v);
+                Command::None
+            }
+            Msg::CpuLoaded(Err(e)) => {
+                self.cpu = Pane::Failed(e);
+                Command::None
+            }
+            Msg::AcceleratorsLoaded(Ok(v)) => {
+                self.accelerators = Pane::Ready(v);
+                Command::None
+            }
+            Msg::AcceleratorsLoaded(Err(e)) => {
+                self.accelerators = Pane::Failed(e);
+                Command::None
+            }
+            Msg::ProcessesLoaded(Ok(v)) => {
+                self.processes = Pane::Ready(v);
+                Command::None
+            }
+            Msg::ProcessesLoaded(Err(e)) => {
+                self.processes = Pane::Failed(e);
+                Command::None
+            }
         }
     }
 
@@ -618,6 +819,10 @@ impl Model for SimonApp {
             .render(chunks[0], frame, &mut tab_state);
 
         match self.tab {
+            Tab::Overview => self.view_overview(chunks[1], frame),
+            Tab::Cpu => self.view_cpu(chunks[1], frame),
+            Tab::Accelerators => self.view_accelerators(chunks[1], frame),
+            Tab::Processes => self.view_processes(chunks[1], frame),
             Tab::Memory => self.view_memory(chunks[1], frame),
             Tab::Network => self.view_network(chunks[1], frame),
             Tab::Disk => self.view_disk(chunks[1], frame),
@@ -640,6 +845,196 @@ fn rows_of(area: Rect, count: usize) -> Vec<Rect> {
 }
 
 impl SimonApp {
+    /// One line per subsystem, derived from the panes rather than reloaded.
+    fn view_overview(&self, area: Rect, frame: &mut Frame<'_>) {
+        let mut rows: Vec<(String, String)> = Vec::new();
+
+        // Each arm states the pane's condition rather than skipping it. A missing
+        // Overview line would be indistinguishable from a healthy subsystem with
+        // nothing to say, which is the ambiguity this whole port exists to remove.
+        let summarise = |label: &str, text: String| (label.to_string(), text);
+
+        rows.push(summarise(
+            "CPU",
+            match &self.cpu {
+                Pane::Loading => "loading…".into(),
+                Pane::Failed(e) => format!("unavailable — {e}"),
+                Pane::Ready(c) => format!(
+                    "{:.0}% busy across {} cores",
+                    c.total_busy_percent, c.core_count
+                ),
+            },
+        ));
+        rows.push(summarise(
+            "Memory",
+            match &self.memory {
+                Pane::Loading => "loading…".into(),
+                Pane::Failed(e) => format!("unavailable — {e}"),
+                Pane::Ready(m) => format!(
+                    "{:.0} / {:.0} MB ({:.0}%)",
+                    m.used_mb, m.total_mb, m.usage_percent
+                ),
+            },
+        ));
+        rows.push(summarise(
+            "Accelerators",
+            match &self.accelerators {
+                Pane::Loading => "loading…".into(),
+                Pane::Failed(e) => format!("unavailable — {e}"),
+                Pane::Ready(a) if a.is_empty() => "none detected".into(),
+                Pane::Ready(a) => format!("{} detected", a.len()),
+            },
+        ));
+        rows.push(summarise(
+            "Disks",
+            match &self.disks {
+                Pane::Loading => "loading…".into(),
+                Pane::Failed(e) => format!("unavailable — {e}"),
+                Pane::Ready(d) if d.is_empty() => "none detected".into(),
+                Pane::Ready(d) => format!("{} attached", d.len()),
+            },
+        ));
+        rows.push(summarise(
+            "Network",
+            match &self.network {
+                Pane::Loading => "loading…".into(),
+                Pane::Failed(e) => format!("unavailable — {e}"),
+                Pane::Ready(n) => format!("{} interfaces", n.interfaces.len()),
+            },
+        ));
+        rows.push(summarise(
+            "Processes",
+            match &self.processes {
+                Pane::Loading => "loading…".into(),
+                Pane::Failed(e) => format!("unavailable — {e}"),
+                Pane::Ready(p) => format!("top {} by CPU", p.len()),
+            },
+        ));
+
+        let r = rows_of(area, 1 + rows.len());
+        Label::new("Overview")
+            .bold()
+            .agent_id("overview_heading")
+            .render(r[0], frame);
+        for (i, (label, value)) in rows.iter().enumerate() {
+            Label::new(format!("{label}: {value}"))
+                .agent_id(format!("overview_{}", label.to_lowercase()))
+                .render(r[i + 1], frame);
+        }
+    }
+
+    fn view_cpu(&self, area: Rect, frame: &mut Frame<'_>) {
+        match &self.cpu {
+            Pane::Loading => Label::new("Loading CPU information…")
+                .agent_id("cpu_status")
+                .render(area, frame),
+            Pane::Failed(e) => Label::new(format!("CPU unavailable: {e}"))
+                .agent_id("cpu_status")
+                .render(area, frame),
+            Pane::Ready(c) => {
+                let shown = c.cores.len().min(32);
+                let r = rows_of(area, 3 + shown);
+                Label::new("CPU")
+                    .bold()
+                    .agent_id("cpu_heading")
+                    .render(r[0], frame);
+                ProgressBar::new(c.total_busy_percent / 100.0)
+                    .label(format!("{:.1}% busy", c.total_busy_percent))
+                    .agent_id("cpu_total_bar")
+                    .render(r[1], frame);
+                Label::new(format!(
+                    "user {:.1}%  system {:.1}%  idle {:.1}%  cores {}",
+                    c.total_user, c.total_system, c.total_idle, c.core_count
+                ))
+                .agent_id("cpu_totals")
+                .render(r[2], frame);
+                for (i, (id, busy, governor)) in c.cores.iter().take(shown).enumerate() {
+                    let gov = if governor.trim().is_empty() {
+                        String::new()
+                    } else {
+                        format!("  [{governor}]")
+                    };
+                    Label::new(format!("core {id}: {busy:.0}%{gov}"))
+                        .agent_id(format!("cpu_core_{id}"))
+                        .render(r[i + 3], frame);
+                }
+            }
+        }
+    }
+
+    fn view_accelerators(&self, area: Rect, frame: &mut Frame<'_>) {
+        match &self.accelerators {
+            Pane::Loading => Label::new("Loading accelerator information…")
+                .agent_id("accelerators_status")
+                .render(area, frame),
+            Pane::Failed(e) => Label::new(format!("Accelerators unavailable: {e}"))
+                .agent_id("accelerators_status")
+                .render(area, frame),
+            Pane::Ready(rows) if rows.is_empty() => Label::new("No accelerators detected")
+                .agent_id("accelerators_empty")
+                .render(area, frame),
+            Pane::Ready(rows) => {
+                let r = rows_of(area, 1 + rows.len().min(8));
+                Label::new("Accelerators")
+                    .bold()
+                    .agent_id("accelerators_heading")
+                    .render(r[0], frame);
+                for (i, a) in rows.iter().take(8).enumerate() {
+                    // A metric the device did not report is omitted, never zeroed.
+                    let mut parts = vec![format!("{} {}", a.vendor, a.name)];
+                    if let Some(u) = a.utilization_percent {
+                        parts.push(format!("{u}% util"));
+                    }
+                    if let (Some(used), Some(total)) = (a.memory_used_mb, a.memory_total_mb) {
+                        parts.push(format!("{used:.0}/{total:.0} MB"));
+                    }
+                    if let Some(t) = a.temperature_c {
+                        parts.push(format!("{t:.0}°C"));
+                    }
+                    if let Some(w) = a.power_watts {
+                        parts.push(format!("{w:.0} W"));
+                    }
+                    Label::new(parts.join("  "))
+                        .agent_id(format!("accelerator_{}", a.index))
+                        .render(r[i + 1], frame);
+                }
+            }
+        }
+    }
+
+    fn view_processes(&self, area: Rect, frame: &mut Frame<'_>) {
+        match &self.processes {
+            Pane::Loading => Label::new("Loading process list…")
+                .agent_id("processes_status")
+                .render(area, frame),
+            Pane::Failed(e) => Label::new(format!("Processes unavailable: {e}"))
+                .agent_id("processes_status")
+                .render(area, frame),
+            Pane::Ready(rows) if rows.is_empty() => Label::new("No processes reported")
+                .agent_id("processes_empty")
+                .render(area, frame),
+            Pane::Ready(rows) => {
+                let shown = rows.len().min(24);
+                let r = rows_of(area, 2 + shown);
+                Label::new("Processes")
+                    .bold()
+                    .agent_id("processes_heading")
+                    .render(r[0], frame);
+                Label::new(format!("top {} by CPU", rows.len()))
+                    .agent_id("processes_caption")
+                    .render(r[1], frame);
+                for (i, p) in rows.iter().take(shown).enumerate() {
+                    Label::new(format!(
+                        "{:>7}  {:>5.1}%  {:>8.0} MB  {}",
+                        p.pid, p.cpu_percent, p.memory_mb, p.name
+                    ))
+                    .agent_id(format!("process_{i}"))
+                    .render(r[i + 2], frame);
+                }
+            }
+        }
+    }
+
     fn view_memory(&self, area: Rect, frame: &mut Frame<'_>) {
         match &self.memory {
             Pane::Loading => {
@@ -915,6 +1310,9 @@ mod tests {
             app.update(Msg::SystemLoaded(read_system()));
             app.update(Msg::PeripheralsLoaded(read_peripherals()));
             app.update(Msg::ProfilesLoaded(read_profiles()));
+            app.update(Msg::CpuLoaded(read_cpu()));
+            app.update(Msg::AcceleratorsLoaded(read_accelerators()));
+            app.update(Msg::ProcessesLoaded(read_processes()));
             app
         })
     }
@@ -934,6 +1332,10 @@ mod tests {
                 Tab::System => "system_heading",
                 Tab::Peripherals => "peripherals_heading",
                 Tab::Profiles => "profiles_heading",
+                Tab::Overview => "overview_heading",
+                Tab::Cpu => "cpu_heading",
+                Tab::Accelerators => "accelerators_heading",
+                Tab::Processes => "processes_heading",
             };
             if tab == Tab::Disk && driver.ontology().find_node("disk_empty").is_some() {
                 continue;
@@ -964,6 +1366,15 @@ mod tests {
         assert!(
             !driver.model().network.is_loading(),
             "network pane still Loading after init; a Command::Task did not deliver"
+        );
+        assert!(!driver.model().cpu.is_loading(), "cpu pane still Loading");
+        assert!(
+            !driver.model().accelerators.is_loading(),
+            "accelerators pane still Loading"
+        );
+        assert!(
+            !driver.model().processes.is_loading(),
+            "processes pane still Loading"
         );
         assert!(
             !driver.model().profiles.is_loading(),
@@ -1083,6 +1494,109 @@ mod tests {
         }
     }
 
+    /// The CPU tab reports cores and a utilisation that adds up.
+    #[test]
+    fn cpu_reports_cores_and_consistent_totals() {
+        let app = shared();
+        match &app.cpu {
+            Pane::Ready(c) => {
+                assert!(c.core_count > 0, "no CPU cores reported");
+                assert_eq!(c.cores.len(), c.core_count, "core list and count disagree");
+                assert!(
+                    (0.0..=100.0).contains(&c.total_busy_percent),
+                    "busy percent out of range: {}",
+                    c.total_busy_percent
+                );
+                // The zero-constructor's signature: no cores and exactly 100% idle.
+                // Asserting against it means a regression to CpuStats::new() fails
+                // here rather than silently rendering an idle machine.
+                assert!(
+                    !(c.cores.is_empty() && c.total_idle == 100.0),
+                    "CPU pane looks like the zero-constructor, not a reading"
+                );
+            }
+            Pane::Failed(e) => panic!("CPU read failed: {e}"),
+            Pane::Loading => panic!("CPU still loading after init"),
+        }
+    }
+
+    /// Accelerator metrics are absent, never zeroed, when a device declines.
+    #[test]
+    fn accelerators_distinguish_absent_from_zero() {
+        let app = shared();
+        match &app.accelerators {
+            Pane::Ready(rows) => {
+                for a in rows {
+                    assert!(!a.name.is_empty(), "accelerator {} has no name", a.index);
+                    if let Some(u) = a.utilization_percent {
+                        assert!(u <= 100, "utilisation {u}% exceeds 100 on {}", a.name);
+                    }
+                    if let (Some(used), Some(total)) = (a.memory_used_mb, a.memory_total_mb) {
+                        assert!(
+                            used <= total * 1.05,
+                            "{}: used {used:.0} MB exceeds total {total:.0} MB",
+                            a.name
+                        );
+                    }
+                }
+            }
+            Pane::Failed(_) => {}
+            Pane::Loading => panic!("accelerators still loading after init"),
+        }
+    }
+
+    /// Processes come back sorted by CPU and capped by the loader.
+    #[test]
+    fn processes_are_capped_and_ordered() {
+        let app = shared();
+        match &app.processes {
+            Pane::Ready(rows) => {
+                assert!(
+                    rows.len() <= 32,
+                    "loader returned {} rows, cap is 32",
+                    rows.len()
+                );
+                for pair in rows.windows(2) {
+                    assert!(
+                        pair[0].cpu_percent >= pair[1].cpu_percent,
+                        "process list is not ordered by CPU: {} then {}",
+                        pair[0].cpu_percent,
+                        pair[1].cpu_percent
+                    );
+                }
+            }
+            Pane::Failed(_) => {}
+            Pane::Loading => panic!("processes still loading after init"),
+        }
+    }
+
+    /// Overview never invents a state a pane is not in.
+    ///
+    /// It is derived from the other panes rather than loaded, so the risk it
+    /// carries is disagreement rather than absence — an Overview claiming a
+    /// figure the tab it summarises does not have.
+    #[test]
+    fn overview_agrees_with_the_panes_it_summarises() {
+        let app = shared();
+        let mut driver = HeadlessDriver::new(
+            SimonApp {
+                tab: Tab::Overview,
+                ..SimonApp::new()
+            },
+            1280.0,
+            800.0,
+        );
+        driver.init();
+        driver.process_request(&dewey::agent::protocol::AgentRequest::GetTree);
+        assert!(
+            driver.ontology().find_node("overview_cpu").is_some(),
+            "overview has no CPU line"
+        );
+        if let (Pane::Ready(c), Pane::Ready(_)) = (&app.cpu, &app.memory) {
+            assert!(c.core_count > 0);
+        }
+    }
+
     /// The disk tab reports drives, and each carries the fields the row draws.
     ///
     /// This machine has three NVMe drives and a USB gadget, so an empty list here
@@ -1139,8 +1653,11 @@ mod tests {
     /// the switch rather than of the key handler alone.
     #[test]
     fn tab_key_cycles_and_switches_the_rendered_pane() {
+        // Written against PORTED's order rather than named tabs: this test broke
+        // once already when a tab was added ahead of the default, which told it
+        // nothing about the switching it exists to check.
         let mut app = SimonApp::new();
-        assert_eq!(app.tab, Tab::Memory);
+        assert_eq!(app.tab, Tab::PORTED[0], "default tab is not the first");
 
         let msg = app
             .handle_event(Event::Key(KeyEvent::new(
@@ -1149,7 +1666,23 @@ mod tests {
             )))
             .expect("Tab key produced no message");
         app.update(msg);
-        assert_eq!(app.tab, Tab::Network, "Tab did not advance the selection");
+        assert_eq!(
+            app.tab,
+            Tab::PORTED[1],
+            "Tab did not advance to the next tab"
+        );
+
+        // Cycling all the way round returns to the start.
+        for _ in 1..Tab::PORTED.len() {
+            let msg = app
+                .handle_event(Event::Key(KeyEvent::new(
+                    KeyCode::Tab,
+                    KeyModifiers::empty(),
+                )))
+                .expect("Tab key produced no message");
+            app.update(msg);
+        }
+        assert_eq!(app.tab, Tab::PORTED[0], "Tab did not wrap around");
 
         let mut driver = HeadlessDriver::new(
             SimonApp {
