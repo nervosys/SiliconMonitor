@@ -167,7 +167,7 @@ feature stayed broken through eight published versions.
 9. **The GUI is being ported to Dewey, two tabs of nine done.** simon's shipping
    GUI (`src/gui/`, ~10k lines) is immediate-mode egui and was never built on
    [Dewey](https://crates.io/crates/deweygui), nervosys' agentic-first GUI
-   framework at `C:/Users/adamm/dev/nervosys/desktop/Dewey`. The port lives in
+   framework (a sibling checkout under `nervosys/desktop/Dewey`). The port lives in
    `src/gui_dewey/` behind the `dewey-gui` feature, independent of `gui` so both
    build at once and neither can break the other.
 
@@ -182,9 +182,14 @@ feature stayed broken through eight published versions.
 
    1. ~~`dewey-gui` feature; both GUI paths build.~~
    2. ~~Memory + Network tabs (no loaders — proves the harness).~~
-   3. Disk + System. **The interesting step:** these are the loader tabs, where
-      `Command<Msg>` replaces `check_background_loaders` and the 3.9.0 fix stops
-      being needed rather than being reimplemented.
+   3. ~~Disk~~ + System. The premise held: `read_disks()` is an ordinary
+      `Command::Task`, and `panes_leave_the_loading_state` asserts the disk pane
+      is out of `Loading` after one `init()` — the exact 3.9.0 failure, now a
+      standing assertion. The whole suite runs in 2.0 s against the egui path's
+      6.7 s for this tab alone, with no settle predicate and no deadline. The one
+      thing that did not vanish is the COM guard: disk paths reach WMI, so
+      `crate::pipeline::com_guard()` moves to the top of the task rather than into
+      a thread the app spawns. System tab still to do.
    4. Peripherals + Profiles.
    5. Charts: `egui_plot` to Dewey's `Chart` widget.
    6. Delete `src/gui/headless.rs` (663 lines) and move the contract test onto

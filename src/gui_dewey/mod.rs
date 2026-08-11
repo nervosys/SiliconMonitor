@@ -37,7 +37,7 @@ use std::result::Result;
 
 /// Which tab is showing.
 ///
-/// Only the two tabs ported so far. This grows with the migration rather than
+/// Only the tabs ported so far. This grows with the migration rather than
 /// mirroring the egui `Tab` enum up front — a variant here means a tab that
 /// actually renders, so the agent-visible tab list never promises more than the
 /// port delivers.
@@ -45,15 +45,17 @@ use std::result::Result;
 pub enum Tab {
     Memory,
     Network,
+    Disk,
 }
 
 impl Tab {
-    pub const PORTED: [Tab; 2] = [Tab::Memory, Tab::Network];
+    pub const PORTED: [Tab; 3] = [Tab::Memory, Tab::Network, Tab::Disk];
 
     pub fn title(self) -> &'static str {
         match self {
             Tab::Memory => "Memory",
             Tab::Network => "Network",
+            Tab::Disk => "Disk",
         }
     }
 }
@@ -74,6 +76,18 @@ pub struct MemoryView {
     pub shared_mb: f64,
     /// free + buffers + cached, the same arithmetic `free -h` reports.
     pub available_mb: f64,
+}
+
+/// One drive, reduced to what the tab draws.
+#[derive(Debug, Clone, Default)]
+pub struct DiskRow {
+    pub name: String,
+    pub model: String,
+    pub capacity_bytes: u64,
+    pub interface: String,
+    pub temperature_c: Option<f32>,
+    /// SMART verdict, or None where the drive declines to report one.
+    pub health: Option<String>,
 }
 
 /// Total bandwidth across every interface, bytes per second.
@@ -108,6 +122,7 @@ pub struct SimonApp {
     pub tab: Tab,
     pub memory: Pane<MemoryView>,
     pub network: Pane<NetworkView>,
+    pub disks: Pane<Vec<DiskRow>>,
 }
 
 #[derive(Debug)]
@@ -116,6 +131,7 @@ pub enum Msg {
     Refresh,
     MemoryLoaded(Result<MemoryView, String>),
     NetworkLoaded(Result<NetworkView, String>),
+    DisksLoaded(Result<Vec<DiskRow>, String>),
 }
 
 impl Default for SimonApp {
@@ -130,6 +146,7 @@ impl SimonApp {
             tab: Tab::Memory,
             memory: Pane::Loading,
             network: Pane::Loading,
+            disks: Pane::Loading,
         }
     }
 
@@ -142,6 +159,7 @@ impl SimonApp {
         Command::Batch(vec![
             Command::Task(Box::new(|| Msg::MemoryLoaded(read_memory()))),
             Command::Task(Box::new(|| Msg::NetworkLoaded(read_network()))),
+            Command::Task(Box::new(|| Msg::DisksLoaded(read_disks()))),
         ])
     }
 }
@@ -194,6 +212,38 @@ fn read_network() -> Result<NetworkView, String> {
     })
 }
 
+/// Enumerate drives and reduce each to a display row.
+///
+/// The COM guard matters: disk paths reach WMI on Windows, which requires COM to
+/// be initialised on the calling thread. The egui path takes the guard inside the
+/// thread it spawns; here the runtime owns the thread, so the guard belongs at the
+/// top of the task instead. It is the one piece of the old loader that does not
+/// simply disappear.
+fn read_disks() -> Result<Vec<DiskRow>, String> {
+    let _com = crate::pipeline::com_guard();
+    let disks = crate::disk::enumerate_disks().map_err(|e| e.to_string())?;
+    Ok(disks
+        .iter()
+        .map(|disk| {
+            let info = disk.info().ok();
+            DiskRow {
+                name: disk.name().to_string(),
+                model: info
+                    .as_ref()
+                    .map(|i| i.model.clone())
+                    .unwrap_or_else(|| "unknown".to_string()),
+                capacity_bytes: info.as_ref().map(|i| i.capacity).unwrap_or(0),
+                interface: info
+                    .as_ref()
+                    .and_then(|i| i.interface_type.clone())
+                    .unwrap_or_else(|| "unknown".to_string()),
+                temperature_c: disk.temperature().ok().flatten(),
+                health: disk.health().ok().map(|h| format!("{h:?}")),
+            }
+        })
+        .collect())
+}
+
 fn format_bytes(bytes: f64) -> String {
     const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
     let mut value = bytes;
@@ -244,6 +294,7 @@ impl Model for SimonApp {
             Msg::Refresh => {
                 self.memory = Pane::Loading;
                 self.network = Pane::Loading;
+                self.disks = Pane::Loading;
                 Self::load_all()
             }
             Msg::MemoryLoaded(Ok(v)) => {
@@ -260,6 +311,14 @@ impl Model for SimonApp {
             }
             Msg::NetworkLoaded(Err(e)) => {
                 self.network = Pane::Failed(e);
+                Command::None
+            }
+            Msg::DisksLoaded(Ok(v)) => {
+                self.disks = Pane::Ready(v);
+                Command::None
+            }
+            Msg::DisksLoaded(Err(e)) => {
+                self.disks = Pane::Failed(e);
                 Command::None
             }
         }
@@ -286,12 +345,13 @@ impl Model for SimonApp {
         match self.tab {
             Tab::Memory => self.view_memory(chunks[1], frame),
             Tab::Network => self.view_network(chunks[1], frame),
+            Tab::Disk => self.view_disk(chunks[1], frame),
         }
     }
 }
 
 /// Rows are laid out top-down at a fixed line height; returns each row's rect.
-fn rows(area: Rect, count: usize) -> Vec<Rect> {
+fn rows_of(area: Rect, count: usize) -> Vec<Rect> {
     Layout::new(
         Direction::Vertical,
         (0..count)
@@ -315,7 +375,7 @@ impl SimonApp {
                     .render(area, frame);
             }
             Pane::Ready(m) => {
-                let r = rows(area, 9);
+                let r = rows_of(area, 9);
                 Label::new("Physical Memory")
                     .bold()
                     .agent_id("memory_heading")
@@ -347,6 +407,50 @@ impl SimonApp {
         }
     }
 
+    fn view_disk(&self, area: Rect, frame: &mut Frame<'_>) {
+        match &self.disks {
+            Pane::Loading => Label::new("Loading disk information…")
+                .agent_id("disk_status")
+                .render(area, frame),
+            Pane::Failed(e) => Label::new(format!("Disks unavailable: {e}"))
+                .agent_id("disk_status")
+                .render(area, frame),
+            // A machine with no drives is a real answer, not a failure, and it
+            // must not read as the spinner state. 3.9.0 could not tell the two
+            // apart from painted text alone; here they are different nodes.
+            Pane::Ready(rows) if rows.is_empty() => Label::new("No disks detected")
+                .agent_id("disk_empty")
+                .render(area, frame),
+            Pane::Ready(rows) => {
+                let r = rows_of(area, 1 + rows.len().min(16));
+                Label::new("Disks")
+                    .bold()
+                    .agent_id("disk_heading")
+                    .render(r[0], frame);
+                for (i, d) in rows.iter().take(16).enumerate() {
+                    let temp = d
+                        .temperature_c
+                        .map(|t| format!(" {t:.0}°C"))
+                        .unwrap_or_default();
+                    let health = d
+                        .health
+                        .as_deref()
+                        .map(|h| format!(" [{h}]"))
+                        .unwrap_or_default();
+                    Label::new(format!(
+                        "{}: {} {} {}{temp}{health}",
+                        d.name,
+                        d.model,
+                        format_bytes(d.capacity_bytes as f64),
+                        d.interface
+                    ))
+                    .agent_id(format!("disk_row_{i}"))
+                    .render(r[i + 1], frame);
+                }
+            }
+        }
+    }
+
     fn view_network(&self, area: Rect, frame: &mut Frame<'_>) {
         match &self.network {
             Pane::Loading => {
@@ -360,7 +464,7 @@ impl SimonApp {
                     .render(area, frame);
             }
             Pane::Ready(n) => {
-                let r = rows(area, 2 + n.interfaces.len().min(16));
+                let r = rows_of(area, 2 + n.interfaces.len().min(16));
                 Label::new("Interfaces")
                     .bold()
                     .agent_id("network_heading")
@@ -415,7 +519,12 @@ mod tests {
             let expected = match tab {
                 Tab::Memory => "memory_heading",
                 Tab::Network => "network_heading",
+                // A driveless machine is a legitimate answer, so accept either.
+                Tab::Disk => "disk_heading",
             };
+            if tab == Tab::Disk && driver.ontology().find_node("disk_empty").is_some() {
+                continue;
+            }
             if driver.model().tab != tab {
                 continue; // reached below by the tab-switch test
             }
@@ -443,6 +552,36 @@ mod tests {
             !driver.model().network.is_loading(),
             "network pane still Loading after init; a Command::Task did not deliver"
         );
+        assert!(
+            !driver.model().disks.is_loading(),
+            "disk pane still Loading after init -- this is the exact 3.9.0 failure,              and the whole premise of the port is that it cannot happen here"
+        );
+    }
+
+    /// The disk tab reports drives, and each carries the fields the row draws.
+    ///
+    /// This machine has three NVMe drives and a USB gadget, so an empty list here
+    /// would mean enumeration silently failed rather than that the box is
+    /// driveless — but the assertion is written to pass on a driveless machine
+    /// too, since CI runners legitimately are one.
+    #[test]
+    fn disks_load_with_usable_rows() {
+        let driver = loaded();
+        match &driver.model().disks {
+            Pane::Ready(rows) => {
+                for d in rows {
+                    assert!(!d.name.is_empty(), "a disk row has no device name");
+                }
+                // Deliberately not asserting capacity > 0. A first version did,
+                // and this machine's USB File-Stor Gadget failed it: it reports a
+                // model but zero bytes, which is what a removable device with no
+                // media legitimately does. It is the same drive that answers
+                // NotSupported to ATA SMART. A row rendering "0 B" is correct
+                // there; the tab's job is to report what the device said.
+            }
+            Pane::Failed(e) => panic!("disk enumeration failed: {e}"),
+            Pane::Loading => panic!("disks still loading after init"),
+        }
     }
 
     #[test]
