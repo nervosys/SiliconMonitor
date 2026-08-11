@@ -23,6 +23,85 @@ fn cpuid(leaf: u32) -> core::arch::x86_64::CpuidResult {
     }
 }
 
+/// Which side of a Hyper-V partition boundary this code is running on.
+///
+/// Matters because Windows 11 enables virtualization-based security by default,
+/// which puts the *host* under a thin hypervisor: a bare-metal desktop reports
+/// the "Microsoft Hv" CPUID signature exactly as a guest VM does. Vendor string
+/// alone therefore cannot answer "am I in a VM", and every caller that assumed
+/// it could has been wrong on ordinary Windows 11 hardware.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum HyperVPartition {
+    /// The root (host) partition — physical hardware that happens to run Hyper-V.
+    Root,
+    /// A guest partition — an actual virtual machine.
+    Guest,
+    /// Not Hyper-V, or the question cannot be answered on this architecture.
+    Unknown,
+}
+
+/// Distinguish a Hyper-V root partition from a guest via CPUID leaf 0x40000003.
+///
+/// EBX holds the high half of the partition privilege mask. `CreatePartitions`
+/// (bit 0) and `CpuManagement` (bit 12) are root-only privileges: the root
+/// partition is what creates and schedules guests, so a guest is never granted
+/// them. Both are required here rather than either, since a single bit is a
+/// thinner reed than the pair and they are set together on a root partition.
+///
+/// Verified on the root-partition side: this machine, a Windows 11 desktop with
+/// VBS on, reports ebx=0x002bb9ff — CreatePartitions, AccessPartitionId and
+/// CpuManagement all set. The guest side is *not* verified against a real
+/// Hyper-V VM; it follows from the TLFS privilege definitions, and the failure
+/// mode if it is wrong is the status quo ante — a guest misreported as a host.
+/// See HANDOFF.md open work for what would settle it.
+pub fn hyperv_partition() -> HyperVPartition {
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    {
+        if (cpuid(0x1).ecx >> 31) & 1 == 0 {
+            return HyperVPartition::Unknown; // no hypervisor present
+        }
+
+        let vendor = cpuid(0x4000_0000);
+        let mut vendor_str = [0u8; 12];
+        vendor_str[0..4].copy_from_slice(&vendor.ebx.to_le_bytes());
+        vendor_str[4..8].copy_from_slice(&vendor.ecx.to_le_bytes());
+        vendor_str[8..12].copy_from_slice(&vendor.edx.to_le_bytes());
+        if String::from_utf8_lossy(&vendor_str).trim_end_matches('\0') != "Microsoft Hv" {
+            return HyperVPartition::Unknown;
+        }
+
+        // The privilege leaf must actually exist; vendor.eax is the max leaf.
+        if vendor.eax < 0x4000_0003 {
+            return HyperVPartition::Unknown;
+        }
+
+        let privileges = cpuid(0x4000_0003).ebx;
+        const CREATE_PARTITIONS: u32 = 1 << 0;
+        const CPU_MANAGEMENT: u32 = 1 << 12;
+        if privileges & CREATE_PARTITIONS != 0 && privileges & CPU_MANAGEMENT != 0 {
+            HyperVPartition::Root
+        } else {
+            HyperVPartition::Guest
+        }
+    }
+    #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
+    {
+        HyperVPartition::Unknown
+    }
+}
+
+/// Whether a detected hypervisor means this code is running *inside* a VM.
+///
+/// The distinction a bare `detect_hypervisor().is_some()` cannot make: a
+/// Hyper-V root partition has a hypervisor beneath it and is still the physical
+/// machine. Every "am I virtualized" question routes through here.
+pub fn hypervisor_indicates_vm() -> bool {
+    if hyperv_partition() == HyperVPartition::Root {
+        return false;
+    }
+    detect_hypervisor().is_some()
+}
+
 /// Known hypervisors
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Hypervisor {
@@ -86,19 +165,19 @@ pub fn detect_platform() -> VirtPlatform {
         if is_container_env() {
             return VirtPlatform::Container;
         }
-        if detect_hypervisor().is_some() {
+        if hypervisor_indicates_vm() {
             return VirtPlatform::VirtualMachine;
         }
     }
     #[cfg(target_os = "windows")]
     {
-        if detect_hypervisor().is_some() {
+        if hypervisor_indicates_vm() {
             return VirtPlatform::VirtualMachine;
         }
     }
     #[cfg(target_os = "macos")]
     {
-        if detect_hypervisor().is_some() {
+        if hypervisor_indicates_vm() {
             return VirtPlatform::VirtualMachine;
         }
     }
@@ -292,4 +371,46 @@ fn is_container_env() -> bool {
         || std::fs::read_to_string("/proc/1/cgroup")
             .map(|c| c.contains("docker") || c.contains("containerd") || c.contains("lxc"))
             .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod partition_tests {
+    use super::*;
+
+    /// The partition answer must agree with the vendor string, on any machine.
+    ///
+    /// Deliberately not asserting `Root`: this invariant has to hold on the
+    /// development desktop (a root partition) and in CI, where the Windows
+    /// runners are themselves Hyper-V guests on Azure — which is what exercises
+    /// the `Guest` arm that no local hardware here can reach.
+    #[test]
+    fn partition_agrees_with_hypervisor_vendor() {
+        let is_hyperv = matches!(
+            detect_hypervisor().map(|h| h.hypervisor),
+            Some(Hypervisor::HyperV)
+        );
+        match hyperv_partition() {
+            HyperVPartition::Root | HyperVPartition::Guest => assert!(
+                is_hyperv,
+                "claimed a Hyper-V partition kind without a Hyper-V vendor string"
+            ),
+            HyperVPartition::Unknown => assert!(
+                !is_hyperv || cfg!(not(any(target_arch = "x86", target_arch = "x86_64"))),
+                "Hyper-V is present on an x86 machine but the partition kind was Unknown"
+            ),
+        }
+    }
+
+    /// A root partition is not a virtual machine — the defect this fixes.
+    #[test]
+    fn root_partition_is_not_reported_as_a_vm() {
+        if hyperv_partition() == HyperVPartition::Root {
+            assert!(
+                !crate::virtualization::VirtMonitor::new()
+                    .expect("VirtMonitor::new")
+                    .is_virtual_machine(),
+                "a Hyper-V root partition is bare metal, not a VM"
+            );
+        }
+    }
 }

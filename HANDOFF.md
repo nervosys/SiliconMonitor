@@ -1,6 +1,6 @@
 # Status
 
-Current as of 3.9.0. This file is excluded from the published crate
+Current as of 3.10.0. This file is excluded from the published crate
 (`Cargo.toml`'s `exclude` list) and is for whoever picks the work up next.
 
 ## Released
@@ -18,6 +18,7 @@ Current as of 3.9.0. This file is excluded from the published crate
 | 3.7.0 | Virtualization, NUMA and ECC in the ontology (134 entities); two misleading virtualization readings withdrawn. Published, tagged `v3.7.0`. |
 | 3.8.0 | `simon tune`: use-case detection and profile recommendations, with an automatic server. Recommend-only by default. Published, tagged `v3.8.0`. |
 | 3.9.0 | Headless GUI reads four previously unreadable tabs; racy coverage test fixed. Published, tagged `v3.9.0`. |
+| 3.10.0 | Hyper-V root partition distinguished from a guest via CPUID leaf 0x40000003; bare metal no longer reported as a VM. Published, tagged `v3.10.0`. |
 | 2.1.5 | Committed, never published. Documentation only; superseded by 3.0.0. |
 
 ## Verification that is worth repeating
@@ -110,16 +111,19 @@ feature stayed broken through eight published versions.
    does not exist, so add a domain only when its resolver can say why each absence
    is absent.
 
-6. **`VirtMonitor::is_virtual_machine()` returns true on a Hyper-V root
-   partition.** With virtualization-based security on — the Windows 11 default —
-   a bare-metal host reports the "Microsoft Hv" CPUID signature exactly as a guest
-   does, so every caller of this method sees a desktop as a VM. 3.7.0 works around
-   it in the ontology resolver, which reports `unavailable` with the reason rather
-   than guessing; the method itself is unchanged because its blast radius is wider.
+6. ~~**`VirtMonitor::is_virtual_machine()` returns true on a Hyper-V root
+   partition.**~~ Fixed in 3.10.0 via Hyper-V CPUID leaf 0x40000003: the
+   partition privilege mask holds `CreatePartitions` and `CpuManagement` only on
+   a root partition. `hypervisor_indicates_vm()` is now the single path, so
+   `detect_platform()` and the ontology entity were corrected at the same time,
+   and the 3.7.0 ontology workaround is withdrawn.
 
-   The fix is Hyper-V CPUID leaf 0x40000003: the partition privilege mask
-   distinguishes a root partition from a guest. Doing it in the detector would let
-   the ontology drop its special case and would correct every other caller at once.
+   **The guest side is still unverified against a real Hyper-V VM.** The root
+   side is measured on this desktop (`ebx=0x002bb9ff`). If you have a Hyper-V
+   guest, one run of `simon get system.virtualization.platform` settles it —
+   expect `virtual_machine`. CI's Windows runners are Azure Hyper-V guests and
+   exercise the arm, but no assertion pins the value there because the same test
+   must pass on this bare-metal desktop.
 
 7. ~~**The Windows PCI reader blocks the PCI ontology domain.**~~ Fixed in 3.5.0.
    The reader reported a device-instance path as the address and never reported a

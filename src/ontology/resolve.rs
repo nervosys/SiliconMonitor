@@ -627,43 +627,30 @@ fn resolve_virtualization(out: &mut Vec<Reading>) {
 
     let hypervisor = monitor.hypervisor();
 
-    // Hyper-V is the one case simon cannot call. When virtualization-based
-    // security is on — the Windows 11 default — the host OS runs as the Hyper-V
-    // *root partition*, so CPUID reports "Microsoft Hv" on a bare-metal
-    // workstation exactly as it does inside a guest. The development machine, an
-    // ASUS desktop, is detected as a virtual machine for this reason, and its
-    // AMD-V support reads as absent because the hypervisor masks SVM from the root
-    // partition.
+    // Hyper-V used to be the one case simon could not call: with
+    // virtualization-based security on — the Windows 11 default — the host OS
+    // runs as the Hyper-V *root partition*, so CPUID reports "Microsoft Hv" on a
+    // bare-metal workstation exactly as it does inside a guest. 3.7.0 reported
+    // this entity as unavailable rather than guess, because it is the entity an
+    // agent consults before trusting every other reading.
     //
-    // Distinguishing the two needs the partition privilege mask from Hyper-V
-    // CPUID leaf 0x40000003, which simon does not read yet. Until it does, saying
-    // "virtual machine" here would be a guess presented as a determination — and
-    // this is the entity an agent consults before trusting every other reading, so
-    // it is the worst possible place for one.
+    // 3.10.0 reads the partition privilege mask from CPUID leaf 0x40000003, which
+    // answers it: only a root partition holds CreatePartitions and CpuManagement.
+    // The special case below is now just the ordinary determination.
     let is_hyperv = matches!(
         hypervisor.as_ref().map(|h| &h.hypervisor),
         Some(crate::virtualization::Hypervisor::HyperV)
     );
 
-    if is_hyperv {
-        out.push(Reading::unavailable(
-            "system.virtualization.platform",
-            Some(Unit::Identifier),
-            "a Hyper-V hypervisor is present, but simon cannot yet tell a root \
-             partition (bare metal with virtualization-based security) from a \
-             guest VM; both report the same CPUID signature",
-        ));
+    // Bare metal is a determination, not a failure to detect one.
+    let platform = if monitor.is_container() {
+        "container"
+    } else if monitor.is_virtual_machine() {
+        "virtual_machine"
     } else {
-        // Bare metal is a determination, not a failure to detect one.
-        let platform = if monitor.is_container() {
-            "container"
-        } else if monitor.is_virtual_machine() {
-            "virtual_machine"
-        } else {
-            "bare_metal"
-        };
-        push_id(out, "system.virtualization.platform", platform);
-    }
+        "bare_metal"
+    };
+    push_id(out, "system.virtualization.platform", platform);
 
     match hypervisor {
         Some(h) => {

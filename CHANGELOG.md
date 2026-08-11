@@ -5,6 +5,51 @@ All notable changes to Silicon Monitor will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.10.0] - 2026-08-10
+
+A bare-metal Windows 11 desktop is no longer reported as a virtual machine.
+
+### Fixed
+
+- **`is_virtual_machine()` returned true on a Hyper-V root partition.** Windows 11
+  enables virtualization-based security by default, which puts the host under a
+  thin hypervisor: a physical desktop reports the "Microsoft Hv" CPUID signature
+  exactly as a guest VM does. Every caller that read the vendor string and
+  stopped there — `is_virtual_machine()`, `detect_platform()`, and the
+  `system.virtualization.platform` ontology entity — has been wrong on ordinary
+  Windows 11 hardware since virtualization detection was added.
+
+  `hyperv_partition()` now reads the partition privilege mask from Hyper-V CPUID
+  leaf 0x40000003. `CreatePartitions` (EBX bit 0) and `CpuManagement` (EBX bit 12)
+  are root-only: the root partition is what creates and schedules guests, so a
+  guest is never granted them. Both are required rather than either — one bit is
+  a thinner reed than the pair, and they are set together on a root partition.
+
+  Measured on this desktop: `ebx=0x002bb9ff`, with CreatePartitions,
+  AccessPartitionId and CpuManagement all set. `simon get
+  system.virtualization.platform` now answers `bare_metal [measured]`.
+
+- **The ontology's 3.7.0 workaround is withdrawn.** That release reported
+  `system.virtualization.platform` as *unavailable* rather than guess, on the
+  grounds that this is the entity an agent consults before trusting every other
+  reading and so the worst possible place for one. The entity now resolves as a
+  measurement, which is what the workaround was waiting for.
+
+- **All three "am I virtualized" paths route through one helper.**
+  `hypervisor_indicates_vm()` is the single place the root-partition case is
+  handled; `detect_platform()` had the identical defect on the Windows, macOS and
+  Linux arms and was silently fixed by the same change.
+
+### Verification
+
+The root-partition side is measured here. The **guest** side is not verified
+against a real Hyper-V VM — it follows from the TLFS privilege definitions, and
+if it is wrong the failure mode is the status quo ante, a guest misreported as a
+host. The new `partition_agrees_with_hypervisor_vendor` test deliberately does
+not assert `Root`: it has to hold both on this desktop and in CI, where the
+Windows runners are themselves Hyper-V guests on Azure — which is what exercises
+the `Guest` arm no hardware here can reach.
+
 ## [3.9.0] - 2026-08-10
 
 The headless GUI surface could not read four of its nine tabs.

@@ -60,8 +60,14 @@ impl VirtMonitor {
     }
 
     /// Check if running inside a virtual machine
+    /// Whether this is running inside a virtual machine.
+    ///
+    /// A Hyper-V *root* partition is not a VM, however loudly CPUID says
+    /// "Microsoft Hv". Windows 11 turns on virtualization-based security by
+    /// default, so an ordinary desktop carries the hypervisor signature; before
+    /// 3.10.0 this method returned true on bare metal for that reason.
     pub fn is_virtual_machine(&self) -> bool {
-        detect::detect_hypervisor().is_some()
+        detect::hypervisor_indicates_vm()
     }
 
     /// Check if running inside a container
