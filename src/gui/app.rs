@@ -638,10 +638,17 @@ impl SiliconMonitorApp {
         #[cfg(not(target_os = "windows"))]
         let cpu_core_count = num_cpus::get();
 
-        // Get initial CPU stats
+        // Get initial CPU stats.
+        //
+        // `CpuStats::new()` is a zero-constructor exactly like `MemoryStats::new()`
+        // below — cores empty, idle pinned at 100%. Reaching it means the tab
+        // opens claiming a fully idle machine with no cores. Linux has a real
+        // reader in `platform::linux::cpu`; it is now called.
         #[cfg(target_os = "windows")]
         let initial_cpu_stats = platform_impl::read_cpu_stats().ok();
-        #[cfg(not(target_os = "windows"))]
+        #[cfg(target_os = "linux")]
+        let initial_cpu_stats = crate::platform::linux::cpu::read_cpu_stats().ok();
+        #[cfg(not(any(target_os = "windows", target_os = "linux")))]
         let initial_cpu_stats = CpuStats::new().ok();
 
         // Get initial memory stats.

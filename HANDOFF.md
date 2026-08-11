@@ -195,11 +195,35 @@ feature stayed broken through eight published versions.
       that `SystemInfo` carries — this tab is read by agents and pasted into
       issues. `system_reports_identity_without_identifiers` asserts the omission,
       so it reads as a decision rather than something to helpfully add back.
-   4. Peripherals + Profiles.
-   5. Charts: `egui_plot` to Dewey's `Chart` widget.
-   6. Delete `src/gui/headless.rs` (663 lines) and move the contract test onto
+   4. ~~Peripherals + Profiles.~~ Peripherals drops MAC and Bluetooth
+      addresses; Profiles keeps provider errors as rows rather than dropping
+      them, since "the GPU provider failed" and "this GPU has no tunables" are
+      different facts. Six of thirteen tabs now render.
+   5. The four core tabs — **CPU, Accelerators, Processes, Overview**. These are
+      what make the Dewey path a replacement rather than a preview; until they
+      land, deleting the eframe path would ship a hardware monitor that cannot
+      show a CPU. Then the three remaining: NetworkTools, Connections, AI
+      Assistant.
+   6. Charts: `egui_plot` to Dewey's `Chart` widget. Unscouted — whether Dewey's
+      `Chart` matches `egui_plot`'s capability rather than just its output has not
+      been checked, and it is the most likely place to hit real friction.
+   7. Delete `src/gui/headless.rs` (663 lines) and move the contract test onto
       `agent_id`s instead of painted-text scraping.
-   7. Drop the `gui`/eframe path once parity holds.
+   8. Drop the `gui`/eframe path once parity holds. This is also what ends the
+      duplicate-egui disk cost.
+
+   **The egui GUI has thirteen tabs, not nine.** Earlier notes in this file and in
+   commit messages said nine, carried forward from the 3.9.0 work without checking
+   `Tab` in `src/gui/app.rs`. The unported seven are Overview, Cpu, Accelerators,
+   Processes, NetworkTools, Connections and AI Assistant.
+
+   **Verifying without filling the disk.** `cargo test --all-features` links every
+   example, and with two copies of egui/wgpu in `target/` that has failed twice
+   with `link.exe` 1318 (disk exhaustion). Use
+   `cargo test --all-features --lib --tests` for execution and
+   `cargo clippy --all-features --all-targets` for type-checking the examples;
+   between them the coverage is the same. Note `--lib --tests` skips doc-tests, so
+   run those separately before a release.
 
    **Three things to know before continuing.**
 
@@ -223,22 +247,33 @@ feature stayed broken through eight published versions.
    tests here depend on it. Confirm which is intended before step 3 leans harder
    on it — if it ever becomes a real thread, the settle problem returns.
 
-10. **The egui memory tab showed 0 MB on Linux; macOS still does.**
-   `MemoryStats::new()` is a zero-constructor, not a reader: it returns zeros on
-   every platform. `src/gui/app.rs` called the real per-platform
-   `read_memory_stats()` only under `#[cfg(target_os = "windows")]` and fell back
-   to the zero-constructor everywhere else, so the tab opened showing 0 MB of
-   0 MB until the first refresh replaced it.
+10. **`CpuStats::new()` and `MemoryStats::new()` are zero-constructors with
+   constructor-shaped names.** Neither reads anything: `MemoryStats::new()`
+   returns all zeros, `CpuStats::new()` returns no cores and 100% idle. The real
+   values come from the per-platform `read_cpu_stats` / `read_memory_stats`.
 
-   Linux is fixed — it had a working reader in `platform::linux::memory` the whole
-   time that the GUI simply never called. **That arm is verified by inspection,
-   not by compilation:** the documented Linux cross-check cannot include the `gui`
-   feature, because it drags in reqwest and so `ring`/`openssl-sys`, which need a
-   C toolchain this box does not have. CI is what will actually compile it.
+   `src/gui/app.rs` called the real readers only under
+   `#[cfg(target_os = "windows")]` and fell back to the zero-constructors
+   everywhere else, so on Linux the GUI opened showing 0 MB of memory and a fully
+   idle machine with no cores. Both now call the Linux readers. **Verified by
+   inspection, not compilation** — the documented Linux cross-check cannot include
+   `gui`, which drags in reqwest and so ring/openssl-sys, needing a C toolchain
+   this box lacks. CI compiles Linux.
 
-   macOS is untouched on purpose. There is no `platform::macos::read_memory_stats`
-   to call (open work 2) and no Mac here to check a replacement against, so it
-   still reaches the zero-constructor. Fixing item 2 is what closes this.
+   macOS still reaches both zero-constructors. There is no
+   `platform::macos::read_cpu_stats` or `read_memory_stats` to call (open work 2),
+   and no Mac here to check a replacement against.
+
+   **The deeper fix is a rename, and it is a breaking change.** `SystemStats::new()`
+   shows the right shape — it dispatches to the platform reader. The other two
+   cannot simply follow it: `platform::linux::memory::read_memory_stats` calls
+   `MemoryStats::new()?` as its starting struct, so making `new()` read would
+   recurse forever. They are builder bases wearing a constructor's name, and
+   `empty()` or `zeroed()` would have prevented both bugs. Worth doing at the next
+   major version; call sites are the only safe fix before then.
+
+   This has now caused two defects found a day apart. Assume any other
+   `T::new()` in this crate may be a zero-constructor until checked.
 
 ## The plan for what is left
 

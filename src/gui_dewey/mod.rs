@@ -48,15 +48,17 @@ pub enum Tab {
     Disk,
     System,
     Peripherals,
+    Profiles,
 }
 
 impl Tab {
-    pub const PORTED: [Tab; 5] = [
+    pub const PORTED: [Tab; 6] = [
         Tab::Memory,
         Tab::Network,
         Tab::Disk,
         Tab::System,
         Tab::Peripherals,
+        Tab::Profiles,
     ];
 
     pub fn title(self) -> &'static str {
@@ -66,6 +68,7 @@ impl Tab {
             Tab::Disk => "Disk",
             Tab::System => "System",
             Tab::Peripherals => "Peripherals",
+            Tab::Profiles => "Profiles",
         }
     }
 }
@@ -121,6 +124,22 @@ pub struct PeripheralsView {
     pub groups: Vec<(String, Vec<String>)>,
 }
 
+/// Tunable driver settings, grouped by the device that owns them.
+///
+/// Values and defaults are rendered as the provider reported them. Nothing here
+/// proposes a change: `simon tune`'s rule is that a proposed value comes from
+/// what the driver declared, never from this crate, and a read-only tab has even
+/// less business inventing one.
+#[derive(Debug, Clone, Default)]
+pub struct ProfilesView {
+    pub groups: Vec<(String, Vec<String>)>,
+    /// Subsystems that failed, kept as first-class rows rather than dropped —
+    /// "the GPU provider errored" is information an agent needs, and silently
+    /// omitting it would read as "this machine has no GPU settings".
+    pub errors: Vec<(String, String)>,
+    pub total_settings: usize,
+}
+
 /// Total bandwidth across every interface, bytes per second.
 #[derive(Debug, Clone, Default)]
 pub struct NetworkView {
@@ -156,6 +175,7 @@ pub struct SimonApp {
     pub disks: Pane<Vec<DiskRow>>,
     pub system: Pane<SystemView>,
     pub peripherals: Pane<PeripheralsView>,
+    pub profiles: Pane<ProfilesView>,
 }
 
 #[derive(Debug)]
@@ -167,6 +187,7 @@ pub enum Msg {
     DisksLoaded(Result<Vec<DiskRow>, String>),
     SystemLoaded(Result<SystemView, String>),
     PeripheralsLoaded(Result<PeripheralsView, String>),
+    ProfilesLoaded(Result<ProfilesView, String>),
 }
 
 impl Default for SimonApp {
@@ -184,6 +205,7 @@ impl SimonApp {
             disks: Pane::Loading,
             system: Pane::Loading,
             peripherals: Pane::Loading,
+            profiles: Pane::Loading,
         }
     }
 
@@ -199,6 +221,7 @@ impl SimonApp {
             Command::Task(Box::new(|| Msg::DisksLoaded(read_disks()))),
             Command::Task(Box::new(|| Msg::SystemLoaded(read_system()))),
             Command::Task(Box::new(|| Msg::PeripheralsLoaded(read_peripherals()))),
+            Command::Task(Box::new(|| Msg::ProfilesLoaded(read_profiles()))),
         ])
     }
 }
@@ -414,6 +437,61 @@ fn read_peripherals() -> Result<PeripheralsView, String> {
     Ok(PeripheralsView { groups })
 }
 
+/// Read tunable driver settings.
+///
+/// Uses the cached inspector the egui tab uses, so opening this pane does not
+/// re-run every provider from scratch — the providers reach vendor control
+/// panels and are not cheap.
+fn read_profiles() -> Result<ProfilesView, String> {
+    let _com = crate::pipeline::com_guard();
+    let mut inspector = crate::profile::cache::CachedProfileInspector::new();
+    let snapshot = inspector.snapshot_all();
+
+    let mut groups: Vec<(String, Vec<String>)> = Vec::new();
+    for (subsystem, provider_groups) in &snapshot.providers {
+        for group in provider_groups {
+            let rows: Vec<String> = group
+                .settings
+                .iter()
+                .map(|setting| {
+                    let unit = setting
+                        .unit
+                        .as_deref()
+                        .map(|u| format!(" {u}"))
+                        .unwrap_or_default();
+                    // The default is shown only when it differs from the current
+                    // value, so a row that mentions one is a row worth reading.
+                    let default = match &setting.default {
+                        Some(d) if format!("{d:?}") != format!("{:?}", setting.value) => {
+                            format!("  (default {d:?})")
+                        }
+                        _ => String::new(),
+                    };
+                    format!(
+                        "{}: {:?}{unit}{default}",
+                        setting.display_name, setting.value
+                    )
+                })
+                .collect();
+            if !rows.is_empty() {
+                groups.push((format!("{subsystem:?} — {}", group.device), rows));
+            }
+        }
+    }
+
+    let errors = snapshot
+        .errors
+        .iter()
+        .map(|(subsystem, reason)| (format!("{subsystem:?}"), reason.clone()))
+        .collect();
+
+    Ok(ProfilesView {
+        total_settings: snapshot.total_settings(),
+        groups,
+        errors,
+    })
+}
+
 fn format_bytes(bytes: f64) -> String {
     const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
     let mut value = bytes;
@@ -467,6 +545,7 @@ impl Model for SimonApp {
                 self.disks = Pane::Loading;
                 self.system = Pane::Loading;
                 self.peripherals = Pane::Loading;
+                self.profiles = Pane::Loading;
                 Self::load_all()
             }
             Msg::MemoryLoaded(Ok(v)) => {
@@ -509,6 +588,14 @@ impl Model for SimonApp {
                 self.peripherals = Pane::Failed(e);
                 Command::None
             }
+            Msg::ProfilesLoaded(Ok(v)) => {
+                self.profiles = Pane::Ready(v);
+                Command::None
+            }
+            Msg::ProfilesLoaded(Err(e)) => {
+                self.profiles = Pane::Failed(e);
+                Command::None
+            }
         }
     }
 
@@ -536,6 +623,7 @@ impl Model for SimonApp {
             Tab::Disk => self.view_disk(chunks[1], frame),
             Tab::System => self.view_system(chunks[1], frame),
             Tab::Peripherals => self.view_peripherals(chunks[1], frame),
+            Tab::Profiles => self.view_profiles(chunks[1], frame),
         }
     }
 }
@@ -703,6 +791,54 @@ impl SimonApp {
         }
     }
 
+    fn view_profiles(&self, area: Rect, frame: &mut Frame<'_>) {
+        match &self.profiles {
+            Pane::Loading => Label::new("Loading driver settings…")
+                .agent_id("profiles_status")
+                .render(area, frame),
+            Pane::Failed(e) => Label::new(format!("Driver settings unavailable: {e}"))
+                .agent_id("profiles_status")
+                .render(area, frame),
+            Pane::Ready(v) if v.groups.is_empty() && v.errors.is_empty() => {
+                Label::new("No tunable settings detected")
+                    .agent_id("profiles_empty")
+                    .render(area, frame)
+            }
+            Pane::Ready(v) => {
+                let mut lines: Vec<(String, String)> = Vec::new();
+                for (subsystem, reason) in &v.errors {
+                    lines.push((
+                        format!("profiles_error_{}", subsystem.to_lowercase()),
+                        format!("{subsystem}: unavailable — {reason}"),
+                    ));
+                }
+                for (heading, rows) in &v.groups {
+                    let slug: String = heading
+                        .to_lowercase()
+                        .chars()
+                        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+                        .collect();
+                    lines.push((format!("profiles_group_{slug}"), heading.clone()));
+                    for (i, row) in rows.iter().enumerate() {
+                        lines.push((format!("profiles_{slug}_{i}"), format!("  {row}")));
+                    }
+                }
+                let shown = lines.len().min(40);
+
+                let r = rows_of(area, 1 + shown);
+                Label::new(format!("Profiles — {} settings", v.total_settings))
+                    .bold()
+                    .agent_id("profiles_heading")
+                    .render(r[0], frame);
+                for (i, (id, text)) in lines.iter().take(shown).enumerate() {
+                    Label::new(text.clone())
+                        .agent_id(id.clone())
+                        .render(r[i + 1], frame);
+                }
+            }
+        }
+    }
+
     fn view_network(&self, area: Rect, frame: &mut Frame<'_>) {
         match &self.network {
             Pane::Loading => {
@@ -778,6 +914,7 @@ mod tests {
             app.update(Msg::DisksLoaded(read_disks()));
             app.update(Msg::SystemLoaded(read_system()));
             app.update(Msg::PeripheralsLoaded(read_peripherals()));
+            app.update(Msg::ProfilesLoaded(read_profiles()));
             app
         })
     }
@@ -796,6 +933,7 @@ mod tests {
                 Tab::Disk => "disk_heading",
                 Tab::System => "system_heading",
                 Tab::Peripherals => "peripherals_heading",
+                Tab::Profiles => "profiles_heading",
             };
             if tab == Tab::Disk && driver.ontology().find_node("disk_empty").is_some() {
                 continue;
@@ -826,6 +964,10 @@ mod tests {
         assert!(
             !driver.model().network.is_loading(),
             "network pane still Loading after init; a Command::Task did not deliver"
+        );
+        assert!(
+            !driver.model().profiles.is_loading(),
+            "profiles pane still Loading after init"
         );
         assert!(
             !driver.model().peripherals.is_loading(),
@@ -907,6 +1049,37 @@ mod tests {
             // runners are not required to answer.
             Pane::Failed(_) => {}
             Pane::Loading => panic!("peripherals still loading after init"),
+        }
+    }
+
+    /// The profiles tab reports settings and keeps failures visible.
+    ///
+    /// A provider that errors is rendered as a row, not dropped. "The GPU
+    /// provider failed" and "this GPU exposes no tunables" are different facts,
+    /// and an agent reading this pane has to be able to tell them apart.
+    #[test]
+    fn profiles_render_settings_and_surface_provider_errors() {
+        let app = shared();
+        match &app.profiles {
+            Pane::Ready(v) => {
+                assert_eq!(
+                    v.groups.is_empty() && v.errors.is_empty(),
+                    v.total_settings == 0 && v.errors.is_empty(),
+                    "group list and settings count disagree about emptiness"
+                );
+                for (heading, rows) in &v.groups {
+                    assert!(!rows.is_empty(), "group {heading} rendered with no rows");
+                }
+                for (subsystem, reason) in &v.errors {
+                    assert!(
+                        !reason.trim().is_empty(),
+                        "{subsystem} errored with no stated reason -- an absence \
+                         with no reason is exactly what the ontology forbids"
+                    );
+                }
+            }
+            Pane::Failed(_) => {}
+            Pane::Loading => panic!("profiles still loading after init"),
         }
     }
 
