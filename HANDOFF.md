@@ -182,14 +182,19 @@ feature stayed broken through eight published versions.
 
    1. ~~`dewey-gui` feature; both GUI paths build.~~
    2. ~~Memory + Network tabs (no loaders — proves the harness).~~
-   3. ~~Disk~~ + System. The premise held: `read_disks()` is an ordinary
+   3. ~~Disk + System.~~ The premise held: `read_disks()` is an ordinary
       `Command::Task`, and `panes_leave_the_loading_state` asserts the disk pane
       is out of `Loading` after one `init()` — the exact 3.9.0 failure, now a
       standing assertion. The whole suite runs in 2.0 s against the egui path's
       6.7 s for this tab alone, with no settle predicate and no deadline. The one
       thing that did not vanish is the COM guard: disk paths reach WMI, so
       `crate::pipeline::com_guard()` moves to the top of the task rather than into
-      a thread the app spawns. System tab still to do.
+      a thread the app spawns, and the System tab needs it for the same reason.
+
+      `read_system()` deliberately withholds the serial number and machine UUID
+      that `SystemInfo` carries — this tab is read by agents and pasted into
+      issues. `system_reports_identity_without_identifiers` asserts the omission,
+      so it reads as a decision rather than something to helpfully add back.
    4. Peripherals + Profiles.
    5. Charts: `egui_plot` to Dewey's `Chart` widget.
    6. Delete `src/gui/headless.rs` (663 lines) and move the contract test onto

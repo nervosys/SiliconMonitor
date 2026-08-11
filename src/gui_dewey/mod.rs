@@ -46,16 +46,18 @@ pub enum Tab {
     Memory,
     Network,
     Disk,
+    System,
 }
 
 impl Tab {
-    pub const PORTED: [Tab; 3] = [Tab::Memory, Tab::Network, Tab::Disk];
+    pub const PORTED: [Tab; 4] = [Tab::Memory, Tab::Network, Tab::Disk, Tab::System];
 
     pub fn title(self) -> &'static str {
         match self {
             Tab::Memory => "Memory",
             Tab::Network => "Network",
             Tab::Disk => "Disk",
+            Tab::System => "System",
         }
     }
 }
@@ -88,6 +90,17 @@ pub struct DiskRow {
     pub temperature_c: Option<f32>,
     /// SMART verdict, or None where the drive declines to report one.
     pub health: Option<String>,
+}
+
+/// Host, board and firmware identity, flattened to label/value pairs.
+///
+/// A Vec of pairs rather than a struct mirroring `SystemInfo` because the tab
+/// draws whatever is present and skips what is not — several fields are
+/// `Option` and absent on plenty of hardware. Flattening at load time keeps the
+/// "is this worth a row" decision out of the view, which stays a pure function.
+#[derive(Debug, Clone, Default)]
+pub struct SystemView {
+    pub rows: Vec<(String, String)>,
 }
 
 /// Total bandwidth across every interface, bytes per second.
@@ -123,6 +136,7 @@ pub struct SimonApp {
     pub memory: Pane<MemoryView>,
     pub network: Pane<NetworkView>,
     pub disks: Pane<Vec<DiskRow>>,
+    pub system: Pane<SystemView>,
 }
 
 #[derive(Debug)]
@@ -132,6 +146,7 @@ pub enum Msg {
     MemoryLoaded(Result<MemoryView, String>),
     NetworkLoaded(Result<NetworkView, String>),
     DisksLoaded(Result<Vec<DiskRow>, String>),
+    SystemLoaded(Result<SystemView, String>),
 }
 
 impl Default for SimonApp {
@@ -147,6 +162,7 @@ impl SimonApp {
             memory: Pane::Loading,
             network: Pane::Loading,
             disks: Pane::Loading,
+            system: Pane::Loading,
         }
     }
 
@@ -160,6 +176,7 @@ impl SimonApp {
             Command::Task(Box::new(|| Msg::MemoryLoaded(read_memory()))),
             Command::Task(Box::new(|| Msg::NetworkLoaded(read_network()))),
             Command::Task(Box::new(|| Msg::DisksLoaded(read_disks()))),
+            Command::Task(Box::new(|| Msg::SystemLoaded(read_system()))),
         ])
     }
 }
@@ -244,6 +261,58 @@ fn read_disks() -> Result<Vec<DiskRow>, String> {
         .collect())
 }
 
+/// Read host, board and firmware identity.
+///
+/// Like the disk loader this reaches WMI on Windows, so it takes the COM guard.
+fn read_system() -> Result<SystemView, String> {
+    let _com = crate::pipeline::com_guard();
+    let info = crate::motherboard::get_system_info().map_err(|e| e.to_string())?;
+
+    let mut rows = vec![
+        ("OS".to_string(), info.os_name.clone()),
+        ("OS Version".to_string(), info.os_version.clone()),
+        ("Architecture".to_string(), info.architecture.clone()),
+    ];
+    // Absent fields are skipped rather than rendered as "unknown": a row that is
+    // not there is a truthful "this machine did not say", where a row reading
+    // "unknown" invites an agent to treat the absence as a measured value.
+    let mut push = |label: &str, value: &Option<String>| {
+        if let Some(v) = value {
+            if !v.trim().is_empty() {
+                rows.push((label.to_string(), v.clone()));
+            }
+        }
+    };
+    push("Kernel", &info.kernel_version);
+    push("Hostname", &info.hostname);
+    push("Manufacturer", &info.manufacturer);
+    push("Product", &info.product_name);
+    push("Board Vendor", &info.board_vendor);
+    push("Board", &info.board_name);
+    push("CPU", &info.cpu_name);
+    push("BIOS Vendor", &info.bios.vendor);
+    push("BIOS Version", &info.bios.version);
+    push("BIOS Date", &info.bios.release_date);
+
+    if let Some(cores) = info.cpu_cores {
+        rows.push(("CPU Cores".to_string(), cores.to_string()));
+    }
+    if let Some(threads) = info.cpu_threads {
+        rows.push(("CPU Threads".to_string(), threads.to_string()));
+    }
+    rows.push((
+        "Firmware".to_string(),
+        format!("{:?}", info.bios.firmware_type),
+    ));
+    if let Some(sb) = info.bios.secure_boot {
+        rows.push(("Secure Boot".to_string(), sb.to_string()));
+    }
+
+    // Serial number and UUID are deliberately not surfaced. They identify the
+    // machine, and this tab is read by agents and pasted into issues.
+    Ok(SystemView { rows })
+}
+
 fn format_bytes(bytes: f64) -> String {
     const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
     let mut value = bytes;
@@ -295,6 +364,7 @@ impl Model for SimonApp {
                 self.memory = Pane::Loading;
                 self.network = Pane::Loading;
                 self.disks = Pane::Loading;
+                self.system = Pane::Loading;
                 Self::load_all()
             }
             Msg::MemoryLoaded(Ok(v)) => {
@@ -319,6 +389,14 @@ impl Model for SimonApp {
             }
             Msg::DisksLoaded(Err(e)) => {
                 self.disks = Pane::Failed(e);
+                Command::None
+            }
+            Msg::SystemLoaded(Ok(v)) => {
+                self.system = Pane::Ready(v);
+                Command::None
+            }
+            Msg::SystemLoaded(Err(e)) => {
+                self.system = Pane::Failed(e);
                 Command::None
             }
         }
@@ -346,6 +424,7 @@ impl Model for SimonApp {
             Tab::Memory => self.view_memory(chunks[1], frame),
             Tab::Network => self.view_network(chunks[1], frame),
             Tab::Disk => self.view_disk(chunks[1], frame),
+            Tab::System => self.view_system(chunks[1], frame),
         }
     }
 }
@@ -451,6 +530,29 @@ impl SimonApp {
         }
     }
 
+    fn view_system(&self, area: Rect, frame: &mut Frame<'_>) {
+        match &self.system {
+            Pane::Loading => Label::new("Loading system information…")
+                .agent_id("system_status")
+                .render(area, frame),
+            Pane::Failed(e) => Label::new(format!("System information unavailable: {e}"))
+                .agent_id("system_status")
+                .render(area, frame),
+            Pane::Ready(v) => {
+                let r = rows_of(area, 1 + v.rows.len().min(24));
+                Label::new("System")
+                    .bold()
+                    .agent_id("system_heading")
+                    .render(r[0], frame);
+                for (i, (label, value)) in v.rows.iter().take(24).enumerate() {
+                    Label::new(format!("{label}: {value}"))
+                        .agent_id(format!("system_{}", label.to_lowercase().replace(' ', "_")))
+                        .render(r[i + 1], frame);
+                }
+            }
+        }
+    }
+
     fn view_network(&self, area: Rect, frame: &mut Frame<'_>) {
         match &self.network {
             Pane::Loading => {
@@ -521,6 +623,7 @@ mod tests {
                 Tab::Network => "network_heading",
                 // A driveless machine is a legitimate answer, so accept either.
                 Tab::Disk => "disk_heading",
+                Tab::System => "system_heading",
             };
             if tab == Tab::Disk && driver.ontology().find_node("disk_empty").is_some() {
                 continue;
@@ -553,9 +656,42 @@ mod tests {
             "network pane still Loading after init; a Command::Task did not deliver"
         );
         assert!(
+            !driver.model().system.is_loading(),
+            "system pane still Loading after init"
+        );
+        assert!(
             !driver.model().disks.is_loading(),
             "disk pane still Loading after init -- this is the exact 3.9.0 failure,              and the whole premise of the port is that it cannot happen here"
         );
+    }
+
+    /// The system tab reports identity, and withholds the identifying parts.
+    ///
+    /// `SystemInfo` carries a serial number and a machine UUID. This tab is read
+    /// by agents and pasted into issues, so `read_system` never surfaces them —
+    /// and this asserts that, because the omission is a decision rather than an
+    /// oversight and would otherwise be easy to "fix" by adding the rows back.
+    #[test]
+    fn system_reports_identity_without_identifiers() {
+        let driver = loaded();
+        match &driver.model().system {
+            Pane::Ready(v) => {
+                assert!(!v.rows.is_empty(), "system tab produced no rows");
+                assert!(
+                    v.rows.iter().any(|(label, _)| label == "OS"),
+                    "system tab has no OS row"
+                );
+                for (label, _) in &v.rows {
+                    let l = label.to_lowercase();
+                    assert!(
+                        !l.contains("serial") && !l.contains("uuid"),
+                        "system tab surfaced a machine identifier: {label}"
+                    );
+                }
+            }
+            Pane::Failed(e) => panic!("system info failed: {e}"),
+            Pane::Loading => panic!("system still loading after init"),
+        }
     }
 
     /// The disk tab reports drives, and each carries the fields the row draws.
