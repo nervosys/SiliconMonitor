@@ -1,6 +1,6 @@
 # Status
 
-Current as of 4.0.0. This file is excluded from the published crate
+Current as of 4.0.1. This file is excluded from the published crate
 (`Cargo.toml`'s `exclude` list) and is for whoever picks the work up next.
 
 ## Released
@@ -229,6 +229,27 @@ feature stayed broken through eight published versions.
    `cargo clippy --all-features --all-targets` for type-checking the examples.
    Note `--lib --tests` skips doc-tests; run those before a release.
 
+
+12. **The GUI runs on Dewey's `agpu` backend, not the default egui one.** wgpu's
+   Vulkan surface path reuses a single binary semaphore across swapchain images,
+   which the validation layer rejects as
+   `VUID-vkQueueSubmit-pSignalSemaphores-00067`. It renders anyway, so it is
+   invisible without a validation layer installed — but it is undefined behaviour,
+   not noise, and could surface as a hang or a corrupt frame on another driver.
+
+   The bug is wgpu's, below both simon and Dewey. Do not "fix" it here or in
+   Dewey; the egui path has no semaphore code of its own to fix. If the agpu
+   backend ever becomes unavailable, the fallback is to report it upstream to
+   wgpu with the VUID and the acquire-index sequence from the log rather than to
+   switch back.
+
+   **This is the one surface no test covers.** `gui::frame` and `gui::script`
+   render through Dewey's `TestBackend` and touch no GPU, which is exactly why 839
+   passing tests said nothing about it. Anything to do with presentation,
+   swapchains or teardown has to be checked by running `simon gui` and watching
+   the log. Closing the window is the interesting moment: Dewey works around a
+   separate wgpu 24.x cleanup panic at `agpu_backend.rs:870`, so a clean exit on
+   WM_CLOSE is worth confirming after any backend or dependency change.
 
 ## The plan for what is left
 

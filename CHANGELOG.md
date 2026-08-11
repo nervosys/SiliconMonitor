@@ -5,6 +5,35 @@ All notable changes to Silicon Monitor will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.0.1] - 2026-08-11
+
+### Fixed
+
+- **The GUI violated the Vulkan spec on every frame.** Running `simon gui` under
+  a Vulkan validation layer produced
+  `VUID-vkQueueSubmit-pSignalSemaphores-00067` continuously: a binary semaphore
+  still bound to a pending presentation was being resubmitted, because wgpu's
+  Vulkan surface path reuses one semaphore across swapchain images rather than
+  one per image. It rendered, but undefined behaviour that happens to work on
+  this driver is not the same as working.
+
+  The fault is wgpu's, beneath both this crate and Dewey — the chain is Dewey →
+  eframe → egui-wgpu → wgpu, and Dewey's egui path contains no semaphore or
+  swapchain code of its own. `wgpu_hal::vulkan` appears in the log because that
+  is where the validation callback is installed, not because it authored the
+  mistake.
+
+  The GUI now runs on Dewey's `agpu` backend, which manages its own surface
+  semaphores and already carries a workaround for a related wgpu 24.x cleanup
+  panic. Measured after the switch: no validation output at all during rendering,
+  and a clean exit on `WM_CLOSE` — teardown being the specific moment that other
+  wgpu bug strikes.
+
+  Only `gui::run` changes. `gui::frame` and `gui::script` render through Dewey's
+  `TestBackend` and touch no GPU, which is also why the full 839-test suite
+  passed without a hint of this: the interactive surface is not the one the tests
+  cover.
+
 ## [4.0.0] - 2026-08-11
 
 The GUI is now built on [Dewey](https://crates.io/crates/deweygui), nervosys'

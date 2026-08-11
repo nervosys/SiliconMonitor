@@ -1502,10 +1502,21 @@ impl SimonApp {
 // ── Entry points ────────────────────────────────────────────────────────────
 
 /// Launch the interactive application.
+///
+/// Runs on Dewey's `agpu` backend (Vulkan-first, its own surface management)
+/// rather than the eframe/egui-wgpu default. wgpu's Vulkan presentation path
+/// reuses a single binary semaphore across swapchain images, which the
+/// validation layer rejects as VUID-vkQueueSubmit-pSignalSemaphores-00067 — a
+/// spec violation rather than noise, even though it renders. The bug is wgpu's,
+/// below both Dewey and simon, so the fix here is to take the path that does not
+/// hit it.
+///
+/// The headless entry points below are unaffected either way: they render
+/// through Dewey's `TestBackend`, which touches no GPU at all. That is also why
+/// the 839-test suite passed without a hint of this — the interactive surface is
+/// genuinely not the one the tests cover.
 pub fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
-    Program::new(SimonApp::new())
-        .run()
-        .map_err(|e| -> Box<dyn std::error::Error> { Box::new(e) })
+    AgpuProgram::new(SimonApp::new()).run()
 }
 
 /// Render one tab headlessly and return its text.
