@@ -55,7 +55,7 @@ Silicon Monitor is the world's first agentic system monitoring utility and API. 
 - [x] **Response caching** — LRU cache for agent responses
 
 ### User Interfaces
-- [x] **GUI (egui/eframe)** — Full native desktop application
+- [x] **GUI (Dewey)** — Full native desktop application, agent-readable headlessly
   - Real-time charts with 60-second history
   - Tabbed interface (Overview, CPU, Accelerators, Memory, Storage, Network, Connections, AI Chat)
   - Cyber theme with neon colors, dark/light toggle

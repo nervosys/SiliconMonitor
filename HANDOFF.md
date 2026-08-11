@@ -1,6 +1,6 @@
 # Status
 
-Current as of 3.10.0. This file is excluded from the published crate
+Current as of 4.0.0. This file is excluded from the published crate
 (`Cargo.toml`'s `exclude` list) and is for whoever picks the work up next.
 
 ## Released
@@ -19,6 +19,7 @@ Current as of 3.10.0. This file is excluded from the published crate
 | 3.8.0 | `simon tune`: use-case detection and profile recommendations, with an automatic server. Recommend-only by default. Published, tagged `v3.8.0`. |
 | 3.9.0 | Headless GUI reads four previously unreadable tabs; racy coverage test fixed. Published, tagged `v3.9.0`. |
 | 3.10.0 | Hyper-V root partition distinguished from a guest via CPUID leaf 0x40000003; bare metal no longer reported as a VM. Published, tagged `v3.10.0`. |
+| 4.0.0 | GUI rebuilt on Dewey; the ~10k-line egui implementation and eframe deleted. MSRV 1.85. Published, tagged `v4.0.0`. |
 | 2.1.5 | Committed, never published. Documentation only; superseded by 3.0.0. |
 
 ## Verification that is worth repeating
@@ -164,116 +165,70 @@ feature stayed broken through eight published versions.
    from a model. `tuning::tests::a_recommendation_never_proposes_a_value_the_driver_did_not_offer`
    is the test that keeps it true. A model may classify; it may not pick numbers.
 
-9. **The GUI is being ported to Dewey, two tabs of nine done.** simon's shipping
-   GUI (`src/gui/`, ~10k lines) is immediate-mode egui and was never built on
-   [Dewey](https://crates.io/crates/deweygui), nervosys' agentic-first GUI
-   framework (a sibling checkout under `nervosys/desktop/Dewey`). The port lives in
-   `src/gui_dewey/` behind the `dewey-gui` feature, independent of `gui` so both
-   build at once and neither can break the other.
+9. ~~**The GUI is being ported to Dewey.**~~ Done in 4.0.0. `src/gui/` is the
+   Dewey application; the ~10,000-line immediate-mode egui implementation and its
+   663-line `headless.rs` are deleted, and eframe/egui/egui_plot/egui_extras are
+   out of the dependency graph.
 
-   **Why, in one line:** the 3.9.0 spinner bug cannot occur in Dewey. Background
-   work is a `Command::Task` the runtime owns, not a thread the event loop has to
-   remember to poll, and `HeadlessDriver` runs it inline — one `init()` leaves the
-   model populated. The four Dewey tests run in **0.01 s**; the egui headless path
-   needs 6.7 s for disk, 16.5 s for peripherals, a per-tab settle predicate and a
-   30-second deadline to reach the same place.
+   All thirteen tabs render. `every_egui_tab_has_a_dewey_counterpart` asserts the
+   count so the completion condition is checked rather than claimed, and
+   `frame_renders_every_tab_by_name` renders each one headlessly.
 
-   Port order, smallest risk first — 1 and 2 are done:
+   **What the move actually bought.** The 3.9.0 spinner bug cannot recur:
+   background work is a `Command::Task` the runtime owns rather than a thread the
+   event loop must remember to poll, so there is no headless-versus-interactive
+   divergence to get wrong. Tests assert on named ontology nodes rather than
+   painted text, which is what let four broken tabs pass the old contract test for
+   six releases.
 
-   1. ~~`dewey-gui` feature; both GUI paths build.~~
-   2. ~~Memory + Network tabs (no loaders — proves the harness).~~
-   3. ~~Disk + System.~~ The premise held: `read_disks()` is an ordinary
-      `Command::Task`, and `panes_leave_the_loading_state` asserts the disk pane
-      is out of `Loading` after one `init()` — the exact 3.9.0 failure, now a
-      standing assertion. The whole suite runs in 2.0 s against the egui path's
-      6.7 s for this tab alone, with no settle predicate and no deadline. The one
-      thing that did not vanish is the COM guard: disk paths reach WMI, so
-      `crate::pipeline::com_guard()` moves to the top of the task rather than into
-      a thread the app spawns, and the System tab needs it for the same reason.
+   **Things learned the hard way, in case they recur.**
 
-      `read_system()` deliberately withholds the serial number and machine UUID
-      that `SystemInfo` carries — this tab is read by agents and pasted into
-      issues. `system_reports_identity_without_identifiers` asserts the omission,
-      so it reads as a decision rather than something to helpfully add back.
-   4. ~~Peripherals + Profiles.~~ Peripherals drops MAC and Bluetooth
-      addresses; Profiles keeps provider errors as rows rather than dropping
-      them, since "the GPU provider failed" and "this GPU has no tunables" are
-      different facts. Six of thirteen tabs now render.
-   5. The four core tabs — **CPU, Accelerators, Processes, Overview**. These are
-      what make the Dewey path a replacement rather than a preview; until they
-      land, deleting the eframe path would ship a hardware monitor that cannot
-      show a CPU. Then the three remaining: NetworkTools, Connections, AI
-      Assistant.
-   6. Charts: `egui_plot` to Dewey's `Chart` widget. Unscouted — whether Dewey's
-      `Chart` matches `egui_plot`'s capability rather than just its output has not
-      been checked, and it is the most likely place to hit real friction.
-   7. Delete `src/gui/headless.rs` (663 lines) and move the contract test onto
-      `agent_id`s instead of painted-text scraping.
-   8. Drop the `gui`/eframe path once parity holds. This is also what ends the
-      duplicate-egui disk cost.
+   Dewey's prelude exports a single-parameter `Result<T>` that shadows std's under
+   a glob import; `src/gui/mod.rs` re-imports `std::result::Result` explicitly.
 
-   **The egui GUI has thirteen tabs, not nine.** Earlier notes in this file and in
-   commit messages said nine, carried forward from the 3.9.0 work without checking
-   `Tab` in `src/gui/app.rs`. The unported seven are Overview, Cpu, Accelerators,
-   Processes, NetworkTools, Connections and AI Assistant.
+   `HeadlessDriver::process_command` runs `Command::Task` inline while commenting
+   that it spawns a thread. The inline behaviour is what makes headless reads
+   deterministic and everything here depends on it. **This is still worth
+   confirming upstream** — if it ever becomes a real thread, the settle problem
+   comes back and `gui::frame` will need the deadline it currently does without.
 
-   **Verifying without filling the disk.** `cargo test --all-features` links every
-   example, and with two copies of egui/wgpu in `target/` that has failed twice
-   with `link.exe` 1318 (disk exhaustion). Use
-   `cargo test --all-features --lib --tests` for execution and
-   `cargo clippy --all-features --all-targets` for type-checking the examples;
-   between them the coverage is the same. Note `--lib --tests` skips doc-tests, so
-   run those separately before a release.
-
-   **Three things to know before continuing.**
-
-   Dewey renders through egui 0.31 and simon pins 0.30, so enabling both features
-   compiles two copies of egui/wgpu/naga. That is temporary and it is not free —
-   it filled a 3.7 TB disk mid-build and needed `cargo clean` to recover. Watch
-   free space when building `--all-features`.
-
-   `dewey-gui` raises the MSRV: Dewey is edition 2024, so it needs Rust 1.85+
-   against the 1.70 this crate claims. It stays optional and off by default for
-   that reason. Revisit the `rust-version` line at step 7, not before.
-
-   Dewey's prelude exports a single-parameter `Result<T>` alias that shadows
-   std's under a glob import. `src/gui_dewey/mod.rs` re-imports
-   `std::result::Result` explicitly; do the same in new modules or every
-   `Result<T, String>` becomes an arity error.
-
-   **One upstream question.** `HeadlessDriver::process_command` comments
-   `Command::Task` as "spawn the task on a background thread" but calls `task()`
-   inline. The inline behaviour is what makes headless reads deterministic and the
-   tests here depend on it. Confirm which is intended before step 3 leans harder
-   on it — if it ever becomes a real thread, the settle problem returns.
+   Building both GUIs at once compiled two copies of egui/wgpu/naga and exhausted
+   a 3.7 TB disk twice, failing with `link.exe` 1318. That is gone with the eframe
+   path, and `cargo test --all-features` links every example again.
 
 10. **`CpuStats::new()` and `MemoryStats::new()` are zero-constructors with
    constructor-shaped names.** Neither reads anything: `MemoryStats::new()`
    returns all zeros, `CpuStats::new()` returns no cores and 100% idle. The real
    values come from the per-platform `read_cpu_stats` / `read_memory_stats`.
 
-   `src/gui/app.rs` called the real readers only under
-   `#[cfg(target_os = "windows")]` and fell back to the zero-constructors
-   everywhere else, so on Linux the GUI opened showing 0 MB of memory and a fully
-   idle machine with no cores. Both now call the Linux readers. **Verified by
-   inspection, not compilation** — the documented Linux cross-check cannot include
-   `gui`, which drags in reqwest and so ring/openssl-sys, needing a C toolchain
-   this box lacks. CI compiles Linux.
+   Both GUI call sites are fixed (4.0.0), and the Dewey CPU tab asserts against
+   the zero-constructor's exact signature so a regression fails loudly. **The
+   Linux arms are verified by inspection, not compilation** — the documented Linux
+   cross-check cannot include `gui`, which drags in reqwest and so
+   ring/openssl-sys, needing a C toolchain this box lacks. CI compiles Linux.
 
-   macOS still reaches both zero-constructors. There is no
-   `platform::macos::read_cpu_stats` or `read_memory_stats` to call (open work 2),
-   and no Mac here to check a replacement against.
+   macOS still reaches both zero-constructors: there is no
+   `platform::macos::read_cpu_stats` or `read_memory_stats` to call (open work 2).
 
-   **The deeper fix is a rename, and it is a breaking change.** `SystemStats::new()`
-   shows the right shape — it dispatches to the platform reader. The other two
-   cannot simply follow it: `platform::linux::memory::read_memory_stats` calls
+   **The real fix is a rename, and it is breaking.** `SystemStats::new()` shows
+   the right shape — it dispatches to the platform reader. The other two cannot
+   follow it: `platform::linux::memory::read_memory_stats` calls
    `MemoryStats::new()?` as its starting struct, so making `new()` read would
    recurse forever. They are builder bases wearing a constructor's name, and
-   `empty()` or `zeroed()` would have prevented both bugs. Worth doing at the next
-   major version; call sites are the only safe fix before then.
+   `empty()` or `zeroed()` would have prevented both defects. 4.0.0 was the moment
+   to do it and it was not taken — the GUI migration was already the breaking
+   change and stacking a second one would have muddied it. Next major version.
 
-   This has now caused two defects found a day apart. Assume any other
-   `T::new()` in this crate may be a zero-constructor until checked.
+   This has now caused two defects found a day apart. **Assume any other
+   `T::new()` in this crate may be a zero-constructor until checked.**
+
+11. **Verify with `--lib --tests` when the disk is tight.** `cargo test
+   --all-features` links every example. That is affordable again now the duplicate
+   egui is gone, but if it ever fails with `link.exe` 1318, the split is
+   `cargo test --all-features --lib --tests` for execution plus
+   `cargo clippy --all-features --all-targets` for type-checking the examples.
+   Note `--lib --tests` skips doc-tests; run those before a release.
+
 
 ## The plan for what is left
 

@@ -70,8 +70,7 @@ impl McpServer {
         let reader = BufReader::new(stdin.lock());
 
         for line in reader.lines() {
-            let line = line
-                .map_err(|e| SimonError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+            let line = line.map_err(|e| SimonError::Io(std::io::Error::other(e)))?;
             if line.trim().is_empty() {
                 continue;
             }
@@ -91,12 +90,12 @@ impl McpServer {
             };
 
             let response_json = serde_json::to_string(&response)
-                .map_err(|e| SimonError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+                .map_err(|e| SimonError::Io(std::io::Error::other(e)))?;
             writeln!(stdout, "{}", response_json)
-                .map_err(|e| SimonError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+                .map_err(|e| SimonError::Io(std::io::Error::other(e)))?;
             stdout
                 .flush()
-                .map_err(|e| SimonError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+                .map_err(|e| SimonError::Io(std::io::Error::other(e)))?;
         }
         Ok(())
     }

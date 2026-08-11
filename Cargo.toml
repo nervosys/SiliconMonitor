@@ -1,8 +1,8 @@
 [package]
 name = "silicon-monitor"
-version = "3.10.0"
+version = "4.0.0"
 edition = "2021"
-rust-version = "1.70"
+rust-version = "1.85"
 default-run = "simon"
 authors = ["nervosys"]
 license = "AGPL-3.0-or-later"
@@ -36,8 +36,8 @@ name = "simonlib"
 path = "src/lib.rs"
 crate-type = ["lib", "cdylib", "staticlib"]
 
-# `examples/gui.rs` names `simonlib::gui` and `eframe` directly, so it cannot
-# build without the feature that supplies them. Without this, `cargo check
+# `examples/gui.rs` names `simonlib::gui`, so it cannot build without the feature
+# that supplies it. Without this, `cargo check
 # --all-targets` on any feature set lacking `gui` fails on the example rather than
 # skipping it — the same shape as the `cli`-without-`gui` breakage fixed in 3.0.1,
 # and missed by the Feature combinations job because that job checks default
@@ -82,34 +82,15 @@ num_cpus = { version = "1.16", optional = true }
 ctrlc = { version = "3.4", optional = true }
 
 # Optional dependencies for the GUI
-# `default-features = false` drops eframe's windowing backends along with the
-# renderer defaults. On Windows and macOS winit has exactly one backend and needs
-# no feature to find it, so nothing appeared wrong; on Linux it has two and picks
-# neither, failing the build at `compile_error!("The platform you're compiling for
-# is not supported by winit")`. Both are named here so a Linux desktop session of
-# either kind works — this is a compile-time backend selection, not a runtime one.
-eframe = { version = "0.30", optional = true, default-features = false, features = [
-    "default_fonts",
-    "glow",
-    "persistence",
-    "x11",
-    "wayland",
-] }
-egui = { version = "0.30", optional = true }
-egui_extras = { version = "0.30", optional = true, features = ["all_loaders"] }
-egui_plot = { version = "0.30", optional = true }
 open = { version = "5.3", optional = true }
 
-# Dewey — nervosys' agentic-first GUI framework, and where the GUI is heading.
-# Ported tab by tab behind `dewey-gui` while the eframe path above keeps
-# shipping; see HANDOFF.md. Dewey renders through egui 0.31 and simon's own path
-# is pinned to 0.30, so enabling both features compiles two copies of egui. That
-# is deliberate and temporary — the duplicate goes away with the eframe path once
-# Dewey reaches parity, and until then neither path can break the other.
+# Dewey — nervosys' agentic-first GUI framework. The GUI is built on this; the
+# immediate-mode egui implementation it replaced was removed in 4.0.0.
 #
-# Note this is the one dependency that raises the MSRV: Dewey is edition 2024, so
-# `--features dewey-gui` needs Rust 1.85+ against the 1.70 claimed above. It stays
-# optional and off by default for exactly that reason.
+# Dewey is edition 2024, so `--features gui` needs Rust 1.85+. That is why the
+# crate's `rust-version` moved from 1.70 to 1.85 in 4.0.0; every non-GUI feature
+# still builds on older toolchains, but Cargo resolves `rust-version` per crate,
+# not per feature.
 deweygui = { version = "1.0", optional = true }
 
 # Optional dependencies for remote AI backends
@@ -228,24 +209,20 @@ cli = [
     "ctrlc",
     "remote-backends", # Required for AI backend detection (Ollama, OpenAI, etc.)
 ]
-# GUI features
+# GUI feature. Backed by Dewey since 4.0.0.
 gui = [
-    "eframe",
-    "egui",
-    "egui_extras",
-    "egui_plot",
+    "deweygui",
+    "network",
     "open",
     "tokio",
-
     "hostname",
     "num_cpus",
     "remote-backends", # Required for AI backend detection (Ollama, OpenAI, etc.)
 ]
 
-# The Dewey port. Independent of `gui` on purpose: both can be enabled at once so
-# the two renderings of a tab can be compared side by side during the migration,
-# and neither is required for the other to build.
-dewey-gui = ["deweygui", "network", "hostname", "num_cpus"]
+# Retained as an alias so `--features dewey-gui` from the migration period keeps
+# working. It is exactly `gui` now.
+dewey-gui = ["gui"]
 # Remote AI backend support (OpenAI, Anthropic, Ollama, etc.)
 remote-backends = ["reqwest"]
 # Local AI backends

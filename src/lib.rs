@@ -258,13 +258,10 @@ pub mod tui; // Terminal UI
 #[cfg(feature = "cli")]
 pub use tui::{AcceleratorInfo, AcceleratorType};
 
+// Graphical UI, built on Dewey (nervosys' agentic-first GUI framework).
+// Replaced the ~10k-line immediate-mode egui implementation in 4.0.0.
 #[cfg(feature = "gui")]
-pub mod gui; // Graphical UI
-
-// The Dewey port of the above, grown tab by tab. Independent of `gui` so both
-// can be built at once and compared during the migration.
-#[cfg(feature = "dewey-gui")]
-pub mod gui_dewey;
+pub mod gui;
 
 // Re-export new hardware monitors
 pub use audio::{AudioDevice, AudioDeviceType, AudioMonitor, AudioState};

@@ -29,7 +29,7 @@ Silicon Monitor is a powerful, cross-platform hardware monitoring utility design
 | 🤖 **AI Agent** | `amon` / `simon ai` | Natural language queries, MCP server for Claude, tool manifests for LLMs   |
 | 💻 **CLI**      | `simon <component>` | Command-line monitoring with JSON output for scripting                     |
 | 🖥️ **TUI**      | `simon tui`         | Interactive terminal dashboard with real-time graphs and selectable themes |
-| 🪟 **GUI**      | `simon gui`         | Native desktop application with egui                                       |
+| 🪟 **GUI**      | `simon gui`         | Native desktop application built on Dewey, readable headlessly by agents   |
 
 ## Overview
 
@@ -995,7 +995,7 @@ Every other tab renders the same way — pass `--tab Processes`, `CPU`,
 
 ## Graphical User Interface (GUI)
 
-Silicon Monitor also includes a native desktop GUI built with egui for a modern graphical experience:
+Silicon Monitor also includes a native desktop GUI built on [Dewey](https://crates.io/crates/deweygui), nervosys' agentic-first GUI framework. Every widget carries a semantic id, so the same application an operator clicks through can be read without a display via `simon gui --frame` or driven over Dewey's agent protocol with `simon gui --script`:
 
 ```bash
 # Build and run the GUI

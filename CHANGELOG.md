@@ -5,6 +5,94 @@ All notable changes to Silicon Monitor will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.0.0] - 2026-08-11
+
+The GUI is now built on [Dewey](https://crates.io/crates/deweygui), nervosys'
+agentic-first GUI framework. The ~10,000-line immediate-mode egui implementation
+is gone.
+
+### Breaking
+
+- **MSRV is 1.85**, up from 1.70. Dewey is edition 2024. Cargo resolves
+  `rust-version` per crate rather than per feature, so this applies even to
+  builds that do not enable `gui`.
+- **`simonlib::gui::headless` is removed.** Its job — render a tab without a
+  display — is now `gui::frame`, which returns the ontology tree as JSON rather
+  than painted text.
+- **`simonlib::gui::app::SiliconMonitorApp` is removed**, along with the rest of
+  the egui implementation. `gui::run`, `gui::frame` and `gui::script` are the
+  public surface.
+- **`gui::run` returns `Box<dyn Error>`** instead of `eframe::Error`.
+- **`gui --script` speaks Dewey's agent protocol** — one JSON request per line —
+  instead of the bespoke command vocabulary simon had invented.
+
+### Why
+
+3.9.0 fixed a bug where four tabs rendered only a spinner under `gui --frame`.
+Their contents loaded on background threads collected by
+`check_background_loaders`, which runs only inside the interactive event loop, so
+the headless path never collected them. The fix taught the headless path to pump
+the loaders: a 30-second deadline, a per-tab settle predicate combining loader
+flags with painted text, and two wrong attempts before it worked.
+
+Dewey's answer is that the loaders were never the app's to pump. Background work
+is a `Command::Task` the runtime owns and delivers as an ordinary message. There
+is no "collect the loaders" step to forget, so there is no
+headless-versus-interactive divergence to get wrong. The bug class is absent
+rather than fixed.
+
+The same applies to how the GUI is read. Every widget carries an `agent_id` and a
+headless read returns named ontology nodes, so a test asks whether
+`memory_total` is present instead of whether *some* text was painted — which a
+spinner satisfies, and which is why four broken tabs passed the contract test for
+six releases.
+
+### Added
+
+- All thirteen tabs render under Dewey: Overview, CPU, Accelerators, Processes,
+  Memory, Network, Disk, System, Peripherals, Profiles, Connections, Network
+  Tools, AI Assistant. `every_egui_tab_has_a_dewey_counterpart` asserts the count.
+- `gui::frame(Some(tab))` renders any tab headlessly and returns its ontology
+  tree. No deadline, no settle predicate: `init()` runs the loaders to completion
+  because the runtime owns them.
+- CPU history chart, replacing the `egui_plot` graph. It draws only from two
+  samples on, since a one-point line chart is a dot implying a trend it cannot
+  have.
+
+### Fixed
+
+- **The GUI showed 0 MB of memory and a fully idle CPU with no cores on Linux.**
+  `MemoryStats::new()` and `CpuStats::new()` are zero-constructors, not readers.
+  The egui GUI called the real per-platform readers only under
+  `#[cfg(target_os = "windows")]` and fell back to the zero-constructors
+  everywhere else. Both now call the Linux readers.
+
+  `SystemStats::new()` in the same crate does the right thing and dispatches to
+  the platform reader. The other two cannot follow it —
+  `platform::linux::memory::read_memory_stats` calls `MemoryStats::new()?` as its
+  starting struct, so making `new()` read would recurse forever. They are builder
+  bases wearing a constructor's name; `empty()` would have prevented both defects.
+  Renaming them is recorded as open work.
+
+### Behaviour worth knowing
+
+- **Network Tools runs nothing at load.** Ping, traceroute and port scans send
+  packets to hosts the user names, so they now require an explicit action, and
+  the pane says so on screen. `network_tools_runs_nothing_on_load` asserts the
+  negative — the kind of guarantee that is otherwise lost silently, since a
+  version that pinged on load would still render a pane and every other test
+  would pass.
+- **The AI pane does not probe backends at load.** Probing is a network call, and
+  blocking a frame on one makes reading the GUI as slow as the slowest
+  unreachable host.
+- **Peripherals omits MAC and Bluetooth addresses, and System omits the serial
+  number and machine UUID.** These panes are read by agents and pasted into
+  issues. Connections *does* show remote addresses — they are the substance of
+  that tab.
+- Row caps are applied by loaders, not views, so the model states exactly what a
+  tab can show and a headless read is not misled into thinking it received a
+  complete table.
+
 ## [3.10.0] - 2026-08-10
 
 A bare-metal Windows 11 desktop is no longer reported as a virtual machine.

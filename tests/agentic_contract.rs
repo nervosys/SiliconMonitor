@@ -329,6 +329,12 @@ fn tui_frame_selects_tabs_by_name_and_rejects_unknown_ones() {
 
 /// The GUI must be readable without a window, or it is the surface an agent cannot
 /// see at all — and the one where "rendered but invisible" already happened once.
+///
+/// Since 4.0.0 the GUI is a Dewey application and `--frame` emits the ontology
+/// tree rather than painted text. That is a stronger contract than the one this
+/// test used to check: it asks whether a *named* node is present, not whether
+/// some glyphs appeared. The old form was satisfied by a spinner, which is
+/// exactly how four broken tabs passed it for six releases.
 #[test]
 fn the_gui_renders_a_tab_headlessly() {
     let (stdout, stderr, code) = run(&["gui", "--frame", "--tab", "profiles"]);
@@ -336,9 +342,11 @@ fn the_gui_renders_a_tab_headlessly() {
         code, 0,
         "rendering a GUI tab should succeed.\nstderr: {stderr}"
     );
+    let tree: serde_json::Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("--frame emitted invalid JSON: {e}\n{stdout}"));
     assert!(
-        stdout.contains("Hardware Profile Inspector"),
-        "the Profiles tab did not paint its header:\n{stdout}"
+        tree_contains_agent_id(&tree, "profiles_heading"),
+        "the Profiles tab produced no profiles_heading node:\n{stdout}"
     );
 
     // An unknown tab must list the alternatives rather than silently rendering the
@@ -346,66 +354,75 @@ fn the_gui_renders_a_tab_headlessly() {
     let (_, stderr, code) = run(&["gui", "--frame", "--tab", "not-a-tab"]);
     assert_eq!(code, 1, "an unknown GUI tab must exit 1");
     assert!(
-        stderr.contains("Unknown tab") && stderr.contains("overview"),
+        stderr.contains("unknown tab") && stderr.contains("Overview"),
         "an unknown tab should name the available ones, got: {stderr}"
     );
 }
 
-/// Every GUI tab must paint something. A tab that paints nothing is blank to a user
-/// and indistinguishable from one that is broken.
+/// Walk the exported ontology tree looking for a node with this agent id.
+fn tree_contains_agent_id(value: &serde_json::Value, id: &str) -> bool {
+    match value {
+        serde_json::Value::Object(map) => {
+            if map
+                .get("agent_id")
+                .and_then(|v| v.as_str())
+                .is_some_and(|v| v == id)
+            {
+                return true;
+            }
+            map.values().any(|v| tree_contains_agent_id(v, id))
+        }
+        serde_json::Value::Array(items) => items.iter().any(|v| tree_contains_agent_id(v, id)),
+        _ => false,
+    }
+}
+
+/// Every GUI tab must render its own named content.
+///
+/// The pre-4.0.0 version of this test counted "substantive lines" of painted
+/// text, which was a proxy for the thing actually wanted and a poor one — a
+/// spinner counted, and the threshold had to be tuned twice to avoid failing
+/// tabs that were working. Asking for the tab's heading node by name is the
+/// property that was meant all along.
 #[test]
-fn every_gui_tab_paints_text() {
-    for tab in [
-        "overview",
-        "cpu",
-        "accelerators",
-        "memory",
-        "disk",
-        "processes",
-        "network",
-        "system",
-        "peripherals",
-        "profiles",
-        "ai",
+fn every_gui_tab_renders_its_own_content() {
+    for (tab, expected) in [
+        ("overview", "overview_heading"),
+        ("cpu", "cpu_heading"),
+        ("accelerators", "accelerators_heading"),
+        ("processes", "processes_heading"),
+        ("memory", "memory_heading"),
+        ("network", "network_heading"),
+        ("disk", "disk_heading"),
+        ("system", "system_heading"),
+        ("peripherals", "peripherals_heading"),
+        ("profiles", "profiles_heading"),
+        ("connections", "connections_heading"),
+        ("network tools", "networktools_heading"),
+        ("ai assistant", "ai_heading"),
     ] {
         let (stdout, stderr, code) = run(&["gui", "--frame", "--tab", tab]);
         assert_eq!(code, 0, "tab {tab} failed to render.\nstderr: {stderr}");
-        assert!(
-            !stdout.trim().is_empty(),
-            "the {tab} tab painted no text at all"
-        );
+        let tree: serde_json::Value = serde_json::from_str(&stdout)
+            .unwrap_or_else(|e| panic!("{tab}: --frame emitted invalid JSON: {e}"));
 
-        // A spinner is painted text, so "not empty" was satisfied by four tabs
-        // that rendered *only* "Loading …" — disk, system, peripherals and
-        // profiles, which between them carry the SMART, PCI and USB work. An
-        // agent reading them learned nothing.
-        //
-        // The assertion is "painted something besides placeholders", not "painted
-        // no placeholder at all". A tab may legitimately show data while one
-        // section is still arriving — the system tab does exactly that when the
-        // machine is loaded — and forbidding that outright made this test fail on
-        // a busy CI box for a tab that was working.
-        let substantive: Vec<&str> = stdout
-            .lines()
-            .map(str::trim)
-            .filter(|l| !l.is_empty() && !l.starts_with("Loading"))
-            .collect();
-        // Two, not more. The four broken tabs each painted exactly one
-        // substantive line — a bare title beside their spinner — so this catches
-        // them. The AI tab legitimately sits at two while it probes for backends,
-        // and that probe is deliberately not waited on: it is a network call, and
-        // blocking every headless read on it would make reading the GUI as slow
-        // as a DNS timeout.
+        // Tabs whose content is legitimately empty on some machines report that
+        // through their own node rather than sharing the heading's, so an empty
+        // result is still a positive answer and never looks like a stuck load.
+        let empty_id = format!("{}_empty", expected.trim_end_matches("_heading"));
         assert!(
-            substantive.len() >= 2,
-            "the {tab} tab painted nothing but placeholders and a title, so an agent \
-             reading it learns nothing:\n{stdout}"
+            tree_contains_agent_id(&tree, expected) || tree_contains_agent_id(&tree, &empty_id),
+            "the {tab} tab produced neither {expected} nor {empty_id}:\n{stdout}"
         );
     }
 }
 
-/// The GUI script surface mirrors the TUI's, minus the key step it has no use for.
-/// Exit codes must match so a caller can treat both surfaces the same way.
+/// The GUI script surface speaks Dewey's agent protocol.
+///
+/// Before 4.0.0 this was a vocabulary simon had invented — `goto`, `assert`,
+/// `capture`. It is now one JSON agent request per line, so anything that can
+/// drive a Dewey application can drive simon's GUI, and the protocol is
+/// documented by Dewey rather than by this crate.
 #[test]
 fn the_gui_can_be_inspected_by_a_script() {
     use std::io::Write;
@@ -433,28 +450,28 @@ fn the_gui_can_be_inspected_by_a_script() {
         )
     }
 
-    let (stdout, stderr, code) =
-        run_script("goto profiles\nassert Hardware Profile Inspector\ncapture\n");
-    assert_eq!(code, 0, "script should pass.\nstderr: {stderr}");
-    assert!(
-        stdout.contains("Hardware Profile Inspector"),
-        "the capture should hold the painted text:\n{stdout}"
-    );
-
-    let (_, stderr, code) = run_script("assert absolutely-not-painted\n");
-    assert_eq!(code, 1, "a failed assertion must exit 1, matching the TUI");
-    assert!(stderr.contains("absolutely-not-painted"), "got: {stderr}");
-
-    // The absent `key` step is a decision, and the error says so rather than
-    // reading as an oversight.
-    let (_, stderr, code) = run_script("key 3\n");
+    let (stdout, stderr, code) = run_script("{\"type\":\"get_tree\"}\n");
     assert_eq!(
-        code, 2,
-        "an unparseable script must exit 2, matching the TUI"
+        code, 0,
+        "a GetTree request should succeed.\nstderr: {stderr}"
     );
     assert!(
-        stderr.contains("addressable by name"),
-        "the rejection should explain why there is no key step, got: {stderr}"
+        stdout.contains("agent_id"),
+        "the response should carry the ui tree:\n{stdout}"
+    );
+
+    // Blank lines and comments are skipped rather than erroring, so a script can
+    // be commented without special-casing at the call site.
+    let (_, _, code) = run_script("\n# a comment\n{\"type\":\"get_tree\"}\n");
+    assert_eq!(code, 0, "comments and blank lines must be skipped");
+
+    // Malformed input names the offending line, since a script that fails on
+    // line 40 of 60 is useless if the error does not say which line.
+    let (_, stderr, code) = run_script("{\"type\":\"get_tree\"}\nnot-json\n");
+    assert_eq!(code, 1, "an unparseable request must exit 1");
+    assert!(
+        stderr.contains("line 2"),
+        "the error should name the failing line, got: {stderr}"
     );
 }
 

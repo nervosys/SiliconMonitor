@@ -1007,8 +1007,8 @@ impl MonitoringBackend {
     ) -> Vec<&ConnectionInfo> {
         self.connections
             .iter()
-            .filter(|c| protocol.map_or(true, |p| c.protocol == p))
-            .filter(|c| state.map_or(true, |s| c.state == s))
+            .filter(|c| protocol.is_none_or(|p| c.protocol == p))
+            .filter(|c| state.is_none_or(|s| c.state == s))
             .collect()
     }
 
