@@ -218,18 +218,22 @@ feature stayed broken through eight published versions.
    tests here depend on it. Confirm which is intended before step 3 leans harder
    on it — if it ever becomes a real thread, the settle problem returns.
 
-10. **The egui memory tab shows 0 MB on Linux and macOS.** `MemoryStats::new()`
-   is a zero-constructor, not a reader: it returns zeros on every platform. The
-   real values come from the per-platform `read_memory_stats()`, which
-   `src/gui/app.rs` calls only under `#[cfg(target_os = "windows")]`, falling back
-   to the zero-constructor everywhere else. Linux has a working reader
-   (`src/platform/linux/memory.rs`) that the GUI never calls.
+10. **The egui memory tab showed 0 MB on Linux; macOS still does.**
+   `MemoryStats::new()` is a zero-constructor, not a reader: it returns zeros on
+   every platform. `src/gui/app.rs` called the real per-platform
+   `read_memory_stats()` only under `#[cfg(target_os = "windows")]` and fell back
+   to the zero-constructor everywhere else, so the tab opened showing 0 MB of
+   0 MB until the first refresh replaced it.
 
-   Found while porting; `src/gui_dewey/` wires Linux up correctly, so the two
-   paths deliberately differ until this is fixed. The egui path was left alone to
-   keep that fix a separate, reviewable change. macOS has no `read_memory_stats`
-   at all — see item 2.
+   Linux is fixed — it had a working reader in `platform::linux::memory` the whole
+   time that the GUI simply never called. **That arm is verified by inspection,
+   not by compilation:** the documented Linux cross-check cannot include the `gui`
+   feature, because it drags in reqwest and so `ring`/`openssl-sys`, which need a
+   C toolchain this box does not have. CI is what will actually compile it.
 
+   macOS is untouched on purpose. There is no `platform::macos::read_memory_stats`
+   to call (open work 2) and no Mac here to check a replacement against, so it
+   still reaches the zero-constructor. Fixing item 2 is what closes this.
 
 ## The plan for what is left
 

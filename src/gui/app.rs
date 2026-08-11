@@ -644,10 +644,23 @@ impl SiliconMonitorApp {
         #[cfg(not(target_os = "windows"))]
         let initial_cpu_stats = CpuStats::new().ok();
 
-        // Get initial memory stats
+        // Get initial memory stats.
+        //
+        // `MemoryStats::new()` is a zero-constructor, not a reader — it returns a
+        // struct of zeros on every platform. Reaching it means the tab opens
+        // showing 0 MB of 0 MB until the first refresh replaces it. Linux has had
+        // a working `read_memory_stats` in `platform::linux::memory` the whole
+        // time and simply was not being called; it is now.
+        //
+        // macOS still falls through to the zero-constructor. That is left alone
+        // deliberately rather than "fixed" blind: there is no
+        // `platform::macos::read_memory_stats` to call yet (HANDOFF.md open work
+        // 2), and no Mac here to check a replacement against.
         #[cfg(target_os = "windows")]
         let initial_memory_stats = platform_impl::read_memory_stats().ok();
-        #[cfg(not(target_os = "windows"))]
+        #[cfg(target_os = "linux")]
+        let initial_memory_stats = crate::platform::linux::memory::read_memory_stats().ok();
+        #[cfg(not(any(target_os = "windows", target_os = "linux")))]
         let initial_memory_stats = MemoryStats::new().ok();
 
         // Start background loading for AI agent (avoid blocking UI with HTTP timeouts)
