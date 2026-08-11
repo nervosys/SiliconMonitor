@@ -164,6 +164,68 @@ feature stayed broken through eight published versions.
    from a model. `tuning::tests::a_recommendation_never_proposes_a_value_the_driver_did_not_offer`
    is the test that keeps it true. A model may classify; it may not pick numbers.
 
+9. **The GUI is being ported to Dewey, two tabs of nine done.** simon's shipping
+   GUI (`src/gui/`, ~10k lines) is immediate-mode egui and was never built on
+   [Dewey](https://crates.io/crates/deweygui), nervosys' agentic-first GUI
+   framework at `C:/Users/adamm/dev/nervosys/desktop/Dewey`. The port lives in
+   `src/gui_dewey/` behind the `dewey-gui` feature, independent of `gui` so both
+   build at once and neither can break the other.
+
+   **Why, in one line:** the 3.9.0 spinner bug cannot occur in Dewey. Background
+   work is a `Command::Task` the runtime owns, not a thread the event loop has to
+   remember to poll, and `HeadlessDriver` runs it inline — one `init()` leaves the
+   model populated. The four Dewey tests run in **0.01 s**; the egui headless path
+   needs 6.7 s for disk, 16.5 s for peripherals, a per-tab settle predicate and a
+   30-second deadline to reach the same place.
+
+   Port order, smallest risk first — 1 and 2 are done:
+
+   1. ~~`dewey-gui` feature; both GUI paths build.~~
+   2. ~~Memory + Network tabs (no loaders — proves the harness).~~
+   3. Disk + System. **The interesting step:** these are the loader tabs, where
+      `Command<Msg>` replaces `check_background_loaders` and the 3.9.0 fix stops
+      being needed rather than being reimplemented.
+   4. Peripherals + Profiles.
+   5. Charts: `egui_plot` to Dewey's `Chart` widget.
+   6. Delete `src/gui/headless.rs` (663 lines) and move the contract test onto
+      `agent_id`s instead of painted-text scraping.
+   7. Drop the `gui`/eframe path once parity holds.
+
+   **Three things to know before continuing.**
+
+   Dewey renders through egui 0.31 and simon pins 0.30, so enabling both features
+   compiles two copies of egui/wgpu/naga. That is temporary and it is not free —
+   it filled a 3.7 TB disk mid-build and needed `cargo clean` to recover. Watch
+   free space when building `--all-features`.
+
+   `dewey-gui` raises the MSRV: Dewey is edition 2024, so it needs Rust 1.85+
+   against the 1.70 this crate claims. It stays optional and off by default for
+   that reason. Revisit the `rust-version` line at step 7, not before.
+
+   Dewey's prelude exports a single-parameter `Result<T>` alias that shadows
+   std's under a glob import. `src/gui_dewey/mod.rs` re-imports
+   `std::result::Result` explicitly; do the same in new modules or every
+   `Result<T, String>` becomes an arity error.
+
+   **One upstream question.** `HeadlessDriver::process_command` comments
+   `Command::Task` as "spawn the task on a background thread" but calls `task()`
+   inline. The inline behaviour is what makes headless reads deterministic and the
+   tests here depend on it. Confirm which is intended before step 3 leans harder
+   on it — if it ever becomes a real thread, the settle problem returns.
+
+10. **The egui memory tab shows 0 MB on Linux and macOS.** `MemoryStats::new()`
+   is a zero-constructor, not a reader: it returns zeros on every platform. The
+   real values come from the per-platform `read_memory_stats()`, which
+   `src/gui/app.rs` calls only under `#[cfg(target_os = "windows")]`, falling back
+   to the zero-constructor everywhere else. Linux has a working reader
+   (`src/platform/linux/memory.rs`) that the GUI never calls.
+
+   Found while porting; `src/gui_dewey/` wires Linux up correctly, so the two
+   paths deliberately differ until this is fixed. The egui path was left alone to
+   keep that fix a separate, reviewable change. macOS has no `read_memory_stats`
+   at all — see item 2.
+
+
 ## The plan for what is left
 
 Items A–D are blocked on hardware this project does not have, and are
