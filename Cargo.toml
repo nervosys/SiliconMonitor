@@ -100,6 +100,18 @@ egui_extras = { version = "0.30", optional = true, features = ["all_loaders"] }
 egui_plot = { version = "0.30", optional = true }
 open = { version = "5.3", optional = true }
 
+# Dewey — nervosys' agentic-first GUI framework, and where the GUI is heading.
+# Ported tab by tab behind `dewey-gui` while the eframe path above keeps
+# shipping; see HANDOFF.md. Dewey renders through egui 0.31 and simon's own path
+# is pinned to 0.30, so enabling both features compiles two copies of egui. That
+# is deliberate and temporary — the duplicate goes away with the eframe path once
+# Dewey reaches parity, and until then neither path can break the other.
+#
+# Note this is the one dependency that raises the MSRV: Dewey is edition 2024, so
+# `--features dewey-gui` needs Rust 1.85+ against the 1.70 claimed above. It stays
+# optional and off by default for exactly that reason.
+deweygui = { version = "1.0", optional = true }
+
 # Optional dependencies for remote AI backends
 reqwest = { version = "0.12", features = ["blocking", "json"], optional = true }
 
@@ -229,6 +241,11 @@ gui = [
     "num_cpus",
     "remote-backends", # Required for AI backend detection (Ollama, OpenAI, etc.)
 ]
+
+# The Dewey port. Independent of `gui` on purpose: both can be enabled at once so
+# the two renderings of a tab can be compared side by side during the migration,
+# and neither is required for the other to build.
+dewey-gui = ["deweygui", "network", "hostname", "num_cpus"]
 # Remote AI backend support (OpenAI, Anthropic, Ollama, etc.)
 remote-backends = ["reqwest"]
 # Local AI backends

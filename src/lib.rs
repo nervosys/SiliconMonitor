@@ -261,6 +261,11 @@ pub use tui::{AcceleratorInfo, AcceleratorType};
 #[cfg(feature = "gui")]
 pub mod gui; // Graphical UI
 
+// The Dewey port of the above, grown tab by tab. Independent of `gui` so both
+// can be built at once and compared during the migration.
+#[cfg(feature = "dewey-gui")]
+pub mod gui_dewey;
+
 // Re-export new hardware monitors
 pub use audio::{AudioDevice, AudioDeviceType, AudioMonitor, AudioState};
 pub use bluetooth::{
