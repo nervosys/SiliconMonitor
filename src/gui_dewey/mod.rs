@@ -47,10 +47,17 @@ pub enum Tab {
     Network,
     Disk,
     System,
+    Peripherals,
 }
 
 impl Tab {
-    pub const PORTED: [Tab; 4] = [Tab::Memory, Tab::Network, Tab::Disk, Tab::System];
+    pub const PORTED: [Tab; 5] = [
+        Tab::Memory,
+        Tab::Network,
+        Tab::Disk,
+        Tab::System,
+        Tab::Peripherals,
+    ];
 
     pub fn title(self) -> &'static str {
         match self {
@@ -58,6 +65,7 @@ impl Tab {
             Tab::Network => "Network",
             Tab::Disk => "Disk",
             Tab::System => "System",
+            Tab::Peripherals => "Peripherals",
         }
     }
 }
@@ -103,6 +111,16 @@ pub struct SystemView {
     pub rows: Vec<(String, String)>,
 }
 
+/// Attached devices, grouped by kind.
+///
+/// Each group is (heading, rows). Empty groups are dropped at load time rather
+/// than rendered as an empty heading — the same rule the System tab follows for
+/// absent fields, for the same reason.
+#[derive(Debug, Clone, Default)]
+pub struct PeripheralsView {
+    pub groups: Vec<(String, Vec<String>)>,
+}
+
 /// Total bandwidth across every interface, bytes per second.
 #[derive(Debug, Clone, Default)]
 pub struct NetworkView {
@@ -137,6 +155,7 @@ pub struct SimonApp {
     pub network: Pane<NetworkView>,
     pub disks: Pane<Vec<DiskRow>>,
     pub system: Pane<SystemView>,
+    pub peripherals: Pane<PeripheralsView>,
 }
 
 #[derive(Debug)]
@@ -147,6 +166,7 @@ pub enum Msg {
     NetworkLoaded(Result<NetworkView, String>),
     DisksLoaded(Result<Vec<DiskRow>, String>),
     SystemLoaded(Result<SystemView, String>),
+    PeripheralsLoaded(Result<PeripheralsView, String>),
 }
 
 impl Default for SimonApp {
@@ -163,6 +183,7 @@ impl SimonApp {
             network: Pane::Loading,
             disks: Pane::Loading,
             system: Pane::Loading,
+            peripherals: Pane::Loading,
         }
     }
 
@@ -177,6 +198,7 @@ impl SimonApp {
             Command::Task(Box::new(|| Msg::NetworkLoaded(read_network()))),
             Command::Task(Box::new(|| Msg::DisksLoaded(read_disks()))),
             Command::Task(Box::new(|| Msg::SystemLoaded(read_system()))),
+            Command::Task(Box::new(|| Msg::PeripheralsLoaded(read_peripherals()))),
         ])
     }
 }
@@ -313,6 +335,85 @@ fn read_system() -> Result<SystemView, String> {
     Ok(SystemView { rows })
 }
 
+/// Enumerate attached devices.
+///
+/// This is the slowest loader in the app — on Windows it runs several PowerShell
+/// CIM queries, and the egui tab took 16.5 s to settle. Nothing here makes it
+/// faster; what changes is that the cost is paid by a task the runtime owns, so
+/// a headless read waits for it once instead of racing it.
+///
+/// MAC and Bluetooth addresses are omitted for the same reason the System tab
+/// omits the machine UUID: they identify the machine and its owner's devices,
+/// and this pane is read by agents and pasted into issues.
+fn read_peripherals() -> Result<PeripheralsView, String> {
+    let _com = crate::pipeline::com_guard();
+    let p = crate::motherboard::get_peripherals().map_err(|e| e.to_string())?;
+
+    let mut groups: Vec<(String, Vec<String>)> = Vec::new();
+    let mut add = |name: &str, rows: Vec<String>| {
+        if !rows.is_empty() {
+            groups.push((name.to_string(), rows));
+        }
+    };
+
+    add(
+        "USB",
+        p.usb_devices
+            .iter()
+            .map(|d| match &d.vendor {
+                Some(v) if !v.trim().is_empty() => format!("{} ({v})", d.name),
+                _ => d.name.clone(),
+            })
+            .collect(),
+    );
+    add(
+        "Displays",
+        p.display_outputs
+            .iter()
+            .map(|d| {
+                let state = if d.connected {
+                    "connected"
+                } else {
+                    "disconnected"
+                };
+                match &d.resolution {
+                    Some(r) => format!("{} [{:?}] {state} {r}", d.name, d.output_type),
+                    None => format!("{} [{:?}] {state}", d.name, d.output_type),
+                }
+            })
+            .collect(),
+    );
+    add(
+        "Audio",
+        p.audio_devices
+            .iter()
+            .map(|d| format!("{} [{:?}]", d.name, d.device_type))
+            .collect(),
+    );
+    add(
+        "Bluetooth",
+        p.bluetooth_devices
+            .iter()
+            .map(|d| {
+                let state = if d.connected { "connected" } else { "paired" };
+                format!("{} ({state})", d.name)
+            })
+            .collect(),
+    );
+    add(
+        "Network Ports",
+        p.network_ports
+            .iter()
+            .map(|d| match &d.speed {
+                Some(sp) => format!("{} [{:?}] {sp}", d.name, d.port_type),
+                None => format!("{} [{:?}]", d.name, d.port_type),
+            })
+            .collect(),
+    );
+
+    Ok(PeripheralsView { groups })
+}
+
 fn format_bytes(bytes: f64) -> String {
     const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
     let mut value = bytes;
@@ -365,6 +466,7 @@ impl Model for SimonApp {
                 self.network = Pane::Loading;
                 self.disks = Pane::Loading;
                 self.system = Pane::Loading;
+                self.peripherals = Pane::Loading;
                 Self::load_all()
             }
             Msg::MemoryLoaded(Ok(v)) => {
@@ -399,6 +501,14 @@ impl Model for SimonApp {
                 self.system = Pane::Failed(e);
                 Command::None
             }
+            Msg::PeripheralsLoaded(Ok(v)) => {
+                self.peripherals = Pane::Ready(v);
+                Command::None
+            }
+            Msg::PeripheralsLoaded(Err(e)) => {
+                self.peripherals = Pane::Failed(e);
+                Command::None
+            }
         }
     }
 
@@ -425,6 +535,7 @@ impl Model for SimonApp {
             Tab::Network => self.view_network(chunks[1], frame),
             Tab::Disk => self.view_disk(chunks[1], frame),
             Tab::System => self.view_system(chunks[1], frame),
+            Tab::Peripherals => self.view_peripherals(chunks[1], frame),
         }
     }
 }
@@ -553,6 +664,45 @@ impl SimonApp {
         }
     }
 
+    fn view_peripherals(&self, area: Rect, frame: &mut Frame<'_>) {
+        match &self.peripherals {
+            Pane::Loading => Label::new("Loading peripheral information…")
+                .agent_id("peripherals_status")
+                .render(area, frame),
+            Pane::Failed(e) => Label::new(format!("Peripherals unavailable: {e}"))
+                .agent_id("peripherals_status")
+                .render(area, frame),
+            Pane::Ready(v) if v.groups.is_empty() => Label::new("No peripherals detected")
+                .agent_id("peripherals_empty")
+                .render(area, frame),
+            Pane::Ready(v) => {
+                // Flattened to (agent_id, text) first so the row budget is applied
+                // once across all groups. Truncating per group would silently drop
+                // whole categories while claiming the tab rendered.
+                let mut lines: Vec<(String, String)> = Vec::new();
+                for (heading, rows) in &v.groups {
+                    let slug = heading.to_lowercase().replace(' ', "_");
+                    lines.push((format!("peripherals_group_{slug}"), heading.clone()));
+                    for (i, row) in rows.iter().enumerate() {
+                        lines.push((format!("peripherals_{slug}_{i}"), format!("  {row}")));
+                    }
+                }
+                let shown = lines.len().min(40);
+
+                let r = rows_of(area, 1 + shown);
+                Label::new("Peripherals")
+                    .bold()
+                    .agent_id("peripherals_heading")
+                    .render(r[0], frame);
+                for (i, (id, text)) in lines.iter().take(shown).enumerate() {
+                    Label::new(text.clone())
+                        .agent_id(id.clone())
+                        .render(r[i + 1], frame);
+                }
+            }
+        }
+    }
+
     fn view_network(&self, area: Rect, frame: &mut Frame<'_>) {
         match &self.network {
             Pane::Loading => {
@@ -611,6 +761,27 @@ mod tests {
         driver
     }
 
+    /// A model with every loader run, shared across the data tests.
+    ///
+    /// The loaders hit real hardware — peripherals alone runs several PowerShell
+    /// CIM queries and costs ~10 s — so giving each test its own `loaded()` had
+    /// the suite enumerating this machine five times over for the same answers.
+    /// The tests that assert on *data* share one; the tests that assert on the
+    /// *driver* still build their own, because a shared model would defeat what
+    /// they check.
+    fn shared() -> &'static SimonApp {
+        static APP: std::sync::OnceLock<SimonApp> = std::sync::OnceLock::new();
+        APP.get_or_init(|| {
+            let mut app = SimonApp::new();
+            app.update(Msg::MemoryLoaded(read_memory()));
+            app.update(Msg::NetworkLoaded(read_network()));
+            app.update(Msg::DisksLoaded(read_disks()));
+            app.update(Msg::SystemLoaded(read_system()));
+            app.update(Msg::PeripheralsLoaded(read_peripherals()));
+            app
+        })
+    }
+
     #[test]
     fn every_ported_tab_renders_named_nodes() {
         for tab in Tab::PORTED {
@@ -624,6 +795,7 @@ mod tests {
                 // A driveless machine is a legitimate answer, so accept either.
                 Tab::Disk => "disk_heading",
                 Tab::System => "system_heading",
+                Tab::Peripherals => "peripherals_heading",
             };
             if tab == Tab::Disk && driver.ontology().find_node("disk_empty").is_some() {
                 continue;
@@ -656,6 +828,11 @@ mod tests {
             "network pane still Loading after init; a Command::Task did not deliver"
         );
         assert!(
+            !driver.model().peripherals.is_loading(),
+            "peripherals pane still Loading after init -- the slowest loader in \
+             the app, and the one the egui path took 16.5 s to settle"
+        );
+        assert!(
             !driver.model().system.is_loading(),
             "system pane still Loading after init"
         );
@@ -673,8 +850,8 @@ mod tests {
     /// oversight and would otherwise be easy to "fix" by adding the rows back.
     #[test]
     fn system_reports_identity_without_identifiers() {
-        let driver = loaded();
-        match &driver.model().system {
+        let app = shared();
+        match &app.system {
             Pane::Ready(v) => {
                 assert!(!v.rows.is_empty(), "system tab produced no rows");
                 assert!(
@@ -694,6 +871,45 @@ mod tests {
         }
     }
 
+    /// Peripherals render, and no device address goes out with them.
+    ///
+    /// `PeripheralsInfo` carries MAC addresses on network ports and Bluetooth
+    /// addresses on paired devices. Both identify the machine and its owner's
+    /// devices, and this pane is read by agents, so `read_peripherals` drops
+    /// them. Asserted by shape — a colon-separated hex run — rather than by
+    /// field name, so re-adding the data anywhere in a row still trips it.
+    #[test]
+    fn peripherals_carry_no_hardware_addresses() {
+        let app = shared();
+        let looks_like_mac = |s: &str| {
+            let parts: Vec<&str> = s.split(':').collect();
+            parts.len() >= 6
+                && parts
+                    .iter()
+                    .all(|p| p.len() == 2 && p.chars().all(|c| c.is_ascii_hexdigit()))
+        };
+        match &app.peripherals {
+            Pane::Ready(v) => {
+                for (heading, rows) in &v.groups {
+                    assert!(!rows.is_empty(), "group {heading} rendered with no rows");
+                    for row in rows {
+                        for word in row.split_whitespace() {
+                            assert!(
+                                !looks_like_mac(word.trim_matches(['(', ')', '[', ']'])),
+                                "peripherals leaked a hardware address in {heading}: {row}"
+                            );
+                        }
+                    }
+                }
+            }
+            // A machine with nothing attached is legitimate; a failure is not
+            // fatal to the suite either, since this loader reaches WMI and CI
+            // runners are not required to answer.
+            Pane::Failed(_) => {}
+            Pane::Loading => panic!("peripherals still loading after init"),
+        }
+    }
+
     /// The disk tab reports drives, and each carries the fields the row draws.
     ///
     /// This machine has three NVMe drives and a USB gadget, so an empty list here
@@ -702,8 +918,8 @@ mod tests {
     /// too, since CI runners legitimately are one.
     #[test]
     fn disks_load_with_usable_rows() {
-        let driver = loaded();
-        match &driver.model().disks {
+        let app = shared();
+        match &app.disks {
             Pane::Ready(rows) => {
                 for d in rows {
                     assert!(!d.name.is_empty(), "a disk row has no device name");
@@ -722,8 +938,8 @@ mod tests {
 
     #[test]
     fn memory_reads_a_plausible_total() {
-        let driver = loaded();
-        match &driver.model().memory {
+        let app = shared();
+        match &app.memory {
             Pane::Ready(m) => {
                 assert!(
                     m.total_mb > 128.0,
