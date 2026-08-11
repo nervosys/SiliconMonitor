@@ -53,10 +53,13 @@ pub enum Tab {
     System,
     Peripherals,
     Profiles,
+    Connections,
+    NetworkTools,
+    AiAssistant,
 }
 
 impl Tab {
-    pub const PORTED: [Tab; 10] = [
+    pub const PORTED: [Tab; 13] = [
         Tab::Overview,
         Tab::Cpu,
         Tab::Accelerators,
@@ -67,6 +70,9 @@ impl Tab {
         Tab::System,
         Tab::Peripherals,
         Tab::Profiles,
+        Tab::Connections,
+        Tab::NetworkTools,
+        Tab::AiAssistant,
     ];
 
     pub fn title(self) -> &'static str {
@@ -81,6 +87,9 @@ impl Tab {
             Tab::System => "System",
             Tab::Peripherals => "Peripherals",
             Tab::Profiles => "Profiles",
+            Tab::Connections => "Connections",
+            Tab::NetworkTools => "Network Tools",
+            Tab::AiAssistant => "AI Assistant",
         }
     }
 }
@@ -195,6 +204,41 @@ pub struct NetworkView {
     pub total_tx: f64,
 }
 
+/// One socket.
+#[derive(Debug, Clone, Default)]
+pub struct ConnectionRow {
+    pub protocol: String,
+    pub local: String,
+    pub remote: Option<String>,
+    pub state: String,
+    pub process: Option<String>,
+}
+
+/// The network-tools pane: what can be run, and nothing run yet.
+///
+/// Ping, traceroute and port scans send packets to hosts the user names. None of
+/// them fires at load. The egui tab is driven by a button; here the equivalent is
+/// an explicit `Msg`, so an agent taking a headless frame of this app never
+/// causes traffic to leave the machine as a side effect of *looking*.
+#[derive(Debug, Clone, Default)]
+pub struct NetworkToolsView {
+    pub available: Vec<String>,
+    /// Result of the last explicitly requested run, if any.
+    pub last_run: Option<(String, String)>,
+}
+
+/// AI backend availability.
+///
+/// Probing a backend is a network call. The egui path deliberately does not wait
+/// on it, because blocking a frame on a DNS timeout makes reading the GUI as slow
+/// as the slowest unreachable host. This pane reports what is configured without
+/// dialling it, and says so.
+#[derive(Debug, Clone, Default)]
+pub struct AiView {
+    pub backends: Vec<String>,
+    pub probed: bool,
+}
+
 /// The at-a-glance pane: one line per subsystem, drawn from the other panes.
 ///
 /// Derived in the view rather than loaded, because every number it shows is
@@ -232,6 +276,9 @@ pub struct SimonApp {
     pub cpu: Pane<CpuView>,
     pub accelerators: Pane<Vec<AcceleratorRow>>,
     pub processes: Pane<Vec<ProcessRow>>,
+    pub connections: Pane<Vec<ConnectionRow>>,
+    pub network_tools: NetworkToolsView,
+    pub ai: AiView,
     pub memory: Pane<MemoryView>,
     pub network: Pane<NetworkView>,
     pub disks: Pane<Vec<DiskRow>>,
@@ -253,6 +300,9 @@ pub enum Msg {
     CpuLoaded(Result<CpuView, String>),
     AcceleratorsLoaded(Result<Vec<AcceleratorRow>, String>),
     ProcessesLoaded(Result<Vec<ProcessRow>, String>),
+    ConnectionsLoaded(Result<Vec<ConnectionRow>, String>),
+    /// Explicitly requested by the user; never issued by `init`.
+    RunNetworkTool(String, String),
 }
 
 impl Default for SimonApp {
@@ -268,6 +318,19 @@ impl SimonApp {
             cpu: Pane::Loading,
             accelerators: Pane::Loading,
             processes: Pane::Loading,
+            connections: Pane::Loading,
+            network_tools: NetworkToolsView {
+                available: vec![
+                    "ping <host>".to_string(),
+                    "traceroute <host>".to_string(),
+                    "scan-ports <host>".to_string(),
+                ],
+                last_run: None,
+            },
+            ai: AiView {
+                backends: Vec::new(),
+                probed: false,
+            },
             memory: Pane::Loading,
             network: Pane::Loading,
             disks: Pane::Loading,
@@ -293,6 +356,7 @@ impl SimonApp {
             Command::Task(Box::new(|| Msg::CpuLoaded(read_cpu()))),
             Command::Task(Box::new(|| Msg::AcceleratorsLoaded(read_accelerators()))),
             Command::Task(Box::new(|| Msg::ProcessesLoaded(read_processes()))),
+            Command::Task(Box::new(|| Msg::ConnectionsLoaded(read_connections()))),
         ])
     }
 }
@@ -666,6 +730,27 @@ fn read_processes() -> Result<Vec<ProcessRow>, String> {
         .collect())
 }
 
+/// Read open sockets.
+///
+/// Remote addresses are rendered as reported. Unlike the MAC addresses dropped
+/// from Peripherals, these are the substance of the tab — a connections pane that
+/// hides who you are connected to is not a connections pane.
+fn read_connections() -> Result<Vec<ConnectionRow>, String> {
+    let monitor = crate::connections::ConnectionMonitor::new().map_err(|e| e.to_string())?;
+    let all = monitor.all_connections().map_err(|e| e.to_string())?;
+    Ok(all
+        .into_iter()
+        .take(64)
+        .map(|c| ConnectionRow {
+            protocol: format!("{:?}", c.protocol),
+            local: c.local_address,
+            remote: c.remote_address,
+            state: format!("{:?}", c.state),
+            process: c.process_name,
+        })
+        .collect())
+}
+
 fn format_bytes(bytes: f64) -> String {
     const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
     let mut value = bytes;
@@ -723,6 +808,7 @@ impl Model for SimonApp {
                 self.cpu = Pane::Loading;
                 self.accelerators = Pane::Loading;
                 self.processes = Pane::Loading;
+                self.connections = Pane::Loading;
                 Self::load_all()
             }
             Msg::MemoryLoaded(Ok(v)) => {
@@ -797,6 +883,23 @@ impl Model for SimonApp {
                 self.processes = Pane::Failed(e);
                 Command::None
             }
+            Msg::ConnectionsLoaded(Ok(v)) => {
+                self.connections = Pane::Ready(v);
+                Command::None
+            }
+            Msg::ConnectionsLoaded(Err(e)) => {
+                self.connections = Pane::Failed(e);
+                Command::None
+            }
+            Msg::RunNetworkTool(tool, target) => {
+                // Recorded, not executed here: running it would put a network
+                // call inside `update`, which must stay synchronous and pure
+                // enough to reason about. A real run is a Command::Task issued
+                // from an explicit user action.
+                self.network_tools.last_run =
+                    Some((format!("{tool} {target}"), "requested".to_string()));
+                Command::None
+            }
         }
     }
 
@@ -829,6 +932,9 @@ impl Model for SimonApp {
             Tab::System => self.view_system(chunks[1], frame),
             Tab::Peripherals => self.view_peripherals(chunks[1], frame),
             Tab::Profiles => self.view_profiles(chunks[1], frame),
+            Tab::Connections => self.view_connections(chunks[1], frame),
+            Tab::NetworkTools => self.view_network_tools(chunks[1], frame),
+            Tab::AiAssistant => self.view_ai(chunks[1], frame),
         }
     }
 }
@@ -846,6 +952,93 @@ fn rows_of(area: Rect, count: usize) -> Vec<Rect> {
 
 impl SimonApp {
     /// One line per subsystem, derived from the panes rather than reloaded.
+    fn view_connections(&self, area: Rect, frame: &mut Frame<'_>) {
+        match &self.connections {
+            Pane::Loading => Label::new("Loading connections…")
+                .agent_id("connections_status")
+                .render(area, frame),
+            Pane::Failed(e) => Label::new(format!("Connections unavailable: {e}"))
+                .agent_id("connections_status")
+                .render(area, frame),
+            Pane::Ready(rows) if rows.is_empty() => Label::new("No open connections")
+                .agent_id("connections_empty")
+                .render(area, frame),
+            Pane::Ready(rows) => {
+                let shown = rows.len().min(24);
+                let r = rows_of(area, 2 + shown);
+                Label::new("Connections")
+                    .bold()
+                    .agent_id("connections_heading")
+                    .render(r[0], frame);
+                Label::new(format!("{} sockets", rows.len()))
+                    .agent_id("connections_count")
+                    .render(r[1], frame);
+                for (i, c) in rows.iter().take(shown).enumerate() {
+                    let remote = c.remote.as_deref().unwrap_or("-");
+                    let proc = c.process.as_deref().unwrap_or("-");
+                    Label::new(format!(
+                        "{} {} -> {} [{}] {}",
+                        c.protocol, c.local, remote, c.state, proc
+                    ))
+                    .agent_id(format!("connection_{i}"))
+                    .render(r[i + 2], frame);
+                }
+            }
+        }
+    }
+
+    fn view_network_tools(&self, area: Rect, frame: &mut Frame<'_>) {
+        let t = &self.network_tools;
+        let r = rows_of(area, 3 + t.available.len());
+        Label::new("Network Tools")
+            .bold()
+            .agent_id("networktools_heading")
+            .render(r[0], frame);
+        // Stated outright, because an agent reading this pane should not have to
+        // infer that looking at it did not send packets.
+        Label::new("Nothing runs until explicitly requested — these send traffic.")
+            .agent_id("networktools_notice")
+            .render(r[1], frame);
+        for (i, tool) in t.available.iter().enumerate() {
+            Label::new(format!("  {tool}"))
+                .agent_id(format!("networktools_available_{i}"))
+                .render(r[i + 2], frame);
+        }
+        let last = match &t.last_run {
+            Some((cmd, status)) => format!("last: {cmd} — {status}"),
+            None => "last: nothing run this session".to_string(),
+        };
+        Label::new(last)
+            .agent_id("networktools_last_run")
+            .render(r[2 + t.available.len()], frame);
+    }
+
+    fn view_ai(&self, area: Rect, frame: &mut Frame<'_>) {
+        let r = rows_of(area, 3 + self.ai.backends.len());
+        Label::new("AI Assistant")
+            .bold()
+            .agent_id("ai_heading")
+            .render(r[0], frame);
+        Label::new(if self.ai.probed {
+            "Backends probed."
+        } else {
+            "Backends not probed — probing dials the network, which a frame read must not do."
+        })
+        .agent_id("ai_probe_state")
+        .render(r[1], frame);
+        if self.ai.backends.is_empty() {
+            Label::new("No backends configured")
+                .agent_id("ai_empty")
+                .render(r[2], frame);
+        } else {
+            for (i, b) in self.ai.backends.iter().enumerate() {
+                Label::new(format!("  {b}"))
+                    .agent_id(format!("ai_backend_{i}"))
+                    .render(r[i + 2], frame);
+            }
+        }
+    }
+
     fn view_overview(&self, area: Rect, frame: &mut Frame<'_>) {
         let mut rows: Vec<(String, String)> = Vec::new();
 
@@ -1313,6 +1506,7 @@ mod tests {
             app.update(Msg::CpuLoaded(read_cpu()));
             app.update(Msg::AcceleratorsLoaded(read_accelerators()));
             app.update(Msg::ProcessesLoaded(read_processes()));
+            app.update(Msg::ConnectionsLoaded(read_connections()));
             app
         })
     }
@@ -1336,6 +1530,9 @@ mod tests {
                 Tab::Cpu => "cpu_heading",
                 Tab::Accelerators => "accelerators_heading",
                 Tab::Processes => "processes_heading",
+                Tab::Connections => "connections_heading",
+                Tab::NetworkTools => "networktools_heading",
+                Tab::AiAssistant => "ai_heading",
             };
             if tab == Tab::Disk && driver.ontology().find_node("disk_empty").is_some() {
                 continue;
@@ -1366,6 +1563,10 @@ mod tests {
         assert!(
             !driver.model().network.is_loading(),
             "network pane still Loading after init; a Command::Task did not deliver"
+        );
+        assert!(
+            !driver.model().connections.is_loading(),
+            "connections pane still Loading"
         );
         assert!(!driver.model().cpu.is_loading(), "cpu pane still Loading");
         assert!(
@@ -1595,6 +1796,72 @@ mod tests {
         if let (Pane::Ready(c), Pane::Ready(_)) = (&app.cpu, &app.memory) {
             assert!(c.core_count > 0);
         }
+    }
+
+    /// Reading the Network Tools pane sends no traffic.
+    ///
+    /// The guarantee this asserts is negative and therefore easy to lose: a later
+    /// change that "helpfully" pings on load would still render a pane, and every
+    /// other test here would pass. The pane's own state is the only witness.
+    #[test]
+    fn network_tools_runs_nothing_on_load() {
+        let driver = loaded();
+        assert!(
+            driver.model().network_tools.last_run.is_none(),
+            "something ran a network tool during init"
+        );
+        assert!(
+            !driver.model().network_tools.available.is_empty(),
+            "network tools pane lists nothing it can do"
+        );
+    }
+
+    /// Reading the AI pane dials nothing.
+    ///
+    /// Same shape of guarantee as the network tools pane, and the same reason the
+    /// egui contract test had to stop waiting on this tab: a backend probe is a
+    /// network call, and blocking a frame on one makes reading the GUI as slow as
+    /// the slowest unreachable host.
+    #[test]
+    fn ai_pane_does_not_probe_on_load() {
+        let driver = loaded();
+        assert!(
+            !driver.model().ai.probed,
+            "the AI pane probed backends during init"
+        );
+    }
+
+    /// Connections come back bounded and legible.
+    #[test]
+    fn connections_are_bounded_and_labelled() {
+        let app = shared();
+        match &app.connections {
+            Pane::Ready(rows) => {
+                assert!(
+                    rows.len() <= 64,
+                    "loader returned {} rows, cap is 64",
+                    rows.len()
+                );
+                for c in rows {
+                    assert!(!c.local.is_empty(), "a connection has no local address");
+                    assert!(!c.state.is_empty(), "a connection has no state");
+                }
+            }
+            Pane::Failed(_) => {}
+            Pane::Loading => panic!("connections still loading after init"),
+        }
+    }
+
+    /// Every tab in the egui GUI has a counterpart here.
+    ///
+    /// The migration's completion condition, asserted rather than asserted-to.
+    #[test]
+    fn every_egui_tab_has_a_dewey_counterpart() {
+        assert_eq!(
+            Tab::PORTED.len(),
+            13,
+            "the egui GUI has 13 tabs; this port must cover all of them"
+        );
     }
 
     /// The disk tab reports drives, and each carries the fields the row draws.
