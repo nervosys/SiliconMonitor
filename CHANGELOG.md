@@ -5,6 +5,52 @@ All notable changes to Silicon Monitor will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.9.0] - 2026-08-10
+
+The headless GUI surface could not read four of its nine tabs.
+
+### Fixed
+
+- **`gui --frame` and `gui --script` rendered only a spinner for the disk,
+  system, peripherals and profiles tabs.** Those four load their contents on a
+  background thread, and the results are collected by `check_background_loaders`,
+  which only runs inside the interactive event loop. The headless path draws a
+  tab directly, so nothing ever collected them and the frame said
+  "Loading disk information…" forever.
+
+  It went unnoticed because a spinner *is* painted text, so
+  `every_gui_tab_paints_text` passed. The four affected tabs are the ones
+  carrying the SMART, PCI and USB work of the preceding six releases — an agent
+  reading the GUI could see none of it.
+
+  Headless reads now pump the loaders between frames until the tab settles or 30
+  seconds pass, and report on stderr when the deadline was hit, so a slow read is
+  distinguishable from a stuck one. All nine tabs render data: disk 6.7 s,
+  peripherals 16.5 s (its loader runs several PowerShell CIM queries), the rest
+  under 4 s.
+
+- **`every_gui_tab_paints_text` now asserts a tab painted something besides
+  placeholders**, which is the property that was actually wanted. Two earlier
+  formulations were wrong: forbidding any placeholder failed a system tab that
+  legitimately shows data while one section arrives, and requiring more than two
+  substantive lines failed the AI tab, whose backend probe is deliberately not
+  waited on — blocking every headless read on a network call would make reading
+  the GUI as slow as a DNS timeout.
+
+- **The settle predicate is per tab, not global.** A first version waited on
+  every loader for every tab, which took the memory and network tabs from instant
+  to twelve seconds waiting on a peripherals query they do not draw. It now
+  consults only the current tab's loaders, combined with a check of the painted
+  text — both are needed, because the disk tab has a third state between spinner
+  and data ("No Disks Detected") that text alone cannot tell from a machine that
+  genuinely has none.
+
+- **`coverage_accounts_for_every_reading` was racy.** It compared `coverage()`
+  against a second, independent `snapshot()` and asserted equal lengths — but
+  instance counts move between calls on a live machine, so it was passing only
+  while the box was quiet and failed once the suite got busier. `coverage_of`
+  now tallies a snapshot the caller already holds.
+
 ## [3.8.0] - 2026-08-10
 
 Use-case detection and hardware profile recommendations, with an automatic

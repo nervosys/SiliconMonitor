@@ -205,13 +205,22 @@ pub fn get(id: &str) -> Option<Reading> {
 /// Coverage is a fact about simon, not about the machine, so it is worth being able
 /// to ask for directly rather than inferring from a snapshot full of nulls.
 pub fn coverage() -> Coverage {
-    let readings = snapshot();
+    coverage_of(&snapshot())
+}
+
+/// Coverage of an existing snapshot.
+///
+/// Split out because a caller wanting both the readings and their tally must not
+/// take two snapshots to get them: instance counts move between calls on a live
+/// machine — a USB device is unplugged, a process exits — so two snapshots
+/// legitimately differ in length. A test asserting they match was passing only
+/// while the box was quiet, and failed the moment the suite got busier.
+pub fn coverage_of(readings: &[Reading]) -> Coverage {
     let bound = readings.iter().filter(|r| r.value.is_some()).count();
-    let unavailable = readings.len() - bound;
     Coverage {
         total: readings.len(),
         resolved: bound,
-        unavailable,
+        unavailable: readings.len() - bound,
     }
 }
 
@@ -2166,8 +2175,15 @@ mod tests {
 
     #[test]
     fn coverage_accounts_for_every_reading() {
-        let c = coverage();
+        // One snapshot, tallied. The previous version compared `coverage()`
+        // against a second, independent `snapshot()` and asserted equal lengths —
+        // which is a race on a live machine, since a USB device or a process can
+        // come and go between the two calls. It passed for as long as the suite
+        // was quiet enough, then failed under parallel load for no reason
+        // connected to what it was testing.
+        let readings = snapshot();
+        let c = coverage_of(&readings);
         assert_eq!(c.total, c.resolved + c.unavailable);
-        assert_eq!(c.total, snapshot().len());
+        assert_eq!(c.total, readings.len());
     }
 }

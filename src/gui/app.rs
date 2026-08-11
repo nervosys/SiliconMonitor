@@ -1041,6 +1041,47 @@ impl SiliconMonitorApp {
     }
 
     /// Check for completed background loading operations (non-blocking)
+    /// Advance background loaders once, outside the interactive event loop.
+    ///
+    /// [`Self::update`] calls [`Self::check_background_loaders`] every frame, so
+    /// an interactive session picks up finished loads as a matter of course. The
+    /// headless renderer draws a tab directly and never runs `update`, so nothing
+    /// ever collected the results and four tabs — disk, system, peripherals,
+    /// profiles — could only ever render their "Loading …" placeholder. An agent
+    /// reading the GUI through `--frame` or `--script` therefore could not see
+    /// the tabs carrying the disk, PCI and USB work at all.
+    pub fn pump_background_loaders(&mut self, ctx: &egui::Context) {
+        self.check_background_loaders(ctx);
+    }
+
+    /// Whether a background load *the currently selected tab draws from* is still
+    /// in flight.
+    ///
+    /// Per tab, not global. A global answer made every headless read wait for
+    /// every loader: the memory and network tabs render immediately and went from
+    /// instant to twelve seconds because they were waiting on a peripherals query
+    /// they do not draw.
+    ///
+    /// The disk case needs both conditions. That tab has three states, not two —
+    /// spinner, then "No Disks Detected", then rows — and the middle one is
+    /// indistinguishable by text from a machine that genuinely has no disks. So
+    /// enumeration finishing is not enough; the rows have to have arrived.
+    ///
+    /// Only loads that gate painted content count. A pending agent-model probe
+    /// does not stop a tab rendering, and waiting on it would make every headless
+    /// read as slow as a network timeout.
+    pub fn has_pending_load(&self) -> bool {
+        match self.current_tab {
+            Tab::Disk => {
+                self.disk_loading
+                    || (self.disk_rows_receiver.is_some() && self.cached_disk_data.is_empty())
+            }
+            Tab::SystemInfo | Tab::Peripherals => self.system_info_loading,
+            Tab::Profiles => self.profile_snapshot_loading,
+            _ => false,
+        }
+    }
+
     fn check_background_loaders(&mut self, ctx: &egui::Context) {
         // Hardware data no longer arrives through a per-poll channel; it is pulled
         // from the collector's published snapshot in `sync_snapshot`.

@@ -3844,7 +3844,41 @@ fn handle_gui_frame_command(tab: &str) -> Result<(), Box<dyn std::error::Error>>
         std::process::exit(1);
     }
 
-    let lines = headless::painted_text(&ctx, |ui| app.draw_current_tab(ui));
+    // Four tabs load their contents on a background thread. Without pumping the
+    // loaders between frames they render their spinner forever — which is painted
+    // text, so `every_gui_tab_paints_text` passed while an agent reading the disk
+    // tab learned nothing.
+    //
+    // Thirty seconds because the system and peripherals loaders run several
+    // PowerShell CIM queries back to back and were measured at over ten. Bounded
+    // rather than unbounded so a wedged reader yields a slow, honest answer
+    // instead of a command that never returns.
+    const SETTLE_DEADLINE: std::time::Duration = std::time::Duration::from_secs(30);
+    let lines = headless::painted_text_until(
+        &ctx,
+        SETTLE_DEADLINE,
+        &mut app,
+        |app, ctx| app.pump_background_loaders(ctx),
+        // Both signals. The painted text catches a tab still showing its
+        // placeholder; the app's own flags catch the disk tab's middle state,
+        // where enumeration has finished but the rows have not arrived and the
+        // frame reads "No Disks Detected" — which text alone cannot tell from a
+        // machine that has none.
+        |app, lines| !headless::frame_is_still_loading(lines) && !app.has_pending_load(),
+        |app, ui| app.draw_current_tab(ui),
+    );
+
+    // A timeout and a genuinely quick tab both end here, and the caller cannot
+    // tell them apart from the painted text alone — "Loading …" looks the same
+    // either way. Say which happened, on stderr so it does not pollute the frame.
+    if headless::frame_is_still_loading(&lines) {
+        eprintln!(
+            "note: the {tab} tab was still loading after {}s; the text below is \
+             whatever it had painted by then",
+            SETTLE_DEADLINE.as_secs()
+        );
+    }
+
     if lines.is_empty() {
         eprintln!(
             "the {tab} tab painted no text at all — that is a blank tab, not an \

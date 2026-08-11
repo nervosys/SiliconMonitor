@@ -374,6 +374,33 @@ fn every_gui_tab_paints_text() {
             !stdout.trim().is_empty(),
             "the {tab} tab painted no text at all"
         );
+
+        // A spinner is painted text, so "not empty" was satisfied by four tabs
+        // that rendered *only* "Loading …" — disk, system, peripherals and
+        // profiles, which between them carry the SMART, PCI and USB work. An
+        // agent reading them learned nothing.
+        //
+        // The assertion is "painted something besides placeholders", not "painted
+        // no placeholder at all". A tab may legitimately show data while one
+        // section is still arriving — the system tab does exactly that when the
+        // machine is loaded — and forbidding that outright made this test fail on
+        // a busy CI box for a tab that was working.
+        let substantive: Vec<&str> = stdout
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty() && !l.starts_with("Loading"))
+            .collect();
+        // Two, not more. The four broken tabs each painted exactly one
+        // substantive line — a bare title beside their spinner — so this catches
+        // them. The AI tab legitimately sits at two while it probes for backends,
+        // and that probe is deliberately not waited on: it is a network call, and
+        // blocking every headless read on it would make reading the GUI as slow
+        // as a DNS timeout.
+        assert!(
+            substantive.len() >= 2,
+            "the {tab} tab painted nothing but placeholders and a title, so an agent \
+             reading it learns nothing:\n{stdout}"
+        );
     }
 }
 

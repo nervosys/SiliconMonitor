@@ -69,6 +69,82 @@ pub fn painted_text_sized(
     out
 }
 
+/// Render frames until `settled` reports true or `deadline` passes, then return
+/// what the last frame painted.
+///
+/// The two-frame warmup above handles egui's own laziness. This handles the
+/// application's: four tabs load their contents on a background thread and paint
+/// a spinner until it lands, and the headless path never ran the loop that
+/// collects those results. A single frame therefore captured "Loading disk
+/// information…" forever — which *is* painted text, so
+/// `every_gui_tab_paints_text` passed while an agent reading the disk tab learned
+/// nothing.
+///
+/// `pump` is called between frames to advance whatever the caller is waiting on.
+/// Returning on a deadline rather than blocking is deliberate: a machine whose
+/// disk enumeration hangs should yield a slow, honest "still loading" rather than
+/// a headless command that never exits.
+/// `settled` is asked about the *painted text*, not about the application's
+/// internal flags. That is deliberate: a flag-based predicate makes every tab wait
+/// for every loader, so tabs that render instantly — memory, network — went from
+/// immediate to twelve seconds because they were waiting on a peripherals query
+/// they do not draw. What the caller actually wants to know is whether *this* tab
+/// still says it is loading, and the frame answers that directly.
+///
+/// `state` is threaded through explicitly rather than captured, because all three
+/// callbacks need it and closures capturing one `&mut` cannot coexist.
+pub fn painted_text_until<T>(
+    ctx: &Context,
+    deadline: std::time::Duration,
+    state: &mut T,
+    mut pump: impl FnMut(&mut T, &Context),
+    mut settled: impl FnMut(&T, &[String]) -> bool,
+    mut body: impl FnMut(&mut T, &mut egui::Ui),
+) -> Vec<String> {
+    let start = std::time::Instant::now();
+    let mut last = painted_text(ctx, |ui| body(state, ui));
+
+    while !settled(state, &last) && start.elapsed() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        pump(state, ctx);
+        last = painted_text(ctx, |ui| body(state, ui));
+    }
+
+    if settled(state, &last) {
+        return last;
+    }
+
+    // One more pass after settling: the frame that observes a load finishing is
+    // the frame *before* its data is available to draw.
+    pump(state, ctx);
+    let final_pass = painted_text(ctx, |ui| body(state, ui));
+
+    // A tab that painted nothing on the very last pass should report whatever it
+    // last managed rather than a blank, which would read as a dead tab.
+    if final_pass.is_empty() {
+        last
+    } else {
+        final_pass
+    }
+}
+
+/// Whether a rendered frame is still showing a background load rather than data.
+///
+/// The tabs that load asynchronously all paint a spinner beside a line of the
+/// form "Loading … information…". Matching on that is coupling to a UI string,
+/// which is worth stating plainly — but the alternative, introspecting per-tab
+/// loading flags, couples to more and gets the answer wrong for tabs that draw
+/// none of them. `every_gui_tab_paints_text` asserts this same property from the
+/// other side, so a placeholder that changes wording fails a test rather than
+/// silently making the wait a no-op.
+pub fn frame_is_still_loading(lines: &[String]) -> bool {
+    // Matches "Loading disk information...", "Loading profile snapshot…" and the
+    // bare "Loading…". An earlier version required a trailing "..." and missed
+    // every placeholder using the single-character ellipsis, which is most of
+    // them — the check has to be as loose as the wording actually is.
+    lines.iter().any(|l| l.trim_start().starts_with("Loading"))
+}
+
 /// Text painted by `body`, joined into one haystack for substring assertions.
 pub fn painted_blob(ctx: &Context, body: impl FnMut(&mut egui::Ui)) -> String {
     painted_text(ctx, body).join("\n")
@@ -437,6 +513,30 @@ pub fn parse_script(text: &str) -> Result<Vec<Step>, String> {
     Ok(steps)
 }
 
+/// How long a headless read waits for a tab's background loaders.
+///
+/// The system and peripherals loaders run several PowerShell CIM queries back to
+/// back and were measured at over ten seconds. Bounded rather than unbounded so a
+/// wedged reader gives a slow, honest answer instead of never returning.
+pub const SETTLE_DEADLINE: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// The current tab's text, once its background loaders have settled.
+///
+/// Both `--frame` and `--script` go through this, so an agent asserting on a tab
+/// sees the same thing either way. Before it existed, `--script` captured the
+/// first frame — which for four tabs was their "Loading …" placeholder, forever.
+pub fn settled_tab_text(app: &mut super::app::SiliconMonitorApp, ctx: &Context) -> String {
+    painted_text_until(
+        ctx,
+        SETTLE_DEADLINE,
+        app,
+        |app, ctx| app.pump_background_loaders(ctx),
+        |app, lines| !frame_is_still_loading(lines) && !app.has_pending_load(),
+        |app, ui| app.draw_current_tab(ui),
+    )
+    .join("\n")
+}
+
 /// Run a GUI script against `app`.
 pub fn run_script(
     app: &mut super::app::SiliconMonitorApp,
@@ -444,13 +544,13 @@ pub fn run_script(
     steps: &[Step],
 ) -> ScriptResult {
     let mut result = ScriptResult::default();
-    let mut frame = painted_text(ctx, |ui| app.draw_current_tab(ui)).join("\n");
+    let mut frame = settled_tab_text(app, ctx);
 
     for (i, step) in steps.iter().enumerate() {
         match step {
             Step::Goto(target) => match app.select_tab_by_name(target) {
                 Ok(()) => {
-                    frame = painted_text(ctx, |ui| app.draw_current_tab(ui)).join("\n");
+                    frame = settled_tab_text(app, ctx);
                 }
                 Err(available) => result.failures.push(format!(
                     "step {}: unknown tab {target:?}; available: {available:?}",
