@@ -261,7 +261,6 @@ pub use tui::{AcceleratorInfo, AcceleratorType};
 #[cfg(feature = "gui")]
 pub mod gui; // Graphical UI
 
-
 // Re-export new hardware monitors
 pub use audio::{AudioDevice, AudioDeviceType, AudioMonitor, AudioState};
 pub use bluetooth::{

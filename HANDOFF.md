@@ -1,6 +1,6 @@
 # Status
 
-Current as of 4.0.2. This file is excluded from the published crate
+Current as of 5.0.0. This file is excluded from the published crate
 (`Cargo.toml`'s `exclude` list) and is for whoever picks the work up next.
 
 ## Released
@@ -19,7 +19,12 @@ Current as of 4.0.2. This file is excluded from the published crate
 | 3.8.0 | `simon tune`: use-case detection and profile recommendations, with an automatic server. Recommend-only by default. Published, tagged `v3.8.0`. |
 | 3.9.0 | Headless GUI reads four previously unreadable tabs; racy coverage test fixed. Published, tagged `v3.9.0`. |
 | 3.10.0 | Hyper-V root partition distinguished from a guest via CPUID leaf 0x40000003; bare metal no longer reported as a VM. Published, tagged `v3.10.0`. |
-| 4.0.0 | GUI rebuilt on Dewey; the ~10k-line egui implementation and eframe deleted. MSRV 1.85. Published, tagged `v4.0.0`. |
+| 4.0.0 | GUI rebuilt on Dewey; the ~10k-line egui implementation and eframe deleted. MSRV 1.85. Published, tagged `v4.0.0`. **Withdrawn in 5.0.0.** |
+| 4.0.1 | GUI moved to Dewey's `agpu` backend over a wgpu Vulkan spec violation. Published, tagged `v4.0.1`. Withdrawn. |
+| 4.0.2 | Dewey GUI made legible and its tabs clickable. Published, tagged `v4.0.2`. Withdrawn. |
+| 4.0.3 | Dewey GUI restyled onto the recovered `CyberColors` palette. Published, tagged `v4.0.3`. Withdrawn. |
+| 4.0.4 | Dewey Overview rebuilt from the egui widget vocabulary. Published, tagged `v4.0.4`. Withdrawn. |
+| 5.0.0 | **The Dewey port is withdrawn and the egui GUI restored.** MSRV back to 1.70. Published, tagged `v5.0.0`. See open work 9. |
 | 2.1.5 | Committed, never published. Documentation only; superseded by 3.0.0. |
 
 ## Verification that is worth repeating
@@ -165,36 +170,33 @@ feature stayed broken through eight published versions.
    from a model. `tuning::tests::a_recommendation_never_proposes_a_value_the_driver_did_not_offer`
    is the test that keeps it true. A model may classify; it may not pick numbers.
 
-9. ~~**The GUI is being ported to Dewey.**~~ Done in 4.0.0. `src/gui/` is the
-   Dewey application; the ~10,000-line immediate-mode egui implementation and its
-   663-line `headless.rs` are deleted, and eframe/egui/egui_plot/egui_extras are
-   out of the dependency graph.
+9. **The Dewey port was tried across 4.0.0–4.0.4 and withdrawn in 5.0.0.**
+   `src/gui/` is the egui application again — `app.rs`, `widgets.rs`, `theme.rs`,
+   `profile_tab.rs`, `headless.rs`, `mod.rs`, restored from `927ffaa^`. The
+   `deweygui` dependency, the `dewey-gui` feature and `simonlib::gui_dewey` are
+   gone rather than left as dead aliases.
 
-   All thirteen tabs render. `every_egui_tab_has_a_dewey_counterpart` asserts the
-   count so the completion condition is checked rather than claimed, and
-   `frame_renders_every_tab_by_name` renders each one headlessly.
+   **Read this before proposing the port again.** The argument for it was sound:
+   the 3.9.0 spinner bug came from a headless path that diverged from the
+   interactive one, and Dewey's `Command::Task` removes that class of bug. What
+   the argument missed is what the egui GUI actually does. Side by side, the
+   original shows nine metric cards including live GPU temperatures, six
+   sparkline charts with axes and min/max, a threshold legend, an uptime and task
+   status line, an AI ask bar and JSON/CSV export — and on the development
+   machine it detects three NVIDIA GPUs where the port reported
+   `Accelerators: unavailable — Failed to initialize COM`.
 
-   **What the move actually bought.** The 3.9.0 spinner bug cannot recur:
-   background work is a `Command::Task` the runtime owns rather than a thread the
-   event loop must remember to poll, so there is no headless-versus-interactive
-   divergence to get wrong. Tests assert on named ontology nodes rather than
-   painted text, which is what let four broken tabs pass the old contract test for
-   six releases.
+   So the port was not merely unfinished to look at. **It was reading less
+   hardware, and the tests said nothing about either fact.** They asserted that
+   every tab emitted named ontology nodes, which the port did faithfully while
+   displaying a fraction of what it replaced. A contract that checks the shape of
+   the output and never its substance will certify a regression as complete. If
+   this is attempted again, the acceptance criterion is a screenshot of both
+   GUIs side by side and a diff of what each reports on the same machine — not a
+   node count.
 
-   **Things learned the hard way, in case they recur.**
-
-   Dewey's prelude exports a single-parameter `Result<T>` that shadows std's under
-   a glob import; `src/gui/mod.rs` re-imports `std::result::Result` explicitly.
-
-   `HeadlessDriver::process_command` runs `Command::Task` inline while commenting
-   that it spawns a thread. The inline behaviour is what makes headless reads
-   deterministic and everything here depends on it. **This is still worth
-   confirming upstream** — if it ever becomes a real thread, the settle problem
-   comes back and `gui::frame` will need the deadline it currently does without.
-
-   Building both GUIs at once compiled two copies of egui/wgpu/naga and exhausted
-   a 3.7 TB disk twice, failing with `link.exe` 1318. That is gone with the eframe
-   path, and `cargo test --all-features` links every example again.
+   Four releases went into making the replacement presentable and it never got
+   close. Budget accordingly.
 
 10. **`CpuStats::new()` and `MemoryStats::new()` are zero-constructors with
    constructor-shaped names.** Neither reads anything: `MemoryStats::new()`
@@ -230,48 +232,64 @@ feature stayed broken through eight published versions.
    Note `--lib --tests` skips doc-tests; run those before a release.
 
 
-12. **The GUI runs on Dewey's `agpu` backend, not the default egui one.** wgpu's
-   Vulkan surface path reuses a single binary semaphore across swapchain images,
-   which the validation layer rejects as
-   `VUID-vkQueueSubmit-pSignalSemaphores-00067`. It renders anyway, so it is
-   invisible without a validation layer installed — but it is undefined behaviour,
-   not noise, and could surface as a hang or a corrupt frame on another driver.
+12. **Two Dewey bugs found during the port, recorded because they are real
+   and unfixed — but no longer reachable from this crate.** Neither affects simon
+   now that `deweygui` is gone. Both are for whoever works on Dewey itself, or
+   for anyone who reconsiders open work 9.
 
-   The bug is wgpu's, below both simon and Dewey. Do not "fix" it here or in
-   Dewey; the egui path has no semaphore code of its own to fix. If the agpu
-   backend ever becomes unavailable, the fallback is to report it upstream to
-   wgpu with the VUID and the acquire-index sequence from the log rather than to
-   switch back.
+   *wgpu Vulkan semaphore reuse.* Dewey's default eframe path reuses one binary
+   semaphore across swapchain images, which the validation layer rejects as
+   `VUID-vkQueueSubmit-pSignalSemaphores-00067` on every frame. Undefined
+   behaviour by the spec rather than noise, though it renders. The fault is
+   wgpu's, below both Dewey and eframe. Dewey's `agpu` backend does not hit it.
 
-   **This is the one surface no test covers.** `gui::frame` and `gui::script`
-   render through Dewey's `TestBackend` and touch no GPU, which is exactly why 839
-   passing tests said nothing about it. Anything to do with presentation,
-   swapchains or teardown has to be checked by running `simon gui` and watching
-   the log. Closing the window is the interesting moment: Dewey works around a
-   separate wgpu 24.x cleanup panic at `agpu_backend.rs:870`, so a clean exit on
-   WM_CLOSE is worth confirming after any backend or dependency change.
+   *Intermittent blank render.* Resizing an `agpu` window — including a
+   `SetWindowPos` to the size it already was — sometimes leaves it entirely blank
+   with the process alive and nothing logged. It reproduces in Dewey's own
+   `counter_agpu` example. Instrumenting `agpu_backend.rs` showed winit
+   delivering a spurious `Resized(<the configured size>)` immediately after the
+   true size, shrinking the surface while the window stays large. Three fixes
+   failed and were reverted rather than left in place: `ControlFlow::WaitUntil`,
+   requesting a redraw on resize, and reconciling against `window.inner_size()`
+   each frame — the last because winit's own `inner_size()` reports the stale
+   value too. That is the detail any further attempt should start from. Repro:
+   three `eprintln!` calls in `resize`, the surface-acquire error arm and the
+   frame-area computation in `render`, driven by `ShowWindow(hwnd, 3)`.
 
-13. **The GUI window can render blank, intermittently.** Resizing it — including
-   an ordinary `SetWindowPos` to the size it already was — sometimes leaves the
-   window entirely white or entirely flat grey, with the process alive and no
-   error logged anywhere.
+13. **Applied settings are reversible; the tuning loop is not yet closed.**
+   `ApplyHandler::read_current()` reads a setting before it is written,
+   `ApplyOutcome.previous` carries what was overwritten, `revert_setting()` puts
+   it back through the same confirmed and audit-logged path, and
+   `tuning::serve::revert_cycle()` undoes everything one cycle applied, in
+   reverse.
 
-   It reproduces in Dewey's own `counter_agpu` example, so it is not simon's
-   code. Instrumenting `agpu_backend.rs` showed winit delivering a spurious
-   `Resized(<the configured size>)` immediately after the true size, which
-   shrinks the surface while the window stays large; the app then paints a small
-   corner and the rest of the window is never drawn.
+   Before this, `simon tune --apply` could change a machine and had no way to
+   change it back: the trait could only write, and the outcome recorded only what
+   was requested. That is worth remembering as a shape of bug — the write path
+   was complete and correct on its own terms, and useless for anything that
+   needed to undo it.
 
-   Three fixes did not work and were reverted rather than left in place:
-   setting `ControlFlow::WaitUntil` so ticks are scheduled rather than waiting on
-   unrelated events; requesting a redraw directly on resize; and reconciling the
-   surface against `window.inner_size()` every frame. The last failed because
-   winit's own `inner_size()` reports the stale value too, which is the detail
-   any further attempt should start from.
+   **The rule to preserve:** when no prior value was recorded, `revert_setting`
+   refuses rather than writing a default. Putting a machine into a state it was
+   never in is a worse failure than leaving it where the caller put it. A handler
+   without `read_current` makes its setting explicitly one-way; the default
+   returns `None` so existing handlers still compile, which means *adding* a
+   handler without it silently gives up reversibility. Implement it whenever the
+   source can be read back.
 
-   Re-adding the instrumentation is three `eprintln!` calls in `resize`, the
-   surface-acquire error arm, and the frame-area computation in `render`. Drive
-   it with `ShowWindow(hwnd, 3)` against `counter_agpu`.
+   Verified on Windows: `read_current` returns the same GUID that
+   `simon profile explain active_scheme_guid` reports through unrelated code in
+   `profile::cpu`. **The Linux sysfs readers are written by inspection and have
+   never run** — there was no Linux machine in the session that added them, and
+   CI compiles the path without exercising a sysfs write.
+
+   **What is left to close the loop:** measure a metric before applying,
+   re-measure after a settle period, and revert automatically on regression.
+   The hard part is not the mechanism, it is deciding what proves a given setting
+   helped — and the same rule that governs values should govern this. A loop that
+   invents a success criterion is the optimiser equivalent of a model picking a
+   power limit. If a setting's effect cannot be measured, the honest verdict is
+   "unverifiable", not "improved".
 
 ## The plan for what is left
 
@@ -375,6 +393,16 @@ have produced, and is already reported.
 
 Each was checked against a deliberate break before being kept, because a test
 that cannot fail is worse than none.
+
+**A green suite is evidence about the surface it covers, and nothing else.**
+The Dewey port passed 839 tests through four releases while its window opened at
+800x600 titled "Dewey App", clipped every value off the right edge, responded to
+no clicks at all, and reported no GPUs on a machine with three. The tests
+asserted that each tab emitted named ontology nodes; the port did that
+faithfully. Nothing failed because nothing was asked. The bugs were found by
+screenshotting the window and looking at it — and each round of looking found
+another one. If a change affects something a person sees, look at it before
+reporting it done.
 
 ## Two things worth knowing
 

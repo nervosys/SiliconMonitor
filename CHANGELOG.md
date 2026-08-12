@@ -5,6 +5,38 @@ All notable changes to Silicon Monitor will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.1.0] - 2026-08-12
+
+### Added
+
+- **Applied settings are reversible.** `ApplyHandler::read_current` reads a
+  setting before it is written, `ApplyOutcome.previous` records what was
+  overwritten, `profile::apply::revert_setting` puts it back, and
+  `tuning::serve::revert_cycle` undoes everything one tuning cycle applied, in
+  reverse order.
+
+  Until now `simon tune --apply` could change a machine and had no way to change
+  it back: the handler trait could only write, and an outcome recorded only what
+  was requested. An autonomous tuner that can move a machine in one direction
+  only is not something to leave running unattended.
+
+  A revert goes through `apply_setting`, so it is confirmed and audit-logged on
+  exactly the same terms as the write it undoes. Where no prior value was
+  recorded — because the handler could not read the setting — revert refuses
+  rather than writing a default: putting a machine into a state it was never in
+  is a worse failure than leaving it where the caller put it.
+
+  `read_current` is implemented for the Windows active power scheme
+  (`PowerGetActiveScheme`, verified against `simon profile explain
+  active_scheme_guid`, which reaches the same value through unrelated code) and
+  for the Linux cpufreq governor. The Linux path is written by inspection and has
+  not been run.
+
+### Changed
+
+- `ApplyOutcome` gains a `previous` field and derives `PartialEq`. The field is
+  `#[serde(default)]`, so audit records written before 5.1.0 still deserialise.
+
 ## [5.0.0] - 2026-08-12
 
 ### Changed

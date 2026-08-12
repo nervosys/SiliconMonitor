@@ -74,12 +74,42 @@ pub struct AppliedOutcome {
     pub setting_id: String,
     pub status: String,
     pub message: String,
+    /// The full outcome of the write, carried so the cycle can be undone.
+    ///
+    /// Summarising the write to a status string threw away the value it
+    /// overwrote, which left an autonomous loop able to change a machine and
+    /// unable to change it back. [`revert_cycle`] needs this.
+    #[serde(default)]
+    pub outcome: Option<crate::profile::apply::ApplyOutcome>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Withheld {
     pub setting_id: String,
     pub reason: String,
+}
+
+/// Put back everything a cycle applied, most recent write first.
+///
+/// An autonomous tuner that can only move a machine in one direction is not
+/// something to leave running unattended. This is the way back: hand it a
+/// [`Cycle`] and it undoes that cycle's writes through
+/// [`crate::profile::apply::revert_setting`], which is confirmed and
+/// audit-logged exactly like the writes it undoes.
+///
+/// Reverts in reverse order so that settings applied together come off in the
+/// order they went on. Writes that were refused, failed, or recorded no prior
+/// value are reported as un-revertible rather than skipped silently — a caller
+/// asking "is this machine back where it started" deserves the whole answer,
+/// including the parts that are not.
+pub fn revert_cycle(cycle: &Cycle, confirm: bool) -> Vec<crate::profile::apply::ApplyOutcome> {
+    cycle
+        .applied
+        .iter()
+        .rev()
+        .filter_map(|a| a.outcome.as_ref())
+        .map(|o| crate::profile::apply::revert_setting(o, confirm))
+        .collect()
 }
 
 /// Gather the signals the classifier reads.
@@ -235,7 +265,8 @@ pub fn cycle_with(mode: Mode, started: Instant, classification: Classification) 
                 applied.push(AppliedOutcome {
                     setting_id: rec.setting_id.clone(),
                     status: format!("{:?}", outcome.status),
-                    message: outcome.message,
+                    message: outcome.message.clone(),
+                    outcome: Some(outcome),
                 });
             }
         }
@@ -422,5 +453,66 @@ mod tests {
         let s = collect_signals();
         let c = classify_from_signals(&s);
         assert!(!c.evidence.is_empty());
+    }
+
+    /// A cycle that applied nothing has nothing to undo, and says so by
+    /// returning nothing rather than by erroring.
+    #[test]
+    fn reverting_a_recommend_only_cycle_is_a_no_op() {
+        let cycle = cycle(Mode::Recommend, Instant::now());
+        assert!(cycle.applied.is_empty(), "Recommend mode must not write");
+        assert!(revert_cycle(&cycle, true).is_empty());
+    }
+
+    /// Writes come off in the reverse of the order they went on, and a write
+    /// that recorded no prior value is reported rather than skipped: a caller
+    /// asking whether the machine is back where it started must not be told
+    /// "yes" by silence.
+    #[test]
+    fn revert_undoes_in_reverse_and_reports_the_unrevertible() {
+        use crate::profile::apply::{ApplyOutcome, ApplyStatus};
+        use crate::profile::{SettingValue, Subsystem};
+
+        let mk = |id: &str, previous: Option<&str>| AppliedOutcome {
+            setting_id: id.into(),
+            status: "Applied".into(),
+            message: String::new(),
+            outcome: Some(ApplyOutcome {
+                setting_id: id.into(),
+                subsystem: Subsystem::Cpu,
+                requested: SettingValue::Text("new".into()),
+                status: ApplyStatus::Applied,
+                message: String::new(),
+                timestamp: 0,
+                previous: previous.map(|p| SettingValue::Text(p.into())),
+            }),
+        };
+
+        let cycle = Cycle {
+            elapsed_secs: 0,
+            plan: Plan {
+                classification: Classification {
+                    use_case: crate::tuning::UseCase::Idle,
+                    confidence: 0.0,
+                    method: crate::tuning::Method::Signals,
+                    evidence: vec![],
+                },
+                recommendations: vec![],
+                skipped: vec![],
+            },
+            applied: vec![mk("first", Some("old")), mk("second", None)],
+            withheld: vec![],
+        };
+
+        let reverts = revert_cycle(&cycle, true);
+        assert_eq!(reverts.len(), 2, "every applied write is accounted for");
+        assert_eq!(
+            reverts[0].setting_id, "second",
+            "the last write applied is the first undone"
+        );
+        // "second" recorded no prior value, so it cannot be put back, and the
+        // refusal is visible in the result.
+        assert_eq!(reverts[0].status, ApplyStatus::NotWritable);
+        assert!(reverts[0].message.contains("no prior value"));
     }
 }

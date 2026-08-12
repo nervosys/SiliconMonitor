@@ -27,7 +27,7 @@ use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Result of an apply attempt — always returned (never panics), always logged.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ApplyOutcome {
     pub setting_id: String,
     pub subsystem: Subsystem,
@@ -36,6 +36,16 @@ pub struct ApplyOutcome {
     pub message: String,
     /// Unix epoch seconds.
     pub timestamp: u64,
+    /// The value that was in effect before this write, when the handler could
+    /// read it.
+    ///
+    /// This is what makes a write reversible, and until it existed nothing in
+    /// this crate could undo one: an autonomous tuner could set a governor and
+    /// then had no way to put back what it found. `None` means the prior value
+    /// was not readable — not that there wasn't one — so
+    /// [`revert_setting`] refuses rather than guessing at a default.
+    #[serde(default)]
+    pub previous: Option<SettingValue>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -62,6 +72,16 @@ pub trait ApplyHandler: Send + Sync {
     /// Try to write the requested value. Must not panic; surface any error
     /// via the returned [`ApplyStatus`].
     fn apply(&self, value: &SettingValue) -> ApplyOutcome;
+
+    /// The value currently in effect, when it can be read.
+    ///
+    /// Defaults to `None` so existing handlers keep compiling, but a handler
+    /// that does not implement this makes its setting one-way: `apply_setting`
+    /// records no prior value, and [`revert_setting`] will refuse to guess one.
+    /// Implement it wherever the source can be read back.
+    fn read_current(&self) -> Option<SettingValue> {
+        None
+    }
 }
 
 /// Built-in handler registry. New handlers register themselves by appearing
@@ -82,6 +102,62 @@ pub fn builtin_handlers() -> Vec<Box<dyn ApplyHandler>> {
     #[cfg(windows)]
     out.push(Box::new(WindowsActivePowerSchemeHandler));
     out
+}
+
+/// Put back the value an earlier [`apply_setting`] overwrote.
+///
+/// Takes the outcome of the write being undone rather than a setting id and a
+/// value, because the whole point is that the caller does not have to have kept
+/// the old value anywhere: it travels with the outcome.
+///
+/// Refuses when `previous` is `None`. That happens when the handler could not
+/// read the setting before writing it, and the honest answer there is "this
+/// cannot be undone" rather than a guess at a default — putting a machine into a
+/// state it was never in is a worse failure than leaving it in the state the
+/// caller chose.
+///
+/// Goes through [`apply_setting`], so a revert is confirmed and audit-logged on
+/// exactly the same terms as the write it undoes. An autonomous loop that could
+/// revert without confirmation would be a write path with no confirmation.
+pub fn revert_setting(applied: &ApplyOutcome, confirm: bool) -> ApplyOutcome {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
+    // Only a write that took effect needs undoing. Reverting a refused or failed
+    // apply would write a value the caller never asked for.
+    if applied.status != ApplyStatus::Applied {
+        return ApplyOutcome {
+            setting_id: applied.setting_id.clone(),
+            subsystem: applied.subsystem,
+            requested: applied.requested.clone(),
+            status: ApplyStatus::NotWritable,
+            message: format!(
+                "Nothing to revert: the apply being undone ended as {:?}, not Applied.",
+                applied.status
+            ),
+            timestamp: now,
+            previous: None,
+        };
+    }
+
+    let Some(previous) = applied.previous.clone() else {
+        return ApplyOutcome {
+            setting_id: applied.setting_id.clone(),
+            subsystem: applied.subsystem,
+            requested: applied.requested.clone(),
+            status: ApplyStatus::NotWritable,
+            message: format!(
+                "Cannot revert {:?}: no prior value was recorded, because the handler                  could not read the setting before writing it. The setting is still at                  the applied value.",
+                applied.setting_id
+            ),
+            timestamp: now,
+            previous: None,
+        };
+    };
+
+    apply_setting(&applied.setting_id, previous, confirm)
 }
 
 /// Apply a setting by id. Returns an [`ApplyOutcome`] in every case (no
@@ -108,6 +184,7 @@ pub fn apply_setting(setting_id: &str, value: SettingValue, confirm: bool) -> Ap
                 setting_id
             ),
             timestamp: now,
+            previous: None,
         },
         Some(h) if !confirm => ApplyOutcome {
             setting_id: setting_id.into(),
@@ -118,8 +195,16 @@ pub fn apply_setting(setting_id: &str, value: SettingValue, confirm: bool) -> Ap
                 "Apply rejected: explicit confirmation required (pass confirm=true or --confirm)."
                     .into(),
             timestamp: now,
+            previous: None,
         },
-        Some(h) => h.apply(&value),
+        Some(h) => {
+            // Read before writing. Afterwards the old value is gone, and a
+            // tuner that cannot say what it overwrote cannot put it back.
+            let previous = h.read_current();
+            let mut outcome = h.apply(&value);
+            outcome.previous = previous;
+            outcome
+        }
     };
 
     audit_log(&outcome);
@@ -207,6 +292,7 @@ impl ApplyHandler for NvidiaPersistenceModeHandler {
                     status: ApplyStatus::Failed,
                     message: "persistence_mode requires a Bool value.".into(),
                     timestamp: now,
+                    previous: None,
                 };
             }
         };
@@ -223,6 +309,7 @@ impl ApplyHandler for NvidiaPersistenceModeHandler {
                 status: ApplyStatus::Applied,
                 message: format!("NVIDIA persistence mode on GPU 0 set to {}.", target),
                 timestamp: now,
+                previous: None,
             },
             Err(e) => {
                 let s = e.to_string();
@@ -245,6 +332,7 @@ impl ApplyHandler for NvidiaPersistenceModeHandler {
                         format!("NVML write failed: {}", s)
                     },
                     timestamp: now,
+                    previous: None,
                 }
             }
         }
@@ -260,8 +348,16 @@ impl ApplyHandler for LinuxCpufreqGovernorHandler {
     fn setting_id(&self) -> &str {
         "scaling_governor"
     }
+    // Reading back the same path that `apply` writes. By inspection only: this
+    // session had no Linux machine to run it on, and CI compiles but does not
+    // exercise a sysfs write.
     fn subsystem(&self) -> Subsystem {
         Subsystem::Cpu
+    }
+    fn read_current(&self) -> Option<SettingValue> {
+        std::fs::read_to_string("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor")
+            .ok()
+            .map(|s| SettingValue::Text(s.trim().to_string()))
     }
     fn apply(&self, value: &SettingValue) -> ApplyOutcome {
         let now = SystemTime::now()
@@ -279,6 +375,7 @@ impl ApplyHandler for LinuxCpufreqGovernorHandler {
                     message: "scaling_governor requires a Text value (e.g. \"performance\")."
                         .into(),
                     timestamp: now,
+                    previous: None,
                 };
             }
         };
@@ -291,6 +388,7 @@ impl ApplyHandler for LinuxCpufreqGovernorHandler {
                 status: ApplyStatus::Applied,
                 message: format!("CPU0 scaling_governor set to {:?}.", target),
                 timestamp: now,
+                previous: None,
             },
             Err(e) => {
                 let refused = e.kind() == std::io::ErrorKind::PermissionDenied;
@@ -309,6 +407,7 @@ impl ApplyHandler for LinuxCpufreqGovernorHandler {
                         format!("sysfs write failed: {}", e)
                     },
                     timestamp: now,
+                    previous: None,
                 }
             }
         }
@@ -344,6 +443,7 @@ impl ApplyHandler for LinuxAmdPerfLevelHandler {
                     status: ApplyStatus::Failed,
                     message: "perf_level requires a Text value (e.g. \"auto\").".into(),
                     timestamp: now,
+                    previous: None,
                 };
             }
         };
@@ -358,6 +458,7 @@ impl ApplyHandler for LinuxAmdPerfLevelHandler {
                     status: ApplyStatus::Failed,
                     message: "No AMD GPU card found in /sys/class/drm.".into(),
                     timestamp: now,
+                    previous: None,
                 };
             }
         };
@@ -372,6 +473,7 @@ impl ApplyHandler for LinuxAmdPerfLevelHandler {
                 status: ApplyStatus::Applied,
                 message: format!("AMD perf level set to {:?} via {}", target, path.display()),
                 timestamp: now,
+                previous: None,
             },
             Err(e) => {
                 let refused = e.kind() == std::io::ErrorKind::PermissionDenied;
@@ -393,6 +495,7 @@ impl ApplyHandler for LinuxAmdPerfLevelHandler {
                         format!("sysfs write failed: {}", e)
                     },
                     timestamp: now,
+                    previous: None,
                 }
             }
         }
@@ -427,6 +530,7 @@ impl ApplyHandler for LinuxIntelGtMaxFreqHandler {
                     status: ApplyStatus::Failed,
                     message: "gt_max_freq_mhz requires a non-negative integer (MHz).".into(),
                     timestamp: now,
+                    previous: None,
                 };
             }
         };
@@ -440,6 +544,7 @@ impl ApplyHandler for LinuxIntelGtMaxFreqHandler {
                     status: ApplyStatus::Failed,
                     message: "No Intel GPU card found in /sys/class/drm.".into(),
                     timestamp: now,
+                    previous: None,
                 };
             }
         };
@@ -452,6 +557,7 @@ impl ApplyHandler for LinuxIntelGtMaxFreqHandler {
                 status: ApplyStatus::Applied,
                 message: format!("Intel GT max frequency set to {} MHz.", mhz),
                 timestamp: now,
+                previous: None,
             },
             Err(e) => {
                 let refused = e.kind() == std::io::ErrorKind::PermissionDenied;
@@ -473,6 +579,7 @@ impl ApplyHandler for LinuxIntelGtMaxFreqHandler {
                         format!("sysfs write failed: {}", e)
                     },
                     timestamp: now,
+                    previous: None,
                 }
             }
         }
@@ -519,6 +626,28 @@ impl ApplyHandler for WindowsActivePowerSchemeHandler {
     fn subsystem(&self) -> Subsystem {
         Subsystem::Cpu
     }
+    fn read_current(&self) -> Option<SettingValue> {
+        use windows::Win32::System::Power::PowerGetActiveScheme;
+        let mut guid_ptr: *mut windows::core::GUID = std::ptr::null_mut();
+        // SAFETY: PowerGetActiveScheme writes a pointer to a GUID allocated by
+        // the system; None selects the same user root that `apply` writes to.
+        // The allocation is released with LocalFree below, as the API documents.
+        let err = unsafe { PowerGetActiveScheme(None, &mut guid_ptr) };
+        if err.0 != 0 || guid_ptr.is_null() {
+            return None;
+        }
+        // SAFETY: non-null and written by the call above.
+        let guid = unsafe { *guid_ptr };
+        // SAFETY: the API allocates with LocalAlloc, so LocalFree is the
+        // documented counterpart. Leaking here would leak on every read, and a
+        // tuning loop reads on every cycle.
+        unsafe {
+            let _ = windows::Win32::Foundation::LocalFree(windows::Win32::Foundation::HLOCAL(
+                guid_ptr as *mut _,
+            ));
+        }
+        Some(SettingValue::Text(format!("{:?}", guid).to_lowercase()))
+    }
     fn apply(&self, value: &SettingValue) -> ApplyOutcome {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -534,6 +663,7 @@ impl ApplyHandler for WindowsActivePowerSchemeHandler {
                     status: ApplyStatus::Failed,
                     message: "active_scheme_guid requires a Text value (GUID).".into(),
                     timestamp: now,
+                    previous: None,
                 };
             }
         };
@@ -547,6 +677,7 @@ impl ApplyHandler for WindowsActivePowerSchemeHandler {
                     status: ApplyStatus::Failed,
                     message: format!("Invalid GUID format: {:?}", guid_str),
                     timestamp: now,
+                    previous: None,
                 };
             }
         };
@@ -564,6 +695,7 @@ impl ApplyHandler for WindowsActivePowerSchemeHandler {
                 status: ApplyStatus::Applied,
                 message: format!("Windows active power scheme set to {{{}}}.", guid_str),
                 timestamp: now,
+                previous: None,
             }
         } else {
             // ERROR_ACCESS_DENIED = 5
@@ -583,6 +715,7 @@ impl ApplyHandler for WindowsActivePowerSchemeHandler {
                     format!("PowerSetActiveScheme failed: WIN32_ERROR {}", win_error.0)
                 },
                 timestamp: now,
+                previous: None,
             }
         }
     }
@@ -667,8 +800,144 @@ mod tests {
             status: ApplyStatus::NotWritable,
             message: "test".into(),
             timestamp: 0,
+            previous: None,
         };
         let s = serde_json::to_string(&outcome).unwrap();
         assert!(s.contains("not_writable"));
+    }
+
+    /// A write that cannot say what it overwrote cannot be undone, and the
+    /// refusal has to be explicit rather than a silent no-op.
+    #[test]
+    fn revert_refuses_when_no_prior_value_was_recorded() {
+        let applied = ApplyOutcome {
+            setting_id: "scaling_governor".into(),
+            subsystem: Subsystem::Cpu,
+            requested: SettingValue::Text("performance".into()),
+            status: ApplyStatus::Applied,
+            message: "applied".into(),
+            timestamp: 0,
+            previous: None,
+        };
+        let out = revert_setting(&applied, true);
+        assert_eq!(out.status, ApplyStatus::NotWritable);
+        assert!(
+            out.message.contains("no prior value"),
+            "the refusal should say why, got: {}",
+            out.message
+        );
+    }
+
+    /// Reverting something that never took effect would write a value the
+    /// caller never asked for.
+    #[test]
+    fn revert_refuses_an_apply_that_did_not_take_effect() {
+        for status in [
+            ApplyStatus::Refused,
+            ApplyStatus::Failed,
+            ApplyStatus::NeedsConfirm,
+            ApplyStatus::NotWritable,
+        ] {
+            let applied = ApplyOutcome {
+                setting_id: "scaling_governor".into(),
+                subsystem: Subsystem::Cpu,
+                requested: SettingValue::Text("performance".into()),
+                status,
+                message: String::new(),
+                timestamp: 0,
+                previous: Some(SettingValue::Text("powersave".into())),
+            };
+            let out = revert_setting(&applied, true);
+            assert_eq!(
+                out.status,
+                ApplyStatus::NotWritable,
+                "reverting a {status:?} apply must refuse"
+            );
+        }
+    }
+
+    /// A revert is a write, so it needs confirmation on the same terms.
+    /// Otherwise an autonomous loop would have an unconfirmed write path.
+    #[test]
+    fn revert_without_confirmation_is_refused() {
+        let applied = ApplyOutcome {
+            setting_id: "active_scheme_guid".into(),
+            subsystem: Subsystem::Cpu,
+            requested: SettingValue::Text("381b4222-f694-41f0-9685-ff5bb260df2e".into()),
+            status: ApplyStatus::Applied,
+            message: "applied".into(),
+            timestamp: 0,
+            previous: Some(SettingValue::Text(
+                "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c".into(),
+            )),
+        };
+        let out = revert_setting(&applied, false);
+        assert_eq!(out.status, ApplyStatus::NeedsConfirm);
+    }
+
+    /// The prior value round-trips through serialisation, so an outcome
+    /// recorded in an audit log stays revertible after being read back.
+    #[test]
+    fn a_recorded_prior_value_survives_serialisation() {
+        let outcome = ApplyOutcome {
+            setting_id: "scaling_governor".into(),
+            subsystem: Subsystem::Cpu,
+            requested: SettingValue::Text("performance".into()),
+            status: ApplyStatus::Applied,
+            message: String::new(),
+            timestamp: 0,
+            previous: Some(SettingValue::Text("schedutil".into())),
+        };
+        let json = serde_json::to_string(&outcome).unwrap();
+        let back: ApplyOutcome = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.previous, Some(SettingValue::Text("schedutil".into())));
+    }
+
+    /// Outcomes written before `previous` existed still deserialise, so an
+    /// existing audit log does not become unreadable.
+    #[test]
+    fn an_outcome_without_previous_still_deserialises() {
+        // Built by removing the key from a real outcome rather than hand-written,
+        // so the test cannot pass or fail on a guess at the wire format.
+        let outcome = ApplyOutcome {
+            setting_id: "scaling_governor".into(),
+            subsystem: Subsystem::Cpu,
+            requested: SettingValue::Text("performance".into()),
+            status: ApplyStatus::Applied,
+            message: String::new(),
+            timestamp: 0,
+            previous: Some(SettingValue::Text("schedutil".into())),
+        };
+        let mut value: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&outcome).unwrap()).unwrap();
+        value.as_object_mut().unwrap().remove("previous");
+        let back: ApplyOutcome = serde_json::from_value(value).unwrap();
+        assert_eq!(back.previous, None);
+    }
+
+    /// The Windows handler can read the scheme it writes.
+    ///
+    /// Without this the setting is one-way: `apply_setting` records no prior
+    /// value and `revert_setting` refuses. Cross-checked against
+    /// `simon profile explain active_scheme_guid`, which reaches the same
+    /// registry through entirely different code in `profile::cpu`.
+    #[cfg(windows)]
+    #[test]
+    fn the_windows_power_scheme_reads_back_as_a_guid() {
+        let current = WindowsActivePowerSchemeHandler.read_current();
+        let Some(SettingValue::Text(guid)) = current else {
+            panic!("active power scheme did not read back as text: {current:?}");
+        };
+        println!("read_current -> {guid}");
+        assert_eq!(guid.len(), 36, "expected a bare 36-char GUID, got {guid:?}");
+        assert_eq!(
+            guid.matches('-').count(),
+            4,
+            "expected GUID dash grouping, got {guid:?}"
+        );
+        assert!(
+            guid.chars().all(|c| c.is_ascii_hexdigit() || c == '-'),
+            "GUID should be hex and dashes, got {guid:?}"
+        );
     }
 }
