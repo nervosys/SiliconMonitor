@@ -32,6 +32,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   for the Linux cpufreq governor. The Linux path is written by inspection and has
   not been run.
 
+- **Unattended writes must be reversible.** `profile::apply::apply_setting_reversible`
+  refuses when the value currently in effect cannot be read, and the automatic
+  tuning server uses it. `apply_setting` still writes in that case, for attended
+  callers who can be told "this cannot be undone" and decide for themselves.
+
+- **A failed read is retried before a setting is declared unreadable.** Observed
+  during testing: `PowerGetActiveScheme` failed once on a machine running several
+  compiles, then read normally. Without a retry a transient failure silently
+  converts a reversible write into a one-way one — the write succeeds, no prior
+  value is recorded, and nothing says so until someone tries to undo it.
+
 ### Changed
 
 - `ApplyOutcome` gains a `previous` field and derives `PartialEq`. The field is

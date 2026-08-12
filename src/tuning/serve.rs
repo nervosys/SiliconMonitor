@@ -257,7 +257,11 @@ pub fn cycle_with(mode: Mode, started: Instant, classification: Classification) 
                     });
                     continue;
                 }
-                let outcome = crate::profile::apply::apply_setting(
+                // Unattended writes must be reversible. `apply_setting_reversible`
+                // refuses when the prior value could not be read, rather than
+                // making a change this loop could never undo -- there is nobody
+                // watching to be told that the way back was lost.
+                let outcome = crate::profile::apply::apply_setting_reversible(
                     &rec.setting_id,
                     rec.proposed.clone(),
                     confirm,

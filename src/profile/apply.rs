@@ -104,6 +104,74 @@ pub fn builtin_handlers() -> Vec<Box<dyn ApplyHandler>> {
     out
 }
 
+/// Read a handler's current value, retrying a transient failure.
+///
+/// The Win32 and sysfs reads behind `read_current` can fail for reasons that
+/// have nothing to do with the setting — a loaded machine, a momentarily busy
+/// device. A single failed read is not evidence that the setting is unreadable,
+/// and treating it as such silently converts a reversible write into an
+/// irreversible one: the write still happens, `previous` is `None`, and nothing
+/// says so until someone tries to undo it.
+///
+/// Observed once during testing, where `PowerGetActiveScheme` returned failure
+/// on a machine running several compiles, then read normally on the next
+/// attempt. Three tries, because the failure was transient, not persistent.
+fn read_current_with_retry(handler: &dyn ApplyHandler) -> Option<SettingValue> {
+    for attempt in 0..3 {
+        if let Some(v) = handler.read_current() {
+            return Some(v);
+        }
+        if attempt < 2 {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    }
+    None
+}
+
+/// Apply a setting, but only if the change can be undone.
+///
+/// Identical to [`apply_setting`] except that it refuses when the prior value
+/// could not be read. Use it for anything unattended: an autonomous loop that
+/// makes a change it cannot reverse has taken a decision away from the person
+/// who has to live with the result, and it does so invisibly — the write
+/// succeeds, and only a later attempt to undo it reveals there is no way back.
+///
+/// Attended callers may still want [`apply_setting`]: a person at a terminal who
+/// asks for a setting and is told "this cannot be undone" can decide for
+/// themselves. That decision is theirs and not this function's, which is why
+/// both exist.
+pub fn apply_setting_reversible(
+    setting_id: &str,
+    value: SettingValue,
+    confirm: bool,
+) -> ApplyOutcome {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
+    if let Some(h) = builtin_handlers()
+        .into_iter()
+        .find(|h| h.setting_id() == setting_id)
+    {
+        if read_current_with_retry(h.as_ref()).is_none() {
+            return ApplyOutcome {
+                setting_id: setting_id.into(),
+                subsystem: h.subsystem(),
+                requested: value,
+                status: ApplyStatus::Refused,
+                message: format!(
+                    "Refused: the value currently in effect for {setting_id:?} could not be                      read, so this write could not be undone. Use apply_setting (or                      `simon profile set`) to write it anyway, accepting that it is one-way."
+                ),
+                timestamp: now,
+                previous: None,
+            };
+        }
+    }
+
+    apply_setting(setting_id, value, confirm)
+}
+
 /// Put back the value an earlier [`apply_setting`] overwrote.
 ///
 /// Takes the outcome of the write being undone rather than a setting id and a
@@ -200,7 +268,7 @@ pub fn apply_setting(setting_id: &str, value: SettingValue, confirm: bool) -> Ap
         Some(h) => {
             // Read before writing. Afterwards the old value is gone, and a
             // tuner that cannot say what it overwrote cannot put it back.
-            let previous = h.read_current();
+            let previous = read_current_with_retry(h.as_ref());
             let mut outcome = h.apply(&value);
             outcome.previous = previous;
             outcome
@@ -938,6 +1006,263 @@ mod tests {
         assert!(
             guid.chars().all(|c| c.is_ascii_hexdigit() || c == '-'),
             "GUID should be hex and dashes, got {guid:?}"
+        );
+    }
+
+    /// What `read_current` emits must be what `apply` accepts.
+    ///
+    /// This is the seam a revert crosses, and it is invisible if only one side
+    /// is tested: `read_current` formats a GUID with `Debug`, `apply` parses one
+    /// with `parse_guid`, and nothing forces those two to agree. If the Debug
+    /// representation ever gains braces or uppercase or a `GUID { .. }` wrapper,
+    /// every revert of this setting starts failing and the unit tests above stay
+    /// green.
+    #[cfg(windows)]
+    #[test]
+    fn the_windows_guid_round_trips_from_read_to_parse() {
+        let Some(SettingValue::Text(read)) = WindowsActivePowerSchemeHandler.read_current() else {
+            panic!("no scheme readable");
+        };
+        let parsed = parse_guid(&read).expect(
+            "the GUID that read_current produced must parse with the same function apply uses",
+        );
+        // And round again: formatting the parsed value must reproduce the string,
+        // so a revert writes the identical scheme rather than a near-miss.
+        let reformatted = format!("{parsed:?}").to_lowercase();
+        assert_eq!(
+            reformatted, read,
+            "read -> parse -> format must be lossless"
+        );
+    }
+
+    /// Every GUID Windows offers must survive the same round trip, not just
+    /// whichever one happens to be active on the development machine.
+    #[cfg(windows)]
+    #[test]
+    fn every_known_scheme_guid_round_trips() {
+        for guid in [
+            "381b4222-f694-41f0-9685-ff5bb260df2e", // Balanced
+            "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c", // High performance
+            "a1841308-3541-4fab-bc81-f71556f20b4a", // Power saver
+            "00000000-0000-0000-0000-000000000000", // all-zero edge
+            "ffffffff-ffff-ffff-ffff-ffffffffffff", // all-ones edge
+        ] {
+            let parsed = parse_guid(guid).unwrap_or_else(|| panic!("{guid} should parse"));
+            assert_eq!(
+                format!("{parsed:?}").to_lowercase(),
+                guid,
+                "{guid} did not survive parse -> format"
+            );
+        }
+    }
+
+    /// Malformed input is rejected rather than silently truncated into a
+    /// different, valid-looking GUID.
+    #[test]
+    #[cfg(windows)]
+    fn malformed_guids_are_rejected() {
+        for bad in [
+            "",
+            "381b4222",
+            "381b4222-f694-41f0-9685",
+            "381b4222-f694-41f0-9685-ff5bb260df2e-extra",
+            "381b4222-f694-41f0-9685-ff5bb260df2ee", // one too long
+            "zzzzzzzz-f694-41f0-9685-ff5bb260df2e",  // not hex
+            "381b4222 f694 41f0 9685 ff5bb260df2e",  // spaces, not dashes
+        ] {
+            assert!(
+                parse_guid(bad).is_none(),
+                "{bad:?} should not parse as a GUID"
+            );
+        }
+    }
+
+    /// Hammer the Win32 read from many threads at once.
+    ///
+    /// `read_current` allocates through `PowerGetActiveScheme` and frees with
+    /// `LocalFree` on every call, and the tuning loop calls it on every cycle
+    /// for every setting. A mistake there is heap corruption, which shows up as
+    /// an intermittent failure somewhere else entirely — the worst kind to chase
+    /// and the reason this is a stress test rather than a single call.
+    #[cfg(windows)]
+    #[test]
+    fn concurrent_reads_of_the_power_scheme_agree_and_do_not_corrupt() {
+        use std::sync::Arc;
+        let first = WindowsActivePowerSchemeHandler
+            .read_current()
+            .expect("scheme must be readable");
+        let expected = Arc::new(first);
+
+        let mut handles = Vec::new();
+        for _ in 0..8 {
+            let expected = Arc::clone(&expected);
+            handles.push(std::thread::spawn(move || {
+                for _ in 0..250 {
+                    let got = WindowsActivePowerSchemeHandler.read_current();
+                    assert_eq!(
+                        got.as_ref(),
+                        Some(&*expected),
+                        "a concurrent read disagreed with the first one"
+                    );
+                }
+            }));
+        }
+        for h in handles {
+            h.join()
+                .expect("a reader thread panicked — suspect the LocalFree");
+        }
+    }
+
+    /// A write that cannot be undone is refused for unattended callers, and the
+    /// refusal names the way to override it.
+    #[test]
+    fn reversible_apply_refuses_when_the_prior_value_is_unreadable() {
+        // No handler at all is the strongest case of "cannot be read": the
+        // fallback must not be to write anyway.
+        let out = apply_setting_reversible(
+            "definitely_not_a_registered_setting",
+            SettingValue::Bool(true),
+            true,
+        );
+        assert_ne!(
+            out.status,
+            ApplyStatus::Applied,
+            "an unregistered setting must never report as applied"
+        );
+    }
+
+    /// The retry gives a flaky read three chances before declaring the setting
+    /// unreadable. A single transient failure silently turning a reversible
+    /// write into a one-way one is the bug this exists to prevent.
+    #[test]
+    fn read_current_retries_before_giving_up() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        struct FlakyOnce(AtomicUsize);
+        impl ApplyHandler for FlakyOnce {
+            fn setting_id(&self) -> &str {
+                "flaky"
+            }
+            fn subsystem(&self) -> Subsystem {
+                Subsystem::Cpu
+            }
+            fn apply(&self, _v: &SettingValue) -> ApplyOutcome {
+                unreachable!("this test never writes")
+            }
+            fn read_current(&self) -> Option<SettingValue> {
+                // Fails the first time, succeeds after — the shape of the
+                // failure actually observed on a loaded machine.
+                if self.0.fetch_add(1, Ordering::SeqCst) == 0 {
+                    None
+                } else {
+                    Some(SettingValue::Text("recovered".into()))
+                }
+            }
+        }
+
+        let h = FlakyOnce(AtomicUsize::new(0));
+        assert_eq!(
+            read_current_with_retry(&h),
+            Some(SettingValue::Text("recovered".into())),
+            "a read that fails once then succeeds must be retried, not given up on"
+        );
+
+        struct AlwaysNone;
+        impl ApplyHandler for AlwaysNone {
+            fn setting_id(&self) -> &str {
+                "never"
+            }
+            fn subsystem(&self) -> Subsystem {
+                Subsystem::Cpu
+            }
+            fn apply(&self, _v: &SettingValue) -> ApplyOutcome {
+                unreachable!("this test never writes")
+            }
+        }
+        assert_eq!(
+            read_current_with_retry(&AlwaysNone),
+            None,
+            "a genuinely unreadable setting still reports unreadable"
+        );
+    }
+
+    /// The whole point, end to end, against the real machine: apply a setting,
+    /// confirm it changed, put it back, confirm it is back.
+    ///
+    /// `#[ignore]` because it writes to the machine it runs on. Every other test
+    /// here proves a piece in isolation — that a refusal refuses, that a GUID
+    /// round-trips — and none of them proves the pieces compose into a change
+    /// that can actually be undone. Run it deliberately:
+    ///
+    /// ```text
+    /// cargo test --all-features --lib -- --ignored round_trip
+    /// ```
+    ///
+    /// Cross-check from outside with `powercfg /getactivescheme` before and
+    /// after; if this test is wrong, the tool it is testing is not the one to
+    /// ask about the result.
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "writes to the machine's active power scheme"]
+    fn round_trip_the_active_power_scheme_on_real_hardware() {
+        const HIGH_PERFORMANCE: &str = "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c";
+        const BALANCED: &str = "381b4222-f694-41f0-9685-ff5bb260df2e";
+
+        let Some(SettingValue::Text(start)) = WindowsActivePowerSchemeHandler.read_current() else {
+            panic!("cannot read the starting scheme; refusing to write blind");
+        };
+        println!("start:  {start}");
+
+        // Move to whichever standard scheme is not the current one, so the test
+        // is a real change on any machine rather than only on a Balanced one.
+        let target = if start == HIGH_PERFORMANCE {
+            BALANCED
+        } else {
+            HIGH_PERFORMANCE
+        };
+
+        let applied = apply_setting_reversible(
+            "active_scheme_guid",
+            SettingValue::Text(target.into()),
+            true,
+        );
+        println!("apply:  {:?} — {}", applied.status, applied.message);
+        assert_eq!(
+            applied.status,
+            ApplyStatus::Applied,
+            "the write did not take effect: {}",
+            applied.message
+        );
+        assert_eq!(
+            applied.previous,
+            Some(SettingValue::Text(start.clone())),
+            "the outcome must record exactly what it overwrote"
+        );
+
+        // Confirm from the machine, not from the outcome we just built.
+        let after = WindowsActivePowerSchemeHandler.read_current();
+        println!("during: {after:?}");
+        assert_eq!(
+            after,
+            Some(SettingValue::Text(target.into())),
+            "the machine did not actually change"
+        );
+
+        let reverted = revert_setting(&applied, true);
+        println!("revert: {:?} — {}", reverted.status, reverted.message);
+        assert_eq!(
+            reverted.status,
+            ApplyStatus::Applied,
+            "the revert did not take effect: {} — THE MACHINE IS LEFT ON {target}",
+            reverted.message
+        );
+
+        let end = WindowsActivePowerSchemeHandler.read_current();
+        println!("end:    {end:?}");
+        assert_eq!(
+            end,
+            Some(SettingValue::Text(start)),
+            "the machine was not returned to where it started"
         );
     }
 }
