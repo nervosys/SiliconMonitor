@@ -5,6 +5,33 @@ All notable changes to Silicon Monitor will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.0.4] - 2026-08-12
+
+### Changed
+
+- **The Overview is rebuilt from the egui GUI's own widgets**, read out of git
+  rather than approximated. 4.0.3 had the original palette on a layout I had
+  invented, which is why it still did not look like simon.
+
+  - The Glances-style **QuickLook strip**: four labelled mini-bars across a 32px
+    surface panel, threshold-coloured, with the reading beside each. This sat at
+    the top of the original Overview and is the most recognisable thing about
+    it.
+  - **Section headers**: a 14px cyan title followed by a hairline rule to the
+    right edge. The rule is what made a simon pane identifiable at a glance, and
+    4.0.0 had dropped it entirely.
+  - **Metric cards** at their original 140x70 proportions -- a 3px accent stripe
+    down the left edge in the device colour, an 11px secondary title, an 18px
+    value in that colour. The 4.0.3 tiles were three times the size with a 30px
+    number and no stripe.
+  - A dense two-column process table, split evenly, the way htop fills a
+    terminal rather than leaving half the pane empty.
+
+### Fixed
+
+- QuickLook draws no bar for counts. TASKS and DISKS are not percentages, and a
+  bar at 0% reads as "nothing" — the opposite of "32 tasks".
+
 ## [4.0.3] - 2026-08-11
 
 ### Changed
