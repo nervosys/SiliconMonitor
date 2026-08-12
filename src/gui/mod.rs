@@ -278,6 +278,22 @@ impl<T> Pane<T> {
 /// The application model.
 pub struct SimonApp {
     pub tab: Tab,
+    /// Left edge of each tab, measured during `view`.
+    ///
+    /// Dewey's `Tabs` sizes each tab to its label (`measure_text + 16`), not to
+    /// an equal share of the bar. Assuming equal slots put clicks on the wrong
+    /// tab and drew the selection marker under the wrong word — visible as a
+    /// CPU pane with "Accelerators" underlined. `view` is the only place with a
+    /// painter to measure with, so it records the spans here for `handle_event`,
+    /// which has no frame of its own.
+    pub tab_spans: std::sync::Mutex<Vec<f32>>,
+    /// Last known window size, tracked so `handle_event` can hit-test clicks.
+    ///
+    /// `view` takes `&self` and cannot record layout, and `handle_event` has no
+    /// frame — so the tab bar's geometry has to be derived from the window size
+    /// rather than read back from what was drawn. Dewey sends `Event::Resize`,
+    /// which makes this exact rather than a guess.
+    pub size: Size,
     pub cpu: Pane<CpuView>,
     pub accelerators: Pane<Vec<AcceleratorRow>>,
     pub processes: Pane<Vec<ProcessRow>>,
@@ -295,6 +311,7 @@ pub struct SimonApp {
 #[derive(Debug)]
 pub enum Msg {
     SelectTab(Tab),
+    Resized(f32, f32),
     Refresh,
     MemoryLoaded(Result<MemoryView, String>),
     NetworkLoaded(Result<NetworkView, String>),
@@ -320,6 +337,8 @@ impl SimonApp {
     pub fn new() -> Self {
         Self {
             tab: Tab::Overview,
+            tab_spans: std::sync::Mutex::new(Vec::new()),
+            size: Size::new(1280.0, 800.0),
             cpu: Pane::Loading,
             accelerators: Pane::Loading,
             processes: Pane::Loading,
@@ -794,14 +813,55 @@ impl Model for SimonApp {
                 code: KeyCode::Char('r'),
                 ..
             }) => Some(Msg::Refresh),
+
+            // Number keys jump straight to a tab, 1-9 then 0 for the tenth.
+            Event::Key(KeyEvent {
+                code: KeyCode::Char(c),
+                ..
+            }) if c.is_ascii_digit() => {
+                let n = c.to_digit(10).unwrap() as usize;
+                let index = if n == 0 { 9 } else { n - 1 };
+                Tab::PORTED.get(index).copied().map(Msg::SelectTab)
+            }
+
+            // Clicking the tab bar selects a tab. The first cut of this GUI
+            // handled no mouse events at all: it rendered, and nothing in it
+            // could be clicked, which is not a GUI so much as a picture of one.
+            Event::Mouse(m) if m.is_click() => {
+                if m.position.y <= TAB_BAR_HEIGHT {
+                    let Ok(spans) = self.tab_spans.lock() else {
+                        return None;
+                    };
+                    // Before the first frame there is nothing measured, so a
+                    // click cannot be resolved and is ignored rather than
+                    // guessed at.
+                    spans
+                        .windows(2)
+                        .position(|w| m.position.x >= w[0] && m.position.x < w[1])
+                        .and_then(|i| Tab::PORTED.get(i).copied())
+                        .map(Msg::SelectTab)
+                } else {
+                    None
+                }
+            }
+
+            Event::Resize(size) => Some(Msg::Resized(size.width, size.height)),
             _ => None,
         }
+    }
+
+    fn title(&self) -> &str {
+        "Simon — Silicon Monitor"
     }
 
     fn update(&mut self, msg: Msg) -> Command<Msg> {
         match msg {
             Msg::SelectTab(tab) => {
                 self.tab = tab;
+                Command::None
+            }
+            Msg::Resized(w, h) => {
+                self.size = Size::new(w, h);
                 Command::None
             }
             Msg::Refresh => {
@@ -921,11 +981,20 @@ impl Model for SimonApp {
 
     fn view(&self, frame: &mut Frame<'_>) {
         let area = frame.area;
+
+        // Paint the ground first. Without this the window inherits whatever the
+        // backend last cleared to, which is why the first cut looked like text
+        // scattered on nothing.
+        Container::new().bg(palette::BG).render(area, frame);
+
         let chunks = Layout::new(
             Direction::Vertical,
-            [Constraint::Length(36.0), Constraint::Fill(1.0)],
+            [Constraint::Length(TAB_BAR_HEIGHT), Constraint::Fill(1.0)],
         )
         .split(area);
+        Container::new()
+            .bg(palette::SURFACE_ALT)
+            .render(chunks[0], frame);
 
         // `Tabs` is a StatefulWidget, and `view` takes `&self` — so the selection
         // is derived into a local each frame rather than stored. The model stays
@@ -933,34 +1002,169 @@ impl Model for SimonApp {
         // is a projection of it, never the other way round.
         let mut tab_state = TabState::new()
             .with_selected(Tab::PORTED.iter().position(|t| *t == self.tab).unwrap_or(0));
+        // Measure the tabs exactly as `Tabs` will, and keep the edges for
+        // hit-testing. Same formula, same text style, so clicks and paint agree.
+        {
+            let ts = TextStyle::default();
+            let mut x = chunks[0].x;
+            let mut spans = Vec::with_capacity(Tab::PORTED.len() + 1);
+            spans.push(x);
+            for tab in Tab::PORTED {
+                x += frame.painter().measure_text(tab.title(), &ts).width + 16.0;
+                spans.push(x);
+            }
+            if let Ok(mut slot) = self.tab_spans.lock() {
+                *slot = spans;
+            }
+        }
+
         Tabs::new(Tab::PORTED.iter().map(|t| t.title().to_string()).collect())
+            .fg(palette::TEXT)
+            // The selected tab is filled with this colour by the widget itself.
+            // Setting it to the bar's own background made the highlight
+            // invisible, which is what sent me looking for a marker to draw.
+            .bg(palette::CPU)
             .agent_id("tab_bar")
             .render(chunks[0], frame, &mut tab_state);
 
+        let body = card(inset(chunks[1], PAD), frame);
         match self.tab {
-            Tab::Overview => self.view_overview(chunks[1], frame),
-            Tab::Cpu => self.view_cpu(chunks[1], frame),
-            Tab::Accelerators => self.view_accelerators(chunks[1], frame),
-            Tab::Processes => self.view_processes(chunks[1], frame),
-            Tab::Memory => self.view_memory(chunks[1], frame),
-            Tab::Network => self.view_network(chunks[1], frame),
-            Tab::Disk => self.view_disk(chunks[1], frame),
-            Tab::System => self.view_system(chunks[1], frame),
-            Tab::Peripherals => self.view_peripherals(chunks[1], frame),
-            Tab::Profiles => self.view_profiles(chunks[1], frame),
-            Tab::Connections => self.view_connections(chunks[1], frame),
-            Tab::NetworkTools => self.view_network_tools(chunks[1], frame),
-            Tab::AiAssistant => self.view_ai(chunks[1], frame),
+            Tab::Overview => self.view_overview(body, frame),
+            Tab::Cpu => self.view_cpu(body, frame),
+            Tab::Accelerators => self.view_accelerators(body, frame),
+            Tab::Processes => self.view_processes(body, frame),
+            Tab::Memory => self.view_memory(body, frame),
+            Tab::Network => self.view_network(body, frame),
+            Tab::Disk => self.view_disk(body, frame),
+            Tab::System => self.view_system(body, frame),
+            Tab::Peripherals => self.view_peripherals(body, frame),
+            Tab::Profiles => self.view_profiles(body, frame),
+            Tab::Connections => self.view_connections(body, frame),
+            Tab::NetworkTools => self.view_network_tools(body, frame),
+            Tab::AiAssistant => self.view_ai(body, frame),
         }
     }
 }
 
-/// Rows are laid out top-down at a fixed line height; returns each row's rect.
+// ── Appearance ──────────────────────────────────────────────────────────────
+
+/// The colour palette.
+///
+/// Carries the intent of the egui GUI's `CyberColors` — a dark instrument panel
+/// with a colour per domain — rather than its exact values, which lived in 441
+/// lines of theme code that did not survive the port. Held as plain constants
+/// because a `Theme` lookup returns magenta for an unset token, and a palette
+/// that fails loudly in the wrong direction is worse than one that cannot fail.
+mod palette {
+    use dewey::prelude::Color;
+
+    pub const BG: Color = Color::rgb(0.043, 0.051, 0.075);
+    pub const SURFACE: Color = Color::rgb(0.086, 0.102, 0.145);
+    pub const SURFACE_ALT: Color = Color::rgb(0.110, 0.129, 0.180);
+    pub const BORDER: Color = Color::rgb(0.180, 0.212, 0.286);
+
+    pub const TEXT: Color = Color::rgb(0.878, 0.898, 0.941);
+    pub const MUTED: Color = Color::rgb(0.647, 0.694, 0.776);
+
+    pub const CPU: Color = Color::rgb(0.302, 0.651, 1.0);
+    pub const MEMORY: Color = Color::rgb(0.686, 0.510, 1.0);
+    pub const DISK: Color = Color::rgb(1.0, 0.722, 0.302);
+    pub const NETWORK: Color = Color::rgb(0.267, 0.855, 0.635);
+    pub const ACCEL: Color = Color::rgb(1.0, 0.478, 0.361);
+    pub const SYSTEM: Color = Color::rgb(0.545, 0.796, 0.910);
+
+    pub const OK: Color = Color::rgb(0.267, 0.824, 0.510);
+    pub const WARN: Color = Color::rgb(1.0, 0.741, 0.259);
+    pub const CRIT: Color = Color::rgb(1.0, 0.376, 0.376);
+
+    /// Green below 60%, amber to 85%, red above — the thresholds the egui
+    /// progress bar used, kept so a glance means the same thing it used to.
+    pub fn threshold(percent: f32) -> Color {
+        if percent >= 85.0 {
+            CRIT
+        } else if percent >= 60.0 {
+            WARN
+        } else {
+            OK
+        }
+    }
+}
+
+const TAB_BAR_HEIGHT: f32 = 40.0;
+const ROW_HEIGHT: f32 = 30.0;
+const PAD: f32 = 16.0;
+
+/// Inset a rect on all sides.
+fn inset(area: Rect, by: f32) -> Rect {
+    Rect::new(
+        area.x + by,
+        area.y + by,
+        (area.width - by * 2.0).max(0.0),
+        (area.height - by * 2.0).max(0.0),
+    )
+}
+
+/// A section heading: the domain's colour, bold, above its rows.
+fn heading(area: Rect, frame: &mut Frame<'_>, id: &str, text: &str, color: Color) {
+    Label::new(text)
+        .bold()
+        .text_size(21.0)
+        .fg(color)
+        .agent_id(id.to_string())
+        .render(area, frame);
+}
+
+/// A label/value row: muted label on the left, value in its own colour.
+///
+/// Two columns rather than one `"{label}: {value}"` string, because a wall of
+/// same-weight text was most of what made the first cut of this GUI unreadable.
+/// The agent id goes on the value — that is the part worth querying, and it
+/// keeps every id stable from before the restyle.
+fn kv(
+    area: Rect,
+    frame: &mut Frame<'_>,
+    id: impl Into<String>,
+    label: &str,
+    value: &str,
+    color: Color,
+) {
+    let cols = Layout::new(
+        Direction::Horizontal,
+        [Constraint::Length(190.0), Constraint::Fill(1.0)],
+    )
+    .split(area);
+    Label::new(label).fg(palette::MUTED).render(cols[0], frame);
+    Label::new(value)
+        .fg(color)
+        .agent_id(id)
+        .render(cols[1], frame);
+}
+
+/// A card: surface panel with a border, to sit rows inside.
+fn card(area: Rect, frame: &mut Frame<'_>) -> Rect {
+    Container::new()
+        .bg(palette::SURFACE)
+        .border(palette::BORDER, 1.0)
+        .rounded(8.0)
+        .render(area, frame);
+    inset(area, 12.0)
+}
+
+/// Stack `count` rows down `area`, returning each row's rect.
+///
+/// The first row is taller: it carries the section heading, and at the same
+/// height as a data row the heading sat directly on top of the first value.
 fn rows_of(area: Rect, count: usize) -> Vec<Rect> {
     Layout::new(
         Direction::Vertical,
         (0..count)
-            .map(|_| Constraint::Length(24.0))
+            .map(|i| {
+                Constraint::Length(if i == 0 {
+                    ROW_HEIGHT + 14.0
+                } else {
+                    ROW_HEIGHT
+                })
+            })
             .collect::<Vec<_>>(),
     )
     .split(area)
@@ -971,33 +1175,42 @@ impl SimonApp {
     fn view_connections(&self, area: Rect, frame: &mut Frame<'_>) {
         match &self.connections {
             Pane::Loading => Label::new("Loading connections…")
+                .fg(palette::MUTED)
                 .agent_id("connections_status")
                 .render(area, frame),
             Pane::Failed(e) => Label::new(format!("Connections unavailable: {e}"))
+                .fg(palette::CRIT)
                 .agent_id("connections_status")
                 .render(area, frame),
             Pane::Ready(rows) if rows.is_empty() => Label::new("No open connections")
+                .fg(palette::MUTED)
                 .agent_id("connections_empty")
                 .render(area, frame),
             Pane::Ready(rows) => {
                 let shown = rows.len().min(24);
                 let r = rows_of(area, 2 + shown);
-                Label::new("Connections")
-                    .bold()
-                    .agent_id("connections_heading")
-                    .render(r[0], frame);
+                heading(
+                    r[0],
+                    frame,
+                    "connections_heading",
+                    "Connections",
+                    palette::NETWORK,
+                );
                 Label::new(format!("{} sockets", rows.len()))
+                    .fg(palette::MUTED)
                     .agent_id("connections_count")
                     .render(r[1], frame);
                 for (i, c) in rows.iter().take(shown).enumerate() {
                     let remote = c.remote.as_deref().unwrap_or("-");
                     let proc = c.process.as_deref().unwrap_or("-");
-                    Label::new(format!(
-                        "{} {} -> {} [{}] {}",
-                        c.protocol, c.local, remote, c.state, proc
-                    ))
-                    .agent_id(format!("connection_{i}"))
-                    .render(r[i + 2], frame);
+                    kv(
+                        r[i + 2],
+                        frame,
+                        format!("connection_{i}"),
+                        &format!("{} {}", c.protocol, c.local),
+                        &format!("→ {remote}   [{}]   {proc}", c.state),
+                        palette::NETWORK,
+                    );
                 }
             }
         }
@@ -1006,13 +1219,17 @@ impl SimonApp {
     fn view_network_tools(&self, area: Rect, frame: &mut Frame<'_>) {
         let t = &self.network_tools;
         let r = rows_of(area, 3 + t.available.len());
-        Label::new("Network Tools")
-            .bold()
-            .agent_id("networktools_heading")
-            .render(r[0], frame);
+        heading(
+            r[0],
+            frame,
+            "networktools_heading",
+            "Network Tools",
+            palette::NETWORK,
+        );
         // Stated outright, because an agent reading this pane should not have to
         // infer that looking at it did not send packets.
         Label::new("Nothing runs until explicitly requested — these send traffic.")
+            .fg(palette::WARN)
             .agent_id("networktools_notice")
             .render(r[1], frame);
         for (i, tool) in t.available.iter().enumerate() {
@@ -1025,25 +1242,25 @@ impl SimonApp {
             None => "last: nothing run this session".to_string(),
         };
         Label::new(last)
+            .fg(palette::MUTED)
             .agent_id("networktools_last_run")
             .render(r[2 + t.available.len()], frame);
     }
 
     fn view_ai(&self, area: Rect, frame: &mut Frame<'_>) {
         let r = rows_of(area, 3 + self.ai.backends.len());
-        Label::new("AI Assistant")
-            .bold()
-            .agent_id("ai_heading")
-            .render(r[0], frame);
+        heading(r[0], frame, "ai_heading", "AI Assistant", palette::MEMORY);
         Label::new(if self.ai.probed {
             "Backends probed."
         } else {
             "Backends not probed — probing dials the network, which a frame read must not do."
         })
+        .fg(palette::MUTED)
         .agent_id("ai_probe_state")
         .render(r[1], frame);
         if self.ai.backends.is_empty() {
             Label::new("No backends configured")
+                .fg(palette::MUTED)
                 .agent_id("ai_empty")
                 .render(r[2], frame);
         } else {
@@ -1121,23 +1338,139 @@ impl SimonApp {
         ));
 
         let r = rows_of(area, 1 + rows.len());
-        Label::new("Overview")
-            .bold()
-            .agent_id("overview_heading")
-            .render(r[0], frame);
+        heading(r[0], frame, "overview_heading", "Overview", palette::SYSTEM);
         for (i, (label, value)) in rows.iter().enumerate() {
-            Label::new(format!("{label}: {value}"))
-                .agent_id(format!("overview_{}", label.to_lowercase()))
-                .render(r[i + 1], frame);
+            let color = match label.as_str() {
+                "CPU" => palette::CPU,
+                "Memory" => palette::MEMORY,
+                "Accelerators" => palette::ACCEL,
+                "Disks" => palette::DISK,
+                "Network" => palette::NETWORK,
+                _ => palette::SYSTEM,
+            };
+            // A pane that could not be read is stated in the failure colour, so
+            // "unavailable" never reads at a glance like a measurement.
+            let color = if value.starts_with("unavailable") {
+                palette::CRIT
+            } else if value.starts_with("loading") {
+                palette::MUTED
+            } else {
+                color
+            };
+            kv(
+                r[i + 1],
+                frame,
+                format!("overview_{}", label.to_lowercase()),
+                label,
+                value,
+                color,
+            );
+        }
+
+        // Everything above is one line per subsystem, which left most of the
+        // window empty — six rows of text in a 900px pane read as a stub rather
+        // than an instrument. The space below carries the detail an operator
+        // actually watches: load bars, the busiest cores, and the biggest
+        // processes. It is the same data the CPU and Processes tabs hold, at the
+        // depth that fits without making this a duplicate of them.
+        let rest = Rect::new(
+            area.x,
+            r[rows.len()].y + ROW_HEIGHT,
+            area.width,
+            (area.height - (r[rows.len()].y - area.y) - ROW_HEIGHT).max(0.0),
+        );
+        if rest.height < ROW_HEIGHT * 4.0 {
+            return;
+        }
+
+        let cols = Layout::new(
+            Direction::Horizontal,
+            [Constraint::Fill(1.0), Constraint::Fill(1.0)],
+        )
+        .split(rest);
+
+        // Left: load bars for the two subsystems that move second to second.
+        let left = rows_of(cols[0], 8);
+        heading(
+            left[0],
+            frame,
+            "overview_load_heading",
+            "Load",
+            palette::CPU,
+        );
+        let mut used = 1usize;
+        if let Pane::Ready(c) = &self.cpu {
+            ProgressBar::new(c.total_busy_percent / 100.0)
+                .label(format!("CPU {:.0}%", c.total_busy_percent))
+                .fg(palette::threshold(c.total_busy_percent))
+                .bg(palette::SURFACE_ALT)
+                .rounded(4.0)
+                .agent_id("overview_cpu_bar")
+                .render(left[used], frame);
+            used += 1;
+
+            // The busiest cores, not the first few: an average of 13% can hide
+            // one core pinned at 100%, which is the case worth seeing.
+            let mut cores: Vec<_> = c.cores.iter().collect();
+            cores.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+            for (id, busy, _gov) in cores.iter().take(3) {
+                if used >= left.len() {
+                    break;
+                }
+                kv(
+                    left[used],
+                    frame,
+                    format!("overview_hot_core_{id}"),
+                    &format!("core {id}"),
+                    &format!("{busy:.0}%"),
+                    palette::threshold(*busy),
+                );
+                used += 1;
+            }
+        }
+        if let Pane::Ready(m) = &self.memory {
+            if used < left.len() {
+                ProgressBar::new(m.usage_percent / 100.0)
+                    .label(format!("Memory {:.0}%", m.usage_percent))
+                    .fg(palette::threshold(m.usage_percent))
+                    .bg(palette::SURFACE_ALT)
+                    .rounded(4.0)
+                    .agent_id("overview_memory_bar")
+                    .render(left[used], frame);
+            }
+        }
+
+        // Right: the processes actually consuming the machine.
+        let right = rows_of(cols[1], 8);
+        heading(
+            right[0],
+            frame,
+            "overview_processes_heading",
+            "Top processes",
+            palette::SYSTEM,
+        );
+        if let Pane::Ready(ps) = &self.processes {
+            for (i, proc) in ps.iter().take(6).enumerate() {
+                kv(
+                    right[i + 1],
+                    frame,
+                    format!("overview_process_{i}"),
+                    &proc.name,
+                    &format!("{:.1}%   {:.0} MB", proc.cpu_percent, proc.memory_mb),
+                    palette::threshold(proc.cpu_percent),
+                );
+            }
         }
     }
 
     fn view_cpu(&self, area: Rect, frame: &mut Frame<'_>) {
         match &self.cpu {
             Pane::Loading => Label::new("Loading CPU information…")
+                .fg(palette::MUTED)
                 .agent_id("cpu_status")
                 .render(area, frame),
             Pane::Failed(e) => Label::new(format!("CPU unavailable: {e}"))
+                .fg(palette::CRIT)
                 .agent_id("cpu_status")
                 .render(area, frame),
             Pane::Ready(c) => {
@@ -1145,20 +1478,25 @@ impl SimonApp {
                 // Row 3 is the chart's slot whether or not it draws, so core rows
                 // do not shift position between the first and second refresh.
                 let r = rows_of(area, 4 + shown);
-                Label::new("CPU")
-                    .bold()
-                    .agent_id("cpu_heading")
-                    .render(r[0], frame);
+                heading(r[0], frame, "cpu_heading", "CPU", palette::CPU);
                 ProgressBar::new(c.total_busy_percent / 100.0)
                     .label(format!("{:.1}% busy", c.total_busy_percent))
+                    .fg(palette::threshold(c.total_busy_percent))
+                    .bg(palette::SURFACE)
+                    .rounded(4.0)
                     .agent_id("cpu_total_bar")
                     .render(r[1], frame);
-                Label::new(format!(
-                    "user {:.1}%  system {:.1}%  idle {:.1}%  cores {}",
-                    c.total_user, c.total_system, c.total_idle, c.core_count
-                ))
-                .agent_id("cpu_totals")
-                .render(r[2], frame);
+                kv(
+                    r[2],
+                    frame,
+                    "cpu_totals",
+                    "user / system / idle",
+                    &format!(
+                        "{:.1}%  {:.1}%  {:.1}%     {} cores",
+                        c.total_user, c.total_system, c.total_idle, c.core_count
+                    ),
+                    palette::TEXT,
+                );
                 // The chart replaces the egui_plot history graph. It renders only
                 // once there are at least two samples: a one-point line chart is a
                 // dot that implies a trend it cannot have.
@@ -1179,9 +1517,14 @@ impl SimonApp {
                     } else {
                         format!("  [{governor}]")
                     };
-                    Label::new(format!("core {id}: {busy:.0}%{gov}"))
-                        .agent_id(format!("cpu_core_{id}"))
-                        .render(r[i + 3], frame);
+                    kv(
+                        r[i + 3],
+                        frame,
+                        format!("cpu_core_{id}"),
+                        &format!("core {id}{gov}"),
+                        &format!("{busy:.0}%"),
+                        palette::threshold(*busy),
+                    );
                 }
             }
         }
@@ -1190,20 +1533,26 @@ impl SimonApp {
     fn view_accelerators(&self, area: Rect, frame: &mut Frame<'_>) {
         match &self.accelerators {
             Pane::Loading => Label::new("Loading accelerator information…")
+                .fg(palette::MUTED)
                 .agent_id("accelerators_status")
                 .render(area, frame),
             Pane::Failed(e) => Label::new(format!("Accelerators unavailable: {e}"))
+                .fg(palette::CRIT)
                 .agent_id("accelerators_status")
                 .render(area, frame),
             Pane::Ready(rows) if rows.is_empty() => Label::new("No accelerators detected")
+                .fg(palette::MUTED)
                 .agent_id("accelerators_empty")
                 .render(area, frame),
             Pane::Ready(rows) => {
                 let r = rows_of(area, 1 + rows.len().min(8));
-                Label::new("Accelerators")
-                    .bold()
-                    .agent_id("accelerators_heading")
-                    .render(r[0], frame);
+                heading(
+                    r[0],
+                    frame,
+                    "accelerators_heading",
+                    "Accelerators",
+                    palette::ACCEL,
+                );
                 for (i, a) in rows.iter().take(8).enumerate() {
                     // A metric the device did not report is omitted, never zeroed.
                     let mut parts = vec![format!("{} {}", a.vendor, a.name)];
@@ -1219,9 +1568,15 @@ impl SimonApp {
                     if let Some(w) = a.power_watts {
                         parts.push(format!("{w:.0} W"));
                     }
-                    Label::new(parts.join("  "))
-                        .agent_id(format!("accelerator_{}", a.index))
-                        .render(r[i + 1], frame);
+                    let name = parts.remove(0);
+                    kv(
+                        r[i + 1],
+                        frame,
+                        format!("accelerator_{}", a.index),
+                        &name,
+                        &parts.join("   "),
+                        palette::ACCEL,
+                    );
                 }
             }
         }
@@ -1230,31 +1585,40 @@ impl SimonApp {
     fn view_processes(&self, area: Rect, frame: &mut Frame<'_>) {
         match &self.processes {
             Pane::Loading => Label::new("Loading process list…")
+                .fg(palette::MUTED)
                 .agent_id("processes_status")
                 .render(area, frame),
             Pane::Failed(e) => Label::new(format!("Processes unavailable: {e}"))
+                .fg(palette::CRIT)
                 .agent_id("processes_status")
                 .render(area, frame),
             Pane::Ready(rows) if rows.is_empty() => Label::new("No processes reported")
+                .fg(palette::MUTED)
                 .agent_id("processes_empty")
                 .render(area, frame),
             Pane::Ready(rows) => {
                 let shown = rows.len().min(24);
                 let r = rows_of(area, 2 + shown);
-                Label::new("Processes")
-                    .bold()
-                    .agent_id("processes_heading")
-                    .render(r[0], frame);
+                heading(
+                    r[0],
+                    frame,
+                    "processes_heading",
+                    "Processes",
+                    palette::SYSTEM,
+                );
                 Label::new(format!("top {} by CPU", rows.len()))
+                    .fg(palette::MUTED)
                     .agent_id("processes_caption")
                     .render(r[1], frame);
                 for (i, p) in rows.iter().take(shown).enumerate() {
-                    Label::new(format!(
-                        "{:>7}  {:>5.1}%  {:>8.0} MB  {}",
-                        p.pid, p.cpu_percent, p.memory_mb, p.name
-                    ))
-                    .agent_id(format!("process_{i}"))
-                    .render(r[i + 2], frame);
+                    kv(
+                        r[i + 2],
+                        frame,
+                        format!("process_{i}"),
+                        &format!("{:>7}  {}", p.pid, p.name),
+                        &format!("{:>5.1}%   {:>8.0} MB", p.cpu_percent, p.memory_mb),
+                        palette::threshold(p.cpu_percent),
+                    );
                 }
             }
         }
@@ -1264,22 +1628,30 @@ impl SimonApp {
         match &self.memory {
             Pane::Loading => {
                 Label::new("Loading memory information…")
+                    .fg(palette::MUTED)
                     .agent_id("memory_status")
                     .render(area, frame);
             }
             Pane::Failed(e) => {
                 Label::new(format!("Memory unavailable: {e}"))
+                    .fg(palette::CRIT)
                     .agent_id("memory_status")
                     .render(area, frame);
             }
             Pane::Ready(m) => {
                 let r = rows_of(area, 9);
-                Label::new("Physical Memory")
-                    .bold()
-                    .agent_id("memory_heading")
-                    .render(r[0], frame);
+                heading(
+                    r[0],
+                    frame,
+                    "memory_heading",
+                    "Physical Memory",
+                    palette::MEMORY,
+                );
                 ProgressBar::new(m.usage_percent / 100.0)
                     .label(format!("{:.1} MB / {:.1} MB", m.used_mb, m.total_mb))
+                    .fg(palette::threshold(m.usage_percent))
+                    .bg(palette::SURFACE)
+                    .rounded(4.0)
                     .agent_id("memory_usage_bar")
                     .render(r[1], frame);
 
@@ -1297,9 +1669,14 @@ impl SimonApp {
                 .iter()
                 .enumerate()
                 {
-                    Label::new(format!("{label}: {value:.0} MB"))
-                        .agent_id(*id)
-                        .render(r[i + 2], frame);
+                    kv(
+                        r[i + 2],
+                        frame,
+                        *id,
+                        label,
+                        &format!("{value:.0} MB"),
+                        palette::MEMORY,
+                    );
                 }
             }
         }
@@ -1308,23 +1685,23 @@ impl SimonApp {
     fn view_disk(&self, area: Rect, frame: &mut Frame<'_>) {
         match &self.disks {
             Pane::Loading => Label::new("Loading disk information…")
+                .fg(palette::MUTED)
                 .agent_id("disk_status")
                 .render(area, frame),
             Pane::Failed(e) => Label::new(format!("Disks unavailable: {e}"))
+                .fg(palette::CRIT)
                 .agent_id("disk_status")
                 .render(area, frame),
             // A machine with no drives is a real answer, not a failure, and it
             // must not read as the spinner state. 3.9.0 could not tell the two
             // apart from painted text alone; here they are different nodes.
             Pane::Ready(rows) if rows.is_empty() => Label::new("No disks detected")
+                .fg(palette::MUTED)
                 .agent_id("disk_empty")
                 .render(area, frame),
             Pane::Ready(rows) => {
                 let r = rows_of(area, 1 + rows.len().min(16));
-                Label::new("Disks")
-                    .bold()
-                    .agent_id("disk_heading")
-                    .render(r[0], frame);
+                heading(r[0], frame, "disk_heading", "Disks", palette::DISK);
                 for (i, d) in rows.iter().take(16).enumerate() {
                     let temp = d
                         .temperature_c
@@ -1335,15 +1712,19 @@ impl SimonApp {
                         .as_deref()
                         .map(|h| format!(" [{h}]"))
                         .unwrap_or_default();
-                    Label::new(format!(
-                        "{}: {} {} {}{temp}{health}",
-                        d.name,
-                        d.model,
-                        format_bytes(d.capacity_bytes as f64),
-                        d.interface
-                    ))
-                    .agent_id(format!("disk_row_{i}"))
-                    .render(r[i + 1], frame);
+                    kv(
+                        r[i + 1],
+                        frame,
+                        format!("disk_row_{i}"),
+                        &d.name,
+                        &format!(
+                            "{}  {}  {}{temp}{health}",
+                            d.model,
+                            format_bytes(d.capacity_bytes as f64),
+                            d.interface
+                        ),
+                        palette::DISK,
+                    );
                 }
             }
         }
@@ -1352,21 +1733,25 @@ impl SimonApp {
     fn view_system(&self, area: Rect, frame: &mut Frame<'_>) {
         match &self.system {
             Pane::Loading => Label::new("Loading system information…")
+                .fg(palette::MUTED)
                 .agent_id("system_status")
                 .render(area, frame),
             Pane::Failed(e) => Label::new(format!("System information unavailable: {e}"))
+                .fg(palette::CRIT)
                 .agent_id("system_status")
                 .render(area, frame),
             Pane::Ready(v) => {
                 let r = rows_of(area, 1 + v.rows.len().min(24));
-                Label::new("System")
-                    .bold()
-                    .agent_id("system_heading")
-                    .render(r[0], frame);
+                heading(r[0], frame, "system_heading", "System", palette::SYSTEM);
                 for (i, (label, value)) in v.rows.iter().take(24).enumerate() {
-                    Label::new(format!("{label}: {value}"))
-                        .agent_id(format!("system_{}", label.to_lowercase().replace(' ', "_")))
-                        .render(r[i + 1], frame);
+                    kv(
+                        r[i + 1],
+                        frame,
+                        format!("system_{}", label.to_lowercase().replace(' ', "_")),
+                        label,
+                        value,
+                        palette::SYSTEM,
+                    );
                 }
             }
         }
@@ -1375,12 +1760,15 @@ impl SimonApp {
     fn view_peripherals(&self, area: Rect, frame: &mut Frame<'_>) {
         match &self.peripherals {
             Pane::Loading => Label::new("Loading peripheral information…")
+                .fg(palette::MUTED)
                 .agent_id("peripherals_status")
                 .render(area, frame),
             Pane::Failed(e) => Label::new(format!("Peripherals unavailable: {e}"))
+                .fg(palette::CRIT)
                 .agent_id("peripherals_status")
                 .render(area, frame),
             Pane::Ready(v) if v.groups.is_empty() => Label::new("No peripherals detected")
+                .fg(palette::MUTED)
                 .agent_id("peripherals_empty")
                 .render(area, frame),
             Pane::Ready(v) => {
@@ -1398,14 +1786,24 @@ impl SimonApp {
                 let shown = lines.len().min(40);
 
                 let r = rows_of(area, 1 + shown);
-                Label::new("Peripherals")
-                    .bold()
-                    .agent_id("peripherals_heading")
-                    .render(r[0], frame);
+                heading(
+                    r[0],
+                    frame,
+                    "peripherals_heading",
+                    "Peripherals",
+                    palette::ACCEL,
+                );
                 for (i, (id, text)) in lines.iter().take(shown).enumerate() {
-                    Label::new(text.clone())
-                        .agent_id(id.clone())
-                        .render(r[i + 1], frame);
+                    // Group headings are the un-indented lines; rows arrive with
+                    // two leading spaces from the flattening above.
+                    let is_group = !text.starts_with("  ");
+                    let mut label = Label::new(text.clone()).agent_id(id.clone());
+                    label = if is_group {
+                        label.bold().fg(palette::ACCEL)
+                    } else {
+                        label.fg(palette::TEXT)
+                    };
+                    label.render(r[i + 1], frame);
                 }
             }
         }
@@ -1414,13 +1812,16 @@ impl SimonApp {
     fn view_profiles(&self, area: Rect, frame: &mut Frame<'_>) {
         match &self.profiles {
             Pane::Loading => Label::new("Loading driver settings…")
+                .fg(palette::MUTED)
                 .agent_id("profiles_status")
                 .render(area, frame),
             Pane::Failed(e) => Label::new(format!("Driver settings unavailable: {e}"))
+                .fg(palette::CRIT)
                 .agent_id("profiles_status")
                 .render(area, frame),
             Pane::Ready(v) if v.groups.is_empty() && v.errors.is_empty() => {
                 Label::new("No tunable settings detected")
+                    .fg(palette::MUTED)
                     .agent_id("profiles_empty")
                     .render(area, frame)
             }
@@ -1446,14 +1847,24 @@ impl SimonApp {
                 let shown = lines.len().min(40);
 
                 let r = rows_of(area, 1 + shown);
-                Label::new(format!("Profiles — {} settings", v.total_settings))
-                    .bold()
-                    .agent_id("profiles_heading")
-                    .render(r[0], frame);
+                heading(
+                    r[0],
+                    frame,
+                    "profiles_heading",
+                    &format!("Profiles — {} settings", v.total_settings),
+                    palette::DISK,
+                );
                 for (i, (id, text)) in lines.iter().take(shown).enumerate() {
-                    Label::new(text.clone())
-                        .agent_id(id.clone())
-                        .render(r[i + 1], frame);
+                    // Group headings are the un-indented lines; rows arrive with
+                    // two leading spaces from the flattening above.
+                    let is_group = !text.starts_with("  ");
+                    let mut label = Label::new(text.clone()).agent_id(id.clone());
+                    label = if is_group {
+                        label.bold().fg(palette::ACCEL)
+                    } else {
+                        label.fg(palette::TEXT)
+                    };
+                    label.render(r[i + 1], frame);
                 }
             }
         }
@@ -1463,36 +1874,47 @@ impl SimonApp {
         match &self.network {
             Pane::Loading => {
                 Label::new("Loading network information…")
+                    .fg(palette::MUTED)
                     .agent_id("network_status")
                     .render(area, frame);
             }
             Pane::Failed(e) => {
                 Label::new(format!("Network unavailable: {e}"))
+                    .fg(palette::CRIT)
                     .agent_id("network_status")
                     .render(area, frame);
             }
             Pane::Ready(n) => {
                 let r = rows_of(area, 2 + n.interfaces.len().min(16));
-                Label::new("Interfaces")
-                    .bold()
-                    .agent_id("network_heading")
-                    .render(r[0], frame);
-                Label::new(format!(
-                    "Total Bandwidth: ↓ {} ↑ {}",
-                    format_bytes(n.total_rx),
-                    format_bytes(n.total_tx)
-                ))
-                .agent_id("network_total_bandwidth")
-                .render(r[1], frame);
+                heading(
+                    r[0],
+                    frame,
+                    "network_heading",
+                    "Interfaces",
+                    palette::NETWORK,
+                );
+                kv(
+                    r[1],
+                    frame,
+                    "network_total_bandwidth",
+                    "Total bandwidth",
+                    &format!(
+                        "↓ {}   ↑ {}",
+                        format_bytes(n.total_rx),
+                        format_bytes(n.total_tx)
+                    ),
+                    palette::NETWORK,
+                );
 
                 for (i, (name, rx, tx)) in n.interfaces.iter().take(16).enumerate() {
-                    Label::new(format!(
-                        "{name}: ↓ {} ↑ {}",
-                        format_bytes(*rx),
-                        format_bytes(*tx)
-                    ))
-                    .agent_id(format!("network_iface_{i}"))
-                    .render(r[i + 2], frame);
+                    kv(
+                        r[i + 2],
+                        frame,
+                        format!("network_iface_{i}"),
+                        name,
+                        &format!("↓ {}   ↑ {}", format_bytes(*rx), format_bytes(*tx)),
+                        palette::NETWORK,
+                    );
                 }
             }
         }
@@ -1516,7 +1938,19 @@ impl SimonApp {
 /// the 839-test suite passed without a hint of this — the interactive surface is
 /// genuinely not the one the tests cover.
 pub fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
-    AgpuProgram::new(SimonApp::new()).run()
+    // Dewey's default window is 800x600, which is not enough for thirteen tabs
+    // across the top and a label/value grid beneath: the values fell off the
+    // right edge entirely, so the first window showed a column of grey labels
+    // and no readings at all. The headless tests never caught it because
+    // `TestBackend` renders into a fixed 1280x800 area that no real window has.
+    let options = ProgramOptions {
+        width: 1400.0,
+        height: 900.0,
+        ..ProgramOptions::default()
+    };
+    AgpuProgram::new(SimonApp::new())
+        .with_options(options)
+        .run()
 }
 
 /// Render one tab headlessly and return its text.
@@ -2060,6 +2494,67 @@ mod tests {
     /// is checked against the model, and the rendering consequence against a
     /// driver started on that tab. Asserting both is what makes this a test of
     /// the switch rather than of the key handler alone.
+    /// Clicking the tab bar selects the tab under the pointer.
+    ///
+    /// The first Dewey cut of this GUI handled no mouse events at all, and I
+    /// reported it as working without ever pressing a button. This asserts the
+    /// dispatch — given a click at a position, the right `Msg` comes back. It
+    /// does not prove the framework delivers the event, which is a separate
+    /// claim and one only running the binary can settle.
+    #[test]
+    fn clicking_the_tab_bar_selects_that_tab() {
+        use dewey::event::{MouseButton, MouseEvent, MouseEventKind};
+
+        let app = SimonApp::new();
+
+        // Stand in for what `view` measures. The widths do not matter to the
+        // mapping, only that they differ from each other — equal widths were
+        // the wrong assumption that made clicks land on the neighbouring tab,
+        // so a test using equal widths would have passed while the GUI was
+        // broken. Whether the real measurement matches the widget is settled by
+        // running it, not here.
+        let widths: Vec<f32> = Tab::PORTED
+            .iter()
+            .map(|t| t.title().len() as f32 * 8.0 + 16.0)
+            .collect();
+        let mut spans = vec![0.0];
+        for w in &widths {
+            spans.push(spans.last().unwrap() + w);
+        }
+        *app.tab_spans.lock().unwrap() = spans.clone();
+
+        let click_at = |x: f32, y: f32| {
+            app.handle_event(Event::Mouse(MouseEvent {
+                kind: MouseEventKind::Click(MouseButton::Left),
+                position: Position::new(x, y),
+                modifiers: Default::default(),
+            }))
+        };
+
+        for (index, tab) in Tab::PORTED.iter().enumerate() {
+            let x = (spans[index] + spans[index + 1]) / 2.0;
+            match click_at(x, TAB_BAR_HEIGHT / 2.0) {
+                Some(Msg::SelectTab(got)) => assert_eq!(
+                    got, *tab,
+                    "clicking at x={x} should select {tab:?}, got {got:?}"
+                ),
+                other => panic!("clicking tab {index} produced {other:?}"),
+            }
+        }
+
+        // A click below the bar belongs to the pane, not the tab strip.
+        assert!(
+            click_at(10.0, TAB_BAR_HEIGHT + 50.0).is_none(),
+            "a click in the content area must not change tabs"
+        );
+
+        // Past the last tab is bare bar, not the nearest tab.
+        assert!(
+            click_at(spans.last().unwrap() + 40.0, TAB_BAR_HEIGHT / 2.0).is_none(),
+            "empty space beyond the tabs must not select one"
+        );
+    }
+
     #[test]
     fn tab_key_cycles_and_switches_the_rendered_pane() {
         // Written against PORTED's order rather than named tabs: this test broke
