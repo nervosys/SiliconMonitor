@@ -1133,11 +1133,38 @@ fn kv(
         [Constraint::Length(190.0), Constraint::Fill(1.0)],
     )
     .split(area);
-    Label::new(label).fg(palette::MUTED).render(cols[0], frame);
+    // Clamp the label to its column. Interface names like
+    // "vEthernet (WSL (Hyper-V firewall)" are wider than the 190px gutter and
+    // ran straight through the value beside them.
+    const LABEL_CHARS: usize = 26;
+    let shown = if label.chars().count() > LABEL_CHARS {
+        let kept: String = label.chars().take(LABEL_CHARS - 1).collect();
+        format!("{kept}…")
+    } else {
+        label.to_string()
+    };
+    Label::new(shown).fg(palette::MUTED).render(cols[0], frame);
     Label::new(value)
         .fg(color)
         .agent_id(id)
         .render(cols[1], frame);
+}
+
+/// A load bar, deliberately unlabelled.
+///
+/// `ProgressBar::label` is painted in the style's foreground, which is the same
+/// colour as the fill, so the text disappears as the bar fills — invisible at
+/// exactly the moment worth reading. The reading goes in its own row instead.
+fn bar(area: Rect, frame: &mut Frame<'_>, id: &str, percent: f32) {
+    ProgressBar::new((percent / 100.0).clamp(0.0, 1.0))
+        .fg(palette::threshold(percent))
+        .bg(palette::SURFACE_ALT)
+        .rounded(4.0)
+        .agent_id(id.to_string())
+        .render(
+            Rect::new(area.x, area.y + 6.0, area.width, area.height - 12.0),
+            frame,
+        );
 }
 
 /// A card: surface panel with a border, to sit rows inside.
@@ -1400,13 +1427,16 @@ impl SimonApp {
         );
         let mut used = 1usize;
         if let Pane::Ready(c) = &self.cpu {
-            ProgressBar::new(c.total_busy_percent / 100.0)
-                .label(format!("CPU {:.0}%", c.total_busy_percent))
-                .fg(palette::threshold(c.total_busy_percent))
-                .bg(palette::SURFACE_ALT)
-                .rounded(4.0)
-                .agent_id("overview_cpu_bar")
-                .render(left[used], frame);
+            kv(
+                left[used],
+                frame,
+                "overview_cpu_load",
+                "CPU",
+                &format!("{:.0}%  of {} cores", c.total_busy_percent, c.core_count),
+                palette::threshold(c.total_busy_percent),
+            );
+            used += 1;
+            bar(left[used], frame, "overview_cpu_bar", c.total_busy_percent);
             used += 1;
 
             // The busiest cores, not the first few: an average of 13% can hide
@@ -1429,14 +1459,84 @@ impl SimonApp {
             }
         }
         if let Pane::Ready(m) = &self.memory {
-            if used < left.len() {
-                ProgressBar::new(m.usage_percent / 100.0)
-                    .label(format!("Memory {:.0}%", m.usage_percent))
-                    .fg(palette::threshold(m.usage_percent))
-                    .bg(palette::SURFACE_ALT)
-                    .rounded(4.0)
-                    .agent_id("overview_memory_bar")
-                    .render(left[used], frame);
+            if used + 1 < left.len() {
+                kv(
+                    left[used],
+                    frame,
+                    "overview_memory_load",
+                    "Memory",
+                    &format!("{:.0} / {:.0} MB", m.used_mb, m.total_mb),
+                    palette::threshold(m.usage_percent),
+                );
+                used += 1;
+                bar(left[used], frame, "overview_memory_bar", m.usage_percent);
+            }
+        }
+
+        // Fill the rest of the pane with what is attached to the machine. The
+        // window is 900px tall and everything above stopped around 500 — the
+        // empty half read as an unfinished pane rather than a quiet system.
+        let lower = Rect::new(
+            area.x,
+            cols[0].y + ROW_HEIGHT * 8.0 + 14.0,
+            area.width,
+            (area.height - (cols[0].y - area.y) - ROW_HEIGHT * 8.0 - 14.0).max(0.0),
+        );
+        if lower.height >= ROW_HEIGHT * 3.0 {
+            let lower_cols = Layout::new(
+                Direction::Horizontal,
+                [Constraint::Fill(1.0), Constraint::Fill(1.0)],
+            )
+            .split(lower);
+
+            let disks = rows_of(lower_cols[0], 6);
+            heading(
+                disks[0],
+                frame,
+                "overview_disks_heading",
+                "Storage",
+                palette::DISK,
+            );
+            if let Pane::Ready(ds) = &self.disks {
+                for (i, d) in ds.iter().take(4).enumerate() {
+                    kv(
+                        disks[i + 1],
+                        frame,
+                        format!("overview_disk_{i}"),
+                        &d.name,
+                        &format!("{}  {}", format_bytes(d.capacity_bytes as f64), d.interface),
+                        palette::DISK,
+                    );
+                }
+            }
+
+            let nets = rows_of(lower_cols[1], 6);
+            heading(
+                nets[0],
+                frame,
+                "overview_network_heading",
+                "Network",
+                palette::NETWORK,
+            );
+            if let Pane::Ready(n) = &self.network {
+                // Busiest first: twenty interfaces are mostly idle virtual ones,
+                // and the first four alphabetically say nothing about the machine.
+                let mut ifaces: Vec<_> = n.interfaces.iter().collect();
+                ifaces.sort_by(|a, b| {
+                    (b.1 + b.2)
+                        .partial_cmp(&(a.1 + a.2))
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                });
+                for (i, (name, rx, tx)) in ifaces.iter().take(4).enumerate() {
+                    kv(
+                        nets[i + 1],
+                        frame,
+                        format!("overview_iface_{i}"),
+                        name,
+                        &format!("↓ {}   ↑ {}", format_bytes(*rx), format_bytes(*tx)),
+                        palette::NETWORK,
+                    );
+                }
             }
         }
 
@@ -1479,13 +1579,7 @@ impl SimonApp {
                 // do not shift position between the first and second refresh.
                 let r = rows_of(area, 4 + shown);
                 heading(r[0], frame, "cpu_heading", "CPU", palette::CPU);
-                ProgressBar::new(c.total_busy_percent / 100.0)
-                    .label(format!("{:.1}% busy", c.total_busy_percent))
-                    .fg(palette::threshold(c.total_busy_percent))
-                    .bg(palette::SURFACE)
-                    .rounded(4.0)
-                    .agent_id("cpu_total_bar")
-                    .render(r[1], frame);
+                bar(r[1], frame, "cpu_total_bar", c.total_busy_percent);
                 kv(
                     r[2],
                     frame,
@@ -1647,13 +1741,7 @@ impl SimonApp {
                     "Physical Memory",
                     palette::MEMORY,
                 );
-                ProgressBar::new(m.usage_percent / 100.0)
-                    .label(format!("{:.1} MB / {:.1} MB", m.used_mb, m.total_mb))
-                    .fg(palette::threshold(m.usage_percent))
-                    .bg(palette::SURFACE)
-                    .rounded(4.0)
-                    .agent_id("memory_usage_bar")
-                    .render(r[1], frame);
+                bar(r[1], frame, "memory_usage_bar", m.usage_percent);
 
                 // Same six figures as `free -h`, each individually addressable so
                 // an agent can read one without parsing a rendered row.

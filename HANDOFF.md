@@ -1,6 +1,6 @@
 # Status
 
-Current as of 4.0.1. This file is excluded from the published crate
+Current as of 4.0.2. This file is excluded from the published crate
 (`Cargo.toml`'s `exclude` list) and is for whoever picks the work up next.
 
 ## Released
@@ -250,6 +250,28 @@ feature stayed broken through eight published versions.
    the log. Closing the window is the interesting moment: Dewey works around a
    separate wgpu 24.x cleanup panic at `agpu_backend.rs:870`, so a clean exit on
    WM_CLOSE is worth confirming after any backend or dependency change.
+
+13. **The GUI window can render blank, intermittently.** Resizing it — including
+   an ordinary `SetWindowPos` to the size it already was — sometimes leaves the
+   window entirely white or entirely flat grey, with the process alive and no
+   error logged anywhere.
+
+   It reproduces in Dewey's own `counter_agpu` example, so it is not simon's
+   code. Instrumenting `agpu_backend.rs` showed winit delivering a spurious
+   `Resized(<the configured size>)` immediately after the true size, which
+   shrinks the surface while the window stays large; the app then paints a small
+   corner and the rest of the window is never drawn.
+
+   Three fixes did not work and were reverted rather than left in place:
+   setting `ControlFlow::WaitUntil` so ticks are scheduled rather than waiting on
+   unrelated events; requesting a redraw directly on resize; and reconciling the
+   surface against `window.inner_size()` every frame. The last failed because
+   winit's own `inner_size()` reports the stale value too, which is the detail
+   any further attempt should start from.
+
+   Re-adding the instrumentation is three `eprintln!` calls in `resize`, the
+   surface-acquire error arm, and the frame-area computation in `render`. Drive
+   it with `ShowWindow(hwnd, 3)` against `counter_agpu`.
 
 ## The plan for what is left
 

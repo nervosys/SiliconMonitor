@@ -5,6 +5,45 @@ All notable changes to Silicon Monitor will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.0.2] - 2026-08-11
+
+### Fixed
+
+- **The GUI window was barely usable, and the tests could not see it.** The
+  window opened at Dewey's default 800x600 titled "Dewey App", because
+  `Model::title` and `ProgramOptions` were both left at their defaults. At that
+  width every reading fell off the right edge, so the first pane showed a column
+  of grey labels with no values beside them. `gui --frame` could not catch this:
+  it renders through `TestBackend` into a fixed 1280x800 area that no real
+  window has.
+
+- **Nothing in the GUI was clickable.** `handle_event` matched the Tab and 'r'
+  keys and had no `Event::Mouse` arm at all. Clicks now select tabs, and number
+  keys jump straight to one.
+
+- **Clicks landed on the wrong tab.** Dewey's `Tabs` sizes each tab to its label
+  rather than to an equal share of the bar, so equal-width arithmetic selected
+  the neighbour. `view` now measures the same way the widget does and records
+  the spans for `handle_event`.
+
+- **The selected tab was invisible.** `Tabs` fills the active tab with
+  `style.background`, which had been set to the bar's own background colour.
+
+- **Progress bar labels were unreadable.** Dewey paints them in the style's
+  foreground — the same colour as the fill — so the text vanished as the bar
+  filled, exactly when it was worth reading. Readings now sit in their own row.
+
+### Changed
+
+- The GUI has a visual design: a colour per domain, green/amber/red thresholds,
+  two-column rows, and panes on cards. Failures read as failures — red for
+  unavailable, grey for loading — so neither can be mistaken for a measurement.
+  This carries the intent of the deleted `CyberColors`, not its 1,167 lines of
+  custom widgets; the gauges and sparkline treatments are not back.
+
+- Overview fills the window: load bars, the three busiest cores, top processes,
+  attached storage, and the busiest network interfaces.
+
 ## [4.0.1] - 2026-08-11
 
 ### Fixed
