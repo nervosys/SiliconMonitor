@@ -6,7 +6,7 @@ Silicon Monitor now provides a **unified backend** (`src/backend.rs`) that ensur
 
 1. **CLI Mode** (`simon-cli`) - Command-line interface for quick queries
 2. **TUI Mode** (`simon-cli tui`) - Terminal user interface with real-time monitoring
-3. **GUI Mode** (`simon`) - Graphical user interface built on Dewey
+3. **GUI Mode** (`simon`) - Graphical user interface with egui
 
 ## Key Components
 

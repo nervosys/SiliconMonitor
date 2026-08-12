@@ -108,11 +108,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      # Dewey renders through eframe, which links against the system windowing
-      # and GL libraries on Linux. The runners do not carry them, and their
-      # absence surfaces as a linker error rather than anything naming a GUI.
-      # Still required after the 4.0.0 GUI rewrite: the framework changed, the
-      # system libraries it needs did not.
+      # eframe links against the system windowing and GL libraries on Linux. The
+      # runners do not carry them, and their absence surfaces as a linker error
+      # rather than anything naming a GUI.
       - name: Install Linux GUI build dependencies
         if: runner.os == 'Linux'
         run: |

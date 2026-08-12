@@ -3608,6 +3608,8 @@ fn emit_command_catalog(format: &str) -> Result<(), Box<dyn std::error::Error>> 
 /// parse, which keeps "the GUI is wrong" separable from "my script is wrong".
 #[cfg(feature = "gui")]
 fn handle_gui_script_command(source: &str) -> Result<(), Box<dyn std::error::Error>> {
+    use simonlib::gui::headless;
+
     let text = if source == "-" {
         use std::io::Read;
         let mut buf = String::new();
@@ -3618,18 +3620,36 @@ fn handle_gui_script_command(source: &str) -> Result<(), Box<dyn std::error::Err
             .map_err(|e| format!("could not read script {source:?}: {e}"))?
     };
 
-    // The script vocabulary is Dewey's agent protocol rather than something
-    // simon invented, so anything that can drive a Dewey app can drive this one.
-    match simonlib::gui::script(&text) {
-        Ok(out) => {
-            print!("{out}");
-            Ok(())
-        }
+    let steps = match headless::parse_script(&text) {
+        Ok(s) => s,
         Err(e) => {
             eprintln!("{e}");
-            std::process::exit(1);
+            std::process::exit(2);
         }
+    };
+    if steps.is_empty() {
+        eprintln!("the script contains no steps");
+        std::process::exit(2);
     }
+
+    let ctx = headless::themed_context();
+    let mut app = simonlib::gui::app::SiliconMonitorApp::with_context(&ctx);
+    let result = headless::run_script(&mut app, &ctx, &steps);
+
+    for capture in &result.captures {
+        println!("{capture}");
+        println!();
+    }
+
+    if result.failures.is_empty() {
+        eprintln!("{} step(s) ok", steps.len());
+        return Ok(());
+    }
+    eprintln!("{} assertion(s) failed:", result.failures.len());
+    for failure in &result.failures {
+        eprintln!("  {failure}");
+    }
+    std::process::exit(1);
 }
 
 /// Render one GUI tab headlessly and print the text it painted.
@@ -3811,20 +3831,65 @@ fn print_tune_cycle(cycle: &simonlib::tuning::serve::Cycle) {
 }
 
 fn handle_gui_frame_command(tab: &str) -> Result<(), Box<dyn std::error::Error>> {
-    // The whole of what this used to need -- a themed egui context, a live app
-    // instance, a 30-second settle deadline and a per-tab loader predicate -- is
-    // gone. `gui::frame` asks the Dewey runtime for one frame; the loaders have
-    // already run because the runtime owns them.
-    match simonlib::gui::frame(Some(tab)) {
-        Ok(tree) => {
-            println!("{tree}");
-            Ok(())
+    use simonlib::gui::headless;
+
+    let ctx = headless::themed_context();
+    let mut app = simonlib::gui::app::SiliconMonitorApp::with_context(&ctx);
+
+    if let Err(available) = app.select_tab_by_name(tab) {
+        eprintln!("Unknown tab {tab:?}. Available tabs:");
+        for name in available {
+            eprintln!("  {name}");
         }
-        Err(e) => {
-            eprintln!("{e}");
-            std::process::exit(1);
-        }
+        std::process::exit(1);
     }
+
+    // Four tabs load their contents on a background thread. Without pumping the
+    // loaders between frames they render their spinner forever — which is painted
+    // text, so `every_gui_tab_paints_text` passed while an agent reading the disk
+    // tab learned nothing.
+    //
+    // Thirty seconds because the system and peripherals loaders run several
+    // PowerShell CIM queries back to back and were measured at over ten. Bounded
+    // rather than unbounded so a wedged reader yields a slow, honest answer
+    // instead of a command that never returns.
+    const SETTLE_DEADLINE: std::time::Duration = std::time::Duration::from_secs(30);
+    let lines = headless::painted_text_until(
+        &ctx,
+        SETTLE_DEADLINE,
+        &mut app,
+        |app, ctx| app.pump_background_loaders(ctx),
+        // Both signals. The painted text catches a tab still showing its
+        // placeholder; the app's own flags catch the disk tab's middle state,
+        // where enumeration has finished but the rows have not arrived and the
+        // frame reads "No Disks Detected" — which text alone cannot tell from a
+        // machine that has none.
+        |app, lines| !headless::frame_is_still_loading(lines) && !app.has_pending_load(),
+        |app, ui| app.draw_current_tab(ui),
+    );
+
+    // A timeout and a genuinely quick tab both end here, and the caller cannot
+    // tell them apart from the painted text alone — "Loading …" looks the same
+    // either way. Say which happened, on stderr so it does not pollute the frame.
+    if headless::frame_is_still_loading(&lines) {
+        eprintln!(
+            "note: the {tab} tab was still loading after {}s; the text below is \
+             whatever it had painted by then",
+            SETTLE_DEADLINE.as_secs()
+        );
+    }
+
+    if lines.is_empty() {
+        eprintln!(
+            "the {tab} tab painted no text at all — that is a blank tab, not an \
+             empty one"
+        );
+        std::process::exit(2);
+    }
+    for line in lines {
+        println!("{line}");
+    }
+    Ok(())
 }
 
 /// Drive the TUI from a script and report what happened.

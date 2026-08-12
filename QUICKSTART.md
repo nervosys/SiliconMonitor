@@ -205,7 +205,7 @@ println!("{}", json);
 | `intel`        | Intel GPU support (i915/xe)               |
 | `apple`        | Apple Silicon (M1/M2/M3/M4)               |
 | `cli`          | Command-line interface + TUI              |
-| `gui`          | Native GUI (Dewey); needs Rust 1.85+      |
+| `gui`          | Native GUI (egui)                         |
 | `full`         | All features enabled                      |
 | `jetson-utils` | Unsafe Jetson utilities (see SECURITY.md) |
 

@@ -7,7 +7,7 @@
 //! cargo run --release --features "gui nvidia" --example gui
 //! ```
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<(), eframe::Error> {
     println!("⚡ Starting Silicon Monitor GUI...");
     simonlib::gui::run()
 }

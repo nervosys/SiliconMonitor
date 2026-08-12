@@ -5,6 +5,38 @@ All notable changes to Silicon Monitor will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.0.0] - 2026-08-12
+
+### Changed
+
+- **The Dewey GUI is withdrawn and the egui GUI is restored.** 4.0.0 replaced a
+  ~10,000-line egui application with a ~2,100-line Dewey one, and 4.0.1 through
+  4.0.4 spent four releases trying to make the replacement presentable. It never
+  got close. Running the two side by side is the clearest statement of why: the
+  original shows nine metric cards including live GPU temperatures, six
+  sparkline charts with axes and min/max, a threshold legend, an uptime and task
+  status line, an AI ask bar, and JSON/CSV export — and it detects three NVIDIA
+  GPUs on a machine where the Dewey port reported
+  `Accelerators: unavailable — Failed to initialize COM`.
+
+  The port was not only less finished to look at. It was reading less hardware,
+  and the tests said nothing about either fact: they asserted that each tab
+  emitted named nodes, which the port did faithfully while showing a fraction of
+  what it replaced.
+
+BREAKING CHANGE: `deweygui` is no longer a dependency, the `dewey-gui` feature
+and the `simonlib::gui_dewey` module are removed, and `gui --script` speaks
+simon's own `goto` / `assert` / `capture` vocabulary again rather than Dewey's
+JSON agent protocol. `simonlib::gui::headless` and `gui::app::SiliconMonitorApp`
+are back. MSRV returns to 1.70 — Dewey's edition 2024 was the only thing that
+required 1.85.
+
+### Known issues carried back
+
+- The headless path keeps its 30-second deadline and per-tab settle predicate.
+  Avoiding that machinery was the argument for the migration, and it is the price
+  of this reversal.
+
 ## [4.0.4] - 2026-08-12
 
 ### Changed
