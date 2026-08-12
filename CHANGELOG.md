@@ -5,6 +5,43 @@ All notable changes to Silicon Monitor will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.0.3] - 2026-08-11
+
+### Changed
+
+- **The GUI is a dashboard rather than a list of readings.** Overview is a row
+  of stat tiles -- a small tinted label, the number at 30px, a supporting line
+  and a load bar -- over two panels holding the process table and what is
+  attached to the machine. The previous pane spelled every reading as
+  `label: value` at one size and one weight, so nothing was findable without
+  reading all of it.
+
+- **Colour is reserved for things worth looking at.** Values stay neutral until
+  they cross 60%, then go amber and red. Domain tints sit on section labels and
+  load bars, not on every row. Colouring everything by status had turned a
+  healthy machine into twenty green rows all saying "fine", which is the same as
+  saying nothing.
+
+- Near-black ground with lifted cards, hairline borders and a 12px radius, one
+  accent for the active tab, 20px padding throughout, and 13px rows.
+
+- **The original `CyberColors` palette is back**, recovered from git rather than
+  reinvented: GitHub-dark grounds (13,17,23 / 22,27,34 / 30,37,46) under the
+  device-class neons the TUI also uses -- cyan CPU, green accelerators, magenta
+  memory, orange disk, blue network. Section titles carry their device colour
+  again, and stat tiles show their number in it. 4.0.0 had replaced all of this
+  with a neutral palette of my own, which is the main reason the port stopped
+  looking like simon.
+
+- Threshold bands are the original four at 90 / 70 / 50, not the three at 85 /
+  60 the rewrite used, so a machine at 55% reads cyan again rather than green.
+
+### Fixed
+
+- Stat tiles clamp their supporting line. A provider failure --
+  `Failed to initialize COM: HRESULT ...` -- is longer than the card and ran out
+  past its border.
+
 ## [4.0.2] - 2026-08-11
 
 ### Fixed

@@ -992,9 +992,7 @@ impl Model for SimonApp {
             [Constraint::Length(TAB_BAR_HEIGHT), Constraint::Fill(1.0)],
         )
         .split(area);
-        Container::new()
-            .bg(palette::SURFACE_ALT)
-            .render(chunks[0], frame);
+        Container::new().bg(palette::CARD).render(chunks[0], frame);
 
         // `Tabs` is a StatefulWidget, and `view` takes `&self` — so the selection
         // is derived into a local each frame rather than stored. The model stays
@@ -1023,11 +1021,19 @@ impl Model for SimonApp {
             // The selected tab is filled with this colour by the widget itself.
             // Setting it to the bar's own background made the highlight
             // invisible, which is what sent me looking for a marker to draw.
-            .bg(palette::CPU)
+            .bg(palette::ACCENT)
             .agent_id("tab_bar")
             .render(chunks[0], frame, &mut tab_state);
 
-        let body = card(inset(chunks[1], PAD), frame);
+        // Overview lays out its own cards; every other tab is a list of rows
+        // and gets one card to sit on. Wrapping the grid in another card put a
+        // box around a set of boxes.
+        let padded = inset(chunks[1], PAD);
+        let body = if matches!(self.tab, Tab::Overview) {
+            padded
+        } else {
+            card(padded, frame)
+        };
         match self.tab {
             Tab::Overview => self.view_overview(body, frame),
             Tab::Cpu => self.view_cpu(body, frame),
@@ -1058,41 +1064,79 @@ impl Model for SimonApp {
 mod palette {
     use dewey::prelude::Color;
 
-    pub const BG: Color = Color::rgb(0.043, 0.051, 0.075);
-    pub const SURFACE: Color = Color::rgb(0.086, 0.102, 0.145);
-    pub const SURFACE_ALT: Color = Color::rgb(0.110, 0.129, 0.180);
-    pub const BORDER: Color = Color::rgb(0.180, 0.212, 0.286);
+    // The egui GUI's `CyberColors`, recovered from git and carried across
+    // verbatim: GitHub-dark grounds under neon domain colours. 4.0.0 replaced
+    // them with a neutral palette of my own invention, which is why the port
+    // stopped looking like simon. These are the original values, converted from
+    // the 0-255 integers the egui theme used.
+    //
+    // BACKGROUND rgb(13, 17, 23)
+    pub const BG: Color = Color::rgb(0.051, 0.067, 0.090);
+    // BACKGROUND_LIGHT rgb(22, 27, 34)
+    pub const CARD: Color = Color::rgb(0.086, 0.106, 0.133);
+    // SURFACE rgb(30, 37, 46)
+    pub const CARD_ALT: Color = Color::rgb(0.118, 0.145, 0.180);
+    // BORDER rgb(48, 54, 61)
+    pub const BORDER: Color = Color::rgb(0.188, 0.212, 0.239);
 
-    pub const TEXT: Color = Color::rgb(0.878, 0.898, 0.941);
-    pub const MUTED: Color = Color::rgb(0.647, 0.694, 0.776);
+    // TEXT_PRIMARY rgb(230, 237, 243) and TEXT_SECONDARY rgb(140, 148, 158)
+    pub const TEXT: Color = Color::rgb(0.902, 0.929, 0.953);
+    pub const MUTED: Color = Color::rgb(0.549, 0.580, 0.620);
 
-    pub const CPU: Color = Color::rgb(0.302, 0.651, 1.0);
-    pub const MEMORY: Color = Color::rgb(0.686, 0.510, 1.0);
-    pub const DISK: Color = Color::rgb(1.0, 0.722, 0.302);
-    pub const NETWORK: Color = Color::rgb(0.267, 0.855, 0.635);
-    pub const ACCEL: Color = Color::rgb(1.0, 0.478, 0.361);
-    pub const SYSTEM: Color = Color::rgb(0.545, 0.796, 0.910);
+    // CYAN_DIM rgb(0, 180, 180) rather than full CYAN for the active tab: the
+    // widget paints the label in the shared foreground, and light text on
+    // rgb(0, 255, 255) is unreadable.
+    pub const ACCENT: Color = Color::rgb(0.0, 0.706, 0.706);
 
-    pub const OK: Color = Color::rgb(0.267, 0.824, 0.510);
-    pub const WARN: Color = Color::rgb(1.0, 0.741, 0.259);
-    pub const CRIT: Color = Color::rgb(1.0, 0.376, 0.376);
+    // Device-class colours, unchanged from the egui GUI and matching the TUI's
+    // conventions: cyan CPU, green accelerators, magenta memory, orange disk,
+    // blue network.
+    pub const CPU: Color = Color::rgb(0.0, 1.0, 1.0);
+    pub const ACCEL: Color = Color::rgb(0.224, 1.0, 0.078);
+    pub const MEMORY: Color = Color::rgb(1.0, 0.0, 1.0);
+    pub const DISK: Color = Color::rgb(1.0, 0.647, 0.0);
+    pub const NETWORK: Color = Color::rgb(0.0, 0.588, 1.0);
+    // INFO rgb(56, 139, 253)
+    pub const SYSTEM: Color = Color::rgb(0.220, 0.545, 0.992);
 
-    /// Green below 60%, amber to 85%, red above — the thresholds the egui
-    /// progress bar used, kept so a glance means the same thing it used to.
+    // THRESHOLD_* rgb(46,204,113) / (52,211,255) / (255,206,86) / (255,99,99)
+    pub const OK: Color = Color::rgb(0.180, 0.800, 0.443);
+    pub const CAREFUL: Color = Color::rgb(0.204, 0.827, 1.0);
+    pub const WARN: Color = Color::rgb(1.0, 0.808, 0.337);
+    pub const CRIT: Color = Color::rgb(1.0, 0.388, 0.388);
+
+    /// The original four-band scale, thresholds included: 90 / 70 / 50.
+    ///
+    /// The 4.0.0 rewrite used three bands at 85 and 60, so a machine at 55% read
+    /// green where simon had always shown cyan.
     pub fn threshold(percent: f32) -> Color {
-        if percent >= 85.0 {
+        if percent >= 90.0 {
             CRIT
-        } else if percent >= 60.0 {
+        } else if percent >= 70.0 {
             WARN
+        } else if percent >= 50.0 {
+            CAREFUL
         } else {
             OK
+        }
+    }
+
+    /// The same scale for row text, quiet until a reading is worth finding.
+    /// Twenty rows of neon percentages is what the tile numbers are for.
+    pub fn threshold_text(percent: f32) -> Color {
+        if percent >= 90.0 {
+            CRIT
+        } else if percent >= 70.0 {
+            WARN
+        } else {
+            TEXT
         }
     }
 }
 
 const TAB_BAR_HEIGHT: f32 = 40.0;
 const ROW_HEIGHT: f32 = 30.0;
-const PAD: f32 = 16.0;
+const PAD: f32 = 20.0;
 
 /// Inset a rect on all sides.
 fn inset(area: Rect, by: f32) -> Rect {
@@ -1106,9 +1150,8 @@ fn inset(area: Rect, by: f32) -> Rect {
 
 /// A section heading: the domain's colour, bold, above its rows.
 fn heading(area: Rect, frame: &mut Frame<'_>, id: &str, text: &str, color: Color) {
-    Label::new(text)
-        .bold()
-        .text_size(21.0)
+    Label::new(text.to_uppercase())
+        .text_size(11.0)
         .fg(color)
         .agent_id(id.to_string())
         .render(area, frame);
@@ -1143,8 +1186,12 @@ fn kv(
     } else {
         label.to_string()
     };
-    Label::new(shown).fg(palette::MUTED).render(cols[0], frame);
+    Label::new(shown)
+        .text_size(13.0)
+        .fg(palette::MUTED)
+        .render(cols[0], frame);
     Label::new(value)
+        .text_size(13.0)
         .fg(color)
         .agent_id(id)
         .render(cols[1], frame);
@@ -1158,7 +1205,7 @@ fn kv(
 fn bar(area: Rect, frame: &mut Frame<'_>, id: &str, percent: f32) {
     ProgressBar::new((percent / 100.0).clamp(0.0, 1.0))
         .fg(palette::threshold(percent))
-        .bg(palette::SURFACE_ALT)
+        .bg(palette::CARD_ALT)
         .rounded(4.0)
         .agent_id(id.to_string())
         .render(
@@ -1167,14 +1214,109 @@ fn bar(area: Rect, frame: &mut Frame<'_>, id: &str, percent: f32) {
         );
 }
 
-/// A card: surface panel with a border, to sit rows inside.
+/// A card: raised surface, hairline border, generous radius.
 fn card(area: Rect, frame: &mut Frame<'_>) -> Rect {
     Container::new()
-        .bg(palette::SURFACE)
+        .bg(palette::CARD)
         .border(palette::BORDER, 1.0)
-        .rounded(8.0)
+        .rounded(12.0)
         .render(area, frame);
-    inset(area, 12.0)
+    inset(area, 20.0)
+}
+
+/// A stat tile: small label, large number, supporting line, thin bar.
+///
+/// The shape a dashboard uses to answer "how is it" at a glance. Spelling every
+/// reading as `label: value` at one size and weight made nothing findable
+/// without reading all of it -- the layout of a log file, not an instrument.
+#[allow(clippy::too_many_arguments)]
+fn stat_tile(
+    area: Rect,
+    frame: &mut Frame<'_>,
+    id: &str,
+    label: &str,
+    value: &str,
+    sub: &str,
+    tint: Color,
+    fill: Option<f32>,
+) {
+    Container::new()
+        .bg(palette::CARD)
+        .border(palette::BORDER, 1.0)
+        .rounded(12.0)
+        .render(area, frame);
+    let inner = inset(area, 18.0);
+
+    Label::new(label.to_uppercase())
+        .text_size(11.0)
+        .fg(tint)
+        .render(Rect::new(inner.x, inner.y, inner.width, 14.0), frame);
+
+    // The number carries its device-class colour, the way every metric in the
+    // egui GUI did. Rows below stay neutral so the tiles remain the thing the
+    // eye lands on.
+    Label::new(value)
+        .bold()
+        .text_size(30.0)
+        .fg(tint)
+        .agent_id(id.to_string())
+        .render(Rect::new(inner.x, inner.y + 20.0, inner.width, 38.0), frame);
+
+    if !sub.is_empty() {
+        // Clamp to the tile. A provider failure like "Failed to initialize COM:
+        // HRESULT ..." is longer than the card and ran out past its border.
+        let chars = (inner.width / 6.0) as usize;
+        let sub = if sub.chars().count() > chars {
+            let kept: String = sub.chars().take(chars.saturating_sub(1)).collect();
+            format!("{kept}…")
+        } else {
+            sub.to_string()
+        };
+        Label::new(sub)
+            .text_size(12.0)
+            .fg(palette::MUTED)
+            .render(Rect::new(inner.x, inner.y + 58.0, inner.width, 16.0), frame);
+    }
+
+    if let Some(pct) = fill {
+        ProgressBar::new((pct / 100.0).clamp(0.0, 1.0))
+            .fg(palette::threshold(pct))
+            .bg(palette::CARD_ALT)
+            .rounded(3.0)
+            .render(
+                Rect::new(inner.x, inner.y + inner.height - 6.0, inner.width, 6.0),
+                frame,
+            );
+    }
+}
+
+/// A titled panel holding rows. Returns the area for the rows.
+fn panel(area: Rect, frame: &mut Frame<'_>, id: &str, title: &str, tint: Color) -> Rect {
+    Container::new()
+        .bg(palette::CARD)
+        .border(palette::BORDER, 1.0)
+        .rounded(12.0)
+        .render(area, frame);
+    let inner = inset(area, 18.0);
+    Label::new(title.to_uppercase())
+        .text_size(11.0)
+        .fg(tint)
+        .agent_id(id.to_string())
+        .render(Rect::new(inner.x, inner.y, inner.width, 14.0), frame);
+    Rect::new(
+        inner.x,
+        inner.y + 26.0,
+        inner.width,
+        (inner.height - 26.0).max(0.0),
+    )
+}
+
+/// Split a rect into `n` columns with a gap between them.
+fn columns(area: Rect, n: usize, gap: f32) -> Vec<Rect> {
+    let each = (area.width - gap * (n.saturating_sub(1)) as f32) / n as f32;
+    (0..n)
+        .map(|i| Rect::new(area.x + (each + gap) * i as f32, area.y, each, area.height))
+        .collect()
 }
 
 /// Stack `count` rows down `area`, returning each row's rect.
@@ -1236,7 +1378,7 @@ impl SimonApp {
                         format!("connection_{i}"),
                         &format!("{} {}", c.protocol, c.local),
                         &format!("→ {remote}   [{}]   {proc}", c.state),
-                        palette::NETWORK,
+                        palette::TEXT,
                     );
                 }
             }
@@ -1300,265 +1442,262 @@ impl SimonApp {
     }
 
     fn view_overview(&self, area: Rect, frame: &mut Frame<'_>) {
-        let mut rows: Vec<(String, String)> = Vec::new();
+        let gap = 16.0;
 
-        // Each arm states the pane's condition rather than skipping it. A missing
-        // Overview line would be indistinguishable from a healthy subsystem with
-        // nothing to say, which is the ambiguity this whole port exists to remove.
-        let summarise = |label: &str, text: String| (label.to_string(), text);
+        // A page title. The grid carries its own labels, so this is not needed
+        // to read the screen -- but `overview_heading` is part of the agent
+        // contract, and a tab that answers "which page is this" is worth 30px.
+        heading(
+            Rect::new(area.x, area.y, area.width, 20.0),
+            frame,
+            "overview_heading",
+            "Overview",
+            palette::MUTED,
+        );
+        let area = Rect::new(
+            area.x,
+            area.y + 30.0,
+            area.width,
+            (area.height - 30.0).max(0.0),
+        );
 
-        rows.push(summarise(
-            "CPU",
-            match &self.cpu {
-                Pane::Loading => "loading…".into(),
-                Pane::Failed(e) => format!("unavailable — {e}"),
-                Pane::Ready(c) => format!(
-                    "{:.0}% busy across {} cores",
-                    c.total_busy_percent, c.core_count
-                ),
-            },
-        ));
-        rows.push(summarise(
-            "Memory",
-            match &self.memory {
-                Pane::Loading => "loading…".into(),
-                Pane::Failed(e) => format!("unavailable — {e}"),
-                Pane::Ready(m) => format!(
-                    "{:.0} / {:.0} MB ({:.0}%)",
-                    m.used_mb, m.total_mb, m.usage_percent
-                ),
-            },
-        ));
-        rows.push(summarise(
-            "Accelerators",
-            match &self.accelerators {
-                Pane::Loading => "loading…".into(),
-                Pane::Failed(e) => format!("unavailable — {e}"),
-                Pane::Ready(a) if a.is_empty() => "none detected".into(),
-                Pane::Ready(a) => format!("{} detected", a.len()),
-            },
-        ));
-        rows.push(summarise(
-            "Disks",
-            match &self.disks {
-                Pane::Loading => "loading…".into(),
-                Pane::Failed(e) => format!("unavailable — {e}"),
-                Pane::Ready(d) if d.is_empty() => "none detected".into(),
-                Pane::Ready(d) => format!("{} attached", d.len()),
-            },
-        ));
-        rows.push(summarise(
-            "Network",
-            match &self.network {
-                Pane::Loading => "loading…".into(),
-                Pane::Failed(e) => format!("unavailable — {e}"),
-                Pane::Ready(n) => format!("{} interfaces", n.interfaces.len()),
-            },
-        ));
-        rows.push(summarise(
-            "Processes",
-            match &self.processes {
-                Pane::Loading => "loading…".into(),
-                Pane::Failed(e) => format!("unavailable — {e}"),
-                Pane::Ready(p) => format!("top {} by CPU", p.len()),
-            },
-        ));
+        // A row of tiles over two panels. Every tile answers one question at a
+        // glance and states its own condition, so a subsystem that could not be
+        // read stays visible as a tile rather than becoming a missing line.
+        let tiles = Rect::new(area.x, area.y, area.width, 120.0);
+        let cells = columns(tiles, 4, gap);
 
-        let r = rows_of(area, 1 + rows.len());
-        heading(r[0], frame, "overview_heading", "Overview", palette::SYSTEM);
-        for (i, (label, value)) in rows.iter().enumerate() {
-            let color = match label.as_str() {
-                "CPU" => palette::CPU,
-                "Memory" => palette::MEMORY,
-                "Accelerators" => palette::ACCEL,
-                "Disks" => palette::DISK,
-                "Network" => palette::NETWORK,
-                _ => palette::SYSTEM,
-            };
-            // A pane that could not be read is stated in the failure colour, so
-            // "unavailable" never reads at a glance like a measurement.
-            let color = if value.starts_with("unavailable") {
-                palette::CRIT
-            } else if value.starts_with("loading") {
-                palette::MUTED
-            } else {
-                color
-            };
-            kv(
-                r[i + 1],
+        match &self.cpu {
+            Pane::Ready(c) => stat_tile(
+                cells[0],
                 frame,
-                format!("overview_{}", label.to_lowercase()),
-                label,
-                value,
-                color,
-            );
+                "overview_cpu",
+                "CPU load",
+                &format!("{:.0}%", c.total_busy_percent),
+                &format!("{} cores · {:.0}% idle", c.core_count, c.total_idle),
+                palette::CPU,
+                Some(c.total_busy_percent),
+            ),
+            Pane::Loading => stat_tile(
+                cells[0],
+                frame,
+                "overview_cpu",
+                "CPU load",
+                "—",
+                "reading…",
+                palette::CPU,
+                None,
+            ),
+            Pane::Failed(e) => stat_tile(
+                cells[0],
+                frame,
+                "overview_cpu",
+                "CPU load",
+                "n/a",
+                e,
+                palette::CRIT,
+                None,
+            ),
         }
 
-        // Everything above is one line per subsystem, which left most of the
-        // window empty — six rows of text in a 900px pane read as a stub rather
-        // than an instrument. The space below carries the detail an operator
-        // actually watches: load bars, the busiest cores, and the biggest
-        // processes. It is the same data the CPU and Processes tabs hold, at the
-        // depth that fits without making this a duplicate of them.
-        let rest = Rect::new(
+        match &self.memory {
+            Pane::Ready(m) => stat_tile(
+                cells[1],
+                frame,
+                "overview_memory",
+                "Memory",
+                &format!("{:.0}%", m.usage_percent),
+                &format!("{:.1} / {:.1} GB", m.used_mb / 1024.0, m.total_mb / 1024.0),
+                palette::MEMORY,
+                Some(m.usage_percent),
+            ),
+            Pane::Loading => stat_tile(
+                cells[1],
+                frame,
+                "overview_memory",
+                "Memory",
+                "—",
+                "reading…",
+                palette::MEMORY,
+                None,
+            ),
+            Pane::Failed(e) => stat_tile(
+                cells[1],
+                frame,
+                "overview_memory",
+                "Memory",
+                "n/a",
+                e,
+                palette::CRIT,
+                None,
+            ),
+        }
+
+        match &self.disks {
+            Pane::Ready(d) => {
+                let total: f64 = d.iter().map(|x| x.capacity_bytes as f64).sum();
+                stat_tile(
+                    cells[2],
+                    frame,
+                    "overview_disks",
+                    "Storage",
+                    &format!("{}", d.len()),
+                    &format!("{} total", format_bytes(total)),
+                    palette::DISK,
+                    None,
+                )
+            }
+            Pane::Loading => stat_tile(
+                cells[2],
+                frame,
+                "overview_disks",
+                "Storage",
+                "—",
+                "reading…",
+                palette::DISK,
+                None,
+            ),
+            Pane::Failed(e) => stat_tile(
+                cells[2],
+                frame,
+                "overview_disks",
+                "Storage",
+                "n/a",
+                e,
+                palette::CRIT,
+                None,
+            ),
+        }
+
+        // A machine with no accelerator still says so, rather than dropping the
+        // subject: absent and unread are different answers.
+        match &self.accelerators {
+            Pane::Ready(a) if !a.is_empty() => stat_tile(
+                cells[3],
+                frame,
+                "overview_accelerators",
+                "Accelerators",
+                &format!("{}", a.len()),
+                &a.first().map(|x| x.name.clone()).unwrap_or_default(),
+                palette::ACCEL,
+                None,
+            ),
+            Pane::Ready(_) => stat_tile(
+                cells[3],
+                frame,
+                "overview_accelerators",
+                "Accelerators",
+                "0",
+                "none detected",
+                palette::ACCEL,
+                None,
+            ),
+            Pane::Loading => stat_tile(
+                cells[3],
+                frame,
+                "overview_accelerators",
+                "Accelerators",
+                "—",
+                "reading…",
+                palette::ACCEL,
+                None,
+            ),
+            Pane::Failed(e) => stat_tile(
+                cells[3],
+                frame,
+                "overview_accelerators",
+                "Accelerators",
+                "n/a",
+                e,
+                palette::CRIT,
+                None,
+            ),
+        }
+
+        let below = Rect::new(
             area.x,
-            r[rows.len()].y + ROW_HEIGHT,
+            area.y + 120.0 + gap,
             area.width,
-            (area.height - (r[rows.len()].y - area.y) - ROW_HEIGHT).max(0.0),
+            (area.height - 120.0 - gap).max(0.0),
         );
-        if rest.height < ROW_HEIGHT * 4.0 {
+        if below.height < 80.0 {
             return;
         }
+        let panes = columns(below, 2, gap);
 
-        let cols = Layout::new(
-            Direction::Horizontal,
-            [Constraint::Fill(1.0), Constraint::Fill(1.0)],
-        )
-        .split(rest);
-
-        // Left: load bars for the two subsystems that move second to second.
-        let left = rows_of(cols[0], 8);
-        heading(
-            left[0],
-            frame,
-            "overview_load_heading",
-            "Load",
-            palette::CPU,
-        );
-        let mut used = 1usize;
-        if let Pane::Ready(c) = &self.cpu {
-            kv(
-                left[used],
-                frame,
-                "overview_cpu_load",
-                "CPU",
-                &format!("{:.0}%  of {} cores", c.total_busy_percent, c.core_count),
-                palette::threshold(c.total_busy_percent),
-            );
-            used += 1;
-            bar(left[used], frame, "overview_cpu_bar", c.total_busy_percent);
-            used += 1;
-
-            // The busiest cores, not the first few: an average of 13% can hide
-            // one core pinned at 100%, which is the case worth seeing.
-            let mut cores: Vec<_> = c.cores.iter().collect();
-            cores.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-            for (id, busy, _gov) in cores.iter().take(3) {
-                if used >= left.len() {
-                    break;
-                }
-                kv(
-                    left[used],
-                    frame,
-                    format!("overview_hot_core_{id}"),
-                    &format!("core {id}"),
-                    &format!("{busy:.0}%"),
-                    palette::threshold(*busy),
-                );
-                used += 1;
-            }
-        }
-        if let Pane::Ready(m) = &self.memory {
-            if used + 1 < left.len() {
-                kv(
-                    left[used],
-                    frame,
-                    "overview_memory_load",
-                    "Memory",
-                    &format!("{:.0} / {:.0} MB", m.used_mb, m.total_mb),
-                    palette::threshold(m.usage_percent),
-                );
-                used += 1;
-                bar(left[used], frame, "overview_memory_bar", m.usage_percent);
-            }
-        }
-
-        // Fill the rest of the pane with what is attached to the machine. The
-        // window is 900px tall and everything above stopped around 500 — the
-        // empty half read as an unfinished pane rather than a quiet system.
-        let lower = Rect::new(
-            area.x,
-            cols[0].y + ROW_HEIGHT * 8.0 + 14.0,
-            area.width,
-            (area.height - (cols[0].y - area.y) - ROW_HEIGHT * 8.0 - 14.0).max(0.0),
-        );
-        if lower.height >= ROW_HEIGHT * 3.0 {
-            let lower_cols = Layout::new(
-                Direction::Horizontal,
-                [Constraint::Fill(1.0), Constraint::Fill(1.0)],
-            )
-            .split(lower);
-
-            let disks = rows_of(lower_cols[0], 6);
-            heading(
-                disks[0],
-                frame,
-                "overview_disks_heading",
-                "Storage",
-                palette::DISK,
-            );
-            if let Pane::Ready(ds) = &self.disks {
-                for (i, d) in ds.iter().take(4).enumerate() {
-                    kv(
-                        disks[i + 1],
-                        frame,
-                        format!("overview_disk_{i}"),
-                        &d.name,
-                        &format!("{}  {}", format_bytes(d.capacity_bytes as f64), d.interface),
-                        palette::DISK,
-                    );
-                }
-            }
-
-            let nets = rows_of(lower_cols[1], 6);
-            heading(
-                nets[0],
-                frame,
-                "overview_network_heading",
-                "Network",
-                palette::NETWORK,
-            );
-            if let Pane::Ready(n) = &self.network {
-                // Busiest first: twenty interfaces are mostly idle virtual ones,
-                // and the first four alphabetically say nothing about the machine.
-                let mut ifaces: Vec<_> = n.interfaces.iter().collect();
-                ifaces.sort_by(|a, b| {
-                    (b.1 + b.2)
-                        .partial_cmp(&(a.1 + a.2))
-                        .unwrap_or(std::cmp::Ordering::Equal)
-                });
-                for (i, (name, rx, tx)) in ifaces.iter().take(4).enumerate() {
-                    kv(
-                        nets[i + 1],
-                        frame,
-                        format!("overview_iface_{i}"),
-                        name,
-                        &format!("↓ {}   ↑ {}", format_bytes(*rx), format_bytes(*tx)),
-                        palette::NETWORK,
-                    );
-                }
-            }
-        }
-
-        // Right: the processes actually consuming the machine.
-        let right = rows_of(cols[1], 8);
-        heading(
-            right[0],
+        // Left: what is consuming the machine right now.
+        let procs = panel(
+            panes[0],
             frame,
             "overview_processes_heading",
             "Top processes",
-            palette::SYSTEM,
+            palette::TEXT,
         );
         if let Pane::Ready(ps) = &self.processes {
-            for (i, proc) in ps.iter().take(6).enumerate() {
+            let rows = rows_of(
+                procs,
+                ((procs.height / ROW_HEIGHT) as usize).min(ps.len() + 1),
+            );
+            for (i, proc) in ps.iter().take(rows.len().saturating_sub(1)).enumerate() {
                 kv(
-                    right[i + 1],
+                    rows[i],
                     frame,
                     format!("overview_process_{i}"),
                     &proc.name,
                     &format!("{:.1}%   {:.0} MB", proc.cpu_percent, proc.memory_mb),
-                    palette::threshold(proc.cpu_percent),
+                    palette::threshold_text(proc.cpu_percent),
                 );
+            }
+        }
+
+        // Right: what is attached to it.
+        let attached = panel(
+            panes[1],
+            frame,
+            "overview_attached_heading",
+            "Attached",
+            palette::TEXT,
+        );
+        let rows = rows_of(attached, ((attached.height / ROW_HEIGHT) as usize).max(1));
+        let mut row = 0usize;
+        if let Pane::Ready(ds) = &self.disks {
+            for (i, d) in ds.iter().take(4).enumerate() {
+                if row >= rows.len() {
+                    break;
+                }
+                kv(
+                    rows[row],
+                    frame,
+                    format!("overview_disk_{i}"),
+                    &d.name,
+                    &format!("{}  {}", format_bytes(d.capacity_bytes as f64), d.interface),
+                    palette::TEXT,
+                );
+                row += 1;
+            }
+        }
+        if let Pane::Ready(n) = &self.network {
+            // Busiest first: most of twenty interfaces are idle virtual ones,
+            // and the first four alphabetically say nothing about the machine.
+            let mut ifaces: Vec<_> = n.interfaces.iter().collect();
+            ifaces.sort_by(|a, b| {
+                (b.1 + b.2)
+                    .partial_cmp(&(a.1 + a.2))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            for (i, (name, rx, tx)) in ifaces.iter().take(4).enumerate() {
+                if row >= rows.len() {
+                    break;
+                }
+                kv(
+                    rows[row],
+                    frame,
+                    format!("overview_iface_{i}"),
+                    name,
+                    &format!("↓ {}   ↑ {}", format_bytes(*rx), format_bytes(*tx)),
+                    palette::NETWORK,
+                );
+                row += 1;
             }
         }
     }
@@ -1617,7 +1756,7 @@ impl SimonApp {
                         format!("cpu_core_{id}"),
                         &format!("core {id}{gov}"),
                         &format!("{busy:.0}%"),
-                        palette::threshold(*busy),
+                        palette::threshold_text(*busy),
                     );
                 }
             }
@@ -1669,7 +1808,7 @@ impl SimonApp {
                         format!("accelerator_{}", a.index),
                         &name,
                         &parts.join("   "),
-                        palette::ACCEL,
+                        palette::TEXT,
                     );
                 }
             }
@@ -1711,7 +1850,7 @@ impl SimonApp {
                         format!("process_{i}"),
                         &format!("{:>7}  {}", p.pid, p.name),
                         &format!("{:>5.1}%   {:>8.0} MB", p.cpu_percent, p.memory_mb),
-                        palette::threshold(p.cpu_percent),
+                        palette::threshold_text(p.cpu_percent),
                     );
                 }
             }
@@ -1763,7 +1902,7 @@ impl SimonApp {
                         *id,
                         label,
                         &format!("{value:.0} MB"),
-                        palette::MEMORY,
+                        palette::TEXT,
                     );
                 }
             }
@@ -1811,7 +1950,7 @@ impl SimonApp {
                             format_bytes(d.capacity_bytes as f64),
                             d.interface
                         ),
-                        palette::DISK,
+                        palette::TEXT,
                     );
                 }
             }
@@ -1838,7 +1977,7 @@ impl SimonApp {
                         format!("system_{}", label.to_lowercase().replace(' ', "_")),
                         label,
                         value,
-                        palette::SYSTEM,
+                        palette::TEXT,
                     );
                 }
             }
@@ -1991,7 +2130,7 @@ impl SimonApp {
                         format_bytes(n.total_rx),
                         format_bytes(n.total_tx)
                     ),
-                    palette::NETWORK,
+                    palette::TEXT,
                 );
 
                 for (i, (name, rx, tx)) in n.interfaces.iter().take(16).enumerate() {
@@ -2001,7 +2140,7 @@ impl SimonApp {
                         format!("network_iface_{i}"),
                         name,
                         &format!("↓ {}   ↑ {}", format_bytes(*rx), format_bytes(*tx)),
-                        palette::NETWORK,
+                        palette::TEXT,
                     );
                 }
             }
