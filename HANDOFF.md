@@ -300,13 +300,33 @@ feature stayed broken through eight published versions.
    never run** — there was no Linux machine in the session that added them, and
    CI compiles the path without exercising a sysfs write.
 
-   **What is left to close the loop:** measure a metric before applying,
-   re-measure after a settle period, and revert automatically on regression.
-   The hard part is not the mechanism, it is deciding what proves a given setting
-   helped — and the same rule that governs values should govern this. A loop that
-   invents a success criterion is the optimiser equivalent of a model picking a
-   power limit. If a setting's effect cannot be measured, the honest verdict is
-   "unverifiable", not "improved".
+   **The loop was closed in 5.2.0**, in `tuning::verify`: measure, write, settle,
+   measure, revert on a demonstrated regression. `serve::cycle_verified` runs a
+   pass that way and each `AppliedOutcome` carries its `Verdict`.
+
+   The mechanism was the easy half, as expected. The hard half went the way the
+   warning above predicted, and the result is worth stating plainly: **the metric
+   registry ships empty.** The obvious metric for a power-scheme change is
+   achieved clock speed, and on Windows it does not exist —
+   `CallNtPowerInformation(ProcessorInformation)` reports a nominal figure.
+   Sixteen spinning threads took system idle from 79.7% to 11.4% and every core
+   reported exactly 4400 MHz throughout. A verifier built on that number would
+   have reported "no change" for every power scheme ever written and nobody would
+   have questioned it.
+
+   So `metric_for` returns `None` for every setting, `Unverifiable` is the normal
+   verdict, and `no_setting_claims_a_metric_it_has_not_earned` exists to make
+   adding one a deliberate act. **The bar for adding a metric is a demonstration,
+   on real hardware, that the number moves when the setting changes — in the
+   commit message.** A registry entry added because the mapping seemed sensible
+   is precisely the invented criterion the module was built to refuse.
+
+   **Where to look for a metric that would actually work:** something with a
+   readable rate, not a readable configuration. NVML reports live SM clocks and
+   they do vary; that is the most promising unexplored lead, and this machine has
+   three NVIDIA GPUs to try it on. The settings it would verify
+   (`persistence_mode`, `perf_level`) are also the ones whose effect is hardest
+   to attribute, so expect that to be the real work rather than the plumbing.
 
 ## The plan for what is left
 

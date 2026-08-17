@@ -9,6 +9,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The tuning loop is closed: `simon tune` can now measure whether a setting
+  helped, and undo it if it did not.** `tuning::verify` measures a metric before
+  a write, waits a settle period, measures again, and reverts on a demonstrated
+  regression. `serve::cycle_verified` runs a tuning pass that way, and each
+  `AppliedOutcome` carries the `Verdict`.
+
+  5.1.0 made writes reversible but left nothing to decide *whether* to reverse
+  them. A tuner that can apply and undo without telling the two apart is still
+  guessing, it just guesses in both directions.
+
+  **The registry of metrics is deliberately empty, and that is the feature.**
+  Declaring a metric is a claim that a particular number moves when a particular
+  setting changes, and the obvious candidate did not survive being checked: the
+  natural metric for a CPU power-scheme change is achieved clock speed, and on
+  Windows `CallNtPowerInformation(ProcessorInformation)` reports a nominal one.
+  Measured here — 16 spinning threads took system idle from 79.7% to 11.4% and
+  every core reported exactly 4400 MHz throughout, before and after. A verifier
+  built on it would have said "no change" for every power scheme in existence
+  and been believed. So `active_scheme_guid` has no metric, and the honest
+  output is `unverifiable`.
+
+  Consequently `Verdict::Unverifiable` is the default outcome rather than the
+  exception, and is kept distinct from `Unchanged`: "we looked and could not
+  tell" is not "we looked and found nothing". `AppliedOutcome.verdict` being
+  `None` is a third fact again — nobody looked, because the cycle was not a
+  verifying one.
+
+  Only a measured regression triggers a revert. Not `Unchanged`, and not
+  `Unverifiable` — undoing on "I could not tell" would reverse nearly every
+  write this crate makes, which is a way of ignoring the measurement rather than
+  a safer use of it. Noise is handled by comparing medians of sampled windows
+  against a threshold that is the larger of the metric's declared minimum effect
+  and the scatter the two windows actually showed, so a jittery metric raises
+  its own bar instead of producing confident verdicts from noise.
+
+  `revert_cycle` skips writes that verification already undid; reverting a
+  revert would restore the value the loop had just measured as worse.
+
+
 - **`simon ai models` reports what is in an IronVault model vault**, behind a
   new `vault` feature that is **off by default**. It lists each stored model's
   name, format, version count, stored and compressed size, checksum and

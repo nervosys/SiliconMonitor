@@ -38,6 +38,7 @@ use crate::profile::{Setting, SettingRisk, SettingValue, Subsystem};
 use serde::{Deserialize, Serialize};
 
 pub mod serve;
+pub mod verify;
 
 /// What the machine is being used for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

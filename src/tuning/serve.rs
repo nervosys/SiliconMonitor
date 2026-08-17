@@ -81,6 +81,16 @@ pub struct AppliedOutcome {
     /// unable to change it back. [`revert_cycle`] needs this.
     #[serde(default)]
     pub outcome: Option<crate::profile::apply::ApplyOutcome>,
+    /// Whether the write measurably helped, when the cycle was run with
+    /// [`cycle_verified`].
+    ///
+    /// `None` means verification was not attempted — a plain [`cycle`] does not
+    /// measure. That is deliberately distinct from
+    /// [`Verdict::Unverifiable`](crate::tuning::verify::Verdict::Unverifiable),
+    /// which means it *was* attempted and produced no answer. "Nobody looked"
+    /// and "we looked and could not tell" are different facts about a machine.
+    #[serde(default)]
+    pub verdict: Option<crate::tuning::verify::Verdict>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -102,11 +112,20 @@ pub struct Withheld {
 /// value are reported as un-revertible rather than skipped silently — a caller
 /// asking "is this machine back where it started" deserves the whole answer,
 /// including the parts that are not.
+///
+/// Writes that [`cycle_verified`] already undid are skipped: verification has
+/// put them back, and reverting a revert would write the value the loop had just
+/// decided was worse.
 pub fn revert_cycle(cycle: &Cycle, confirm: bool) -> Vec<crate::profile::apply::ApplyOutcome> {
     cycle
         .applied
         .iter()
         .rev()
+        .filter(|a| {
+            !a.verdict
+                .as_ref()
+                .is_some_and(crate::tuning::verify::Verdict::warrants_revert)
+        })
         .filter_map(|a| a.outcome.as_ref())
         .map(|o| crate::profile::apply::revert_setting(o, confirm))
         .collect()
@@ -216,6 +235,28 @@ fn detect_game_processes() -> Vec<String> {
     found
 }
 
+/// How a verifying cycle measures.
+///
+/// A parameter rather than a constant because both numbers are properties of
+/// the setting being changed — how long a governor takes to take effect, and
+/// how long the metric needs to be watched — and this module does not know
+/// which setting is coming.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VerifyPolicy {
+    /// How long to wait after the write before measuring again.
+    pub settle: Duration,
+    pub plan: crate::tuning::verify::SamplingPlan,
+}
+
+impl Default for VerifyPolicy {
+    fn default() -> Self {
+        Self {
+            settle: Duration::from_secs(5),
+            plan: crate::tuning::verify::SamplingPlan::default(),
+        }
+    }
+}
+
 /// Run one pass: collect, classify, plan, and apply if the mode says to.
 pub fn cycle(mode: Mode, started: Instant) -> Cycle {
     let signals = collect_signals();
@@ -223,9 +264,35 @@ pub fn cycle(mode: Mode, started: Instant) -> Cycle {
     cycle_with(mode, started, classification)
 }
 
+/// Run one pass, and measure whether each write helped.
+///
+/// The closed loop: measure, write, settle, measure, and undo anything that
+/// demonstrably made the machine worse. See [`crate::tuning::verify`] for what
+/// "demonstrably" is allowed to mean — in particular, that most settings have
+/// no defensible metric and are reported as unverifiable rather than as
+/// successes.
+///
+/// Costs real time: each verified write spends two sampling windows plus the
+/// settle period. A loop running this needs an interval that accommodates it.
+pub fn cycle_verified(mode: Mode, started: Instant, policy: &VerifyPolicy) -> Cycle {
+    let signals = collect_signals();
+    let classification = classify_from_signals(&signals);
+    cycle_inner(mode, started, classification, Some(policy))
+}
+
 /// One pass with the classification already made, so a caller that classified by
 /// some other means — a model, or an explicit override — reuses the rest.
 pub fn cycle_with(mode: Mode, started: Instant, classification: Classification) -> Cycle {
+    cycle_inner(mode, started, classification, None)
+}
+
+/// `policy` present means measure each write and undo the ones that hurt.
+fn cycle_inner(
+    mode: Mode,
+    started: Instant,
+    classification: Classification,
+    policy: Option<&VerifyPolicy>,
+) -> Cycle {
     let settings = current_settings();
     let plan = plan_from_settings(classification, &settings);
 
@@ -261,16 +328,36 @@ pub fn cycle_with(mode: Mode, started: Instant, classification: Classification) 
                 // refuses when the prior value could not be read, rather than
                 // making a change this loop could never undo -- there is nobody
                 // watching to be told that the way back was lost.
-                let outcome = crate::profile::apply::apply_setting_reversible(
-                    &rec.setting_id,
-                    rec.proposed.clone(),
-                    confirm,
-                );
+                let (outcome, verdict) = match policy {
+                    Some(p) => {
+                        let v = crate::tuning::verify::apply_verified(
+                            &rec.setting_id,
+                            rec.proposed.clone(),
+                            confirm,
+                            p.settle,
+                            &p.plan,
+                        );
+                        // A reverted write is reported as what it was — a write
+                        // that happened and was undone — not quietly dropped
+                        // from the cycle. A reader asking what this loop did to
+                        // the machine is owed both halves.
+                        (v.outcome, Some(v.verdict))
+                    }
+                    None => (
+                        crate::profile::apply::apply_setting_reversible(
+                            &rec.setting_id,
+                            rec.proposed.clone(),
+                            confirm,
+                        ),
+                        None,
+                    ),
+                };
                 applied.push(AppliedOutcome {
                     setting_id: rec.setting_id.clone(),
                     status: format!("{:?}", outcome.status),
                     message: outcome.message.clone(),
                     outcome: Some(outcome),
+                    verdict,
                 });
             }
         }
@@ -490,6 +577,7 @@ mod tests {
                 timestamp: 0,
                 previous: previous.map(|p| SettingValue::Text(p.into())),
             }),
+            verdict: None,
         };
 
         let cycle = Cycle {
@@ -518,5 +606,80 @@ mod tests {
         // refusal is visible in the result.
         assert_eq!(reverts[0].status, ApplyStatus::NotWritable);
         assert!(reverts[0].message.contains("no prior value"));
+    }
+
+    /// A write that verification already undid must not be undone again.
+    ///
+    /// Reverting a revert writes back the value the loop had just measured as
+    /// worse — the tuner would undo its own correction and report success at
+    /// having done so.
+    #[test]
+    fn a_write_verification_already_reverted_is_not_reverted_twice() {
+        use crate::profile::apply::{ApplyOutcome, ApplyStatus};
+        use crate::profile::SettingValue;
+
+        let mk = |id: &str, verdict: Option<crate::tuning::verify::Verdict>| AppliedOutcome {
+            setting_id: id.into(),
+            status: "Applied".into(),
+            message: String::new(),
+            outcome: Some(ApplyOutcome {
+                setting_id: id.into(),
+                subsystem: Subsystem::Cpu,
+                requested: SettingValue::Text("new".into()),
+                status: ApplyStatus::Applied,
+                message: String::new(),
+                timestamp: 0,
+                previous: Some(SettingValue::Text("old".into())),
+            }),
+            verdict,
+        };
+
+        let regressed = crate::tuning::verify::Verdict::Regressed {
+            metric: "m".into(),
+            before: 10.0,
+            after: 20.0,
+            delta: 10.0,
+        };
+        let improved = crate::tuning::verify::Verdict::Improved {
+            metric: "m".into(),
+            before: 20.0,
+            after: 10.0,
+            delta: -10.0,
+        };
+
+        let cycle = Cycle {
+            elapsed_secs: 0,
+            plan: Plan {
+                classification: Classification {
+                    use_case: crate::tuning::UseCase::Idle,
+                    confidence: 0.0,
+                    method: crate::tuning::Method::Signals,
+                    evidence: vec![],
+                },
+                recommendations: vec![],
+                skipped: vec![],
+            },
+            applied: vec![
+                mk("kept", Some(improved)),
+                mk("already_undone", Some(regressed)),
+                mk("unmeasured", None),
+            ],
+            withheld: vec![],
+        };
+
+        let reverts = revert_cycle(&cycle, true);
+        let ids: Vec<&str> = reverts.iter().map(|r| r.setting_id.as_str()).collect();
+        assert!(
+            !ids.contains(&"already_undone"),
+            "verification put this one back; reverting it again would restore the              value that was measured as worse. got {ids:?}"
+        );
+        assert!(
+            ids.contains(&"kept"),
+            "an improvement is still the caller's to undo if they ask"
+        );
+        assert!(
+            ids.contains(&"unmeasured"),
+            "a write nobody measured must still be revertible"
+        );
     }
 }
