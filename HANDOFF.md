@@ -321,12 +321,39 @@ feature stayed broken through eight published versions.
    commit message.** A registry entry added because the mapping seemed sensible
    is precisely the invented criterion the module was built to refuse.
 
-   **Where to look for a metric that would actually work:** something with a
-   readable rate, not a readable configuration. NVML reports live SM clocks and
-   they do vary; that is the most promising unexplored lead, and this machine has
-   three NVIDIA GPUs to try it on. The settings it would verify
-   (`persistence_mode`, `perf_level`) are also the ones whose effect is hardest
-   to attribute, so expect that to be the real work rather than the plumbing.
+   **The NVML lead was followed, and the answer is that a live metric exists but
+   nothing on Windows can be verified with it.** Six samples via `nvidia-smi`
+   half a second apart: GPU 0 moved 540 → 495 → 495 → 555 → 585 → 645 MHz while
+   its utilisation moved 26 → 38%. That is a genuinely live reading, in direct
+   contrast to the Windows CPU clock, which does not move at all. So the metric
+   source is sound.
+
+   It has nothing to verify. **Every setting whose effect a GPU clock could
+   measure is Linux-only:**
+
+   | Setting | Platform | Metric |
+   |---|---|---|
+   | `active_scheme_guid` | Windows | none — the CPU clock reads nominal, see above |
+   | `scaling_governor` | Linux | plausible: `scaling_cur_freq` is live on Linux, unlike the Windows equivalent. Untested. |
+   | `persistence_mode` | Linux + NVIDIA | none plausible — it governs driver load latency, not throughput |
+   | `perf_level` | Linux + **AMD** | GPU core clock |
+   | `gt_max_freq_mhz` | Linux + Intel GPU | GPU clock |
+
+   So the verification loop **cannot be exercised end to end on Windows at all**:
+   the one applicable setting has no live metric, and every setting with a
+   plausible metric is on the other platform. `perf_level` compounds it by being
+   AMD, where the GPUs here are NVIDIA — so even the vendor does not line up.
+
+   No metric was registered, and no metric source was written, on purpose.
+   Writing an NVML clock reader to verify an AMD sysfs setting on a Linux machine
+   that does not exist here would be plausible, untestable, and exactly the class
+   of work this project has been bitten by twice — the Linux sysfs readers in
+   `profile::apply` are already written by inspection and have never run.
+
+   **What actually unblocks this is a Linux box**, ideally with an AMD GPU. On
+   one, the demonstration is cheap: sample the GPU clock, write `perf_level=high`,
+   sample again, and show the number move. That measurement belongs in the commit
+   that adds the registry entry.
 
 ## The plan for what is left
 
