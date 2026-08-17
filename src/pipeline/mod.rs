@@ -632,7 +632,7 @@ fn collect_once(
     // The first tick always collects everything so the UI is populated immediately;
     // after that each decimated stage runs on its own cadence and the previous value
     // is reused in between.
-    let due = |every: u64| generation == 1 || generation % every.max(1) == 0;
+    let due = |every: u64| generation == 1 || generation.is_multiple_of(every.max(1));
     let refresh_disks = due(config.disk_every_n_ticks);
     let refresh_processes = due(config.process_every_n_ticks);
     let refresh_connections = due(config.connection_every_n_ticks);

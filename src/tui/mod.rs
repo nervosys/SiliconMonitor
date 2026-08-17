@@ -181,7 +181,7 @@ fn run_app<B: Backend>(
             // collector actually published a new generation — previously every tick
             // forced a repaint whether or not any value had changed, which burned
             // terminal bandwidth redrawing identical frames.
-            if tick_count % FAST_UPDATE_TICKS == 0 {
+            if tick_count.is_multiple_of(FAST_UPDATE_TICKS) {
                 let _ = app.update_fast();
                 if app.snapshot_changed_since_render() {
                     needs_render = true;
@@ -189,7 +189,7 @@ fn run_app<B: Backend>(
             }
 
             // Process updates
-            if tick_count % PROCESS_TICKS == 0 {
+            if tick_count.is_multiple_of(PROCESS_TICKS) {
                 let _ = app.update_processes_only();
                 needs_render = true;
             }
@@ -209,7 +209,7 @@ fn run_app<B: Backend>(
 
             // Mark render needed on ticks that didn't update data
             // (for sparkline animation, clock updates, etc.) - but less frequently
-            if tick_count % 4 == 0 {
+            if tick_count.is_multiple_of(4) {
                 needs_render = true;
             }
         }

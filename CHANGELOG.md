@@ -5,6 +5,89 @@ All notable changes to Silicon Monitor will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.2.0] - 2026-08-17
+
+### Added
+
+- **`simon ai models` reports what is in an IronVault model vault**, behind a
+  new `vault` feature that is **off by default**. It lists each stored model's
+  name, format, version count, stored and compressed size, checksum and
+  metadata, as a table or as JSON.
+
+  The integration is deliberately read-only. simon does not store, fetch,
+  decrypt or delete anything; it reads the vault's metadata index, which
+  IronVault exposes without a passphrase, and reports it. A locked vault is
+  still fully reportable — verified against a real vault holding two models
+  across three versions, with `"unlocked": false` in the JSON output.
+
+  **Reading a vault leaves no trace.** `security.audit_log` is disabled for the
+  read, and the vault directory is byte-identical before and after: verified by
+  comparing the full file listing across two consecutive reads.
+
+  `VaultStatus` keeps the outcomes that this crate's ontology requires to stay
+  distinct once serialised — `not_installed` (no IronVault on this machine),
+  `absent` (IronVault is present, this path holds no vault), `present`, and
+  `failed` with a reason. Collapsing the first two would report an empty path
+  as though a vault had been looked for and not found.
+
+### Fixed
+
+- **The Peripherals tab no longer waits 24 seconds for data it does not show.**
+  System info was collected by one background thread that ran seven WMI queries
+  and sent nothing until all seven finished. Two of them dominate: measured here,
+  `get_driver_versions` takes 20.3s and `get_system_temperatures` 2.9s, against
+  0.7s for `get_peripherals` itself. The Peripherals tab paints USB and PCIe and
+  no driver table at all, so it sat on a spinner for the duration.
+
+  Headless reads gave up at 30s and returned a bare title. Intermittently:
+  `simon gui --frame --tab peripherals` produced nothing usable in **three runs
+  out of five**, and `every_gui_tab_paints_text` failed at the same rate. It now
+  passes ten consecutive runs, and the tab returns in 8.8s with 192 lines of
+  content instead of two.
+
+  The collector sends two instalments, split by cost rather than by tab, and the
+  two duplicated copies of the thread body — which had already drifted by one
+  `sleep` — are now one function. The System Info tab still waits for the slow
+  queries, because it genuinely displays them.
+
+  This was live in every release since the tab existed, and the test that should
+  have caught it did catch it — just not reliably enough for anyone to believe
+  it. An intermittent failure that nobody chases is a passing test.
+
+- **The declared minimum Rust version was wrong, and is now 1.88.** The manifest
+  said 1.70. Building against every installed toolchain shows the crate has not
+  compiled on 1.70 since the egui GUI was restored in 5.0.0: `eframe` and
+  `egui_extras` pull in `image 0.25.10` and `home 0.5.12`, which declare 1.88
+  themselves, and `image` reaches an edition-2024 crate (`pxfm`) that pre-1.85
+  cargo cannot even parse. 5.0.0 and 5.1.0 both shipped with a `rust-version`
+  that nothing built against and no CI job checked.
+
+- **`virtualization::detect::cpuid` compiles on 1.88 again.** The `unsafe` block
+  around `__cpuid` had been removed as a no-op — true on current Rust, where the
+  intrinsic is safe to call, but on 1.90 and earlier it is still `unsafe` and the
+  crate did not build at all. It is restored under `#[allow(unused_unsafe)]`,
+  which satisfies both. The same edit also splits the function per architecture:
+  it previously named `core::arch::x86_64` in its return type while being gated
+  on `any(x86, x86_64)`, so a 32-bit x86 build could never have compiled.
+
+### Notes
+
+- The `vault` feature raises the required Rust version to **1.89** for builds
+  that enable it, because that is IronVault 7's MSRV — verified by building with
+  and without the feature on 1.88 and 1.89. simon's own floor stays at **1.88**,
+  which is why the dependency is optional rather than default: the 4.0.0 release
+  raised the floor for a GUI dependency and that was a mistake worth not
+  repeating.
+
+- **Upstream finding, IronVault 7.** `VaultConfig::new()` has side effects — it
+  creates the config, data and cache directories and writes a `config.yaml`
+  before anything has been read. There is no non-creating path resolver, so a
+  read-only caller cannot ask "where would the vault be?" without bringing one
+  into existence. simon works around this with an `installed()` probe that
+  checks for the directories itself and refuses to construct a config when they
+  are missing. If IronVault gains a resolver that does not write, that probe
+  should be deleted.
+
 ## [5.1.0] - 2026-08-12
 
 ### Added

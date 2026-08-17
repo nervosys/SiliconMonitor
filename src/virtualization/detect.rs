@@ -8,19 +8,28 @@ use serde::{Deserialize, Serialize};
 /// Read a CPUID leaf.
 ///
 /// Selects the module matching the target. Every caller here is gated on
-/// `any(x86, x86_64)` but reached for `core::arch::x86_64` unconditionally, so a
-/// 32-bit x86 build did not compile at all. `__cpuid` is a safe function on current
-/// Rust; the `unsafe` blocks around these calls were no longer doing anything.
-#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+/// `any(x86, x86_64)` but the previous version named `core::arch::x86_64`
+/// unconditionally — including in the return type — so a 32-bit x86 build did
+/// not compile at all. The two architectures get separate definitions rather
+/// than one function with a `cfg` block inside it, because the return type has
+/// to vary too.
+///
+/// **The `unsafe` block is deliberate even though `__cpuid` is safe to call on
+/// current Rust.** It was removed once as a no-op, and that silently raised the
+/// crate's minimum compiler to a version newer than any this project claims to
+/// support: on Rust 1.90 and earlier the call is still `unsafe` and the crate
+/// did not build. `#[allow(unused_unsafe)]` keeps newer compilers quiet without
+/// giving up the older ones. Do not "clean this up" again.
+#[cfg(target_arch = "x86_64")]
+#[allow(unused_unsafe)]
 fn cpuid(leaf: u32) -> core::arch::x86_64::CpuidResult {
-    #[cfg(target_arch = "x86_64")]
-    {
-        core::arch::x86_64::__cpuid(leaf)
-    }
-    #[cfg(target_arch = "x86")]
-    {
-        core::arch::x86::__cpuid(leaf)
-    }
+    unsafe { core::arch::x86_64::__cpuid(leaf) }
+}
+
+#[cfg(target_arch = "x86")]
+#[allow(unused_unsafe)]
+fn cpuid(leaf: u32) -> core::arch::x86::CpuidResult {
+    unsafe { core::arch::x86::__cpuid(leaf) }
 }
 
 /// Which side of a Hyper-V partition boundary this code is running on.

@@ -186,7 +186,7 @@ pub struct SiliconMonitorApp {
     ai_status_message: Option<(String, bool)>, // (message, is_error)
 
     // Background loading state
-    system_info_receiver: Option<Receiver<SystemInfoResult>>,
+    system_info_receiver: Option<Receiver<SystemInfoUpdate>>,
     system_info_loading: bool,
     disk_receiver: Option<Receiver<Vec<Box<dyn DiskDevice + Send>>>>,
     disk_loading: bool,
@@ -260,15 +260,78 @@ pub struct SiliconMonitorApp {
     processes_view_key: Option<(String, ProcessSortColumn, bool, u64)>,
 }
 
-/// Result from background system info loading
-struct SystemInfoResult {
+/// An instalment of background system info.
+///
+/// Two messages rather than one, because the seven queries behind this differ in
+/// cost by two orders of magnitude. Measured on the development machine:
+/// `get_driver_versions` 20.3s and `get_system_temperatures` 2.9s, against
+/// `get_peripherals` 0.7s, `get_pcie_devices` 0.6s, `get_system_info` 0.1s and
+/// `enumerate_sensors` 0.01s.
+///
+/// Collecting all seven before sending anything meant the Peripherals tab —
+/// which paints USB and PCIe and shows no driver table at all — sat on a spinner
+/// for 24 seconds waiting for data it does not display. Headless reads gave up
+/// at 30s and returned a bare title, intermittently, depending on how the WMI
+/// query happened to go: `every_gui_tab_paints_text` failed roughly three runs
+/// in five.
+///
+/// The split is by cost, not by tab, so [`Slow`](SystemInfoUpdate::Slow) carries
+/// exactly the two queries that are expensive and nothing else.
+enum SystemInfoUpdate {
+    /// Everything cheap enough to wait for. Arrives in about 1.5s.
+    ///
+    /// Boxed because it is several times the size of `Slow`, and every value of
+    /// this enum would otherwise be as large as its biggest variant.
+    Fast(Box<FastSystemInfo>),
+    /// The two slow queries. Receipt of this ends the load.
+    Slow {
+        drivers: Vec<DriverInfo>,
+        system_temps: Option<motherboard::SystemTemperatures>,
+    },
+}
+
+/// The payload of [`SystemInfoUpdate::Fast`].
+struct FastSystemInfo {
     system_info: Option<MBSystemInfo>,
     sensors: Vec<Box<dyn MotherboardDevice>>,
-    drivers: Vec<DriverInfo>,
     pcie_devices: Vec<motherboard::PcieDeviceInfo>,
     sata_devices: Vec<motherboard::SataDeviceInfo>,
-    system_temps: Option<motherboard::SystemTemperatures>,
     peripherals: Option<motherboard::PeripheralsInfo>,
+}
+
+/// Run the seven system-info queries, cheapest first, sending each instalment as
+/// it completes.
+///
+/// One function for both call sites; there were two copies of this thread body
+/// and they had already drifted by one `sleep`.
+fn collect_system_info(tx: std::sync::mpsc::Sender<SystemInfoUpdate>) {
+    let system_info = motherboard::get_system_info().ok();
+    let sensors = motherboard::enumerate_sensors().unwrap_or_default();
+    let pcie_devices = motherboard::get_pcie_devices().unwrap_or_default();
+    let sata_devices = motherboard::get_sata_devices().unwrap_or_default();
+    let peripherals = motherboard::get_peripherals().ok();
+
+    // If the receiver is gone the window closed; the slow queries are then
+    // 23 seconds of work nobody is waiting for.
+    if tx
+        .send(SystemInfoUpdate::Fast(Box::new(FastSystemInfo {
+            system_info,
+            sensors,
+            pcie_devices,
+            sata_devices,
+            peripherals,
+        })))
+        .is_err()
+    {
+        return;
+    }
+
+    let drivers = motherboard::get_driver_versions().unwrap_or_default();
+    let system_temps = motherboard::get_system_temperatures().ok();
+    let _ = tx.send(SystemInfoUpdate::Slow {
+        drivers,
+        system_temps,
+    });
 }
 
 /// A chat entry in the AI Agent conversation
@@ -1096,7 +1159,12 @@ impl SiliconMonitorApp {
                 self.disk_loading
                     || (self.disk_rows_receiver.is_some() && self.cached_disk_data.is_empty())
             }
-            Tab::SystemInfo | Tab::Peripherals => self.system_info_loading,
+            Tab::SystemInfo => self.system_info_loading,
+            // Peripherals paints USB and PCIe and no driver table, so it is
+            // ready as soon as the fast instalment lands. Waiting on
+            // `system_info_loading` meant waiting on `get_driver_versions`,
+            // 20 seconds of work whose result this tab never displays.
+            Tab::Peripherals => self.peripherals.is_none() && self.system_info_loading,
             Tab::Profiles => self.profile_snapshot_loading,
             _ => false,
         }
@@ -1190,14 +1258,37 @@ impl SiliconMonitorApp {
 
         // Check system info background loading
         if let Some(ref receiver) = self.system_info_receiver {
-            if let Ok(result) = receiver.try_recv() {
-                self.system_info = result.system_info;
-                self.motherboard_sensors = result.sensors;
-                self.driver_info = result.drivers;
-                self.pcie_devices = result.pcie_devices;
-                self.sata_devices = result.sata_devices;
-                self.system_temps = result.system_temps;
-                self.peripherals = result.peripherals;
+            // Drain rather than take one: both instalments can land between
+            // frames, and stopping after the first would leave the slow half
+            // sitting in the channel until the next repaint.
+            let mut finished = false;
+            while let Ok(update) = receiver.try_recv() {
+                match update {
+                    SystemInfoUpdate::Fast(fast) => {
+                        let FastSystemInfo {
+                            system_info,
+                            sensors,
+                            pcie_devices,
+                            sata_devices,
+                            peripherals,
+                        } = *fast;
+                        self.system_info = system_info;
+                        self.motherboard_sensors = sensors;
+                        self.pcie_devices = pcie_devices;
+                        self.sata_devices = sata_devices;
+                        self.peripherals = peripherals;
+                    }
+                    SystemInfoUpdate::Slow {
+                        drivers,
+                        system_temps,
+                    } => {
+                        self.driver_info = drivers;
+                        self.system_temps = system_temps;
+                        finished = true;
+                    }
+                }
+            }
+            if finished {
                 self.system_info_loading = false;
                 self.system_info_tried = true;
                 self.system_info_receiver = None;
@@ -1413,18 +1504,7 @@ impl SiliconMonitorApp {
         let (tx, rx) = channel();
         self.system_info_receiver = Some(rx);
 
-        std::thread::spawn(move || {
-            let result = SystemInfoResult {
-                system_info: motherboard::get_system_info().ok(),
-                sensors: motherboard::enumerate_sensors().unwrap_or_default(),
-                drivers: motherboard::get_driver_versions().unwrap_or_default(),
-                pcie_devices: motherboard::get_pcie_devices().unwrap_or_default(),
-                sata_devices: motherboard::get_sata_devices().unwrap_or_default(),
-                system_temps: motherboard::get_system_temperatures().ok(),
-                peripherals: motherboard::get_peripherals().ok(),
-            };
-            let _ = tx.send(result);
-        });
+        std::thread::spawn(move || collect_system_info(tx));
     }
 
     fn cpu_usage(&self) -> f32 {
@@ -4793,17 +4873,37 @@ impl SiliconMonitorApp {
         // Trigger background loading if not started (same as System tab)
         // Check for results from background loading
         if let Some(receiver) = self.system_info_receiver.take() {
-            if let Ok(result) = receiver.try_recv() {
-                self.system_info = result.system_info;
-                self.motherboard_sensors = result.sensors;
-                self.driver_info = result.drivers;
-                self.pcie_devices = result.pcie_devices;
-                self.sata_devices = result.sata_devices;
-                self.system_temps = result.system_temps;
-                self.peripherals = result.peripherals;
+            let mut finished = false;
+            while let Ok(update) = receiver.try_recv() {
+                match update {
+                    SystemInfoUpdate::Fast(fast) => {
+                        let FastSystemInfo {
+                            system_info,
+                            sensors,
+                            pcie_devices,
+                            sata_devices,
+                            peripherals,
+                        } = *fast;
+                        self.system_info = system_info;
+                        self.motherboard_sensors = sensors;
+                        self.pcie_devices = pcie_devices;
+                        self.sata_devices = sata_devices;
+                        self.peripherals = peripherals;
+                    }
+                    SystemInfoUpdate::Slow {
+                        drivers,
+                        system_temps,
+                    } => {
+                        self.driver_info = drivers;
+                        self.system_temps = system_temps;
+                        finished = true;
+                    }
+                }
+            }
+            if finished {
                 self.system_info_loading = false;
             } else {
-                // Put it back if no result yet
+                // Put it back: the slow half has not arrived yet.
                 self.system_info_receiver = Some(receiver);
             }
         }
@@ -4816,27 +4916,7 @@ impl SiliconMonitorApp {
             let (tx, rx) = channel();
             self.system_info_receiver = Some(rx);
 
-            std::thread::spawn(move || {
-                std::thread::sleep(std::time::Duration::from_millis(10));
-
-                let system_info = motherboard::get_system_info().ok();
-                let sensors = motherboard::enumerate_sensors().unwrap_or_default();
-                let drivers = motherboard::get_driver_versions().unwrap_or_default();
-                let pcie_devices = motherboard::get_pcie_devices().unwrap_or_default();
-                let sata_devices = motherboard::get_sata_devices().unwrap_or_default();
-                let system_temps = motherboard::get_system_temperatures().ok();
-                let peripherals = motherboard::get_peripherals().ok();
-
-                let _ = tx.send(SystemInfoResult {
-                    system_info,
-                    sensors,
-                    drivers,
-                    pcie_devices,
-                    sata_devices,
-                    system_temps,
-                    peripherals,
-                });
-            });
+            std::thread::spawn(move || collect_system_info(tx));
         }
 
         ScrollArea::vertical().show(ui, |ui| {

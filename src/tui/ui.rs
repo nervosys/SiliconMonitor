@@ -774,9 +774,8 @@ fn draw_accelerators(f: &mut Frame, app: &App, area: Rect) {
 
     // Split area for each accelerator
     let accel_count = app.accelerators.len();
-    let constraints: Vec<Constraint> = std::iter::repeat(Constraint::Ratio(1, accel_count as u32))
-        .take(accel_count)
-        .collect();
+    let constraints: Vec<Constraint> =
+        std::iter::repeat_n(Constraint::Ratio(1, accel_count as u32), accel_count).collect();
 
     let accel_chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -881,9 +880,8 @@ fn draw_nvtop_gpus(f: &mut Frame, app: &App, area: Rect) {
 
     // Split area for each GPU
     let gpu_count = app.gpu_info.len();
-    let constraints: Vec<Constraint> = std::iter::repeat(Constraint::Ratio(1, gpu_count as u32))
-        .take(gpu_count)
-        .collect();
+    let constraints: Vec<Constraint> =
+        std::iter::repeat_n(Constraint::Ratio(1, gpu_count as u32), gpu_count).collect();
 
     let gpu_chunks = Layout::default()
         .direction(Direction::Vertical)

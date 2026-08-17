@@ -24,7 +24,9 @@ Current as of 5.0.0. This file is excluded from the published crate
 | 4.0.2 | Dewey GUI made legible and its tabs clickable. Published, tagged `v4.0.2`. Withdrawn. |
 | 4.0.3 | Dewey GUI restyled onto the recovered `CyberColors` palette. Published, tagged `v4.0.3`. Withdrawn. |
 | 4.0.4 | Dewey Overview rebuilt from the egui widget vocabulary. Published, tagged `v4.0.4`. Withdrawn. |
-| 5.0.0 | **The Dewey port is withdrawn and the egui GUI restored.** MSRV back to 1.70. Published, tagged `v5.0.0`. See open work 9. |
+| 5.0.0 | **The Dewey port is withdrawn and the egui GUI restored.** Claimed MSRV back to 1.70 — which was not true, see 5.2.0. Published, tagged `v5.0.0`. See open work 9. |
+| 5.1.0 | Applied settings are reversible: `read_current`, `ApplyOutcome.previous`, `revert_setting`, `revert_cycle`. Published, tagged `v5.1.0`. See open work 13. |
+| 5.2.0 | `simon ai models` reads an IronVault vault, behind an optional `vault` feature. **MSRV corrected to 1.88**, having been wrong since 5.0.0. |
 | 2.1.5 | Committed, never published. Documentation only; superseded by 3.0.0. |
 
 ## Verification that is worth repeating
@@ -33,9 +35,24 @@ Current as of 5.0.0. This file is excluded from the published crate
 cargo fmt --all -- --check
 cargo clippy --all-features --all-targets -- -D warnings
 cargo test --all-features
+cargo test                       # default features: the `vault` tests must drop out
+cargo +1.88 check --all-targets  # the declared MSRV, actually built
 cargo check --target x86_64-unknown-linux-gnu --no-default-features --features cpu,npu,io,network,amd,nvidia,intel
 cargo check --target aarch64-apple-darwin --no-default-features --features cpu,npu,io,network,apple,nvidia,num_cpus
 ```
+
+**Build the MSRV, do not declare it.** `rust-version` said 1.70 from 3.x through
+5.1.0 and had been false since 5.0.0: restoring the egui GUI brought in
+`image 0.25.10` and `home 0.5.12`, which declare 1.88 themselves, and `image`
+reaches `pxfm`, an edition-2024 crate that pre-1.85 cargo cannot even parse. Two
+releases shipped a floor nothing had ever compiled against, because nothing did.
+`cargo +<msrv> check` is one command and it is the only thing that makes the
+field mean anything.
+
+The corollary bit in the other direction too: raising the declared floor to 1.88
+un-gated ten clippy lints that `incompatible_msrv` had been silently suppressing
+at 1.70. A wrong `rust-version` does not merely mislead readers — it changes
+which lints run.
 
 The two cross-target checks need only `rustup target add …` — no C toolchain, no
 VM. They are the fastest way to catch platform breakage from a Windows box, and
