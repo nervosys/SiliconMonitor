@@ -3933,6 +3933,13 @@ fn print_tune_cycle(cycle: &simonlib::tuning::serve::Cycle) {
     println!();
 }
 
+/// Gated for the same reason its sibling `handle_gui_script_command` is: it
+/// names `simonlib::gui`, which does not exist without the `gui` feature. Its
+/// only caller is already behind `#[cfg(feature = "gui")]`, so the omission
+/// broke nothing at runtime and broke `--no-default-features --features cli`
+/// completely — the exact failure the CI feature-isolation job was written for
+/// after 3.0.0, recurring after the 5.0.0 GUI restore.
+#[cfg(feature = "gui")]
 fn handle_gui_frame_command(tab: &str) -> Result<(), Box<dyn std::error::Error>> {
     use simonlib::gui::headless;
 

@@ -71,6 +71,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`--no-default-features --features cli` builds again.**
+  `handle_gui_frame_command` names `simonlib::gui` and was not behind
+  `#[cfg(feature = "gui")]`, though its only caller was. The omission broke
+  nothing at runtime and broke the `cli` feature completely.
+
+  This is the same failure the CI feature-isolation job was written for after
+  3.0.0 — a feature that only builds because some other feature supplies what it
+  is missing — recurring after the 5.0.0 GUI restore, which means it has been
+  live since then. All 19 advertised features plus the no-feature build are now
+  verified to compile in isolation.
+
 - **The Peripherals tab no longer waits 24 seconds for data it does not show.**
   System info was collected by one background thread that ran seven WMI queries
   and sent nothing until all seven finished. Two of them dominate: measured here,
