@@ -512,6 +512,45 @@ pub fn catalogue() -> Vec<Capability> {
         Some("src/ai_api; local backends preferred so telemetry stays on the machine"),
     ));
 
+    out.push(cap(
+        "interface.tui",
+        Surface::Interface,
+        "an interactive terminal dashboard, and a headless frame renderer for          scripted inspection",
+        all(Support::Implemented),
+        Some("tui::headless script tests render frames without a terminal"),
+    ));
+    out.push(cap(
+        "interface.gui",
+        Surface::Interface,
+        "a native desktop window, and a headless frame renderer for scripted          inspection",
+        all(Support::Partial {
+            missing: "the window needs a display server; the headless renderer does                       not and is what CI exercises"
+                .into(),
+        }),
+        Some("every_gui_tab_paints_text renders each tab and asserts it carries               substance rather than a spinner"),
+    ));
+    out.push(cap(
+        "interface.mcp",
+        Surface::Interface,
+        "an MCP server, so an agent host can call simon as a tool",
+        all(Support::Implemented),
+        Some("src/ai_api/mcp_server.rs; the protocol version is exported alongside it"),
+    ));
+    out.push(cap(
+        "interface.http",
+        Surface::Interface,
+        "an HTTP endpoint serving readings as JSON",
+        all(Support::Implemented),
+        Some("src/http_server.rs"),
+    ));
+    out.push(cap(
+        "interface.daemon",
+        Surface::Interface,
+        "a long-running collector that samples on an interval",
+        all(Support::Implemented),
+        Some("src/daemon.rs"),
+    ));
+
     out.sort_by(|a, b| a.id.cmp(&b.id));
     out
 }

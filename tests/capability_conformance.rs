@@ -286,6 +286,45 @@ fn the_readme_and_the_catalogue_agree_about_macos_gpu() {
     );
 }
 
+/// Every interface module simon ships is declared.
+///
+/// The first version of the catalogue declared three interfaces and simon had
+/// eight: the gui, tui, MCP server, HTTP server and daemon were all missing, and
+/// nothing noticed because the catalogue was only ever checked against itself.
+/// An agent asking "how can I talk to this" would have been told about a third
+/// of the answers.
+#[test]
+fn every_interface_module_is_declared() {
+    // Module path to capability id. Listed rather than derived from the
+    // directory because not every module is an interface, and a heuristic over
+    // file names would either miss one or invent one.
+    const INTERFACES: &[(&str, &str)] = &[
+        ("src/tui", "interface.tui"),
+        ("src/gui", "interface.gui"),
+        ("src/ai_api/mcp_server.rs", "interface.mcp"),
+        ("src/http_server.rs", "interface.http"),
+        ("src/daemon.rs", "interface.daemon"),
+        ("src/agent", "interface.agent"),
+    ];
+
+    let declared: BTreeSet<String> = capability::catalogue()
+        .into_iter()
+        .filter(|c| c.surface == Surface::Interface)
+        .map(|c| c.id)
+        .collect();
+
+    for (path, id) in INTERFACES {
+        assert!(
+            std::path::Path::new(path).exists(),
+            "{path} is listed as an interface and does not exist; either it was              removed and {id} should go too, or the path is wrong"
+        );
+        assert!(
+            declared.contains(*id),
+            "{path} ships and {id} is not in the capability catalogue. An agent              reading the catalogue would not know this way of talking to simon              exists."
+        );
+    }
+}
+
 /// Surfaces are covered rather than declared and unused.
 #[test]
 fn every_surface_has_at_least_one_capability() {

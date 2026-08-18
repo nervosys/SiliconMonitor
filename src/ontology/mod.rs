@@ -29,6 +29,7 @@
 pub mod resolve;
 
 pub mod capability;
+pub mod vocabulary;
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
