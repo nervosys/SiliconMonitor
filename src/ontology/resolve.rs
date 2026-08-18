@@ -2159,10 +2159,22 @@ mod tests {
             if !has_none {
                 continue;
             }
+            // Only rows carrying an actual observation can contradict the
+            // diagnostic. An unavailable row asserts nothing about the hardware:
+            // `gpu.setting.perf_level` reported as "no resolver bound on this
+            // build" sits perfectly happily beside `gpu.<none>`, because neither
+            // claims a GPU is present. Counting those made the test fire on a
+            // Linux runner with no GPU, where three writable GPU settings are
+            // declared from their registered apply handlers and read by nothing.
+            //
+            // The doc above always said "eight disk readings" — readings, values.
+            // The predicate simply did not say it.
             let real_rows: Vec<&str> = readings
                 .iter()
                 .filter(|r| {
-                    r.id.starts_with(&format!("{}.", domain.as_str())) && !r.id.contains('<')
+                    r.id.starts_with(&format!("{}.", domain.as_str()))
+                        && !r.id.contains('<')
+                        && r.is_observation()
                 })
                 .map(|r| r.id.as_str())
                 .collect();
