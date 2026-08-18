@@ -378,7 +378,7 @@ feature stayed broken through eight published versions.
    already busy, and meaningless on one that was not.
 
    So the metric has to be *passive observation of the real workload's own rate*.
-   simon already detects AI workloads and their frameworks; tokens per second off
+   AI workloads and their frameworks are already detected; tokens per second off
    a running inference server is the shape of thing that would work — it is the
    user's own work, measured without perturbing it. That is the direction worth
    taking, and it is a larger piece of work than a registry entry.
