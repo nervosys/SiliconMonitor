@@ -61,6 +61,43 @@ pub mod file;
 pub mod network;
 pub mod triage;
 
+/// Every rule the detectors in this module can emit, with what it means.
+///
+/// Declared in one place so the capability catalogue can be derived from it
+/// rather than kept in step by hand — see
+/// [`crate::ontology::capability::catalogue`]. A rule emitted by a detector but
+/// missing here would be a finding an agent has no schema for, which is the
+/// undeclared-entity problem the reading ontology already refuses to have.
+///
+/// `tests/capability_conformance.rs` scans the detector source and fails if any
+/// `Finding::new` names a rule that is not in this list.
+pub const RULES: &[(&str, &str)] = &[
+    (
+        "file.became_unreadable",
+        "a watched file was readable at baseline and is not now",
+    ),
+    ("file.created", "a watched path now exists where it did not"),
+    ("file.deleted", "a watched file no longer exists"),
+    ("file.modified", "a watched file's contents changed"),
+    (
+        "file.unbaselined",
+        "a watched file has no baseline entry to compare against",
+    ),
+    ("file.unreadable", "a watched file could not be read"),
+    (
+        "net.listener_gone",
+        "a port in the baseline is no longer listening",
+    ),
+    (
+        "net.new_listener",
+        "a port is listening that was not in the baseline",
+    ),
+    (
+        "net.notable_port",
+        "a port conventionally used by remote-access tooling is listening",
+    ),
+];
+
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 
