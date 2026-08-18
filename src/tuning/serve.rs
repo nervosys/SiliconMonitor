@@ -275,15 +275,34 @@ pub fn cycle(mode: Mode, started: Instant) -> Cycle {
 /// Costs real time: each verified write spends two sampling windows plus the
 /// settle period. A loop running this needs an interval that accommodates it.
 pub fn cycle_verified(mode: Mode, started: Instant, policy: &VerifyPolicy) -> Cycle {
+    let mut scratch = crate::tuning::ledger::Ledger::new();
+    cycle_verified_with(mode, started, policy, &mut scratch)
+}
+
+/// A verified pass that remembers, across cycles, what it already learned.
+///
+/// Without a ledger the loop relearns every result forever: a setting measured
+/// as a regression is reverted, then proposed again next cycle, applied again,
+/// measured again, reverted again. Two writes and several seconds of sampling
+/// per interval, producing a machine that flaps between two configurations.
+/// [`cycle_verified`] passes a scratch ledger and therefore still does exactly
+/// that; it is kept for callers who genuinely want each cycle judged fresh, and
+/// this is the one to use for anything long-running.
+pub fn cycle_verified_with(
+    mode: Mode,
+    started: Instant,
+    policy: &VerifyPolicy,
+    ledger: &mut crate::tuning::ledger::Ledger,
+) -> Cycle {
     let signals = collect_signals();
     let classification = classify_from_signals(&signals);
-    cycle_inner(mode, started, classification, Some(policy))
+    cycle_inner(mode, started, classification, Some(policy), Some(ledger))
 }
 
 /// One pass with the classification already made, so a caller that classified by
 /// some other means — a model, or an explicit override — reuses the rest.
 pub fn cycle_with(mode: Mode, started: Instant, classification: Classification) -> Cycle {
-    cycle_inner(mode, started, classification, None)
+    cycle_inner(mode, started, classification, None, None)
 }
 
 /// `policy` present means measure each write and undo the ones that hurt.
@@ -292,6 +311,7 @@ fn cycle_inner(
     started: Instant,
     classification: Classification,
     policy: Option<&VerifyPolicy>,
+    mut ledger: Option<&mut crate::tuning::ledger::Ledger>,
 ) -> Cycle {
     let settings = current_settings();
     let plan = plan_from_settings(classification, &settings);
@@ -328,6 +348,16 @@ fn cycle_inner(
                 // refuses when the prior value could not be read, rather than
                 // making a change this loop could never undo -- there is nobody
                 // watching to be told that the way back was lost.
+                // What the loop already learned about this setting, before it
+                // spends two sampling windows learning it again.
+                if let Some(skip) = ledger.as_ref().and_then(|l| l.skip(&rec.setting_id)) {
+                    withheld.push(Withheld {
+                        setting_id: rec.setting_id.clone(),
+                        reason: skip.reason(&rec.setting_id),
+                    });
+                    continue;
+                }
+
                 let (outcome, verdict) = match policy {
                     Some(p) => {
                         let v = crate::tuning::verify::apply_verified(
@@ -352,6 +382,9 @@ fn cycle_inner(
                         None,
                     ),
                 };
+                if let (Some(l), Some(v)) = (ledger.as_mut(), verdict.as_ref()) {
+                    l.record(&rec.setting_id, v.clone());
+                }
                 applied.push(AppliedOutcome {
                     setting_id: rec.setting_id.clone(),
                     status: format!("{:?}", outcome.status),
@@ -606,6 +639,58 @@ mod tests {
         // refusal is visible in the result.
         assert_eq!(reverts[0].status, ApplyStatus::NotWritable);
         assert!(reverts[0].message.contains("no prior value"));
+    }
+
+    /// The loop stops relearning a result it already has.
+    ///
+    /// Without the ledger this is an infinite thrash: a setting measured as a
+    /// regression is reverted, proposed again next cycle, applied again,
+    /// measured again, reverted again — two writes and several seconds of
+    /// sampling per interval, forever, on a machine that flaps between two
+    /// configurations.
+    ///
+    /// Driven through the ledger rather than a live cycle because a live cycle
+    /// writes to the machine it runs on. What is under test is the gate: that a
+    /// recorded regression becomes a withheld recommendation carrying a reason,
+    /// and that an unverifiable result does not.
+    #[test]
+    fn a_measured_regression_is_withheld_on_the_next_cycle() {
+        use crate::tuning::ledger::{Ledger, Skip};
+
+        let mut ledger = Ledger::new();
+        ledger.record(
+            "scaling_governor",
+            crate::tuning::verify::Verdict::Regressed {
+                metric: "m".into(),
+                before: 10.0,
+                after: 20.0,
+                delta: 10.0,
+            },
+        );
+
+        let skip = ledger.skip("scaling_governor");
+        assert_eq!(skip, Some(Skip::Regressed));
+
+        let reason = skip.unwrap().reason("scaling_governor");
+        assert!(
+            reason.contains("scaling_governor") && reason.contains("regression"),
+            "a withheld recommendation must say what was measured, not merely that it was skipped: {reason}"
+        );
+
+        // The exception that keeps the loop alive: every setting is currently
+        // unverifiable, so if that counted as a result the loop would stop
+        // acting entirely after one cycle.
+        ledger.record(
+            "active_scheme_guid",
+            crate::tuning::verify::Verdict::Unverifiable {
+                reason: "no metric is declared".into(),
+            },
+        );
+        assert_eq!(
+            ledger.skip("active_scheme_guid"),
+            None,
+            "an absent measurement must not be treated as evidence against a setting"
+        );
     }
 
     /// A write that verification already undid must not be undone again.

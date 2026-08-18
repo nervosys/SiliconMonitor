@@ -37,6 +37,7 @@
 use crate::profile::{Setting, SettingRisk, SettingValue, Subsystem};
 use serde::{Deserialize, Serialize};
 
+pub mod ledger;
 pub mod serve;
 pub mod verify;
 
