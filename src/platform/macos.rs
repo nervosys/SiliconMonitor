@@ -385,13 +385,17 @@ pub fn read_cpu_stats() -> crate::error::Result<crate::core::cpu::CpuStats> {
         )
     })?;
 
-    // `machdep.cpu.brand_string` is absent on Apple Silicon, where the name lives
-    // under `machdep.cpu.brand_string` only for Intel. An empty string is left
-    // empty rather than filled with a guess: the resolver turns it into an
-    // unavailable reading with a reason, which is the honest outcome.
-    let model = sysctl_string("machdep.cpu.brand_string")
-        .or_else(|| sysctl_string("hw.model"))
-        .unwrap_or_default();
+    // Only the CPU brand string. An earlier version fell back to `hw.model`,
+    // which is the *machine* identifier — "Mac14,2" — and reporting that as the
+    // CPU model is a wrong reading rather than an absence. It also made the
+    // result unreadable: CI went green and there was no way to tell which of the
+    // two sysctls had answered, so `cpu.model` might have been a processor name
+    // or a chassis code and nothing distinguished them.
+    //
+    // Empty when the key is missing, which the resolver turns into an
+    // unavailable reading carrying a reason. That is the honest outcome and the
+    // one this crate's ontology asks for.
+    let model = sysctl_string("machdep.cpu.brand_string").unwrap_or_default();
 
     let cores = ticks
         .iter()
