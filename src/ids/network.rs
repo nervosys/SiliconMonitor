@@ -102,6 +102,16 @@ pub fn current_listeners() -> Result<BTreeSet<Listener>, String> {
 
     let mut out = BTreeSet::new();
     for c in connections {
+        // An unbound socket is not a listener. macOS reports these as `*.*` and
+        // they parse to port 0; nothing can connect to them, and including them
+        // would put entries in every baseline that differ between runs for
+        // reasons no reader could act on.
+        //
+        // Found because a test asserted no listener has port 0 — true on
+        // Windows, false on macOS, and only CI could say so.
+        if c.local_port == 0 {
+            continue;
+        }
         let externally_reachable = !c.local_ip.is_loopback();
         out.insert(Listener {
             protocol: format!("{:?}", c.protocol).to_lowercase(),
@@ -417,20 +427,33 @@ mod tests {
         assert_eq!(back, base);
     }
 
-    /// Against the machine this runs on. Not an assertion about what it finds —
-    /// that varies — but that enumeration works and reports honestly.
+    /// Against the machine this runs on: that enumeration either works or says
+    /// why, and that what it returns is internally consistent.
+    ///
+    /// The first version said "not an assertion about what it finds — that
+    /// varies" and then asserted every port was non-zero, which is exactly an
+    /// assertion about what it finds. It held on Windows and failed on macOS,
+    /// where unbound sockets report port 0. The filter for those now lives in
+    /// `current_listeners`, so this checks an invariant rather than the habit of
+    /// one platform.
     #[test]
     fn enumerating_this_machine_either_works_or_says_why() {
         match current_listeners() {
             Ok(ls) => {
                 for l in &ls {
-                    assert!(l.local_port > 0, "a listener on port 0 is not a reading");
+                    assert_ne!(
+                        l.local_port, 0,
+                        "current_listeners must filter unbound sockets: nothing can connect \n                         to them and they would churn every baseline",
+                    );
+                    assert!(
+                        !l.protocol.is_empty(),
+                        "a listener with no protocol is not a reading"
+                    );
                 }
             }
             Err(reason) => assert!(
                 !reason.is_empty(),
-                "a failure must carry a reason, or a caller cannot tell it from \
-                 a quiet machine"
+                "a failure must carry a reason, or a caller cannot tell it from a quiet machine"
             ),
         }
     }
