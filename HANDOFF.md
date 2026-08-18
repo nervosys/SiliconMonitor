@@ -355,6 +355,38 @@ feature stayed broken through eight published versions.
    sample again, and show the number move. That measurement belongs in the commit
    that adds the registry entry.
 
+   **A timed benchmark was tried as a way round the missing Windows metric, and
+   it is a dead end twice over.** The idea: if the reported clock is nominal,
+   measure achieved throughput instead. A fixed single-threaded integer workload,
+   nine samples, median of each:
+
+   | Scheme | Median | MAD |
+   |---|---|---|
+   | Balanced | 236.8 ms | 2.2 |
+   | High performance | 239.2 ms | 2.3 |
+
+   A delta of 2.4 ms against a noise band of 4.5 ms, with the sign backwards —
+   High performance nominally *slower*. By `verify`'s own threshold rule that is
+   `Unchanged`. A lightly loaded desktop boosts a single thread to the same place
+   under both schemes, so there is nothing for the scheme to change.
+
+   The second reason is the one that closes the avenue regardless of what a
+   sustained all-core run would have shown: **a metric that requires running a
+   benchmark is unusable in an autonomous tuner, because it competes with the
+   workload it is tuning for.** Burning every core for two seconds to find out
+   whether the machine got faster is self-defeating on a machine that was
+   already busy, and meaningless on one that was not.
+
+   So the metric has to be *passive observation of the real workload's own rate*.
+   simon already detects AI workloads and their frameworks; tokens per second off
+   a running inference server is the shape of thing that would work — it is the
+   user's own work, measured without perturbing it. That is the direction worth
+   taking, and it is a larger piece of work than a registry entry.
+
+   (Note for whoever repeats the benchmark: a constant seed makes the workload
+   pure and LLVM eliminates every call after the first. The first attempt printed
+   266 ms followed by eight zeros. `black_box` the inputs, not just the result.)
+
 ## The plan for what is left
 
 Items A–D are blocked on hardware this project does not have, and are
