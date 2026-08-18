@@ -447,11 +447,26 @@ pub fn read_memory_stats() -> crate::error::Result<crate::core::memory::MemorySt
         crate::error::SimonError::UnsupportedPlatform("hw.memsize was not readable".into())
     })?;
 
-    // Swap disabled is a reading of zero, not a failure, so a missing swapusage
-    // is the only case that goes absent — and it degrades to zeros here because
-    // `SwapInfo` has no way to say "unknown". That is a limitation of the struct
-    // rather than a claim about the machine.
-    let swap = swap_usage();
+    // A machine with swap disabled reports zeros through `vm.swapusage`, and
+    // that is a reading. A *failed* read is not, and `SwapInfo` has no way to
+    // tell them apart: its fields are plain `u64`.
+    //
+    // So a failed read fails the whole call rather than returning zeros. The
+    // resolver reads `swap.total == 0` as "no swap or pagefile configured" — a
+    // definite statement about the machine — and reaching that through an
+    // unreadable sysctl would be a confident falsehood. Losing the RAM figures
+    // alongside it is a real cost, and it is the smaller one: this crate's whole
+    // position is that an absence beats a wrong reading.
+    //
+    // Fixing it properly means `Option` fields on `SwapInfo`, which has 14
+    // construction sites and 80 field reads across two types of that name. Worth
+    // doing, too large to do here.
+    let swap = swap_usage().ok_or_else(|| {
+        crate::error::SimonError::Parse(
+            "vm.swapusage was not readable, and reporting zero swap would claim              this machine has none"
+                .into(),
+        )
+    })?;
 
     Ok(MemoryStats {
         ram: RamInfo {
@@ -465,8 +480,8 @@ pub fn read_memory_stats() -> crate::error::Result<crate::core::memory::MemorySt
             lfb: None,
         },
         swap: SwapInfo {
-            total: swap.map(|s| s.total / 1024).unwrap_or(0),
-            used: swap.map(|s| s.used / 1024).unwrap_or(0),
+            total: swap.total / 1024,
+            used: swap.used / 1024,
             cached: 0,
         },
         emc: None,

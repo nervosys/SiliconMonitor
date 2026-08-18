@@ -273,13 +273,16 @@ fn resolve_cpu(out: &mut Vec<Reading>) {
 
     let stats = read_cpu_stats();
 
-    let Some(stats) = stats else {
-        out.push(Reading::unavailable(
-            "cpu.total.utilization",
-            Some(Unit::Percent),
-            "the platform CPU reader returned an error",
-        ));
-        return;
+    let stats = match stats {
+        Ok(s) => s,
+        Err(why) => {
+            out.push(Reading::unavailable(
+                "cpu.total.utilization",
+                Some(Unit::Percent),
+                format!("the platform CPU reader failed: {why}"),
+            ));
+            return;
+        }
     };
 
     out.push(Reading::derived(
@@ -384,19 +387,22 @@ fn resolve_memory(out: &mut Vec<Reading>) {
     // below, so it runs first and still resolves if those fail.
     resolve_memory_dimms(out);
 
-    let Some(stats) = read_memory_stats() else {
-        for (id, unit) in [
-            ("memory.total", Unit::Bytes),
-            ("memory.used", Unit::Bytes),
-            ("memory.utilization", Unit::Percent),
-        ] {
-            out.push(Reading::unavailable(
-                id,
-                Some(unit),
-                "the platform memory reader returned an error",
-            ));
+    let stats = match read_memory_stats() {
+        Ok(s) => s,
+        Err(why) => {
+            for (id, unit) in [
+                ("memory.total", Unit::Bytes),
+                ("memory.used", Unit::Bytes),
+                ("memory.utilization", Unit::Percent),
+            ] {
+                out.push(Reading::unavailable(
+                    id,
+                    Some(unit),
+                    format!("the platform memory reader failed: {why}"),
+                ));
+            }
+            return;
         }
-        return;
     };
 
     // Core readers work in KB; the ontology declares bytes.
@@ -1477,41 +1483,49 @@ fn push_opt(
     }
 }
 
-fn read_cpu_stats() -> Option<crate::core::cpu::CpuStats> {
+/// The platform CPU reader, keeping the error text.
+///
+/// `.ok()` threw it away, so every failure surfaced as the same sentence — "the
+/// platform CPU reader returned an error" — with no way to tell a permission
+/// problem from a parse failure from an unimplemented platform. There is a test
+/// called `every_absence_carries_a_usable_reason`; a constant string satisfies
+/// it and tells a reader nothing.
+fn read_cpu_stats() -> Result<crate::core::cpu::CpuStats, String> {
     #[cfg(windows)]
     {
-        crate::platform::windows::read_cpu_stats().ok()
+        crate::platform::windows::read_cpu_stats().map_err(|e| e.to_string())
     }
     #[cfg(target_os = "linux")]
     {
-        crate::platform::linux::read_cpu_stats().ok()
+        crate::platform::linux::read_cpu_stats().map_err(|e| e.to_string())
     }
     #[cfg(target_os = "macos")]
     {
-        crate::platform::macos::read_cpu_stats().ok()
+        crate::platform::macos::read_cpu_stats().map_err(|e| e.to_string())
     }
     #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
     {
-        None
+        Err("no CPU reader is implemented for this platform".to_string())
     }
 }
 
-fn read_memory_stats() -> Option<crate::core::memory::MemoryStats> {
+/// The platform memory reader, keeping the error text. See [`read_cpu_stats`].
+fn read_memory_stats() -> Result<crate::core::memory::MemoryStats, String> {
     #[cfg(windows)]
     {
-        crate::platform::windows::read_memory_stats().ok()
+        crate::platform::windows::read_memory_stats().map_err(|e| e.to_string())
     }
     #[cfg(target_os = "linux")]
     {
-        crate::platform::linux::read_memory_stats().ok()
+        crate::platform::linux::read_memory_stats().map_err(|e| e.to_string())
     }
     #[cfg(target_os = "macos")]
     {
-        crate::platform::macos::read_memory_stats().ok()
+        crate::platform::macos::read_memory_stats().map_err(|e| e.to_string())
     }
     #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
     {
-        None
+        Err("no memory reader is implemented for this platform".to_string())
     }
 }
 
