@@ -33,7 +33,10 @@ Silicon Monitor is a powerful, cross-platform hardware monitoring utility design
 
 ## Overview
 
-Silicon Monitor provides comprehensive hardware monitoring:
+Silicon Monitor reads hardware across Linux, Windows and macOS. What it reads
+varies by platform and by machine, and it is built to say which — see
+[What simon cannot do](#what-simon-cannot-do).
+
 
 - **🛠 Hardware Profile Inspector**: NVIDIA Profile Inspector / Intel XTU / AMD Ryzen Master / nvme-cli equivalents — read & (selectively) write driver profiles, per-app NVIDIA DRS data, CPU power limits, NVMe Get-Features, EDID/XMP/EXPO, with audit-logged apply layer. See [`simon profile --help`](#hardware-profile-inspector).
 - **🎮 GPU Monitoring**: NVIDIA, AMD, and Intel GPUs with utilization, memory, temperature, power, and process tracking
@@ -55,6 +58,63 @@ Silicon Monitor provides comprehensive hardware monitoring:
 - **💻 CLI**: Structured command-line output with JSON support for scripting and automation
 - **🖥️ TUI**: Beautiful terminal interface with real-time graphs, selectable themes, and integrated AI chat
 - **🪟 GUI**: Native desktop application with multiple themes and visualizations
+
+## What simon cannot do
+
+Every item here is something the project has checked and can point at, not a
+disclaimer. simon's whole design position is that an absence reported honestly
+beats a confident wrong answer, and that applies to its own capabilities.
+
+**Readings that are not what their name suggests**
+
+- **CPU frequency on Windows is nominal, not live.** It comes from
+  `CallNtPowerInformation(ProcessorInformation)`, and on the development machine
+  it read exactly 4400 MHz while sixteen busy threads took system idle from 79.7%
+  to 11.4%. Treat it as the rated clock. There is no unelevated live figure.
+- **CPU percentages on Linux and macOS are averages since boot**, derived from
+  cumulative tick counters, not instantaneous rates. The TUI and GUI graphs are
+  built from repeated samples and do show change over time; a single `simon cpu`
+  is not a snapshot of this second.
+- **macOS has no GPU, power or temperature readers.** `Simon::snapshot()` fails
+  there because it requires all of them. `Simon::cpu()`, `memory()` and
+  `uptime()` work.
+
+**Code that compiles everywhere and has not run everywhere**
+
+- **The Windows ATA SMART parser has never met a SATA drive.** It is tested only
+  against buffers this project constructed. The development machine has NVMe
+  only, where the path correctly declines.
+- **The Linux profile writers have never executed.** `scaling_governor`,
+  `perf_level` and `gt_max_freq_mhz` are written by inspection and checked by the
+  compiler and CI. No Linux machine in this project's history has run them.
+- **macOS readers are checked for plausibility, not correctness.** CI asserts the
+  numbers are in sensible ranges. Nobody has compared them against Activity
+  Monitor.
+
+**Things that are structurally out of reach**
+
+- **`simon tune` can apply settings and currently cannot verify them.** The
+  verification loop is implemented and its metric registry is deliberately empty:
+  every candidate metric was checked and none survived. Applying a setting
+  therefore reports `unverifiable` rather than an improvement. That is the honest
+  output, not a placeholder — see `src/tuning/verify.rs`.
+- **Intrusion detection watches socket tables, not traffic.** simon cannot see
+  packet contents, so it detects what is *listening* and what changed against a
+  baseline. File integrity covers an explicit watchlist, not a filesystem sweep,
+  and choosing that watchlist is the part that decides whether it is useful.
+- **A first intrusion scan cannot report a machine clean.** It returns
+  `no_baseline` and records one. A baseline taken after a compromise records the
+  compromise.
+- **The ontology declares entities no resolver reads yet.** Those resolve as
+  `unavailable` with the reason "no resolver bound on this build" rather than
+  being omitted, so an agent can tell "this machine has no such device" from
+  "simon cannot read this". `simon snapshot --validate` reports the coverage.
+
+**Nothing here writes without being told twice**
+
+Applying a setting requires `--confirm` and is recorded in an audit log. The
+library never elevates itself. The intrusion detector observes only: it will not
+block a connection, kill a process, or quarantine a file.
 
 ## Features
 
@@ -419,7 +479,7 @@ The CLI provides two binary names optimized for different use cases:
 
 #### `simon` - Full Silicon Monitor
 
-Complete hardware monitoring with subcommands for specific metrics:
+Subcommands for specific metrics:
 
 ```bash
 # No subcommand: launches the GUI, or the TUI if built without the `gui` feature
@@ -809,7 +869,7 @@ println!("{}", response.response);
 ### Agent Features
 
 - **Natural Language**: Ask questions in plain English
-- **System Aware**: Accesses real-time hardware metrics
+- **System Aware**: Reads the same hardware metrics the CLI does, with the same caveats — CPU percentages on Linux and macOS are averages since boot, not instantaneous rates
 - **Multiple Backends**: Automatic detection of local and remote AI models
 - **Local by Default**: Prefers backends that keep telemetry on your machine
 - **Smart Caching**: Remembers recent queries for instant responses
@@ -1388,3 +1448,4 @@ Special thanks to the Rust community and the maintainers of the following crates
 ---
 
 Made with 🦾 by NERVOSYS
+
