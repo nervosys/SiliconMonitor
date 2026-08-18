@@ -356,6 +356,120 @@ pub fn swap_usage() -> Option<SwapUsage> {
     parse_swapusage(&run("sysctl", &["-n", "vm.swapusage"])?)
 }
 
+/// Assemble [`CpuStats`] the way the ontology resolver expects it.
+///
+/// This existed as scattered primitives — `per_core_ticks`, `aggregate_ticks`,
+/// `sysctl_string` — and nothing assembled them, so
+/// `ontology::resolve::read_cpu_stats` had no macOS arm and returned `None`. The
+/// resolver then reported `cpu.total.utilization` as "the platform CPU reader
+/// returned an error", which was not true: no reader had been called. Four more
+/// entities came back as "no resolver bound on this build" while the readers sat
+/// here unused.
+///
+/// Per-core ticks are the source rather than `top`, because they are the only
+/// one carrying nice time, and because a percentage derived from cumulative
+/// counters is the same quantity Linux reports from `/proc/stat`.
+#[cfg(target_os = "macos")]
+pub fn read_cpu_stats() -> crate::error::Result<crate::core::cpu::CpuStats> {
+    use crate::core::cpu::{CpuCore, CpuStats, CpuTotal};
+
+    let ticks = per_core_ticks().ok_or_else(|| {
+        crate::error::SimonError::UnsupportedPlatform(
+            "host_processor_info returned no per-core ticks".into(),
+        )
+    })?;
+
+    let total_usage = aggregate_ticks(&ticks).percentages().ok_or_else(|| {
+        crate::error::SimonError::Parse(
+            "per-core tick counters summed to zero, which means they were not read".into(),
+        )
+    })?;
+
+    // `machdep.cpu.brand_string` is absent on Apple Silicon, where the name lives
+    // under `machdep.cpu.brand_string` only for Intel. An empty string is left
+    // empty rather than filled with a guess: the resolver turns it into an
+    // unavailable reading with a reason, which is the honest outcome.
+    let model = sysctl_string("machdep.cpu.brand_string")
+        .or_else(|| sysctl_string("hw.model"))
+        .unwrap_or_default();
+
+    let cores = ticks
+        .iter()
+        .enumerate()
+        .map(|(id, t)| {
+            let pct = t.percentages();
+            CpuCore {
+                id,
+                online: true,
+                // macOS exposes no governor. Empty rather than invented; the
+                // resolver reports an empty string as unavailable.
+                governor: String::new(),
+                // No unelevated source of live per-core frequency on macOS.
+                // `None` says that; a nominal figure would repeat the mistake
+                // Windows makes with `CurrentMhz`.
+                frequency: None,
+                user: pct.map(|p| p.user),
+                nice: pct.map(|p| p.nice),
+                system: pct.map(|p| p.system),
+                idle: pct.map(|p| p.idle),
+                model: model.clone(),
+            }
+        })
+        .collect();
+
+    Ok(CpuStats {
+        cores,
+        total: CpuTotal {
+            user: total_usage.user,
+            nice: total_usage.nice,
+            system: total_usage.system,
+            idle: total_usage.idle,
+        },
+    })
+}
+
+/// Assemble [`MemoryStats`] from `vm_stat`, `hw.memsize` and `vm.swapusage`.
+///
+/// Units: the core structs are in KB, `vm_stat` counts pages and `swapusage`
+/// reports bytes, so both are converted here rather than at the call site.
+#[cfg(target_os = "macos")]
+pub fn read_memory_stats() -> crate::error::Result<crate::core::memory::MemoryStats> {
+    use crate::core::memory::{MemoryStats, RamInfo, SwapInfo};
+
+    let vm = vm_stat().ok_or_else(|| {
+        crate::error::SimonError::Parse("vm_stat produced no parseable output".into())
+    })?;
+    let total_bytes = sysctl_u64("hw.memsize").ok_or_else(|| {
+        crate::error::SimonError::UnsupportedPlatform("hw.memsize was not readable".into())
+    })?;
+
+    // Swap disabled is a reading of zero, not a failure, so a missing swapusage
+    // is the only case that goes absent — and it degrades to zeros here because
+    // `SwapInfo` has no way to say "unknown". That is a limitation of the struct
+    // rather than a claim about the machine.
+    let swap = swap_usage();
+
+    Ok(MemoryStats {
+        ram: RamInfo {
+            total: total_bytes / 1024,
+            used: vm.used_bytes() / 1024,
+            free: vm.free_bytes() / 1024,
+            // macOS has no buffer pool distinct from the file cache.
+            buffers: 0,
+            cached: vm.cached_bytes() / 1024,
+            shared: 0,
+            lfb: None,
+        },
+        swap: SwapInfo {
+            total: swap.map(|s| s.total / 1024).unwrap_or(0),
+            used: swap.map(|s| s.used / 1024).unwrap_or(0),
+            cached: 0,
+        },
+        emc: None,
+        iram: None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

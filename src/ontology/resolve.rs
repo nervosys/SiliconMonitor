@@ -1440,7 +1440,11 @@ fn read_cpu_stats() -> Option<crate::core::cpu::CpuStats> {
     {
         crate::platform::linux::read_cpu_stats().ok()
     }
-    #[cfg(not(any(windows, target_os = "linux")))]
+    #[cfg(target_os = "macos")]
+    {
+        crate::platform::macos::read_cpu_stats().ok()
+    }
+    #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
     {
         None
     }
@@ -1455,7 +1459,11 @@ fn read_memory_stats() -> Option<crate::core::memory::MemoryStats> {
     {
         crate::platform::linux::read_memory_stats().ok()
     }
-    #[cfg(not(any(windows, target_os = "linux")))]
+    #[cfg(target_os = "macos")]
+    {
+        crate::platform::macos::read_memory_stats().ok()
+    }
+    #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
     {
         None
     }
