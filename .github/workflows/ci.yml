@@ -103,6 +103,20 @@ jobs:
     name: Test
     runs-on: ${{ matrix.os }}
     strategy:
+      # Every platform reports, even when another has already failed.
+      #
+      # With the default fail-fast, one red platform cancels the other two and
+      # the run says only "something broke somewhere". Seven defects were found
+      # in this suite over a week in August 2026, and they surfaced one per push
+      # rather than together: macOS failing cancelled Linux, so the Linux
+      # failures were invisible until macOS was fixed, and the next Linux
+      # failure was invisible until that one was. Three of the seven could only
+      # be reproduced on a platform the author did not have.
+      #
+      # A cancelled job is not a passing job, and a matrix that stops at the
+      # first failure turns a three-platform check into a one-platform check
+      # whose platform is whichever finished first.
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
