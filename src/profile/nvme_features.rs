@@ -287,10 +287,7 @@ fn issue_get_features(fd: i32, fid: u32) -> std::io::Result<u32> {
     }
     if rc != 0 {
         // NVMe returns the Status Field as the ioctl return when non-zero.
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            format!("NVMe status 0x{:04x}", rc),
-        ));
+        return Err(std::io::Error::other(format!("NVMe status 0x{rc:04x}")));
     }
     Ok(cmd.result)
 }

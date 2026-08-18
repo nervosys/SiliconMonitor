@@ -698,12 +698,12 @@ pub fn get_system_temperatures() -> Result<SystemTemperatures, Error> {
                 match ts.sensor_type {
                     SensorType::Cpu => {
                         // Get the highest CPU temperature
-                        if cpu_temp.map_or(true, |t| ts.temperature > t) {
+                        if cpu_temp.is_none_or(|t| ts.temperature > t) {
                             cpu_temp = Some(ts.temperature);
                         }
                     }
                     SensorType::Chipset | SensorType::Ambient | SensorType::Vrm => {
-                        if mb_temp.map_or(true, |t| ts.temperature > t) {
+                        if mb_temp.is_none_or(|t| ts.temperature > t) {
                             mb_temp = Some(ts.temperature);
                         }
                     }

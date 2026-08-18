@@ -926,10 +926,26 @@ mod tests {
 
     /// A revert is a write, so it needs confirmation on the same terms.
     /// Otherwise an autonomous loop would have an unconfirmed write path.
+    ///
+    /// The refusal's *form* is platform-dependent and the invariant is not.
+    /// `apply_setting` looks the handler up before checking confirmation, so a
+    /// setting with no handler on this platform is refused as `NotWritable`
+    /// rather than `NeedsConfirm` — deliberately, because telling someone to
+    /// pass `--confirm` for a setting that can never be written here sends them
+    /// down a dead end.
+    ///
+    /// This test asserted `NeedsConfirm` unconditionally against
+    /// `active_scheme_guid`, which only exists on Windows. It passed on the
+    /// machine that wrote it and failed on macOS in CI, where the crate
+    /// registers no writable settings at all. The registry is asked directly
+    /// rather than restating its `cfg`s here, so a handler that gains or loses
+    /// a platform does not silently make this test vacuous.
     #[test]
     fn revert_without_confirmation_is_refused() {
+        const SETTING: &str = "active_scheme_guid";
+
         let applied = ApplyOutcome {
-            setting_id: "active_scheme_guid".into(),
+            setting_id: SETTING.into(),
             subsystem: Subsystem::Cpu,
             requested: SettingValue::Text("381b4222-f694-41f0-9685-ff5bb260df2e".into()),
             status: ApplyStatus::Applied,
@@ -939,8 +955,34 @@ mod tests {
                 "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c".into(),
             )),
         };
+
+        let registered = builtin_handlers()
+            .into_iter()
+            .any(|h| h.setting_id() == SETTING);
         let out = revert_setting(&applied, false);
-        assert_eq!(out.status, ApplyStatus::NeedsConfirm);
+
+        // The part that holds everywhere, and the part that matters: an
+        // unconfirmed revert never writes.
+        assert_ne!(
+            out.status,
+            ApplyStatus::Applied,
+            "an unconfirmed revert must never take effect"
+        );
+
+        if registered {
+            assert_eq!(
+                out.status,
+                ApplyStatus::NeedsConfirm,
+                "a handler exists, so the refusal must be about the missing confirmation"
+            );
+        } else {
+            assert_eq!(
+                out.status,
+                ApplyStatus::NotWritable,
+                "no handler on this platform, so the refusal must say that instead \
+                 of asking for a confirmation that would not help"
+            );
+        }
     }
 
     /// The prior value round-trips through serialisation, so an outcome
