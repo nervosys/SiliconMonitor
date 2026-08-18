@@ -473,9 +473,16 @@ pub fn read_memory_stats() -> crate::error::Result<crate::core::memory::MemorySt
             total: total_bytes / 1024,
             used: vm.used_bytes() / 1024,
             free: vm.free_bytes() / 1024,
-            // macOS has no buffer pool distinct from the file cache.
+            // macOS keeps no buffer pool distinct from the file cache, so zero
+            // here is a fact about the platform rather than a missing reading.
             buffers: 0,
             cached: vm.cached_bytes() / 1024,
+            // This one is *not* a fact. macOS has shared memory; simon does not
+            // read it, and `RamInfo::shared` is a plain `u64` with no way to say
+            // so. Nothing in the ontology surfaces this field, so no agent is
+            // told a falsehood today — but a library caller reading
+            // `MemoryStats` is, and the honest fix is the same `Option` change
+            // `SwapInfo` needs.
             shared: 0,
             lfb: None,
         },

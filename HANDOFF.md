@@ -421,6 +421,44 @@ feature stayed broken through eight published versions.
    pure and LLVM eliminates every call after the first. The first attempt printed
    266 ms followed by eight zeros. `black_box` the inputs, not just the result.)
 
+## Queued for the next major version
+
+Three fixes that are correct, identified, and breaking. They live in code
+comments at their sites, which is where the person fixing them will look and not
+where the person planning a release will. Collected here for that reason.
+
+Each is the same underlying fault: **a type with no way to say "not read"**, so
+absence is encoded as zero and becomes indistinguishable from a measurement of
+zero. That is the one distinction this crate exists to preserve, and these three
+places cannot preserve it without an API change.
+
+1. **Rename the zero-constructors.** `CpuStats::new()`, `MemoryStats::new()`,
+   `PowerStats::new()` and `ProcessStats::new()` return fabricated numbers behind
+   a name that reads like a proper constructor — 100% idle, 0 W, 0 bytes.
+   `empty()` or `zeroed()` would have prevented the two GUI defects this has
+   already caused. `tests/zero_constructors.rs` pins the set at four so a fifth
+   is noticed; it does not fix them. See open work 10.
+
+2. **`Option` fields on `SwapInfo`.** `total: 0` currently means both "this
+   machine has no swap" and "the reader failed", and the ontology resolver reads
+   it as the first: `memory.swap.total == 0` becomes "no swap or pagefile
+   configured", a definite claim. The macOS reader now fails the whole memory
+   read rather than pass a zero through, which is honest and costs the RAM
+   figures with it. That trade goes away once the type can say "unknown".
+   14 construction sites, 80 field reads, across two different types named
+   `SwapInfo`.
+
+3. **`Option` fields on `RamInfo`, or a documented contract for its zeros.**
+   `RamInfo::shared` is 0 on macOS because simon does not read it, not because
+   the machine shares nothing. No ontology entity surfaces the field, so no agent
+   is misled today — a library caller reading `MemoryStats` directly is.
+   `buffers: 0` on macOS is fine and should stay: that platform keeps no buffer
+   pool distinct from the file cache, so the zero is a fact.
+
+None of these are urgent and none should be done piecemeal — they are one
+change of principle applied in three places, and doing them together is what
+makes the principle legible in the diff.
+
 ## The plan for what is left
 
 Items A–D are blocked on hardware this project does not have, and are
