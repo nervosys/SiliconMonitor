@@ -195,6 +195,7 @@ pub mod codec; // Hardware codec and media capability detection
 pub mod cpu_cache; // CPU cache topology (L1/L2/L3 sizes, associativity)
 pub mod firmware; // Firmware inventory (BIOS, ME, NIC, storage)
 pub mod hardware_ai; // AI-based hardware inference engine
+pub mod ids; // Network and file intrusion detection: observe and report, never block
 pub mod input; // Input device monitoring (keyboards, mice, touchpads, game controllers)
 pub mod numa; // NUMA topology and memory affinity
 pub mod os_info; // OS and kernel information (version, modules, boot info)
