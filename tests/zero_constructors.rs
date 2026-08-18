@@ -163,6 +163,17 @@ fn brace_body(src: &str, from: usize) -> Option<String> {
 ///
 /// An empty `Vec` or `HashMap` is a container with nothing in it, which is
 /// honest. `power: 0` is a claim that the draw was measured at zero.
+///
+/// **Known false negatives, so nobody reads a pass here as a proof.** A literal
+/// is required, so `idle: DEFAULT_IDLE` escapes even though a named constant
+/// fabricates exactly as effectively as `100.0` does. `true` is not flagged
+/// either — only `false` — because a struct of flags set true is usually a
+/// builder rather than a fabricated reading, and flagging every one of them
+/// would bury the signal.
+///
+/// This narrows 150 constructors to a list a person can read. It does not
+/// certify the remainder, and the four it does find were confirmed by reading
+/// them.
 fn fabricates_a_number(body: &str) -> bool {
     for (i, c) in body.char_indices() {
         if c != ':' {
