@@ -170,13 +170,23 @@ fn readings_claimed_usable_here_actually_resolve() {
             .filter(|r| r.is_observation())
             .count();
 
+        // A capability describes what this *build* can read, not what this
+        // *machine* has. A CI runner with no GPU produces no gpu observations and
+        // that is correct - which the first version of this test got wrong, failing
+        // on Linux and Windows in CI while passing on a workstation with three
+        // adapters.
+        //
+        // So the requirement is that simon says something either way: readings, or
+        // the declared `<none>` diagnostic carrying the reason. Silence is the
+        // failure, and it is the one this crate exists to prevent.
+        let explained_absence = snapshot.iter().any(|r| r.id == format!("{domain}.<none>"));
+
         assert!(
-            observed > 0,
-            "{} claims to be usable on {} and produced no observation at all in a \
-             live snapshot. Either the reader is broken or the claim is wrong; \
-             both are worth failing over.",
+            observed > 0 || explained_absence,
+            "{} claims to be usable on {} and produced neither an observation nor a {}.<none> diagnostic. Either the reader is broken or it is staying silent about finding nothing, and silence is the answer this crate must never give.",
             c.id,
-            here.as_str()
+            here.as_str(),
+            domain
         );
     }
 }
@@ -329,9 +339,26 @@ fn every_interface_module_is_declared() {
 #[test]
 fn every_surface_has_at_least_one_capability() {
     let cat = capability::catalogue();
+    let handlers = simonlib::profile::apply::builtin_handlers().len();
+
     for surface in Surface::ALL {
+        let declared = cat.iter().filter(|c| c.surface == *surface).count();
+
+        // Settings are derived from the registered write handlers, and a platform
+        // may legitimately register none - macOS does. An empty Setting surface
+        // there is the truth rather than a gap, and the first version of this test
+        // asserted otherwise and failed in CI.
+        if *surface == Surface::Setting {
+            assert_eq!(
+                declared > 0,
+                handlers > 0,
+                "the setting surface has {declared} capabilities and {handlers} registered handlers. Those must agree: capabilities without handlers promise writes the binary cannot perform, and handlers without capabilities hide writes it can."
+            );
+            continue;
+        }
+
         assert!(
-            cat.iter().any(|c| c.surface == *surface),
+            declared > 0,
             "the {} surface is declared in the type and described by nothing",
             surface.as_str()
         );
