@@ -3732,6 +3732,16 @@ fn handle_vault_models(format: &str) -> Result<(), Box<dyn std::error::Error>> {
                 format_bytes_short(report.total_size_bytes),
                 format_bytes_short(report.total_compressed_bytes),
             );
+            // A field nothing prints is a field that was dropped, just with more
+            // steps. These models exist in the vault and are in neither total.
+            if !report.versionless.is_empty() {
+                println!(
+                    "
+{} model(s) listed with no versions, so nothing about their                      size was read: {}",
+                    report.versionless.len(),
+                    report.versionless.join(", ")
+                );
+            }
         }
     }
     Ok(())

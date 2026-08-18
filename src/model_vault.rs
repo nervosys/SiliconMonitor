@@ -87,6 +87,15 @@ pub struct VaultReport {
     /// nobody wonders whether a locked vault is being under-reported: it is not.
     pub unlocked: bool,
     pub models: Vec<VaultModel>,
+    /// Models the vault lists but which carry no versions.
+    ///
+    /// A vault inconsistency rather than a normal state, and named rather than
+    /// dropped: a listing that quietly omits them reports a vault with fewer
+    /// models than it has. They contribute to neither total, because nothing
+    /// about their size was ever read.
+    #[serde(default)]
+    pub versionless: Vec<String>,
+    /// Sums over `models` only. Excludes anything in `versionless`.
     pub total_size_bytes: u64,
     pub total_compressed_bytes: u64,
 }
@@ -163,17 +172,21 @@ pub fn read_vault() -> VaultStatus {
     // here, say so and create nothing. `VaultConfig::new` would otherwise write
     // a config tree into the home directory of someone who only asked a
     // question.
-    if installed().is_none() {
+    let Some(config_dir) = installed() else {
         return VaultStatus::NotInstalled;
-    }
+    };
 
     let mut config = match ironvault::VaultConfig::new() {
         Ok(c) => c,
         Err(e) => {
+            // The directory the probe found, not an empty path. An earlier
+            // version put `PathBuf::new()` here, which is the same defect
+            // `NotInstalled` was added to remove — it just survived in a
+            // different arm, so a caller asking where simon looked got "".
             return VaultStatus::Failed {
-                path: PathBuf::new(),
+                path: config_dir,
                 reason: format!("could not resolve the vault configuration: {e}"),
-            }
+            };
         }
     };
 
@@ -200,11 +213,16 @@ pub fn read_vault() -> VaultStatus {
     };
 
     let mut models = Vec::new();
+    let mut versionless = Vec::new();
     for name in vault.list_models() {
         let versions = vault.list_versions(&name);
-        // A model with no versions is a vault inconsistency, not something to
-        // paper over with zeros: skip it rather than invent a 0-byte entry.
+        // A model with no versions is a vault inconsistency. Inventing a 0-byte
+        // entry would report a size that was never measured; dropping it
+        // silently would report a vault with fewer models than it has, and
+        // silence is the one answer this crate must not give. So it is named
+        // separately and counted nowhere else.
         let Some(latest) = versions.iter().max_by_key(|v| v.version) else {
+            versionless.push(name);
             continue;
         };
         models.push(VaultModel {
@@ -224,6 +242,7 @@ pub fn read_vault() -> VaultStatus {
         });
     }
     models.sort_by(|a, b| a.name.cmp(&b.name));
+    versionless.sort();
 
     let total_size_bytes = models.iter().map(|m| m.size_bytes).sum();
     let total_compressed_bytes = models.iter().map(|m| m.compressed_size_bytes).sum();
@@ -232,6 +251,7 @@ pub fn read_vault() -> VaultStatus {
         path,
         unlocked: vault.is_unlocked(),
         models,
+        versionless,
         total_size_bytes,
         total_compressed_bytes,
     }))
@@ -256,6 +276,7 @@ mod tests {
             path: PathBuf::from("/somewhere"),
             unlocked: false,
             models: vec![],
+            versionless: vec![],
             total_size_bytes: 0,
             total_compressed_bytes: 0,
         }));
