@@ -26,7 +26,7 @@ Current as of 5.0.0. This file is excluded from the published crate
 | 4.0.4 | Dewey Overview rebuilt from the egui widget vocabulary. Published, tagged `v4.0.4`. Withdrawn. |
 | 5.0.0 | **The Dewey port is withdrawn and the egui GUI restored.** Claimed MSRV back to 1.70 — which was not true, see 5.2.0. Published, tagged `v5.0.0`. See open work 9. |
 | 5.1.0 | Applied settings are reversible: `read_current`, `ApplyOutcome.previous`, `revert_setting`, `revert_cycle`. Published, tagged `v5.1.0`. See open work 13. |
-| 5.2.0 | `simon ai models` reads an IronVault vault, behind an optional `vault` feature. **MSRV corrected to 1.88**, having been wrong since 5.0.0. |
+| 5.2.0 | `simon ai models` reads an IronVault vault, behind an optional `vault` feature. **MSRV corrected to 1.88**, having been wrong since 5.0.0. The tuning loop is closed (open work 13). **CI made green after twelve consecutive failures**; macOS CPU/memory wired into the resolver. Tagged `v5.2.0`, **not published**. |
 | 2.1.5 | Committed, never published. Documentation only; superseded by 3.0.0. |
 
 ## Verification that is worth repeating
@@ -53,6 +53,28 @@ The corollary bit in the other direction too: raising the declared floor to 1.88
 un-gated ten clippy lints that `incompatible_msrv` had been silently suppressing
 at 1.70. A wrong `rust-version` does not merely mislead readers — it changes
 which lints run.
+
+**Read CI before believing a green local run.** Every job had failed on every
+run for over a week — twelve consecutive, spanning the 5.0.0 and 5.1.0 releases —
+while local suites on Windows were green throughout. Seven defects were hiding in
+there, and each was invisible until the one before it was fixed, because a
+failing job cancels the rest of the matrix.
+
+Three of the seven could not be reproduced on this machine on principle: two
+needed a box with no GPU, one needed a Mac. Two more lived in
+`cfg(target_os = "linux")` code that a Windows compiler never reads. **A local
+`cargo test` says nothing whatsoever about the other two platforms**, and saying
+"the full suite passes" on the strength of one is how those shipped.
+
+```bash
+gh run list --limit 5    # before claiming anything is green
+```
+
+The failure mode to recognise: a pipeline that is always red and a test suite
+that checks nothing are the same instrument. Both return a constant, and a
+constant carries no information. This project has now been bitten three times —
+839 passing tests over a GUI that reported no GPUs on a three-GPU machine, an
+intermittent failure at three runs in five that read as noise, and this.
 
 The two cross-target checks need only `rustup target add …` — no C toolchain, no
 VM. They are the fastest way to catch platform breakage from a Windows box, and
@@ -96,6 +118,18 @@ feature stayed broken through eight published versions.
    on `macos-latest`, which checks that readings are *plausible* — not that they
    are *correct*. Comparing `Simon::cpu()` and `memory()` against Activity Monitor
    once would settle whether the `vm_stat` accounting matches what a user sees.
+
+   5.2.0 closed part of this. `platform::macos::read_cpu_stats` and
+   `read_memory_stats` now exist and are wired into the ontology resolver, which
+   previously had no macOS arm at all and reported "the platform CPU reader
+   returned an error" for readers it had never called. Eight entities were
+   affected, four of them non-nullable. They resolve on `macos-latest` now — the
+   first time this code has executed anywhere.
+
+   Still true, and still the reason this item is open: *plausible* is not
+   *correct*. Nothing has compared these numbers against Activity Monitor, and
+   the `vm_stat` used/free split is a judgement about which pages count as in
+   use, which a conformance test cannot check.
 
 3. **The Linux SMART/NVMe paths have executed exactly once**, in CI on
    `33ee241` — 733 tests, 0 failures. No one has run them against real Linux

@@ -48,6 +48,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   revert would restore the value the loop had just measured as worse.
 
 
+- **macOS CPU and memory now resolve in the ontology.** `read_cpu_stats` and
+  `read_memory_stats` in the resolver had no macOS arm: they returned `None`
+  unconditionally, and the resolver then reported "the platform CPU reader
+  returned an error" — which was false, since no reader had been called.
+
+  Eight entities were affected. `cpu.total.utilization`, `memory.total`,
+  `memory.used` and `memory.utilization` carried that fabricated cause;
+  `cpu.model`, `cpu.cores.logical`, `cpu.cores.physical` and `cpu.total.idle`
+  came back as "no resolver bound on this build", all four of them declared
+  non-nullable, so the schema was promising values it never delivered.
+
+  Everything needed was already in `platform::macos` and unused — `per_core_ticks`
+  (the only source of nice time), `aggregate_ticks`, `vm_stat`, `sysctl_u64`,
+  `swap_usage`. This adds the two adapters that assemble them and wires both
+  resolvers. Where macOS genuinely has nothing it says so: `governor` is left
+  empty, which the resolver reports as unavailable with a reason, and per-core
+  frequency is `None` rather than a nominal figure — the mistake Windows makes
+  with `CurrentMhz`, documented in `tuning::verify`.
+
+  Verified on `macos-latest` in CI, which is the first time these readers have
+  executed at all.
+
 - **`simon ai models` reports what is in an IronVault model vault**, behind a
   new `vault` feature that is **off by default**. It lists each stored model's
   name, format, version count, stored and compressed size, checksum and
@@ -70,6 +92,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   as though a vault had been looked for and not found.
 
 ### Fixed
+
+- **CI had been failing on every run for over a week, across two published
+  releases, and is green again.** Twelve consecutive red runs spanning 5.0.0 and
+  5.1.0. That is why the `cli` break below shipped: the job written to catch it
+  was reporting the fault the whole time, and a pipeline that is always red
+  reports nothing anyone reads.
+
+  Seven defects, each hidden behind the one before it because a failing job
+  cancels the rest:
+
+  - Three clippy errors in `cfg(target_os = "linux")` code, which a Windows
+    machine never compiles.
+  - `revert_without_confirmation_is_refused` asserted `NeedsConfirm` for
+    `active_scheme_guid`, a Windows-only setting. macOS registers no writable
+    settings, so the refusal correctly comes back as `NotWritable` from the
+    handler lookup. The test now asserts the invariant that holds everywhere —
+    an unconfirmed revert never writes — then the platform-appropriate refusal,
+    asking the handler registry which case applies rather than restating its
+    `cfg`s.
+  - `every_documented_command_exists` read a sentence in `HANDOFF.md` beginning
+    "simon already detects…" as a command. Self-inflicted, by pushing a
+    docs-only change without re-running the suite.
+  - `resolve_gpu` reported all three of its failure paths as an unavailable
+    `gpu.0.name`, asserting an adapter exists that could not be read when the
+    truth is none is known to exist. They now use `gpu.<none>`, the declared
+    per-domain diagnostic that already existed for exactly this.
+  - `board.firmware.{n}.version` resolved to the literal `"n/a"` with `measured`
+    provenance on virtualised firmware.
+  - `diagnostics_do_not_contradict_the_readings_beside_them` counted every row
+    in a domain, including unavailable ones that assert nothing, so
+    `gpu.<none>` beside three unread GPU settings looked like a contradiction.
+    It now counts observations, as its own documentation always described.
+  - `pci.*.link.speed` resolved to `"unknown"` with `measured` provenance.
+
+  Four of those seven are the same fault — an absence dressed as a reading —
+  which is the one thing this crate's ontology exists to prevent. It is now
+  caught by a final pass over the assembled snapshot, modelled on the range gate
+  beside it. Guarding the individual push helpers was tried first and failed
+  twice, because it requires knowing the complete set of helpers and that guess
+  was wrong each time.
+
+  **The lesson worth keeping is about the signal, not the bugs.** A red pipeline
+  nobody reads and a green one that checks nothing fail in exactly the same way:
+  they return the same value regardless of input. This project has now hit that
+  three times — 839 passing tests over a GUI that reported no GPUs on a
+  three-GPU machine, a test failing three runs in five and read as noise, and
+  this.
 
 - **`--no-default-features --features cli` builds again.**
   `handle_gui_frame_command` names `simonlib::gui` and was not behind
