@@ -1162,18 +1162,28 @@ fn resolve_cpu_cache(out: &mut Vec<Reading>) {
 }
 
 fn resolve_gpu(out: &mut Vec<Reading>) {
+    // All three failure paths report against `gpu.<none>`, the declared
+    // diagnostic for a domain that enumerated nothing — not against `gpu.0.name`.
+    //
+    // Reporting them as an unavailable `gpu.0.name` asserted that adapter zero
+    // exists and could not be read, when the truth is that no adapter is known
+    // to exist at all. It also broke the schema's own promise: `gpu.{n}.name` is
+    // declared non-nullable, meaning a GPU always has a name, so an unavailable
+    // one is by definition a reader bug. On a headless CI runner that is exactly
+    // what it was, and `non_nullable_entities_are_never_null` said so — on Linux,
+    // where there is no GPU. Every machine that had one passed.
     let Ok(monitor) = crate::SiliconMonitor::new() else {
         out.push(Reading::unavailable(
-            "gpu.0.name",
-            Some(Unit::Text),
+            "gpu.<none>",
+            None,
             "GPU enumeration failed",
         ));
         return;
     };
     let Ok(gpus) = monitor.snapshot_gpus() else {
         out.push(Reading::unavailable(
-            "gpu.0.name",
-            Some(Unit::Text),
+            "gpu.<none>",
+            None,
             "GPU snapshot failed",
         ));
         return;
@@ -1181,8 +1191,8 @@ fn resolve_gpu(out: &mut Vec<Reading>) {
     if gpus.is_empty() {
         // Absent hardware is a fact, not a failure — and not a zero-valued GPU.
         out.push(Reading::unavailable(
-            "gpu.0.name",
-            Some(Unit::Text),
+            "gpu.<none>",
+            None,
             "no GPU detected on this machine",
         ));
         return;
@@ -1331,6 +1341,27 @@ fn id_segment(raw: &str) -> String {
     }
 }
 
+/// Strings that name an absence rather than state a value.
+///
+/// DMI is the reason this exists: firmware tables routinely carry "n/a" or
+/// "unknown" where a board vendor left a field unfilled, and passing those
+/// through as `measured` hands an agent a reading that says nothing while
+/// looking exactly like one that says something. `board.firmware.{n}.version`
+/// did that on Linux CI runners, whose virtualised firmware fills two entries
+/// with "n/a".
+///
+/// The list matches `unknown_is_never_dressed_as_a_measurement` in
+/// `tests/ontology_conformance.rs`, which forbids these values crate-wide. It is
+/// enforced here, at the one place every text reading passes through, rather
+/// than in each reader — the conformance test has caught this class three times
+/// now, always in a different reader.
+const ABSENCE_WORDS: [&str; 5] = ["unknown", "unspecified", "undetermined", "n/a", "none"];
+
+fn names_an_absence(value: &str) -> bool {
+    let v = value.trim().to_ascii_lowercase();
+    ABSENCE_WORDS.contains(&v.as_str())
+}
+
 fn push_text(out: &mut Vec<Reading>, id: impl Into<String>, value: &str) {
     let id = id.into();
     if value.trim().is_empty() {
@@ -1338,6 +1369,15 @@ fn push_text(out: &mut Vec<Reading>, id: impl Into<String>, value: &str) {
             id,
             Some(Unit::Text),
             "reader returned an empty string",
+        ));
+    } else if names_an_absence(value) {
+        out.push(Reading::unavailable(
+            id,
+            Some(Unit::Text),
+            format!(
+                "reader returned {:?}, which names an absence rather than a value",
+                value.trim()
+            ),
         ));
     } else {
         out.push(Reading::measured(
@@ -1355,6 +1395,19 @@ fn push_id(out: &mut Vec<Reading>, id: impl Into<String>, value: &str) {
             id,
             Some(Unit::Identifier),
             "reader returned an empty string",
+        ));
+    } else if names_an_absence(value) {
+        // Enum debug output is the usual source here: an `Unknown` variant
+        // lowercased into "unknown" reads as a measured identifier while
+        // meaning the opposite. That is the exact mistake that put five
+        // entities wrong across two releases.
+        out.push(Reading::unavailable(
+            id,
+            Some(Unit::Identifier),
+            format!(
+                "reader returned {:?}, which names an absence rather than a value",
+                value.trim()
+            ),
         ));
     } else {
         out.push(Reading::measured(
