@@ -2159,18 +2159,20 @@ mod tests {
             if !has_none {
                 continue;
             }
-            let real_rows = readings
+            let real_rows: Vec<&str> = readings
                 .iter()
                 .filter(|r| {
                     r.id.starts_with(&format!("{}.", domain.as_str())) && !r.id.contains('<')
                 })
-                .count();
-            assert_eq!(
-                real_rows,
-                0,
-                "{none_id} claims the domain enumerated nothing, but {real_rows} \
-                 {} rows are present alongside it",
-                domain.as_str()
+                .map(|r| r.id.as_str())
+                .collect();
+            // The ids, not just how many. A count says a contradiction exists and
+            // leaves you to guess which resolver caused it; on a platform you
+            // cannot reproduce locally that guess is the whole cost of the fix.
+            assert!(
+                real_rows.is_empty(),
+                "{none_id} claims the domain enumerated nothing, but these {} rows are present alongside it: {real_rows:?}",
+                real_rows.len(),
             );
         }
     }
