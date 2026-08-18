@@ -445,8 +445,17 @@ where
 /// idle box produces confident numbers.
 fn machine_is_loaded() -> bool {
     const BUSY_PERCENT: f32 = 20.0;
-    crate::tuning::serve::collect_signals()
-        .cpu_utilization
+    // The CPU reader directly, not `collect_signals`. That function also builds
+    // an AI-workload monitor, snapshots every GPU through NVML and enumerates
+    // the process table twice, and this needs one number from it. Measured on
+    // the development machine: 1465 ms against 0.2 ms, a factor of about seven
+    // thousand, paid on every verified apply of a load-dependent metric.
+    //
+    // `serve::read_cpu_utilization` carries a comment explaining that it does
+    // not go through `ontology::resolve::snapshot()` because resolving every
+    // domain to obtain one number took tens of seconds per cycle. This made the
+    // same mistake three functions below that warning.
+    crate::tuning::serve::read_cpu_utilization()
         .map(|u| u >= BUSY_PERCENT)
         .unwrap_or(false)
 }

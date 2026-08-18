@@ -180,7 +180,7 @@ pub fn collect_signals() -> Signals {
 /// device, every USB descriptor — to obtain one number, and took tens of seconds
 /// per cycle when this was written that way. A tuning loop that expensive cannot
 /// run at the interval it needs to be useful at.
-fn read_cpu_utilization() -> Option<f32> {
+pub(crate) fn read_cpu_utilization() -> Option<f32> {
     #[cfg(windows)]
     {
         crate::platform::windows::read_cpu_stats()
