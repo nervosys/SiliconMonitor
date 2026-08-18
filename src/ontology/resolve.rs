@@ -187,6 +187,36 @@ pub fn snapshot() -> Vec<Reading> {
         }
     }
 
+    // Same shape of gate, for absences dressed as text. A reader that returns
+    // "unknown" or "n/a" has told you it does not know, and passing that through
+    // as `measured` hands an agent a reading that looks like an answer.
+    //
+    // This is a final pass rather than only a guard in the push helpers because
+    // guarding the helpers did not work. `push_text` and `push_id` were fixed
+    // first, on the stated reasoning that they were the only route a text value
+    // could take. `push_opt` was a third route, and `pci.*.link.speed` came
+    // through it as "unknown" on the next CI run. Four instances of this class
+    // have now been found in four different places, which is the argument for
+    // catching it where every reading is guaranteed to pass rather than where it
+    // happens to be produced.
+    for reading in out.iter_mut() {
+        if reading.provenance == Provenance::Unavailable {
+            continue;
+        }
+        let Some(text) = reading.value.as_ref().and_then(|v| v.as_str()) else {
+            continue;
+        };
+        if !names_an_absence(text) {
+            continue;
+        }
+        let quoted = text.trim().to_string();
+        reading.value = None;
+        reading.provenance = Provenance::Unavailable;
+        reading.note = Some(format!(
+            "reader returned {quoted:?}, which names an absence rather than a              value, so it is reported as unavailable rather than as a reading"
+        ));
+    }
+
     out.sort_by(|a, b| a.id.cmp(&b.id));
     out
 }
@@ -1426,6 +1456,22 @@ fn push_opt(
     why_absent: &str,
 ) {
     match value {
+        // A string that names an absence is an absence, however it arrived.
+        // `push_text` and `push_id` were guarded first on the reasoning that
+        // they were the only route a text reading could take; they were not.
+        // `pci.*.link.speed` came through here as "unknown" with measured
+        // provenance, on Linux, where PCIe link training is readable and some
+        // devices report exactly that word.
+        Some(v) if v.as_str().is_some_and(names_an_absence) => {
+            out.push(Reading::unavailable(
+                id,
+                unit,
+                format!(
+                    "reader returned {}, which names an absence rather than a value",
+                    v
+                ),
+            ));
+        }
         Some(v) => out.push(Reading::measured(id, v, unit)),
         None => out.push(Reading::unavailable(id, unit, why_absent)),
     }
