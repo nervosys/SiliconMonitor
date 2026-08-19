@@ -223,7 +223,11 @@ pub fn compare(baseline: &Baseline, current: &BTreeSet<Listener>) -> Vec<Finding
             Severity::Info,
             Confidence::Certain,
             subject_of(l),
+            // Protocol included, or two findings that differ only by address
+            // family print identically. Observed live: tcp and tcp6 on the same
+            // port produced two rows a reader could not tell apart.
             vec![
+                Evidence::observed("net.protocol", &l.protocol),
                 Evidence::observed("net.local_port", l.local_port.to_string()),
                 Evidence::differs("net.listening", "false", "true"),
             ],

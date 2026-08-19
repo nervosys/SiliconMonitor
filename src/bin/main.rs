@@ -212,6 +212,29 @@ enum Commands {
         #[arg(short, long, default_value = "text")]
         format: String,
     },
+    /// Intrusion detection over listening sockets and watched files
+    ///
+    /// Observes and reports. It never blocks a connection, kills a process or
+    /// quarantines a file.
+    ///
+    /// A first run records a baseline and reports `no_baseline`, never `clean`:
+    /// a baseline taken after a compromise records the compromise. The baseline
+    /// path is explicit so there is no hidden state deciding what "changed"
+    /// means.
+    Ids {
+        /// Where the baseline lives. Recorded if absent, compared against if
+        /// present.
+        #[arg(long)]
+        baseline: std::path::PathBuf,
+
+        /// Files to watch, in addition to the listening sockets always checked.
+        #[arg(long)]
+        watch: Vec<std::path::PathBuf>,
+
+        /// Output format (json or text)
+        #[arg(short, long, default_value = "text")]
+        format: String,
+    },
     /// Read every resolvable entity at once, with provenance
     ///
     /// The bulk form of `get`. Entities simon cannot read here are still listed,
@@ -783,6 +806,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Some(Commands::Get { id, format }) => {
             handle_get_command(id, format)?;
+        }
+        Some(Commands::Ids {
+            baseline,
+            watch,
+            format,
+        }) => {
+            handle_ids_command(baseline, watch, format)?;
         }
         Some(Commands::Snapshot {
             domain,
@@ -4993,4 +5023,141 @@ fn parse_setting_value(raw: &str) -> simonlib::profile::SettingValue {
 fn main() {
     eprintln!("CLI features not enabled. Please compile with --features cli");
     std::process::exit(1);
+}
+
+/// Run one intrusion-detection pass against the recorded baseline.
+///
+/// The baseline is a file the caller names, holding both halves — listeners and
+/// watched files — so one path is the whole "what this machine looked like"
+/// record. Recorded when absent, compared when present.
+///
+/// Exit code is 0 for a clean or first run and 1 when anything was found, so a
+/// scheduler can act on it without parsing. A failure to scan exits 2: "could
+/// not look" must not be mistaken for "nothing found", which is the distinction
+/// this whole module is built on.
+fn handle_ids_command(
+    baseline_path: &std::path::Path,
+    watch: &[std::path::PathBuf],
+    format: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use simonlib::ids::{file, network, triage, ScanStatus};
+
+    #[derive(serde::Serialize, serde::Deserialize, Default)]
+    struct Baselines {
+        #[serde(default)]
+        network: network::Baseline,
+        #[serde(default)]
+        files: file::Baseline,
+    }
+
+    let existing: Baselines = match std::fs::read_to_string(baseline_path) {
+        Ok(text) => serde_json::from_str(&text).map_err(|e| {
+            format!(
+                "baseline at {} is not readable: {e}",
+                baseline_path.display()
+            )
+        })?,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Baselines::default(),
+        Err(e) => return Err(format!("baseline at {}: {e}", baseline_path.display()).into()),
+    };
+
+    let net = network::scan(&existing.network);
+    let files = file::scan(watch, &existing.files);
+
+    // Record whatever is missing, so the next run has something to compare
+    // against. Writing the baseline is the one thing this command does to the
+    // machine, and it writes only where the caller pointed it.
+    let record_needed = matches!(net, ScanStatus::NoBaseline { .. })
+        || matches!(files, ScanStatus::NoBaseline { .. });
+    if record_needed {
+        let fresh = Baselines {
+            network: if matches!(net, ScanStatus::NoBaseline { .. }) {
+                network::record().unwrap_or_default()
+            } else {
+                existing.network.clone()
+            },
+            files: if matches!(files, ScanStatus::NoBaseline { .. }) {
+                file::record(watch)
+            } else {
+                existing.files.clone()
+            },
+        };
+        if let Some(parent) = baseline_path.parent() {
+            if !parent.as_os_str().is_empty() {
+                std::fs::create_dir_all(parent)?;
+            }
+        }
+        std::fs::write(baseline_path, serde_json::to_string_pretty(&fresh)?)?;
+    }
+
+    let mut findings = Vec::new();
+    findings.extend(net.findings().iter().cloned());
+    findings.extend(files.findings().iter().cloned());
+    let ranked = triage::rank(findings.clone());
+    let counts = triage::counts(&findings);
+
+    if format == "json" {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "network": net,
+                "files": files,
+                "ranked": ranked,
+                "counts": counts,
+            }))?
+        );
+    } else {
+        print_ids_status("network", &net);
+        print_ids_status("files", &files);
+        if !ranked.ranked.is_empty() {
+            println!();
+            for f in &ranked.ranked {
+                println!(
+                    "[{:?}/{:?}] {} — {}",
+                    f.severity, f.confidence, f.rule, f.title
+                );
+                for e in &f.evidence {
+                    match &e.expected {
+                        Some(exp) => println!("    {} = {} (was {})", e.kind, e.observed, exp),
+                        None => println!("    {} = {}", e.kind, e.observed),
+                    }
+                }
+            }
+            println!();
+            println!(
+                "{} finding(s); {} rest on a heuristic rather than a direct observation",
+                findings.len(),
+                counts.possible_only
+            );
+        }
+    }
+
+    if matches!(net, ScanStatus::Failed { .. }) || matches!(files, ScanStatus::Failed { .. }) {
+        std::process::exit(2);
+    }
+    if !findings.is_empty() {
+        std::process::exit(1);
+    }
+    Ok(())
+}
+
+fn print_ids_status(label: &str, status: &simonlib::ids::ScanStatus) {
+    use simonlib::ids::ScanStatus;
+    match status {
+        ScanStatus::NoBaseline { recorded, reason } => {
+            println!("{label}: no baseline — {recorded} recorded now. {reason}");
+        }
+        ScanStatus::Clean { checked } => {
+            println!("{label}: clean over {checked} checked");
+        }
+        ScanStatus::Findings { checked, findings } => {
+            println!(
+                "{label}: {} finding(s) over {checked} checked",
+                findings.len()
+            );
+        }
+        ScanStatus::Failed { reason } => {
+            println!("{label}: scan failed — {reason}");
+        }
+    }
 }

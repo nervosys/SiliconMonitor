@@ -236,10 +236,12 @@ fn command_for(id: &str) -> Option<&'static str> {
         "interface.agent" => "ai",
         // Settings are written through one command regardless of which setting.
         _ if id.starts_with("setting.") => "profile",
-        // Detection has no command. The detectors are reachable from the library
-        // and from nothing a person or agent can type, which is worth seeing in
-        // the catalogue rather than discovering later.
-        _ if id.starts_with("detection.") => return None,
+        // Every detector runs in one pass, so they share a command.
+        //
+        // They had none at all until the capability-to-command join reported it:
+        // real, tested, and reachable from nothing typeable. That the catalogue
+        // found it is the argument for having built the join.
+        _ if id.starts_with("detection.") => "ids",
         // MCP is spoken, not typed.
         "interface.mcp" => return None,
         _ => return None,

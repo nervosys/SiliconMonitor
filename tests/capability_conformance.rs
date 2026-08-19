@@ -416,8 +416,11 @@ fn capabilities_with_no_command_are_named() {
         .iter()
         .filter(|c| c.surface == Surface::Detection)
         .count();
-    assert_eq!(
-        detection_stranded, detection_total,
+    // All-or-nothing, not "all stranded". The first version asserted the state
+    // at the time rather than the invariant, and failed the moment the detectors
+    // gained a command — which is the change it should have welcomed.
+    assert!(
+        detection_stranded == 0 || detection_stranded == detection_total,
         "some detection capabilities now name a command and others do not. Either          all of them are reachable or none are; a half-wired surface is the state          an agent cannot reason about."
     );
 }
