@@ -363,17 +363,23 @@ impl RaplMonitor {
         })
     }
 
+    // The two platforms below return an error carrying the reason rather than an
+    // empty list. An empty list is what a Linux box with no RAPL zones returns,
+    // and collapsing "this platform has no interface" into it means a caller
+    // cannot tell an unsupported host from an unpowered one.
     #[cfg(target_os = "windows")]
     fn read_energy() -> Result<Vec<EnergyReading>, SimonError> {
-        // Windows doesn't have a direct RAPL sysfs equivalent
-        // Return empty; power can be inferred from CPU utilization and TDP
-        Ok(Vec::new())
+        Err(SimonError::UnsupportedPlatform(
+            "Windows exposes no RAPL interface to unprivileged code: the MSRs behind it need a kernel driver, and there is no sysfs equivalent"
+                .into(),
+        ))
     }
 
     #[cfg(target_os = "macos")]
     fn read_energy() -> Result<Vec<EnergyReading>, SimonError> {
-        // macOS: powermetrics requires root; return empty for non-root
-        Ok(Vec::new())
+        Err(SimonError::PermissionDenied(
+            "macOS exposes package energy only through powermetrics, which requires root".into(),
+        ))
     }
 
     #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]

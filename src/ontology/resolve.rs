@@ -103,6 +103,7 @@ pub fn snapshot() -> Vec<Reading> {
     resolve_process(&mut out);
     resolve_thermal(&mut out);
     resolve_power(&mut out);
+    resolve_rapl(&mut out);
     resolve_virtualization(&mut out);
     resolve_numa(&mut out);
     resolve_ecc(&mut out);
@@ -2077,6 +2078,78 @@ fn resolve_thermal(out: &mut Vec<Reading>) {
     //
     // The read-failure path above still emits `<none>`, and correctly: it returns
     // before pushing anything, so nothing contradicts it.
+}
+
+/// Package energy domains, where the platform exposes them.
+///
+/// The absence path is written first and deliberately: on Windows and macOS
+/// there is no unprivileged RAPL interface at all, and the failure has to arrive
+/// as a stated reason rather than as an empty list. The reader returned
+/// `Ok(vec![])` on both until this was wired, which is indistinguishable from a
+/// Linux box whose zones are all disabled.
+fn resolve_rapl(out: &mut Vec<Reading>) {
+    let mut monitor = match crate::rapl::RaplMonitor::new() {
+        Ok(m) => m,
+        Err(e) => {
+            out.push(Reading::unavailable(
+                "power.rapl.<none>",
+                None,
+                format!("RAPL is not readable here: {e}"),
+            ));
+            return;
+        }
+    };
+
+    if let Err(e) = monitor.refresh() {
+        out.push(Reading::unavailable(
+            "power.rapl.<none>",
+            None,
+            format!("RAPL is not readable here: {e}"),
+        ));
+        return;
+    }
+
+    let readings = monitor.readings();
+
+    if readings.is_empty() {
+        // Reached only where the interface exists and enumerated nothing, which
+        // is a different fact from the platform not having one.
+        out.push(Reading::unavailable(
+            "power.rapl.<none>",
+            None,
+            "the RAPL interface is present and enumerated no energy domains",
+        ));
+        return;
+    }
+
+    for (i, r) in readings.iter().enumerate() {
+        let base = format!("power.rapl.{i}");
+        push_text(out, format!("{base}.name"), &r.name);
+        out.push(Reading::measured(
+            format!("{base}.energy"),
+            serde_json::json!(r.energy_uj),
+            Some(Unit::Count),
+        ));
+        out.push(Reading::measured(
+            format!("{base}.max_energy_range"),
+            serde_json::json!(r.max_energy_range_uj),
+            Some(Unit::Count),
+        ));
+        push_opt(
+            out,
+            format!("{base}.power_limit"),
+            // Microwatts to watts, which is the unit the entity declares.
+            r.power_limit_uw
+                .map(|uw| serde_json::json!(uw as f64 / 1_000_000.0)),
+            Some(Unit::Watts),
+            "this RAPL domain publishes no power constraint",
+        );
+        out.push(Reading::measured(
+            format!("{base}.enabled"),
+            serde_json::json!(r.enabled),
+            None,
+        ));
+    }
 }
 
 fn resolve_power(out: &mut Vec<Reading>) {

@@ -543,11 +543,33 @@ code has passed CI, but CI has no drive. The quadratic collector shape fixed in
 **E.** ~~Read PCIe link state on Windows.~~ Done in 3.6.0; see open work 7 for the
 two routes that do not work and why.
 
-**F. Continue the ontology sweep.** *Needs: nothing. Ongoing.* NUMA, RAPL,
-sensors, virtualization and EDAC are the remaining clusters with readers behind
-them. Add a domain per change, verify each field resolves to a true provenance on
-the machine at hand, and check the `Unknown` variant first — see open work 5 for
-why that is the standing instruction.
+**F. Continue the ontology sweep.** *Needs: nothing. Ongoing.* NUMA,
+virtualization and EDAC landed in 3.7.0. **RAPL landed in 6.0.0** —
+`power.rapl.{n}.{name,energy,max_energy_range,power_limit,enabled}` plus a
+`power.rapl.<none>` diagnostic.
+
+Two things that sweep turned up, both worth repeating for the next cluster:
+
+- The reader returned `Ok(vec![])` on Windows and macOS with a comment
+  explaining why there was nothing. An empty list is what a Linux box with all
+  zones disabled returns, so the reason lived in a comment where no caller could
+  reach it. It is now an error carrying the reason, and the resolver turns that
+  into `power.rapl.<none>` with the text.
+- The `<none>` diagnostic is declared per *domain*, and RAPL is a cluster inside
+  `power`. Reusing `power.<none>` would have claimed the whole domain enumerated
+  nothing on a machine whose battery reads fine, so the sub-cluster gets its own
+  declared diagnostic. Expect the same for the next cluster inside an existing
+  domain.
+
+**Sensors is what remains**, and it is not blocked so much as empty here: the
+Windows board sensors need a signed kernel driver and `SensorMonitor` reads zero
+of them on the development machine. Declaring entities that resolve to nothing on
+the only machine available would breach the standing instruction below, so it
+waits for a host where the reader answers.
+
+Add a cluster per change, verify each field resolves to a true provenance on the
+machine at hand, and check the absent variant first — see open work 5 for why
+that is the standing instruction.
 
 **Deliberately not planned:** SMART failure thresholds on Windows. They come from
 SMART READ THRESHOLDS, which has no `IOCTL_STORAGE_*` equivalent, so the only

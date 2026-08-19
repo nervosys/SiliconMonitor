@@ -1374,6 +1374,67 @@ impl Ontology {
             "Process resident memory.",
         ));
 
+        // ── Package energy (RAPL) ────────────────────────────────────────────
+        //
+        // Named in the plan's item F as a remaining cluster. Templated per
+        // package because a two-socket machine has two, and the diagnostic for
+        // "this platform has no RAPL" is the domain's `<none>` row, which
+        // already exists for every domain.
+        add(Entity::new(
+            "power.rapl.<none>",
+            D::Power,
+            K::Diagnostic,
+            None,
+            P::Unavailable,
+            true,
+            "Present when no RAPL energy domain was enumerated, carrying why. A              sub-cluster diagnostic rather than the domain-wide `power.<none>`:              a machine can have a readable battery and no RAPL interface, and              claiming the whole power domain enumerated nothing would be false.",
+        ));
+        add(Entity::new(
+            "power.rapl.{n}.name",
+            D::Power,
+            K::Identity,
+            Some(U::Text),
+            P::Measured,
+            false,
+            "RAPL domain name as the platform reports it - package-0, core,              dram, uncore.",
+        ));
+        add(Entity::new(
+            "power.rapl.{n}.energy",
+            D::Power,
+            K::Measurement,
+            Some(U::Count),
+            P::Measured,
+            false,
+            "Cumulative energy counter in microjoules. A counter, not a rate: it              wraps at `max_energy_range`, and power in watts is the difference              between two readings divided by the interval. Reported raw because              a single sample cannot be converted to watts and pretending              otherwise would invent a rate.",
+        ));
+        add(Entity::new(
+            "power.rapl.{n}.max_energy_range",
+            D::Power,
+            K::Limit,
+            Some(U::Count),
+            P::Specification,
+            false,
+            "The value the energy counter wraps at, in microjoules. Needed to              compute power across a wrap; a consumer without it will read a              wrap as a negative delta.",
+        ));
+        add(Entity::new(
+            "power.rapl.{n}.power_limit",
+            D::Power,
+            K::Limit,
+            Some(U::Watts),
+            P::Specification,
+            true,
+            "The configured power limit for this domain. Nullable: not every              RAPL domain publishes a constraint.",
+        ));
+        add(Entity::new(
+            "power.rapl.{n}.enabled",
+            D::Power,
+            K::Identity,
+            None,
+            P::Specification,
+            false,
+            "Whether the platform reports this domain as enabled. A disabled              domain still has a counter and it does not advance.",
+        ));
+
         // ── System and board ─────────────────────────────────────────────────
         //
         // The four below were readable by `os_info` long before they were named
