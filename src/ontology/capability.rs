@@ -163,6 +163,17 @@ pub struct Capability {
     /// How the claim is known — a test, a measurement, a CI job. Absent only
     /// where the claim is that nothing is implemented.
     pub evidence: Option<String>,
+    /// The command that exercises this, as it would be typed.
+    ///
+    /// `None` means the capability exists in the library and nothing on the
+    /// command line reaches it. That is a real state and worth declaring rather
+    /// than hiding: the intrusion detectors were library-only when this field
+    /// was added, and nothing had noticed because capabilities and commands
+    /// lived in separate catalogues that never met.
+    ///
+    /// Checked against `simon describe --commands` by
+    /// `tests/capability_conformance.rs`, so a command named here always exists.
+    pub command: Option<String>,
 }
 
 impl Capability {
@@ -196,7 +207,43 @@ fn cap(
         summary: summary.to_string(),
         support,
         evidence: evidence.map(|s| s.to_string()),
+        command: command_for(id).map(|c| c.to_string()),
     }
+}
+
+/// The command that exercises a capability, where one exists.
+///
+/// A lookup rather than a field on every call site, so the mapping is readable
+/// in one place and the gaps are visible as gaps.
+fn command_for(id: &str) -> Option<&'static str> {
+    Some(match id {
+        "reading.cpu" => "cli cpu",
+        "reading.gpu" => "cli gpu",
+        "reading.memory" => "cli memory",
+        "reading.power" => "cli power",
+        "reading.thermal" => "cli temperature",
+        "reading.process" => "cli processes",
+        "reading.board" => "cli board",
+        "reading.usb" => "cli usb",
+        "reading.disk" | "reading.network" | "reading.system" | "reading.pci" => "snapshot",
+        "tuning.classify" | "tuning.apply" | "tuning.verify" => "tune",
+        "interface.cli" => "cli",
+        "interface.tui" => "tui",
+        "interface.gui" => "gui",
+        "interface.ontology" => "describe",
+        "interface.daemon" => "daemon",
+        "interface.http" => "serve",
+        "interface.agent" => "ai",
+        // Settings are written through one command regardless of which setting.
+        _ if id.starts_with("setting.") => "profile",
+        // Detection has no command. The detectors are reachable from the library
+        // and from nothing a person or agent can type, which is worth seeing in
+        // the catalogue rather than discovering later.
+        _ if id.starts_with("detection.") => return None,
+        // MCP is spoken, not typed.
+        "interface.mcp" => return None,
+        _ => return None,
+    })
 }
 
 /// Every capability simon declares.

@@ -338,6 +338,90 @@ fn every_interface_module_is_declared() {
     }
 }
 
+/// Every command a capability names actually exists in the binary.
+///
+/// Capabilities and commands were separate catalogues that never met: an agent
+/// read one to learn what simon can do and the other to learn how to ask, with
+/// nothing checking the two described the same program. This is the join.
+///
+/// It also makes the absence visible. A capability with no command is reachable
+/// from the library and from nothing typeable, which is how the intrusion
+/// detectors shipped — real, tested, and unreachable from the command line.
+#[test]
+fn every_command_a_capability_names_exists() {
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_simon"))
+        .args(["describe", "--commands", "--format", "json"])
+        .output()
+        .expect("simon describe runs");
+    assert!(out.status.success(), "simon describe --commands failed");
+    let catalog: serde_json::Value = serde_json::from_slice(&out.stdout).expect("JSON");
+
+    let mut paths = BTreeSet::new();
+    fn walk(node: &serde_json::Value, prefix: &str, out: &mut BTreeSet<String>) {
+        let Some(subs) = node.get("subcommands").and_then(|s| s.as_array()) else {
+            return;
+        };
+        for sub in subs {
+            let Some(name) = sub.get("name").and_then(|n| n.as_str()) else {
+                continue;
+            };
+            let path = if prefix.is_empty() {
+                name.to_string()
+            } else {
+                format!("{prefix} {name}")
+            };
+            walk(sub, &path, out);
+            out.insert(path);
+        }
+    }
+    walk(&catalog, "", &mut paths);
+    assert!(!paths.is_empty(), "the command catalog parsed to nothing");
+
+    for c in capability::catalogue() {
+        let Some(command) = &c.command else { continue };
+        assert!(
+            paths.contains(command),
+            "{} names the command {command:?} and the binary does not accept it.              A capability that tells an agent how to invoke it must be right about              that, or the catalogue is worse than silent.",
+            c.id
+        );
+    }
+}
+
+/// Capabilities the command line cannot reach, reported rather than hidden.
+///
+/// Not a failure — the MCP server is spoken rather than typed, and a library
+/// API is a legitimate way to ship something. It is printed so the gap stays
+/// visible, because the intrusion detectors sat in exactly this state without
+/// anyone noticing.
+#[test]
+fn capabilities_with_no_command_are_named() {
+    let stranded: Vec<String> = capability::catalogue()
+        .into_iter()
+        .filter(|c| c.command.is_none())
+        .map(|c| c.id)
+        .collect();
+    if !stranded.is_empty() {
+        eprintln!(
+            "capabilities reachable only from the library ({}): {stranded:?}",
+            stranded.len()
+        );
+    }
+    // Detection is the one that should eventually gain a command. Asserted so
+    // that if it does, this note stops being true and someone updates it.
+    let detection_stranded = stranded
+        .iter()
+        .filter(|s| s.starts_with("detection."))
+        .count();
+    let detection_total = capability::catalogue()
+        .iter()
+        .filter(|c| c.surface == Surface::Detection)
+        .count();
+    assert_eq!(
+        detection_stranded, detection_total,
+        "some detection capabilities now name a command and others do not. Either          all of them are reachable or none are; a half-wired surface is the state          an agent cannot reason about."
+    );
+}
+
 /// Surfaces are covered rather than declared and unused.
 #[test]
 fn every_surface_has_at_least_one_capability() {
