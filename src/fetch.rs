@@ -24,56 +24,126 @@
 use crate::ontology::resolve::Reading;
 use std::collections::BTreeMap;
 
-/// ASCII art, chosen for the platform.
+/// One colour, as an ANSI SGR code.
 ///
-/// Deliberately generic shapes rather than trademarked logos: this crate is
-/// AGPL and ships no artwork it does not own.
-pub fn logo() -> &'static [&'static str] {
+/// Written out rather than pulled from `colored`, because this module is in the
+/// library and `colored` is behind the `cli` feature. A summary that only exists
+/// in one build configuration is not much of a summary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Colour {
+    Blue,
+    Cyan,
+    Green,
+    Yellow,
+    Red,
+    Magenta,
+    White,
+    Grey,
+}
+
+impl Colour {
+    fn code(self) -> &'static str {
+        match self {
+            Colour::Blue => "[34m",
+            Colour::Cyan => "[36m",
+            Colour::Green => "[32m",
+            Colour::Yellow => "[33m",
+            Colour::Red => "[31m",
+            Colour::Magenta => "[35m",
+            Colour::White => "[97m",
+            Colour::Grey => "[90m",
+        }
+    }
+
+    /// Wrap text, or return it untouched when colour is off.
+    pub fn paint(self, text: &str, colour: bool) -> String {
+        if colour {
+            format!("{}{text}[0m", self.code())
+        } else {
+            text.to_string()
+        }
+    }
+}
+
+/// A line of ASCII art and the colour it is drawn in.
+pub struct ArtLine(pub &'static str, pub Colour);
+
+/// ASCII art for the running platform, in the style neofetch established.
+///
+/// Drawn for this crate rather than copied: neofetch is MIT and its art could be
+/// vendored with attribution, but writing the shapes here keeps the licensing of
+/// this AGPL crate simple and lets each line carry its own colour, which is what
+/// makes the Windows flag read as four panes rather than a block of hashes.
+///
+/// The shapes are the conventional ones — a four-pane flag, a penguin, an apple —
+/// because a summary people paste into issues should look like the tool they
+/// expect. They are not vendor logos and simon claims no trademark in them.
+pub fn logo() -> Vec<ArtLine> {
     #[cfg(windows)]
     {
-        &[
-            "    ####  ####    ",
-            "   #####  #####   ",
-            "  ######  ######  ",
-            "                  ",
-            "  ######  ######  ",
-            "   #####  #####   ",
-            "    ####  ####    ",
+        // The four-pane flag. Each pane its own colour is the detail that makes
+        // it legible; a single-colour version reads as noise.
+        vec![
+            ArtLine("        ,.=:!!t3Z3z.,       ", Colour::Red),
+            ArtLine("       :tt:::tt333EE3       ", Colour::Red),
+            ArtLine("       Et:::ztt33EEEL  @Ee.,", Colour::Green),
+            ArtLine("      ;tt:::tt333EE7 ;EEEEE.", Colour::Green),
+            ArtLine("     :Et:::zt333EEQ. $EEEEE.", Colour::Blue),
+            ArtLine("     it::::tt333EEF @EEEEEE.", Colour::Blue),
+            ArtLine("    ;3=*^```\"*4EEV :EEEEEEE.", Colour::Yellow),
+            ArtLine("    ,.=::::!t=., ` @EEEEEEE.", Colour::Yellow),
         ]
     }
     #[cfg(target_os = "linux")]
     {
-        &[
-            "      .---.       ",
-            "     /     \\      ",
-            "     |()  ()|     ",
-            "     |  __ |      ",
-            "    /|      |\\    ",
-            "   / |      | \\   ",
-            "   \\_|______|_/   ",
+        // Tux.
+        vec![
+            ArtLine("         _nnnn_         ", Colour::White),
+            ArtLine("        dGGGGMMb        ", Colour::White),
+            ArtLine("       @p~qp~~qMb       ", Colour::White),
+            ArtLine("       M|@||@) M|       ", Colour::Yellow),
+            ArtLine("       @,----.JM|       ", Colour::Yellow),
+            ArtLine("      JS^\\__/  qKL      ", Colour::White),
+            ArtLine("     dZP        qKRb     ", Colour::White),
+            ArtLine("    dZP          qKKb    ", Colour::White),
+            ArtLine("   fZP            SMMb   ", Colour::White),
+            ArtLine("   HZM            MMMM   ", Colour::White),
+            ArtLine("   FqM            MMMM   ", Colour::Yellow),
+            ArtLine(" __| \".        |\\dS\"qML ", Colour::Yellow),
         ]
     }
     #[cfg(target_os = "macos")]
     {
-        &[
-            "        .-.       ",
-            "      .-'''-.     ",
-            "     /       \\    ",
-            "    |         |   ",
-            "    |         |   ",
-            "     \\       /    ",
-            "      '-...-'     ",
+        // The apple, in the classic six-band colouring.
+        vec![
+            ArtLine("                 c.'      ", Colour::Green),
+            ArtLine("              ,xNMM.      ", Colour::Green),
+            ArtLine("            .OMMMMo       ", Colour::Yellow),
+            ArtLine("            lMM\"          ", Colour::Yellow),
+            ArtLine("  .;loddo:.  .olloddol;.  ", Colour::Red),
+            ArtLine("cKMMMMMMMMMMNWMMMMMMMMMM0:", Colour::Red),
+            ArtLine(".KMMMMMMMMMMMMMMMMMMMMMMMWd", Colour::Magenta),
+            ArtLine(" XMMMMMMMMMMMMMMMMMMMMMMMX.", Colour::Magenta),
+            ArtLine(" .XMMMMMMMMMMMMMMMMMMMMMMk ", Colour::Blue),
+            ArtLine("  .XMMMMMMMMMMMMMMMMMMMMX. ", Colour::Blue),
+            ArtLine("    kMMMMMMMMMMMMMMMMMMd   ", Colour::Cyan),
+            ArtLine("     ;KMMMMMMMWXXWMMMMMk.  ", Colour::Cyan),
         ]
     }
     #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
     {
-        &[
-            "     +-------+    ",
-            "     | ..... |    ",
-            "     | ..... |    ",
-            "     +-------+    ",
+        vec![
+            ArtLine("     +-------+    ", Colour::Cyan),
+            ArtLine("     | ..... |    ", Colour::Cyan),
+            ArtLine("     | ..... |    ", Colour::Cyan),
+            ArtLine("     +-------+    ", Colour::Cyan),
         ]
     }
+}
+
+/// The visible width of an art line, so padding is right when colour is off.
+fn art_width(art: &[ArtLine]) -> usize {
+    art.iter().map(|l| l.0.chars().count()).max().unwrap_or(0)
 }
 
 /// One line of the summary: a label, and either a value or why there is none.
@@ -214,24 +284,93 @@ pub fn summary(readings: &[Reading]) -> Vec<Line> {
     out
 }
 
+/// The summary without the artwork.
+///
+/// The default, because most of the time the machine is the point and the logo
+/// is decoration. `--ascii` asks for the decoration.
+pub fn render_plain(readings: &[Reading], colour: bool) -> String {
+    let lines = summary(readings);
+    let width = lines
+        .iter()
+        .map(|l| l.label.chars().count())
+        .max()
+        .unwrap_or(0);
+    let mut out = String::new();
+    for l in &lines {
+        let label = Colour::Cyan.paint(&l.label, colour);
+        let pad = width.saturating_sub(l.label.chars().count());
+        let value = match &l.value {
+            Some(v) => Colour::White.paint(v, colour),
+            None => Colour::Grey.paint(&l.render(), colour),
+        };
+        out.push_str(&format!(
+            "{label}{:pad$}  {value}
+",
+            "",
+            pad = pad
+        ));
+    }
+    out
+}
+
 /// The whole thing: logo beside the summary.
-pub fn render(readings: &[Reading]) -> String {
+///
+/// `colour` off produces the same layout in plain text, because this output gets
+/// piped and pasted at least as often as it gets looked at.
+pub fn render(readings: &[Reading], colour: bool) -> String {
     let art = logo();
     let lines = summary(readings);
-    let width = lines.iter().map(|l| l.label.len()).max().unwrap_or(0);
+    let label_width = lines
+        .iter()
+        .map(|l| l.label.chars().count())
+        .max()
+        .unwrap_or(0);
+    let art_width = art_width(&art);
     let mut out = String::new();
 
+    // Neither side truncates the other: art longer than the summary keeps
+    // drawing, and a summary longer than the art keeps listing. A renderer that
+    // silently drops rows lies by omission, and the GPU list is exactly the part
+    // that varies in length.
     let rows = art.len().max(lines.len());
     for i in 0..rows {
-        let left = art.get(i).copied().unwrap_or("                  ");
+        let (art_text, art_colour) = match art.get(i) {
+            Some(ArtLine(t, c)) => (*t, Some(*c)),
+            None => ("", None),
+        };
+        let pad = art_width.saturating_sub(art_text.chars().count());
+        let left = match art_colour {
+            Some(c) => c.paint(art_text, colour),
+            None => art_text.to_string(),
+        };
+
         match lines.get(i) {
-            Some(l) => out.push_str(&format!(
-                "{left}  {:<width$}  {}\n",
-                l.label,
-                l.render(),
-                width = width
+            Some(l) => {
+                let label = Colour::Cyan.paint(&l.label, colour);
+                // Padding is computed from the uncoloured label: escape codes
+                // have no width, and counting them right-shifts every value on
+                // the line.
+                let label_pad = label_width.saturating_sub(l.label.chars().count());
+                let value = match (&l.value, &l.reason) {
+                    (Some(v), _) => Colour::White.paint(v, colour),
+                    // Unknowns in grey. They are information, not errors, and
+                    // colouring them red would make an ordinary desktop with no
+                    // battery look broken.
+                    (None, _) => Colour::Grey.paint(&l.render(), colour),
+                };
+                out.push_str(&format!(
+                    "{left}{:pad$}  {label}{:label_pad$}  {value}
+",
+                    "",
+                    "",
+                    pad = pad,
+                    label_pad = label_pad
+                ));
+            }
+            None => out.push_str(&format!(
+                "{left}
+"
             )),
-            None => out.push_str(&format!("{left}\n")),
         }
     }
     out
@@ -331,6 +470,79 @@ mod tests {
         assert!(cpu.render().contains("not in this snapshot"));
     }
 
+    /// Colour off must leave no escape codes at all: this output is piped and
+    /// pasted at least as often as it is looked at.
+    #[test]
+    fn colour_off_produces_plain_text() {
+        let readings = [measured("cpu.model", serde_json::json!("x"))];
+        for rendered in [render(&readings, false), render_plain(&readings, false)] {
+            assert!(
+                !rendered.contains('\u{1b}'),
+                "escape codes survived with colour off: {}",
+                rendered.escape_debug()
+            );
+        }
+    }
+
+    #[test]
+    fn colour_on_closes_every_sequence_it_opens() {
+        let readings = [measured("cpu.model", serde_json::json!("x"))];
+        let rendered = render_plain(&readings, true);
+        assert!(rendered.contains('\u{1b}'));
+        let opens = rendered.matches("\u{1b}[").count();
+        let resets = rendered.matches("\u{1b}[0m").count();
+        assert_eq!(
+            opens - resets,
+            resets,
+            "every opening sequence needs its reset, or colour bleeds into the \
+             terminal after the command exits"
+        );
+    }
+
+    /// Escape codes have no width, so padding computed over a coloured string
+    /// right-shifts every value on the line.
+    #[test]
+    fn columns_line_up_whether_or_not_colour_is_on() {
+        let readings = [
+            measured("cpu.model", serde_json::json!("a")),
+            measured("system.hostname", serde_json::json!("b")),
+        ];
+        let plain = render_plain(&readings, false);
+        let coloured = render_plain(&readings, true);
+
+        let stripped: String = {
+            let mut out = String::new();
+            let mut chars = coloured.chars();
+            while let Some(c) = chars.next() {
+                if c == '\u{1b}' {
+                    for c2 in chars.by_ref() {
+                        if c2 == 'm' {
+                            break;
+                        }
+                    }
+                } else {
+                    out.push(c);
+                }
+            }
+            out
+        };
+        assert_eq!(
+            stripped, plain,
+            "colour changed the layout, which means padding was computed over \
+             escape codes"
+        );
+    }
+
+    /// The art is drawn per line so each can carry its own colour.
+    #[test]
+    fn every_art_line_declares_a_colour_and_has_content() {
+        let art = logo();
+        assert!(!art.is_empty(), "this platform has no art at all");
+        for ArtLine(text, _) in &art {
+            assert!(!text.is_empty(), "an empty art line renders as a blank row");
+        }
+    }
+
     #[test]
     fn bytes_render_at_a_readable_scale() {
         assert_eq!(as_bytes(&serde_json::json!(1024)), "1.0 KB");
@@ -345,10 +557,10 @@ mod tests {
         let many: Vec<Reading> = (0..20)
             .map(|i| measured(&format!("gpu.{i}.name"), serde_json::json!("G")))
             .collect();
-        let rendered = render(&many);
+        let rendered = render(&many, false);
         assert!(rendered.lines().count() >= 20);
 
-        let none = render(&[]);
+        let none = render(&[], false);
         assert!(none.lines().count() >= logo().len());
     }
 }

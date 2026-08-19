@@ -212,13 +212,21 @@ enum Commands {
         #[arg(short, long, default_value = "text")]
         format: String,
     },
-    /// A one-screen summary with ASCII art, in the style of neofetch
+    /// One-screen summary of this machine
     ///
-    /// Reads through the same resolver as `snapshot`, so it cannot disagree with
-    /// it about the same machine. Anything unreadable prints the reason rather
-    /// than a dash: "no GPU detected" and "GPU enumeration failed" call for
-    /// different responses, and this is the surface most people look at first.
-    Fetch {
+    /// Reads through the same resolver as `snapshot`, so the two cannot disagree
+    /// about one machine. Anything unreadable prints the reason rather than a
+    /// dash: "no GPU detected" and "GPU enumeration failed" call for different
+    /// responses, and this is the surface people paste into issues.
+    Status {
+        /// Draw the OS logo in ASCII, neofetch-style
+        #[arg(long)]
+        ascii: bool,
+
+        /// Never colourise, even on a terminal
+        #[arg(long)]
+        no_color: bool,
+
         /// Output format (text or json)
         #[arg(short, long, default_value = "text")]
         format: String,
@@ -822,8 +830,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(Commands::Get { id, format }) => {
             handle_get_command(id, format)?;
         }
-        Some(Commands::Fetch { format }) => {
-            handle_fetch_command(format)?;
+        Some(Commands::Status {
+            ascii,
+            no_color,
+            format,
+        }) => {
+            handle_status_command(*ascii, *no_color, format)?;
         }
         Some(Commands::Ids {
             baseline,
@@ -5189,8 +5201,12 @@ fn print_ids_status(label: &str, status: &simonlib::ids::ScanStatus) {
     }
 }
 
-/// Render the neofetch-style summary.
-fn handle_fetch_command(format: &str) -> Result<(), Box<dyn std::error::Error>> {
+/// Render the one-screen summary.
+fn handle_status_command(
+    ascii: bool,
+    no_color: bool,
+    format: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
     let readings = simonlib::ontology::resolve::snapshot();
 
     if format.eq_ignore_ascii_case("json") {
@@ -5210,8 +5226,16 @@ fn handle_fetch_command(format: &str) -> Result<(), Box<dyn std::error::Error>> 
             "{}",
             serde_json::to_string_pretty(&serde_json::json!(lines))?
         );
+    } else if ascii {
+        // Colour follows the terminal unless the caller says otherwise. Piped
+        // output carries no escape codes, because this gets pasted as often as
+        // it gets read.
+        let colour = !no_color && std::io::IsTerminal::is_terminal(&std::io::stdout());
+        print!("{}", simonlib::fetch::render(&readings, colour));
     } else {
-        print!("{}", simonlib::fetch::render(&readings));
+        // Terse by default: the summary without the artwork.
+        let colour = !no_color && std::io::IsTerminal::is_terminal(&std::io::stdout());
+        print!("{}", simonlib::fetch::render_plain(&readings, colour));
     }
     Ok(())
 }
