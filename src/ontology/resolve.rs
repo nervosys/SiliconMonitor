@@ -485,6 +485,11 @@ fn resolve_system(out: &mut Vec<Reading>) {
             let info = monitor.info();
             push_text(out, "system.os.name", &info.os_name);
             push_id(out, "system.os.build", &info.os_build);
+            // Read by `os_info` since long before the ontology named them.
+            push_text(out, "system.hostname", &info.hostname);
+            push_text(out, "system.os.version", &info.os_version);
+            push_text(out, "system.kernel.version", &info.kernel_version);
+            push_id(out, "system.architecture", &info.architecture);
             if info.uptime_seconds > 0 {
                 out.push(Reading::measured(
                     "system.uptime",

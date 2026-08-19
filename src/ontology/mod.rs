@@ -29,6 +29,7 @@
 pub mod resolve;
 
 pub mod capability;
+pub mod jsonld;
 pub mod vocabulary;
 
 use serde::{Deserialize, Serialize};
@@ -1374,6 +1375,47 @@ impl Ontology {
         ));
 
         // ── System and board ─────────────────────────────────────────────────
+        //
+        // The four below were readable by `os_info` long before they were named
+        // here. A reader holding data the schema does not expose is invisible to
+        // every agent, which is the same silence this module exists to prevent —
+        // it just happens one level up.
+        add(Entity::new(
+            "system.hostname",
+            D::System,
+            K::Identity,
+            Some(U::Text),
+            P::Measured,
+            true,
+            "The machine's hostname. Nullable: a container or a freshly imaged              host may genuinely have none set.",
+        ));
+        add(Entity::new(
+            "system.os.version",
+            D::System,
+            K::Identity,
+            Some(U::Text),
+            P::Measured,
+            true,
+            "Operating system version string, as distinct from the build number              and from the product name.",
+        ));
+        add(Entity::new(
+            "system.kernel.version",
+            D::System,
+            K::Identity,
+            Some(U::Text),
+            P::Measured,
+            true,
+            "Kernel version. On Windows this is the NT build rather than a              separate kernel line, which is why it can equal the OS build.",
+        ));
+        add(Entity::new(
+            "system.architecture",
+            D::System,
+            K::Identity,
+            Some(U::Identifier),
+            P::Measured,
+            true,
+            "CPU architecture the OS reports — x86_64, aarch64. The architecture              of the running kernel, which on some hosts differs from the              hardware's.",
+        ));
         add(Entity::new(
             "system.os.name",
             D::System,

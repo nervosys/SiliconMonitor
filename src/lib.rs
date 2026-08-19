@@ -166,6 +166,7 @@ pub mod disk; // Disk/storage monitoring
 pub mod display; // Display/monitor information
 pub mod error;
 pub mod fan_control; // Advanced fan monitoring and control
+pub mod fetch; // neofetch-style summary: logo beside the machine, unknowns named
 pub mod gpu; // GPU abstraction layer
 pub mod health; // System health scoring and alerts
 pub mod hwmon; // Hardware monitoring (temperatures, voltages, fans) - native implementation

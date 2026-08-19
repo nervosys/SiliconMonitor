@@ -212,6 +212,17 @@ enum Commands {
         #[arg(short, long, default_value = "text")]
         format: String,
     },
+    /// A one-screen summary with ASCII art, in the style of neofetch
+    ///
+    /// Reads through the same resolver as `snapshot`, so it cannot disagree with
+    /// it about the same machine. Anything unreadable prints the reason rather
+    /// than a dash: "no GPU detected" and "GPU enumeration failed" call for
+    /// different responses, and this is the surface most people look at first.
+    Fetch {
+        /// Output format (text or json)
+        #[arg(short, long, default_value = "text")]
+        format: String,
+    },
     /// Intrusion detection over listening sockets and watched files
     ///
     /// Observes and reports. It never blocks a connection, kills a process or
@@ -254,7 +265,11 @@ enum Commands {
         #[arg(long)]
         validate: bool,
 
-        /// Output format (json or text)
+        /// Output format: text, json, or json-ld
+        ///
+        /// `json-ld` emits a linked-data document whose `@context` resolves
+        /// simon's terms to IRIs and its units to QUDT, so an agent that has
+        /// never seen simon can interpret the graph without documentation.
         #[arg(short, long, default_value = "text")]
         format: String,
     },
@@ -806,6 +821,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Some(Commands::Get { id, format }) => {
             handle_get_command(id, format)?;
+        }
+        Some(Commands::Fetch { format }) => {
+            handle_fetch_command(format)?;
         }
         Some(Commands::Ids {
             baseline,
@@ -3499,7 +3517,15 @@ fn handle_snapshot_command(
         Vec::new()
     };
 
-    if format.eq_ignore_ascii_case("json") {
+    if format.eq_ignore_ascii_case("json-ld") || format.eq_ignore_ascii_case("jsonld") {
+        // Linked data: every term resolves through the `@context`, so a consumer
+        // that has never seen simon can find out what it is looking at. Absence
+        // survives the encoding — an unavailable reading is a node with no value
+        // and a stated reason, never a zero.
+        let stamp = chrono::Utc::now().to_rfc3339();
+        let doc = simonlib::ontology::jsonld::document(&readings, &stamp);
+        println!("{}", serde_json::to_string_pretty(&doc)?);
+    } else if format.eq_ignore_ascii_case("json") {
         let resolved = readings.iter().filter(|r| r.value.is_some()).count();
         let doc = serde_json::json!({
             "ontology_version": simonlib::ontology::ONTOLOGY_VERSION,
@@ -5161,4 +5187,31 @@ fn print_ids_status(label: &str, status: &simonlib::ids::ScanStatus) {
             println!("{label}: scan failed — {reason}");
         }
     }
+}
+
+/// Render the neofetch-style summary.
+fn handle_fetch_command(format: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let readings = simonlib::ontology::resolve::snapshot();
+
+    if format.eq_ignore_ascii_case("json") {
+        // The same lines, structured. `value` absent and `reason` present is the
+        // same distinction the text form draws, kept for a caller that scripts it.
+        let lines: Vec<serde_json::Value> = simonlib::fetch::summary(&readings)
+            .into_iter()
+            .map(|l| {
+                serde_json::json!({
+                    "label": l.label,
+                    "value": l.value,
+                    "reason": l.reason,
+                })
+            })
+            .collect();
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!(lines))?
+        );
+    } else {
+        print!("{}", simonlib::fetch::render(&readings));
+    }
+    Ok(())
 }
