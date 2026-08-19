@@ -432,21 +432,32 @@ absence is encoded as zero and becomes indistinguishable from a measurement of
 zero. That is the one distinction this crate exists to preserve, and these three
 places cannot preserve it without an API change.
 
-1. **Rename the zero-constructors.** `CpuStats::new()`, `MemoryStats::new()`,
-   `PowerStats::new()` and `ProcessStats::new()` return fabricated numbers behind
-   a name that reads like a proper constructor — 100% idle, 0 W, 0 bytes.
-   `empty()` or `zeroed()` would have prevented the two GUI defects this has
-   already caused. `tests/zero_constructors.rs` pins the set at four so a fifth
-   is noticed; it does not fix them. See open work 10.
+1. ~~**Rename the zero-constructors.**~~ Done in 6.0.0. They are `empty()`
+   returning `Self`, and `tests/zero_constructors.rs` now holds an empty list:
+   no `new()` in this crate fabricates a reading.
 
-2. **`Option` fields on `SwapInfo`.** `total: 0` currently means both "this
-   machine has no swap" and "the reader failed", and the ontology resolver reads
-   it as the first: `memory.swap.total == 0` becomes "no swap or pagefile
-   configured", a definite claim. The macOS reader now fails the whole memory
-   read rather than pass a zero through, which is honest and costs the RAM
-   figures with it. That trade goes away once the type can say "unknown".
-   14 construction sites, 80 field reads, across two different types named
-   `SwapInfo`.
+   **The rename was not cosmetic, which is worth remembering before deferring
+   the next one.** Going to do it turned up three live defects the misleading
+   name had been hiding: `SiliconMonitor::snapshot_cpu` and `snapshot_memory`
+   returned zeros from the public API, `SystemHealth::check` computed CPU usage
+   from 100% idle so no threshold could ever be crossed, and the Prometheus
+   exporter published 0% CPU on every scrape. Five defects total from this one
+   pattern, over three separate discoveries.
+
+2. **`Option` fields on `SwapInfo`** — still open, and the one reachable
+   instance is now closed at the reader.
+
+   `total: 0` means both "no swap" and "the reader failed", and the resolver
+   reads it as the first. Every current reader now either produces a real number
+   or errors: Linux `parse_swap_info` treats a missing `SwapTotal:` line as an
+   error rather than a zero (reachable in a container with no swap accounting),
+   and the macOS reader fails the whole memory read rather than pass a zero
+   through — which costs the RAM figures with it, and is the concrete price of
+   not having done this.
+
+   The type change would make the class impossible rather than closing instances
+   one at a time. It is 62 read sites in this crate alone, across two different
+   types named `SwapInfo`. Deferred on cost, not on doubt about its value.
 
 3. **`Option` fields on `RamInfo`, or a documented contract for its zeros.**
    `RamInfo::shared` is 0 on macOS because simon does not read it, not because
