@@ -1374,6 +1374,76 @@ impl Ontology {
             "Process resident memory.",
         ));
 
+        // ── Displays ─────────────────────────────────────────────────────────
+        //
+        // Not in the plan's named list, which was the plan's own list rather
+        // than an audit: `display` has a reader that answers on every desktop
+        // and had no schema at all. Around 28 modules are still in that state;
+        // see the plan section.
+        add(Entity::new(
+            "board.display.<none>",
+            D::Board,
+            K::Diagnostic,
+            None,
+            P::Unavailable,
+            true,
+            "Present when no display was enumerated, carrying why. A headless               server reporting none is a reading; a failed query is not.",
+        ));
+        add(Entity::new(
+            "board.display.{n}.name",
+            D::Board,
+            K::Identity,
+            Some(U::Text),
+            P::Measured,
+            true,
+            "Display name as the platform reports it. Nullable: a monitor that              publishes no EDID name genuinely has none to report.",
+        ));
+        add(Entity::new(
+            "board.display.{n}.connection",
+            D::Board,
+            K::Identity,
+            Some(U::Identifier),
+            P::Measured,
+            true,
+            "How the display is attached - hdmi, displayport, edp, internal.              Nullable, and measured to be so: two of the three displays on the              development machine report a connection the reader cannot classify,              and it says `unknown`, which the resolver turns into an absence              rather than an identifier reading `unknown`.",
+        ));
+        add(Entity::new(
+            "board.display.{n}.width",
+            D::Board,
+            K::Identity,
+            Some(U::Count),
+            P::Measured,
+            true,
+            "Horizontal resolution in pixels, at the mode currently set. Nullable: \n             an attached display whose mode is unreadable has no resolution to \n             report, and zero is not one.",
+        ));
+        add(Entity::new(
+            "board.display.{n}.height",
+            D::Board,
+            K::Identity,
+            Some(U::Count),
+            P::Measured,
+            true,
+            "Vertical resolution in pixels, at the mode currently set.",
+        ));
+        add(Entity::new(
+            "board.display.{n}.refresh_rate",
+            D::Board,
+            K::Measurement,
+            Some(U::Hertz),
+            P::Measured,
+            true,
+            "Refresh rate of the mode currently set.",
+        ));
+        add(Entity::new(
+            "board.display.{n}.primary",
+            D::Board,
+            K::Identity,
+            None,
+            P::Measured,
+            false,
+            "Whether the platform treats this as the primary display.",
+        ));
+
         // ── Platform sensors ─────────────────────────────────────────────────
         //
         // The last cluster named in plan item F. These are the OS-level sensor

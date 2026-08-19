@@ -199,14 +199,20 @@ fn swap_is_reported_without_exceeding_its_own_total() {
     let simon = Simon::new().expect("construct");
     let memory = simon.memory().expect("memory statistics");
 
-    // CI runners may have swap disabled, which is a real zero rather than a
-    // failure — so this checks consistency, not presence.
-    assert!(
-        memory.swap.used <= memory.swap.total,
-        "swap used {} exceeds total {}",
-        memory.swap.used,
-        memory.swap.total
-    );
+    // Three states since 6.0.0, and only one of them is comparable. A CI runner
+    // may have swap disabled, which is a real zero; the platform may not report
+    // swap at all, which is `None` and not a small number. Comparing through
+    // `unwrap_or(0)` would make this pass for the wrong reason on the second.
+    match (memory.swap.used, memory.swap.total) {
+        (Some(used), Some(total)) => assert!(
+            used <= total,
+            "swap used {used} exceeds total {total}"
+        ),
+        (None, None) => {}
+        (used, total) => panic!(
+            "swap reported one half and not the other: used={used:?} total={total:?},              which no reader should produce"
+        ),
+    }
 }
 
 #[test]

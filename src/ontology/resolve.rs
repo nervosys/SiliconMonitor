@@ -105,6 +105,7 @@ pub fn snapshot() -> Vec<Reading> {
     resolve_power(&mut out);
     resolve_rapl(&mut out);
     resolve_sensors(&mut out);
+    resolve_displays(&mut out);
     resolve_virtualization(&mut out);
     resolve_numa(&mut out);
     resolve_ecc(&mut out);
@@ -2079,6 +2080,79 @@ fn resolve_thermal(out: &mut Vec<Reading>) {
     //
     // The read-failure path above still emits `<none>`, and correctly: it returns
     // before pushing anything, so nothing contradicts it.
+}
+
+/// Attached displays.
+fn resolve_displays(out: &mut Vec<Reading>) {
+    let monitor = match crate::display::DisplayMonitor::new() {
+        Ok(m) => m,
+        Err(e) => {
+            out.push(Reading::unavailable(
+                "board.display.<none>",
+                None,
+                format!("display enumeration failed: {e}"),
+            ));
+            return;
+        }
+    };
+
+    let displays = monitor.displays();
+    if displays.is_empty() {
+        out.push(Reading::unavailable(
+            "board.display.<none>",
+            None,
+            "no display is attached, or none is visible to this session - a              headless server and a locked-down service account both look like              this",
+        ));
+        return;
+    }
+
+    for (i, d) in displays.iter().enumerate() {
+        let base = format!("board.display.{i}");
+        push_opt(
+            out,
+            format!("{base}.name"),
+            d.name.as_ref().map(|n| serde_json::json!(n)),
+            Some(Unit::Text),
+            "this display publishes no name",
+        );
+        push_id(
+            out,
+            format!("{base}.connection"),
+            &format!("{:?}", d.connection).to_lowercase(),
+        );
+        // A display is not zero pixels wide. The reader publishes zeros for a
+        // monitor whose current mode it could not read — observed on this
+        // machine, where an attached and named LG ultrawide reported 0x0 at
+        // 0 Hz — and passing those through as `measured` would be a
+        // measurement of an impossible display.
+        const NOT_A_MODE: &str = "the display is attached and its current mode was not readable; zero is not a resolution";
+        push_opt(
+            out,
+            format!("{base}.width"),
+            (d.width > 0).then(|| serde_json::json!(d.width)),
+            Some(Unit::Count),
+            NOT_A_MODE,
+        );
+        push_opt(
+            out,
+            format!("{base}.height"),
+            (d.height > 0).then(|| serde_json::json!(d.height)),
+            Some(Unit::Count),
+            NOT_A_MODE,
+        );
+        push_opt(
+            out,
+            format!("{base}.refresh_rate"),
+            (d.refresh_rate > 0.0).then(|| serde_json::json!(d.refresh_rate)),
+            Some(Unit::Hertz),
+            NOT_A_MODE,
+        );
+        out.push(Reading::measured(
+            format!("{base}.primary"),
+            serde_json::json!(d.is_primary),
+            None,
+        ));
+    }
 }
 
 /// Platform sensor devices — ambient light, accelerometer, orientation.

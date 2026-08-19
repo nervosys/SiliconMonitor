@@ -37,8 +37,8 @@ cargo clippy --all-features --all-targets -- -D warnings
 cargo test --all-features
 cargo test                       # default features: the `vault` tests must drop out
 cargo +1.88 check --all-targets  # the declared MSRV, actually built
-cargo check --target x86_64-unknown-linux-gnu --no-default-features --features cpu,npu,io,network,amd,nvidia,intel
-cargo check --target aarch64-apple-darwin --no-default-features --features cpu,npu,io,network,apple,nvidia,num_cpus
+cargo check --target x86_64-unknown-linux-gnu --all-targets --no-default-features --features cpu,npu,io,network,amd,nvidia,intel
+cargo check --target aarch64-apple-darwin --all-targets --no-default-features --features cpu,npu,io,network,apple,nvidia,num_cpus
 ```
 
 **Build the MSRV, do not declare it.** `rust-version` said 1.70 from 3.x through
@@ -79,6 +79,12 @@ intermittent failure at three runs in five that read as noise, and this.
 The two cross-target checks need only `rustup target add …` — no C toolchain, no
 VM. They are the fastest way to catch platform breakage from a Windows box, and
 they are how the 114 compile errors behind the 3.0.0 manifest bug were found.
+
+**`--all-targets` is not optional there.** Without it `cargo check` builds the
+library and skips the test targets, and `tests/macos_readers.rs` is
+`cfg(target_os = "macos")` — so a signature change that broke it was invisible to
+both the local suite and the cross-check, and reached CI. The `Option` fields on
+`SwapInfo` did exactly that.
 
 CI additionally checks every feature in isolation (job **Feature combinations**).
 That job exists because `--all-features` cannot catch a feature that only builds
@@ -574,7 +580,19 @@ and a machine with genuinely no sensors were indistinguishable — so `note()` n
 records which. And an unnamed sensor was being called `"Unknown"`, a literal that
 reads as the sensor's actual name; those are skipped instead.
 
-Item F is complete for every cluster with a reader behind it.
+Item F is complete for every cluster **the plan named** — NUMA, RAPL, sensors,
+virtualization and EDAC. That is not the same as every reader having a schema,
+and an earlier version of this line said so, which was an overclaim.
+
+Around 28 module directories still have no ontology entities: `audio`,
+`bluetooth`, `camera`, `codec`, `display`, `input`, `printer`, `services`,
+`wsl`, `iommu`, `interrupt_map`, `io_scheduler`, `kernel_params`,
+`memory_bandwidth`, `memory_topology`, `cpu_microarch`, `crypto_accel`,
+`dma_engine`, `drm_monitor`, `gpu_topology`, `hardware_ai`, `interconnect`,
+`power_profile`, `scheduler`, `security_mitigations`, `storage_controller`,
+`thermal_zone`, `voltage_regulator`, `watchdog`. Each is a candidate for the
+same treatment, and each needs the same check first: does its reader answer on
+the machine at hand, and what does it say when it does not?
 
 Add a cluster per change, verify each field resolves to a true provenance on the
 machine at hand, and check the absent variant first — see open work 5 for why
