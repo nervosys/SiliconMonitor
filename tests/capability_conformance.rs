@@ -164,26 +164,29 @@ fn readings_claimed_usable_here_actually_resolve() {
         let domain = c.id.trim_start_matches("reading.");
         let prefix = format!("{domain}.");
 
-        let observed = snapshot
+        // A capability describes what this *build* can read, not what this
+        // *machine* has, so the requirement is that the domain is not silent -
+        // not that it produced numbers.
+        //
+        // This assertion has been wrong twice. It first required an observation,
+        // and failed on CI runners with no GPU. It then allowed an observation or
+        // a `<domain>.<none>` diagnostic, and failed on runners with no battery,
+        // where `power.battery.percentage` resolves as unavailable carrying "no
+        // battery present" - a correct and complete answer that is neither of the
+        // two things it accepted.
+        //
+        // Rows are the property worth asserting. Whether they carry values depends
+        // on the hardware present, which a capability does not claim; that every
+        // absent one carries a reason is guaranteed by
+        // `every_absence_carries_a_usable_reason` in the ontology suite.
+        let rows = snapshot
             .iter()
             .filter(|r| r.id.starts_with(&prefix))
-            .filter(|r| r.is_observation())
             .count();
 
-        // A capability describes what this *build* can read, not what this
-        // *machine* has. A CI runner with no GPU produces no gpu observations and
-        // that is correct - which the first version of this test got wrong, failing
-        // on Linux and Windows in CI while passing on a workstation with three
-        // adapters.
-        //
-        // So the requirement is that simon says something either way: readings, or
-        // the declared `<none>` diagnostic carrying the reason. Silence is the
-        // failure, and it is the one this crate exists to prevent.
-        let explained_absence = snapshot.iter().any(|r| r.id == format!("{domain}.<none>"));
-
         assert!(
-            observed > 0 || explained_absence,
-            "{} claims to be usable on {} and produced neither an observation nor a {}.<none> diagnostic. Either the reader is broken or it is staying silent about finding nothing, and silence is the answer this crate must never give.",
+            rows > 0,
+            "{} claims to be usable on {} and the snapshot contains no {} rows at all - not a reading, not an absence, not a diagnostic. Silence is the one answer this crate must never give.",
             c.id,
             here.as_str(),
             domain
