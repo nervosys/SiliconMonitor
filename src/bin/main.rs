@@ -1469,11 +1469,12 @@ fn print_memory_info(memory: &simonlib::core::memory::MemoryStats) {
         ram_pct_colored
     );
 
-    if memory.swap.total > 0 {
-        let swap_usage = memory.swap_usage_percent();
+    if memory.swap.total_or_zero() > 0 {
+        // Guarded by `total_or_zero() > 0` above, so swap was reported.
+        let swap_usage = memory.swap_usage_percent_or_zero();
         let swap_bar = create_usage_bar(swap_usage, 20);
-        let swap_used_gb = memory.swap.used as f64 / 1024.0 / 1024.0;
-        let swap_total_gb = memory.swap.total as f64 / 1024.0 / 1024.0;
+        let swap_used_gb = memory.swap.used_or_zero() as f64 / 1024.0 / 1024.0;
+        let swap_total_gb = memory.swap.total_or_zero() as f64 / 1024.0 / 1024.0;
 
         let swap_pct_str = format!("{:.1}%", swap_usage);
         let swap_pct_colored = if swap_usage > 90.0 {
@@ -1846,11 +1847,11 @@ fn print_memory_info_backend(backend: &simonlib::backend::MonitoringBackend) {
             ram_pct_colored
         );
 
-        if memory.swap.total > 0 {
-            let swap_usage = memory.swap_usage_percent();
+        if memory.swap.total_or_zero() > 0 {
+            let swap_usage = memory.swap_usage_percent_or_zero();
             let swap_bar = create_usage_bar(swap_usage, 20);
-            let swap_used_gb = memory.swap.used as f64 / 1024.0 / 1024.0;
-            let swap_total_gb = memory.swap.total as f64 / 1024.0 / 1024.0;
+            let swap_used_gb = memory.swap.used_or_zero() as f64 / 1024.0 / 1024.0;
+            let swap_total_gb = memory.swap.total_or_zero() as f64 / 1024.0 / 1024.0;
 
             let swap_pct_str = format!("{:.1}%", swap_usage);
             let swap_pct_colored = if swap_usage > 90.0 {
@@ -2810,8 +2811,8 @@ fn handle_record_command(action: &RecordSubcommand) -> Result<(), Box<dyn std::e
                         (
                             m.ram.used * 1024,
                             m.ram.total * 1024,
-                            m.swap.used * 1024,
-                            m.swap.total * 1024,
+                            m.swap.used_or_zero() * 1024,
+                            m.swap.total_or_zero() * 1024,
                         )
                     })
                     .unwrap_or((0, 0, 0, 0));

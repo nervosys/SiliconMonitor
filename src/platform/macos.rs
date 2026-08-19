@@ -448,25 +448,14 @@ pub fn read_memory_stats() -> crate::error::Result<crate::core::memory::MemorySt
     })?;
 
     // A machine with swap disabled reports zeros through `vm.swapusage`, and
-    // that is a reading. A *failed* read is not, and `SwapInfo` has no way to
-    // tell them apart: its fields are plain `u64`.
+    // that is a reading. A failed read is not, and `SwapInfo` can now say so:
+    // `None` rather than zero.
     //
-    // So a failed read fails the whole call rather than returning zeros. The
-    // resolver reads `swap.total == 0` as "no swap or pagefile configured" — a
-    // definite statement about the machine — and reaching that through an
-    // unreadable sysctl would be a confident falsehood. Losing the RAM figures
-    // alongside it is a real cost, and it is the smaller one: this crate's whole
-    // position is that an absence beats a wrong reading.
-    //
-    // Fixing it properly means `Option` fields on `SwapInfo`, which has 14
-    // construction sites and 80 field reads across two types of that name. Worth
-    // doing, too large to do here.
-    let swap = swap_usage().ok_or_else(|| {
-        crate::error::SimonError::Parse(
-            "vm.swapusage was not readable, and reporting zero swap would claim              this machine has none"
-                .into(),
-        )
-    })?;
+    // Until 6.0.0 this failed the entire memory read when the sysctl was
+    // unreadable, losing the RAM figures to avoid claiming the machine had no
+    // swap. That trade existed only because the type could not express
+    // "unknown", and it is gone now that it can.
+    let swap = swap_usage();
 
     Ok(MemoryStats {
         ram: RamInfo {
@@ -477,19 +466,16 @@ pub fn read_memory_stats() -> crate::error::Result<crate::core::memory::MemorySt
             // here is a fact about the platform rather than a missing reading.
             buffers: 0,
             cached: vm.cached_bytes() / 1024,
-            // This one is *not* a fact. macOS has shared memory; simon does not
-            // read it, and `RamInfo::shared` is a plain `u64` with no way to say
-            // so. Nothing in the ontology surfaces this field, so no agent is
-            // told a falsehood today — but a library caller reading
-            // `MemoryStats` is, and the honest fix is the same `Option` change
-            // `SwapInfo` needs.
-            shared: 0,
+            // macOS has shared memory and simon does not read it, so `None`.
+            // This was a zero until 6.0.0, which read as a measurement of none.
+            shared: None,
             lfb: None,
         },
         swap: SwapInfo {
-            total: swap.total / 1024,
-            used: swap.used / 1024,
-            cached: 0,
+            total: swap.map(|s| s.total / 1024),
+            used: swap.map(|s| s.used / 1024),
+            // macOS reports no cached-swap figure.
+            cached: None,
         },
         emc: None,
         iram: None,

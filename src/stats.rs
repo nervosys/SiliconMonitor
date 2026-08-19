@@ -627,27 +627,35 @@ mod macos_stats {
                 * vm.page_size
         });
 
-        // Swap being unreadable is different from swap being off: the first leaves
-        // zeros that mean "unknown", the second is a real zero. `SwapInfo` has no
-        // Option to carry that distinction, so an unreadable value is reported as
-        // zero and noted here rather than silently conflated.
-        let swap = macos::swap_usage().unwrap_or(macos::SwapUsage { total: 0, used: 0 });
+        // Swap being unreadable is different from swap being off: the first is
+        // unknown, the second is a real zero. `SwapInfo` carries that
+        // distinction as of 6.0.0, so the value passes through as `Option`
+        // rather than collapsing to a zero with a comment apologising for it.
+        // This was the third place in the crate working around the same missing
+        // type.
+        let swap = macos::swap_usage();
 
         Ok(MemoryStats {
+            // KB throughout, which every field of `RamInfo` and `SwapInfo`
+            // documents. This reader assigned bytes to all of them — a factor of
+            // 1024 — while `platform::macos::read_memory_stats` divided
+            // correctly, so the same machine reported two different sizes
+            // depending on which entry point a caller used.
             ram: RamInfo {
-                total,
-                used: vm.used_bytes(),
-                free: vm.free_bytes(),
+                total: total / 1024,
+                used: vm.used_bytes() / 1024,
+                free: vm.free_bytes() / 1024,
                 // macOS has no buffer cache distinct from the file cache.
                 buffers: 0,
-                cached: vm.cached_bytes(),
-                shared: 0,
+                cached: vm.cached_bytes() / 1024,
+                // Not read here.
+                shared: None,
                 lfb: None,
             },
             swap: SwapInfo {
-                total: swap.total,
-                used: swap.used,
-                cached: 0,
+                total: swap.map(|s| s.total / 1024),
+                used: swap.map(|s| s.used / 1024),
+                cached: None,
             },
             emc: None,
             iram: None,

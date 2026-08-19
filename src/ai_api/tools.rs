@@ -1448,10 +1448,10 @@ impl AiDataApi {
                     } else { 0.0 },
                 },
                 "swap": {
-                    "total_mb": stats.swap.total / 1024,
-                    "used_mb": stats.swap.used / 1024,
-                    "usage_percent": if stats.swap.total > 0 {
-                        (stats.swap.used as f64 / stats.swap.total as f64) * 100.0
+                    "total_mb": stats.swap.total_or_zero() / 1024,
+                    "used_mb": stats.swap.used_or_zero() / 1024,
+                    "usage_percent": if stats.swap.total_or_zero() > 0 {
+                        (stats.swap.used_or_zero() as f64 / stats.swap.total_or_zero() as f64) * 100.0
                     } else { 0.0 },
                 }
             }))
@@ -1473,10 +1473,10 @@ impl AiDataApi {
                     } else { 0.0 },
                 },
                 "swap": {
-                    "total_mb": stats.swap.total / 1024,
-                    "used_mb": stats.swap.used / 1024,
-                    "usage_percent": if stats.swap.total > 0 {
-                        (stats.swap.used as f64 / stats.swap.total as f64) * 100.0
+                    "total_mb": stats.swap.total_or_zero() / 1024,
+                    "used_mb": stats.swap.used_or_zero() / 1024,
+                    "usage_percent": if stats.swap.total_or_zero() > 0 {
+                        (stats.swap.used_or_zero() as f64 / stats.swap.total_or_zero() as f64) * 100.0
                     } else { 0.0 },
                 }
             }))
@@ -1663,10 +1663,10 @@ impl AiDataApi {
                 "total_kb": stats.swap.total,
                 "used_kb": stats.swap.used,
                 "cached_kb": stats.swap.cached,
-                "total_mb": stats.swap.total / 1024,
-                "used_mb": stats.swap.used / 1024,
-                "usage_percent": if stats.swap.total > 0 {
-                    (stats.swap.used as f64 / stats.swap.total as f64) * 100.0
+                "total_mb": stats.swap.total_or_zero() / 1024,
+                "used_mb": stats.swap.used_or_zero() / 1024,
+                "usage_percent": if stats.swap.total_or_zero() > 0 {
+                    (stats.swap.used_or_zero() as f64 / stats.swap.total_or_zero() as f64) * 100.0
                 } else { 0.0 },
             }))
         }
@@ -1681,10 +1681,10 @@ impl AiDataApi {
                 "total_kb": stats.swap.total,
                 "used_kb": stats.swap.used,
                 "cached_kb": stats.swap.cached,
-                "total_mb": stats.swap.total / 1024,
-                "used_mb": stats.swap.used / 1024,
-                "usage_percent": if stats.swap.total > 0 {
-                    (stats.swap.used as f64 / stats.swap.total as f64) * 100.0
+                "total_mb": stats.swap.total_or_zero() / 1024,
+                "used_mb": stats.swap.used_or_zero() / 1024,
+                "usage_percent": if stats.swap.total_or_zero() > 0 {
+                    (stats.swap.used_or_zero() as f64 / stats.swap.total_or_zero() as f64) * 100.0
                 } else { 0.0 },
             }))
         }

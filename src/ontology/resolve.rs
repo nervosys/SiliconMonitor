@@ -431,29 +431,51 @@ fn resolve_memory(out: &mut Vec<Reading>) {
         )),
     }
 
-    let swap_total = stats.swap.total.saturating_mul(1024);
-    if swap_total == 0 {
-        out.push(Reading::unavailable(
-            "memory.swap.total",
-            Some(Unit::Bytes),
-            "no swap or pagefile configured",
-        ));
-        out.push(Reading::unavailable(
-            "memory.swap.used",
-            Some(Unit::Bytes),
-            "no swap or pagefile configured",
-        ));
-    } else {
-        out.push(Reading::measured(
-            "memory.swap.total",
-            serde_json::json!(swap_total),
-            Some(Unit::Bytes),
-        ));
-        out.push(Reading::measured(
-            "memory.swap.used",
-            serde_json::json!(stats.swap.used.saturating_mul(1024)),
-            Some(Unit::Bytes),
-        ));
+    // Three outcomes, and until 6.0.0 the type could only express two.
+    //
+    // A platform that did not report swap and a machine with no swap both
+    // arrived here as `0`, and both were published as the definite statement
+    // "no swap or pagefile configured". Now `None` says the first and `Some(0)`
+    // the second, which is the same distinction this module makes everywhere
+    // else and could not make for its own swap rows.
+    match stats.swap.total {
+        None => {
+            for id in ["memory.swap.total", "memory.swap.used"] {
+                out.push(Reading::unavailable(
+                    id,
+                    Some(Unit::Bytes),
+                    "the platform did not report swap, so whether this machine has                      any is unknown",
+                ));
+            }
+        }
+        Some(0) => {
+            for id in ["memory.swap.total", "memory.swap.used"] {
+                out.push(Reading::unavailable(
+                    id,
+                    Some(Unit::Bytes),
+                    "no swap or pagefile configured",
+                ));
+            }
+        }
+        Some(total_kb) => {
+            out.push(Reading::measured(
+                "memory.swap.total",
+                serde_json::json!(total_kb.saturating_mul(1024)),
+                Some(Unit::Bytes),
+            ));
+            match stats.swap.used {
+                Some(used_kb) => out.push(Reading::measured(
+                    "memory.swap.used",
+                    serde_json::json!(used_kb.saturating_mul(1024)),
+                    Some(Unit::Bytes),
+                )),
+                None => out.push(Reading::unavailable(
+                    "memory.swap.used",
+                    Some(Unit::Bytes),
+                    "the platform reported a swap total and no used figure",
+                )),
+            }
+        }
     }
 }
 

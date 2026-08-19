@@ -173,12 +173,16 @@ fn memory_readings_are_self_consistent() {
         mem.ram.used,
         mem.ram.total
     );
-    assert!(
-        mem.swap.used <= mem.swap.total || mem.swap.total == 0,
-        "used swap {} exceeds total {}",
-        mem.swap.used,
-        mem.swap.total
-    );
+    // Only comparable when the platform reported both. `None` is not a small
+    // number: a machine that reported no swap figures at all has nothing here to
+    // be implausible about, and asserting over `unwrap_or(0)` would have made
+    // this pass for the wrong reason.
+    if let (Some(used), Some(total)) = (mem.swap.used, mem.swap.total) {
+        assert!(
+            used <= total || total == 0,
+            "used swap {used} exceeds total {total}"
+        );
+    }
 
     // Guard against the specific fabricated fallback that used to ship: exactly
     // 32 GiB total with exactly 16 GiB used, in kilobytes.

@@ -28,7 +28,7 @@ fn parse_ram_info(meminfo: &str) -> Result<RamInfo> {
         free: 0,
         buffers: 0,
         cached: 0,
-        shared: 0,
+        shared: None,
         lfb: None,
     };
 
@@ -65,7 +65,8 @@ fn parse_ram_info(meminfo: &str) -> Result<RamInfo> {
     ram.free = mem_free;
     ram.buffers = buffers;
     ram.cached = cached + s_reclaimable;
-    ram.shared = shmem;
+    // Linux does report this, via Shmem in /proc/meminfo.
+    ram.shared = Some(shmem);
     ram.used = mem_total.saturating_sub(mem_available);
 
     // Try to read LFB (Large Free Blocks) for Jetson
@@ -92,12 +93,10 @@ fn parse_ram_info(meminfo: &str) -> Result<RamInfo> {
 /// class impossible; it is 62 read sites away and is recorded in HANDOFF.md
 /// rather than half-done here.
 fn parse_swap_info(meminfo: &str) -> Result<SwapInfo> {
-    let mut swap = SwapInfo {
-        total: 0,
-        used: 0,
-        cached: 0,
-    };
-    let mut saw_total = false;
+    // Starts as "nothing reported". Each field becomes `Some` only when
+    // /proc/meminfo actually carried it, which is what makes a container with no
+    // swap accounting distinguishable from a machine with no swap.
+    let mut swap = SwapInfo::default();
 
     for line in meminfo.lines() {
         let parts: Vec<&str> = line.split_whitespace().collect();
@@ -109,26 +108,19 @@ fn parse_swap_info(meminfo: &str) -> Result<SwapInfo> {
         let value: u64 = parts[1].parse().unwrap_or(0);
 
         match key {
-            "SwapTotal" => {
-                swap.total = value;
-                saw_total = true;
-            }
+            "SwapTotal" => swap.total = Some(value),
             "SwapFree" => {
-                let free = value;
-                swap.used = swap.total.saturating_sub(free);
+                // Used is only meaningful once the total is known.
+                swap.used = swap.total.map(|t| t.saturating_sub(value));
             }
-            "SwapCached" => swap.cached = value,
+            "SwapCached" => swap.cached = Some(value),
             _ => {}
         }
     }
 
-    if !saw_total {
-        return Err(crate::error::SimonError::Parse(
-            "/proc/meminfo has no SwapTotal line, so whether this machine has swap              is unknown; reporting zero would claim it has none"
-                .into(),
-        ));
-    }
-
+    // A missing SwapTotal is no longer an error: `None` says "not reported" in
+    // the type, so the whole memory read need not fail to stay honest. That
+    // error existed only because `u64` could not express this.
     Ok(swap)
 }
 

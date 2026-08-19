@@ -1387,8 +1387,8 @@ impl App {
             total: stats.ram.total * 1024,
             used: stats.ram.used * 1024,
             available: stats.ram.free * 1024,
-            swap_total: stats.swap.total * 1024,
-            swap_used: stats.swap.used * 1024,
+            swap_total: stats.swap.total_or_zero() * 1024,
+            swap_used: stats.swap.used_or_zero() * 1024,
         };
 
         let used_percent = (self.memory_info.used * 100)

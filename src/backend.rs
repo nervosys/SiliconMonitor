@@ -1195,8 +1195,8 @@ impl MonitoringBackend {
         // Memory state
         if let Some(ref mem) = self.memory_stats {
             let ram_usage = mem.ram_usage_percent();
-            let swap_usage = if mem.swap.total > 0 {
-                (mem.swap.used as f32 / mem.swap.total as f32) * 100.0
+            let swap_usage = if mem.swap.total_or_zero() > 0 {
+                (mem.swap.used_or_zero() as f32 / mem.swap.total_or_zero() as f32) * 100.0
             } else {
                 0.0
             };
@@ -1206,8 +1206,8 @@ impl MonitoringBackend {
                 used_bytes: mem.ram.used * 1024,
                 available_bytes: mem.ram.free * 1024,
                 usage_percent: ram_usage,
-                swap_total_bytes: mem.swap.total * 1024,
-                swap_used_bytes: mem.swap.used * 1024,
+                swap_total_bytes: mem.swap.total_or_zero() * 1024,
+                swap_used_bytes: mem.swap.used_or_zero() * 1024,
                 swap_usage_percent: swap_usage,
             });
         }

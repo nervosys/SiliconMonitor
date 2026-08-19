@@ -251,8 +251,9 @@ impl SystemHealth {
             );
 
             // Swap check
-            if mem.swap.total > 0 {
-                let swap_usage = (mem.swap.used as f64 / mem.swap.total as f64) * 100.0;
+            if mem.swap.total_or_zero() > 0 {
+                let swap_usage =
+                    (mem.swap.used_or_zero() as f64 / mem.swap.total_or_zero() as f64) * 100.0;
                 let (status, message) = if swap_usage >= thresholds.swap_critical as f64 {
                     (
                         HealthStatus::Critical,

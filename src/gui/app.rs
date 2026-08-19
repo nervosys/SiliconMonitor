@@ -2208,8 +2208,9 @@ impl SiliconMonitorApp {
                 .memory_stats
                 .as_ref()
                 .map(|m| {
-                    if m.swap.total > 0 {
-                        (m.swap.used as f64 / m.swap.total as f64 * 100.0) as f32
+                    if m.swap.total_or_zero() > 0 {
+                        (m.swap.used_or_zero() as f64 / m.swap.total_or_zero() as f64 * 100.0)
+                            as f32
                     } else {
                         0.0
                     }
@@ -3030,7 +3031,8 @@ impl SiliconMonitorApp {
                 let free_mb = mem.ram.free as f64 / 1024.0;
                 let buffers_mb = mem.ram.buffers as f64 / 1024.0;
                 let cached_mb = mem.ram.cached as f64 / 1024.0;
-                let shared_mb = mem.ram.shared as f64 / 1024.0;
+                // Displayed as zero when unreported, which is most platforms.
+                let shared_mb = mem.ram.shared.unwrap_or(0) as f64 / 1024.0;
                 // Available = free + buffers + cached (like free -h)
                 let available_mb = free_mb + buffers_mb + cached_mb;
 
@@ -3172,14 +3174,14 @@ impl SiliconMonitorApp {
                 ui.add(SectionHeader::new("Swap Memory").icon("🔄"));
 
                 let swap_usage = mem.swap_usage_percent();
-                let swap_total_mb = mem.swap.total as f64 / 1024.0;
-                let swap_used_mb = mem.swap.used as f64 / 1024.0;
+                let swap_total_mb = mem.swap.total_or_zero() as f64 / 1024.0;
+                let swap_used_mb = mem.swap.used_or_zero() as f64 / 1024.0;
                 let swap_free_mb = swap_total_mb - swap_used_mb;
-                let swap_cached_mb = mem.swap.cached as f64 / 1024.0;
+                let swap_cached_mb = mem.swap.cached_or_zero() as f64 / 1024.0;
 
                 if swap_total_mb > 0.0 {
                     ui.add(
-                        CyberProgressBar::new(swap_usage / 100.0)
+                        CyberProgressBar::new(swap_usage.unwrap_or(0.0) / 100.0)
                             .color(CyberColors::NEON_PURPLE)
                             .label(format!(
                                 "Swap: {:.1} MB / {:.1} MB",

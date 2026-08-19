@@ -488,16 +488,18 @@ pub fn read_memory_stats() -> Result<MemoryStats> {
         let used_pages = perf_info.CommitTotal as u64;
 
         SwapInfo {
-            total: (total_pages * page_size) / 1024, // Convert to KB
-            used: (used_pages * page_size) / 1024,
-            cached: 0,
+            total: Some((total_pages * page_size) / 1024), // Convert to KB
+            used: Some((used_pages * page_size) / 1024),
+            // Windows exposes no cached-swap figure. `None`, not zero: the
+            // quantity is unreported, not measured at nothing.
+            cached: None,
         }
     } else {
         // Fallback using MEMORYSTATUSEX pagefile info
         SwapInfo {
-            total: (mem_status.ullTotalPageFile - mem_status.ullTotalPhys) / 1024,
-            used: (mem_status.ullTotalPageFile - mem_status.ullAvailPageFile) / 1024,
-            cached: 0,
+            total: Some((mem_status.ullTotalPageFile - mem_status.ullTotalPhys) / 1024),
+            used: Some((mem_status.ullTotalPageFile - mem_status.ullAvailPageFile) / 1024),
+            cached: None,
         }
     };
 
@@ -512,7 +514,9 @@ pub fn read_memory_stats() -> Result<MemoryStats> {
             free: avail_kb,
             buffers: 0, // Windows doesn't expose this separately
             cached: 0,  // Could use GetPerformanceInfo for SystemCache
-            shared: 0,
+            // Not read on Windows. `None` rather than a zero that reads like a
+            // measurement of no shared memory.
+            shared: None,
             lfb: None,
         },
         swap: swap_info,
