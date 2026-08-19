@@ -26,7 +26,7 @@ static PREV_USER_TIME: AtomicU64 = AtomicU64::new(0);
 
 /// Read CPU statistics on Windows
 pub fn read_cpu_stats() -> Result<CpuStats> {
-    let mut stats = CpuStats::new()?;
+    let mut stats = CpuStats::empty();
 
     // Get number of processors
     let mut sys_info: SYSTEM_INFO = unsafe { mem::zeroed() };
@@ -940,7 +940,7 @@ pub fn read_process_stats() -> Result<crate::core::process::ProcessStats> {
         GetProcessTimes, OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ,
     };
 
-    let mut stats = ProcessStats::new()?;
+    let mut stats = ProcessStats::empty();
 
     unsafe {
         // Create snapshot of all processes

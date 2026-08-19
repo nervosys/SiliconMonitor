@@ -9,7 +9,7 @@ use std::path::Path;
 
 /// Read CPU statistics
 pub fn read_cpu_stats() -> Result<CpuStats> {
-    let mut stats = CpuStats::new()?;
+    let mut stats = CpuStats::empty();
 
     // Read CPU times from /proc/stat
     let proc_stat = fs::read_to_string("/proc/stat")?;

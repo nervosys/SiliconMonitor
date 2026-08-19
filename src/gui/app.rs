@@ -712,7 +712,7 @@ impl SiliconMonitorApp {
         #[cfg(target_os = "linux")]
         let initial_cpu_stats = crate::platform::linux::cpu::read_cpu_stats().ok();
         #[cfg(not(any(target_os = "windows", target_os = "linux")))]
-        let initial_cpu_stats = CpuStats::new().ok();
+        let initial_cpu_stats = Some(CpuStats::empty());
 
         // Get initial memory stats.
         //
@@ -731,7 +731,7 @@ impl SiliconMonitorApp {
         #[cfg(target_os = "linux")]
         let initial_memory_stats = crate::platform::linux::memory::read_memory_stats().ok();
         #[cfg(not(any(target_os = "windows", target_os = "linux")))]
-        let initial_memory_stats = MemoryStats::new().ok();
+        let initial_memory_stats = Some(MemoryStats::empty());
 
         // Start background loading for AI agent (avoid blocking UI with HTTP timeouts)
         let (agent_tx, agent_rx) = channel();

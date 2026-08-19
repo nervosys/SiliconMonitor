@@ -745,7 +745,7 @@ impl MonitoringBackend {
             // macOS CPU stats via sysctl and host_processor_info
             // Use Command to get CPU info from sysctl
             use std::process::Command;
-            let mut stats = CpuStats::new()?;
+            let mut stats = CpuStats::empty();
 
             // Get CPU model name
             let model = Command::new("sysctl")

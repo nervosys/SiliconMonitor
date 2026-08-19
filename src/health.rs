@@ -20,8 +20,6 @@
 //! # }
 //! ```
 
-use crate::core::cpu::CpuStats;
-use crate::core::memory::MemoryStats;
 use crate::error::Result;
 use crate::gpu::GpuCollection;
 use serde::{Deserialize, Serialize};
@@ -186,7 +184,10 @@ impl SystemHealth {
         let mut checks = Vec::new();
 
         // CPU Health Check
-        if let Ok(cpu) = CpuStats::new() {
+        // Reads the platform. This called `CpuStats::new()`, a zero-constructor,
+        // so every CPU health check saw 100% idle and could never report high
+        // usage — the check existed and could not fire.
+        if let Ok(cpu) = crate::stats::read_cpu_stats() {
             let cpu_usage = 100.0 - cpu.total.idle;
             let (status, message) = if cpu_usage >= thresholds.cpu_critical {
                 (
@@ -218,7 +219,8 @@ impl SystemHealth {
         }
 
         // Memory Health Check
-        if let Ok(mem) = MemoryStats::new() {
+        // Reads the platform, for the reason above.
+        if let Ok(mem) = crate::stats::read_memory_stats() {
             let mem_usage = mem.ram_usage_percent();
             let (status, message) = if mem_usage >= thresholds.memory_critical {
                 (

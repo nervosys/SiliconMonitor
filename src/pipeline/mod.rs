@@ -784,7 +784,7 @@ fn collect_cpu() -> Option<CpuStats> {
     }
     #[cfg(not(any(target_os = "windows", target_os = "linux")))]
     {
-        CpuStats::new().ok()
+        Some(CpuStats::empty())
     }
 }
 
@@ -799,7 +799,7 @@ fn collect_memory() -> Option<MemoryStats> {
     }
     #[cfg(not(any(target_os = "windows", target_os = "linux")))]
     {
-        MemoryStats::new().ok()
+        Some(MemoryStats::empty())
     }
 }
 

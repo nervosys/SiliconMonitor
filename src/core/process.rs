@@ -1,6 +1,5 @@
 //! Process monitoring
 
-use crate::error::Result;
 use serde::{Deserialize, Serialize};
 
 /// Process information
@@ -38,12 +37,21 @@ pub struct ProcessStats {
 }
 
 impl ProcessStats {
-    /// Create a new process stats instance
-    pub fn new() -> Result<Self> {
-        Ok(Self {
+    /// A zeroed struct for a platform reader to fill in.
+    ///
+    /// **This reads nothing.** It returns no processes and zero GPU memory, and it was called `new()`
+    /// until 6.0.0 — a name that reads like a constructor that gathers
+    /// data. Two GUI defects, one in the HTTP server and one in the
+    /// library's own `snapshot_process` came from exactly that misreading,
+    /// found over three separate occasions.
+    ///
+    /// The real values come from the per-platform readers. Use those
+    /// unless you are a reader building your own starting struct.
+    pub fn empty() -> Self {
+        Self {
             processes: Vec::new(),
             total_gpu_memory_kb: 0,
-        })
+        }
     }
 
     /// Get process count
@@ -72,10 +80,7 @@ impl ProcessStats {
 
 impl Default for ProcessStats {
     fn default() -> Self {
-        Self::new().unwrap_or_else(|_| Self {
-            processes: Vec::new(),
-            total_gpu_memory_kb: 0,
-        })
+        Self::empty()
     }
 }
 
@@ -88,7 +93,7 @@ pub(crate) mod linux {
 
     /// Read process statistics (Linux)
     pub fn read_process_stats() -> Result<ProcessStats> {
-        let mut stats = ProcessStats::new()?;
+        let mut stats = ProcessStats::empty();
 
         // Check if nvmap is available (Jetson)
         let nvmap_path = "/sys/kernel/debug/nvmap/iovmm/maps";

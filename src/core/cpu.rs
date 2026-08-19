@@ -1,6 +1,5 @@
 //! CPU monitoring
 
-use crate::error::Result;
 use serde::{Deserialize, Serialize};
 
 /// CPU frequency information
@@ -60,9 +59,18 @@ pub struct CpuStats {
 }
 
 impl CpuStats {
-    /// Create a new CPU stats instance
-    pub fn new() -> Result<Self> {
-        Ok(Self {
+    /// A zeroed struct for a platform reader to fill in.
+    ///
+    /// **This reads nothing.** It returns no cores and 100% idle, and it was called `new()`
+    /// until 6.0.0 — a name that reads like a constructor that gathers
+    /// data. Two GUI defects, one in the HTTP server and one in the
+    /// library's own `snapshot_cpu` came from exactly that misreading,
+    /// found over three separate occasions.
+    ///
+    /// The real values come from the per-platform readers. Use those
+    /// unless you are a reader building your own starting struct.
+    pub fn empty() -> Self {
+        Self {
             cores: Vec::new(),
             total: CpuTotal {
                 user: 0.0,
@@ -70,7 +78,7 @@ impl CpuStats {
                 system: 0.0,
                 idle: 100.0,
             },
-        })
+        }
     }
 
     /// Get number of CPU cores
@@ -86,14 +94,6 @@ impl CpuStats {
 
 impl Default for CpuStats {
     fn default() -> Self {
-        Self::new().unwrap_or_else(|_| Self {
-            cores: Vec::new(),
-            total: CpuTotal {
-                user: 0.0,
-                nice: 0.0,
-                system: 0.0,
-                idle: 100.0,
-            },
-        })
+        Self::empty()
     }
 }

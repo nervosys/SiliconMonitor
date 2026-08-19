@@ -35,15 +35,20 @@ use std::path::Path;
 /// for a measurement. The honest fix for all of these is a rename — `empty()` or
 /// `zeroed()` — which is breaking and is queued for the next major version.
 const KNOWN_FABRICATORS: &[&str] = &[
-    // Returns 100% idle and no cores. Cost one GUI defect.
-    "src/core/cpu.rs",
-    // Returns all zeros. Cost the other.
-    "src/core/memory.rs",
-    // `total.power` and `total.average` are 0 — indistinguishable from a rail
-    // that genuinely measured no draw. Found by this audit, not by a defect.
-    "src/core/power.rs",
-    // `total_gpu_memory_kb` is 0. Found by this audit.
-    "src/core/process.rs",
+    // Empty, and that is the finished state rather than a starting one.
+    //
+    // It held four entries until 6.0.0: CpuStats, MemoryStats, PowerStats and
+    // ProcessStats all returned fabricated numbers from a method called `new()`.
+    // They are now `empty()`, which says what they do, and no `new()` in this
+    // crate fabricates a reading.
+    //
+    // The rename was not cosmetic. Going to do it turned up three live defects
+    // that the misleading name had been hiding: `SiliconMonitor::snapshot_cpu`
+    // and `snapshot_memory` returned zeros from the public API, the health
+    // checks computed CPU usage from 100% idle so they could never fire, and the
+    // Prometheus exporter published 0% CPU on every scrape.
+    //
+    // Adding an entry here means a `new()` fabricates again. Do not: rename it.
 ];
 
 /// Calls that do not count as reading anything: containers, wrappers, conversions.

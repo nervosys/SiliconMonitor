@@ -1,6 +1,5 @@
 //! Memory monitoring
 
-use crate::error::Result;
 use serde::{Deserialize, Serialize};
 
 /// RAM information
@@ -73,9 +72,18 @@ pub struct MemoryStats {
 }
 
 impl MemoryStats {
-    /// Create a new memory stats instance
-    pub fn new() -> Result<Self> {
-        Ok(Self {
+    /// A zeroed struct for a platform reader to fill in.
+    ///
+    /// **This reads nothing.** It returns all zeros, and it was called `new()`
+    /// until 6.0.0 — a name that reads like a constructor that gathers
+    /// data. Two GUI defects, one in the HTTP server and one in the
+    /// library's own `snapshot_memory` came from exactly that misreading,
+    /// found over three separate occasions.
+    ///
+    /// The real values come from the per-platform readers. Use those
+    /// unless you are a reader building your own starting struct.
+    pub fn empty() -> Self {
+        Self {
             ram: RamInfo {
                 total: 0,
                 used: 0,
@@ -92,7 +100,7 @@ impl MemoryStats {
             },
             emc: None,
             iram: None,
-        })
+        }
     }
 
     /// Get RAM usage percentage
@@ -116,23 +124,6 @@ impl MemoryStats {
 
 impl Default for MemoryStats {
     fn default() -> Self {
-        Self::new().unwrap_or(Self {
-            ram: RamInfo {
-                total: 0,
-                used: 0,
-                free: 0,
-                buffers: 0,
-                cached: 0,
-                shared: 0,
-                lfb: None,
-            },
-            swap: SwapInfo {
-                total: 0,
-                used: 0,
-                cached: 0,
-            },
-            emc: None,
-            iram: None,
-        })
+        Self::empty()
     }
 }

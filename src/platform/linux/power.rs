@@ -11,7 +11,7 @@ const INA3221_PATH: &str = "/sys/bus/i2c/drivers/ina3221x";
 
 /// Read power statistics
 pub fn read_power_stats() -> Result<PowerStats> {
-    let mut stats = PowerStats::new()?;
+    let mut stats = PowerStats::empty();
 
     // Try to read INA3221 sensors (Jetson)
     if let Ok(rails) = read_ina3221_rails() {

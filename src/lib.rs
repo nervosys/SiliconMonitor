@@ -690,13 +690,21 @@ impl SiliconMonitor {
     }
 
     /// Snapshot current CPU statistics.
+    ///
+    /// Reads the platform. This called `CpuStats::new()` until 6.0.0, which is a
+    /// zero-constructor: every caller of a method named "snapshot current CPU
+    /// statistics" received 100% idle and no cores, and nothing said otherwise.
+    /// The same defect had already been found and fixed twice in the GUI and
+    /// once in the HTTP server before anyone looked at the library's own API.
     pub fn snapshot_cpu(&self) -> Result<CpuStats> {
-        CpuStats::new()
+        crate::stats::read_cpu_stats()
     }
 
     /// Snapshot current memory statistics.
+    ///
+    /// Reads the platform, for the reason given on [`Self::snapshot_cpu`].
     pub fn snapshot_memory(&self) -> Result<MemoryStats> {
-        MemoryStats::new()
+        crate::stats::read_memory_stats()
     }
 
     /// Snapshot disk information for all detected volumes.

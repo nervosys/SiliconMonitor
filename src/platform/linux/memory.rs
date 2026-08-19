@@ -7,7 +7,7 @@ use std::fs;
 
 /// Read memory statistics
 pub fn read_memory_stats() -> Result<MemoryStats> {
-    let mut stats = MemoryStats::new()?;
+    let mut stats = MemoryStats::empty();
 
     // Read /proc/meminfo
     let meminfo = fs::read_to_string("/proc/meminfo")?;

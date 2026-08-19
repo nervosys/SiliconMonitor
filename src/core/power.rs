@@ -1,6 +1,5 @@
 //! Power monitoring
 
-use crate::error::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -173,15 +172,24 @@ pub struct PowerStats {
 }
 
 impl PowerStats {
-    /// Create a new power stats instance
-    pub fn new() -> Result<Self> {
-        Ok(Self {
+    /// A zeroed struct for a platform reader to fill in.
+    ///
+    /// **This reads nothing.** It returns zero draw on every rail, and it was called `new()`
+    /// until 6.0.0 — a name that reads like a constructor that gathers
+    /// data. Two GUI defects, one in the HTTP server and one in the
+    /// library's own `snapshot_power` came from exactly that misreading,
+    /// found over three separate occasions.
+    ///
+    /// The real values come from the per-platform readers. Use those
+    /// unless you are a reader building your own starting struct.
+    pub fn empty() -> Self {
+        Self {
             rails: HashMap::new(),
             total: TotalPower {
                 power: 0,
                 average: 0,
             },
-        })
+        }
     }
 
     /// Get power rail by name
@@ -197,7 +205,7 @@ impl PowerStats {
 
 impl Default for PowerStats {
     fn default() -> Self {
-        Self::new().unwrap()
+        Self::empty()
     }
 }
 

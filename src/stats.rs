@@ -175,7 +175,7 @@ impl Simon {
 
 // Platform-specific implementations
 #[cfg(target_os = "linux")]
-fn read_cpu_stats() -> Result<CpuStats> {
+pub(crate) fn read_cpu_stats() -> Result<CpuStats> {
     crate::platform::linux::read_cpu_stats()
 }
 
@@ -185,7 +185,7 @@ fn read_gpu_stats() -> Result<GpuStats> {
 }
 
 #[cfg(target_os = "linux")]
-fn read_memory_stats() -> Result<MemoryStats> {
+pub(crate) fn read_memory_stats() -> Result<MemoryStats> {
     crate::platform::linux::read_memory_stats()
 }
 
@@ -228,7 +228,7 @@ fn read_engine_stats() -> Result<EngineStats> {
 }
 
 #[cfg(windows)]
-fn read_cpu_stats() -> Result<CpuStats> {
+pub(crate) fn read_cpu_stats() -> Result<CpuStats> {
     crate::platform::windows::read_cpu_stats()
 }
 
@@ -238,7 +238,7 @@ fn read_gpu_stats() -> Result<GpuStats> {
 }
 
 #[cfg(windows)]
-fn read_memory_stats() -> Result<MemoryStats> {
+pub(crate) fn read_memory_stats() -> Result<MemoryStats> {
     crate::platform::windows::read_memory_stats()
 }
 

@@ -5,6 +5,47 @@ All notable changes to Silicon Monitor will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.0.0] - 2026-08-19
+
+### Fixed
+
+- **Three live defects found by renaming the zero-constructors.** The rename was
+  queued as cosmetic. It was not: `CpuStats::new()` and friends returned
+  fabricated numbers behind a name that reads like a reader, and going to change
+  it turned up three places that had been believing them.
+
+  - **`SiliconMonitor::snapshot_cpu` and `snapshot_memory` returned zeros.**
+    Public API, documented as "snapshot current statistics", implemented as the
+    zero-constructor. Every library consumer calling them received 100% idle,
+    no cores, and no memory. They now read the platform: 24 cores and 76.7% idle
+    on the development machine where they previously reported nothing.
+  - **Health checks could never fire.** `SystemHealth::check` computed CPU usage
+    as `100 - idle` from the zero-constructor, so it always saw 0% and no
+    threshold could be crossed. It now reads: 23.4% CPU, 51.4% memory, and it
+    correctly reports elevated swap as a warning.
+  - **The Prometheus exporter published 0% CPU on every scrape.** Same
+    arithmetic, same cause, in the integration whose entire purpose is to be
+    believed by a time-series database.
+
+  This is the third, fourth and fifth defect from this one pattern; two GUI
+  cases and one HTTP-server case were found earlier. The name was doing the
+  damage, so the name is gone.
+
+### Changed
+
+- **BREAKING: `CpuStats::new()`, `MemoryStats::new()`, `PowerStats::new()` and
+  `ProcessStats::new()` are now `empty()` and return `Self` rather than
+  `Result<Self>`.** Building a zeroed struct cannot fail, and the `Result` was
+  inviting `?` at call sites that then read like they had gathered something.
+
+  `empty()` says what it does. Callers wanting a reading want the per-platform
+  readers, or `SiliconMonitor::snapshot_cpu` and `snapshot_memory`, which now
+  actually read.
+
+  `tests/zero_constructors.rs` still runs, and its list of known fabricators is
+  now empty: no `new()` in this crate returns a fabricated reading. Adding one
+  fails the build.
+
 ## [5.2.0] - 2026-08-17
 
 ### Added

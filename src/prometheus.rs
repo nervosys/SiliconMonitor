@@ -300,7 +300,9 @@ impl PrometheusExporter {
     }
 
     fn collect_cpu_metrics(&mut self) {
-        if let Ok(cpu) = crate::CpuStats::new() {
+        // Reads the platform. This exported `100 - idle` from a zero-constructor,
+        // so the CPU gauge was always 0% on every scrape.
+        if let Ok(cpu) = crate::stats::read_cpu_stats() {
             self.add(MetricFamily::gauge(
                 &self.prefixed("cpu_usage_percent"),
                 "Total CPU utilization percentage",
@@ -337,7 +339,8 @@ impl PrometheusExporter {
     }
 
     fn collect_memory_metrics(&mut self) {
-        if let Ok(mem) = crate::MemoryStats::new() {
+        // Reads the platform, for the reason above.
+        if let Ok(mem) = crate::stats::read_memory_stats() {
             self.add(MetricFamily::gauge(
                 &self.prefixed("memory_total_bytes"),
                 "Total physical memory in bytes",

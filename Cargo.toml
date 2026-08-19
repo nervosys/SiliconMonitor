@@ -1,6 +1,6 @@
 [package]
 name = "silicon-monitor"
-version = "5.2.0"
+version = "6.0.0"
 edition = "2021"
 # Verified by building against each installed toolchain, not asserted. 1.88 is
 # the lowest that works: below it cargo refuses on `image@0.25.10` and
