@@ -104,6 +104,7 @@ pub fn snapshot() -> Vec<Reading> {
     resolve_thermal(&mut out);
     resolve_power(&mut out);
     resolve_rapl(&mut out);
+    resolve_sensors(&mut out);
     resolve_virtualization(&mut out);
     resolve_numa(&mut out);
     resolve_ecc(&mut out);
@@ -2078,6 +2079,55 @@ fn resolve_thermal(out: &mut Vec<Reading>) {
     //
     // The read-failure path above still emits `<none>`, and correctly: it returns
     // before pushing anything, so nothing contradicts it.
+}
+
+/// Platform sensor devices — ambient light, accelerometer, orientation.
+///
+/// Not the board temperature sensors, which resolve under `thermal`. A desktop
+/// reporting none is the common case and a true reading, so the diagnostic
+/// distinguishes that from a query that could not be made at all.
+fn resolve_sensors(out: &mut Vec<Reading>) {
+    let monitor = match crate::sensors::SensorMonitor::new() {
+        Ok(m) => m,
+        Err(e) => {
+            out.push(Reading::unavailable(
+                "board.sensor.<none>",
+                None,
+                format!("sensor enumeration failed: {e}"),
+            ));
+            return;
+        }
+    };
+
+    let items = monitor.sensors();
+    if items.is_empty() {
+        out.push(Reading::unavailable(
+            "board.sensor.<none>",
+            None,
+            match monitor.note() {
+                Some(why) => why.to_string(),
+                // No note and no items: the enumeration ran and this machine has
+                // none, which is the ordinary case on a desktop.
+                None => "the platform enumerated no sensors on this machine".to_string(),
+            },
+        ));
+        return;
+    }
+
+    for (i, sensor) in items.iter().enumerate() {
+        let base = format!("board.sensor.{i}");
+        push_text(out, format!("{base}.name"), &sensor.name);
+        push_id(
+            out,
+            format!("{base}.type"),
+            &format!("{:?}", sensor.sensor_type).to_lowercase(),
+        );
+        out.push(Reading::measured(
+            format!("{base}.active"),
+            serde_json::json!(sensor.active),
+            None,
+        ));
+    }
 }
 
 /// Package energy domains, where the platform exposes them.

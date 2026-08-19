@@ -561,11 +561,20 @@ Two things that sweep turned up, both worth repeating for the next cluster:
   declared diagnostic. Expect the same for the next cluster inside an existing
   domain.
 
-**Sensors is what remains**, and it is not blocked so much as empty here: the
-Windows board sensors need a signed kernel driver and `SensorMonitor` reads zero
-of them on the development machine. Declaring entities that resolve to nothing on
-the only machine available would breach the standing instruction below, so it
-waits for a host where the reader answers.
+**Sensors landed too**, as `board.sensor.{n}.*` with a `board.sensor.<none>`
+diagnostic. It was left out of the first pass on the grounds that the reader
+returns nothing on this machine — which was inconsistent, because RAPL returns
+nothing here either and was declared anyway. A cluster that resolves to
+`unavailable` carrying a true reason *does* satisfy the standing instruction;
+what it must not do is resolve to silence.
+
+Doing it turned up two defects in that reader. Every failure path collapsed to
+the same empty list — a missing powershell, non-UTF-8 output, unparseable JSON
+and a machine with genuinely no sensors were indistinguishable — so `note()` now
+records which. And an unnamed sensor was being called `"Unknown"`, a literal that
+reads as the sensor's actual name; those are skipped instead.
+
+Item F is complete for every cluster with a reader behind it.
 
 Add a cluster per change, verify each field resolves to a true provenance on the
 machine at hand, and check the absent variant first — see open work 5 for why

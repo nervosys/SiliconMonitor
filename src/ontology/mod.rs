@@ -1374,6 +1374,48 @@ impl Ontology {
             "Process resident memory.",
         ));
 
+        // ── Platform sensors ─────────────────────────────────────────────────
+        //
+        // The last cluster named in plan item F. These are the OS-level sensor
+        // devices — ambient light, accelerometer, orientation — not the board
+        // temperature sensors, which resolve under `thermal`.
+        add(Entity::new(
+            "board.sensor.<none>",
+            D::Board,
+            K::Diagnostic,
+            None,
+            P::Unavailable,
+            true,
+            "Present when no platform sensor was enumerated, carrying why. A              desktop reporting none is the common case and a true reading; this              row distinguishes it from a query that could not be made.",
+        ));
+        add(Entity::new(
+            "board.sensor.{n}.name",
+            D::Board,
+            K::Identity,
+            Some(U::Text),
+            P::Measured,
+            false,
+            "Sensor name as the platform reports it. A sensor the platform did              not name is skipped rather than called \"Unknown\".",
+        ));
+        add(Entity::new(
+            "board.sensor.{n}.type",
+            D::Board,
+            K::Identity,
+            Some(U::Identifier),
+            P::Measured,
+            false,
+            "Sensor kind - ambient light, accelerometer, gyroscope, orientation.",
+        ));
+        add(Entity::new(
+            "board.sensor.{n}.active",
+            D::Board,
+            K::Identity,
+            None,
+            P::Measured,
+            false,
+            "Whether the platform reports this sensor as ready. A present but              inactive sensor is a different fact from an absent one.",
+        ));
+
         // ── Package energy (RAPL) ────────────────────────────────────────────
         //
         // Named in the plan's item F as a remaining cluster. Templated per

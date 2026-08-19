@@ -103,17 +103,24 @@ pub struct SensorInfo {
 /// Monitor for environmental sensors
 pub struct SensorMonitor {
     items: Vec<SensorInfo>,
+    /// Why `items` is empty, when the reason is something other than "there are
+    /// none". See [`SensorMonitor::note`].
+    last_note: Option<String>,
 }
 
 impl SensorMonitor {
     pub fn new() -> Result<Self, SimonError> {
-        let mut monitor = Self { items: Vec::new() };
+        let mut monitor = Self {
+            items: Vec::new(),
+            last_note: None,
+        };
         monitor.refresh()?;
         Ok(monitor)
     }
 
     pub fn refresh(&mut self) -> Result<(), SimonError> {
         self.items.clear();
+        self.last_note = None;
 
         #[cfg(target_os = "linux")]
         self.refresh_linux();
@@ -129,6 +136,20 @@ impl SensorMonitor {
 
     pub fn sensors(&self) -> &[SensorInfo] {
         &self.items
+    }
+
+    /// Why the sensor list is empty, when it is.
+    ///
+    /// Every platform path here swallows its failures: a missing helper, output
+    /// that is not UTF-8, output that is not JSON and a machine with genuinely
+    /// no sensors all produced the same empty list. That is the distinction this
+    /// crate exists to keep, so the reason is recorded rather than discarded.
+    ///
+    /// `None` alongside an empty list means the enumeration ran and found
+    /// nothing — a desktop with no ambient-light or accelerometer sensors, which
+    /// is the common case and a true reading.
+    pub fn note(&self) -> Option<&str> {
+        self.last_note.as_deref()
     }
 
     /// Get sensors by type.
@@ -433,7 +454,19 @@ impl SensorMonitor {
 
     #[cfg(target_os = "windows")]
     fn refresh_windows(&mut self) {
-        // Windows Sensor API via PowerShell
+        // Windows Sensor API via PowerShell. If the helper cannot be run at all,
+        // that is recorded: "no sensors" and "could not ask" are different, and
+        // this path used to return the same empty list for both.
+        let probe = std::process::Command::new("powershell")
+            .args(["-NoProfile", "-Command", "exit 0"])
+            .output();
+        if let Err(e) = probe {
+            self.last_note = Some(format!(
+                "the Windows Sensor API is queried through powershell, which                  could not be run: {e}"
+            ));
+            return;
+        }
+
         if let Ok(output) = std::process::Command::new("powershell")
             .args(["-NoProfile", "-Command",
                 r#"Get-CimInstance -Namespace root/standardcimv2 -ClassName MSFT_Sensor -ErrorAction SilentlyContinue | Select-Object SensorType, FriendlyName, CurrentState | ConvertTo-Json -Compress"#])
@@ -447,7 +480,15 @@ impl SensorMonitor {
                         _ => vec![],
                     };
                     for item in &items {
-                        let name = item["FriendlyName"].as_str().unwrap_or("Unknown").to_string();
+                        // A sensor whose name the platform did not give is
+                        // skipped rather than named "Unknown". A literal
+                        // "Unknown" in a name field reads as the sensor's
+                        // actual name, which is the exact mistake
+                        // `unknown_is_never_dressed_as_a_measurement` exists
+                        // to catch one layer down.
+                        let Some(name) = item["FriendlyName"].as_str().map(str::to_string) else {
+                            continue;
+                        };
                         let type_str = item["SensorType"].as_str().unwrap_or("");
                         let sensor_type = Self::parse_sensor_type_win(type_str, &name);
 
@@ -576,7 +617,10 @@ impl SensorMonitor {
 
 impl Default for SensorMonitor {
     fn default() -> Self {
-        Self::new().unwrap_or(Self { items: Vec::new() })
+        Self::new().unwrap_or(Self {
+            items: Vec::new(),
+            last_note: Some("sensor enumeration failed and this is the fallback".into()),
+        })
     }
 }
 

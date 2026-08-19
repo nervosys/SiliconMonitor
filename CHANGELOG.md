@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [6.0.0] - 2026-08-19
 
+### Added
+
+- **`simon status`** — a one-screen summary of the machine, terse by default and
+  `--ascii` for the OS logo in the neofetch style, colourised when stdout is a
+  terminal. It reads through the same resolver as `snapshot`, so the two cannot
+  disagree about one machine.
+
+  Anything unreadable prints the reason rather than a dash. "No GPU detected"
+  and "GPU enumeration failed" call for different responses, and this is the
+  surface people paste into issues.
+
+- **`simon snapshot --format json-ld`** — a linked-data hardware report. The
+  existing JSON says what the readings are and not what any of the words mean;
+  the `@context` resolves simon's terms to IRIs and its units to QUDT, so an
+  agent that has never seen simon can interpret the graph.
+
+  Units map to QUDT where a mapping exists and not where it does not:
+  `identifier` and `text` are not quantities. A wrong `@type` is a
+  machine-readable claim that a GUID is a measurable amount of something.
+  Absence survives the encoding — an unavailable reading is a node with no
+  value and a `simon:unavailableReason`, never a zero or a null.
+
+- **`simon ids`** — the intrusion detectors, which had no command until the
+  capability catalogue was joined to the command list and reported that they
+  were reachable from the library and from nothing typeable.
+
+- **Package energy and platform sensors in the ontology.**
+  `power.rapl.{n}.*` and `board.sensor.{n}.*`, each with a `<none>` diagnostic
+  carrying why when the cluster is empty. Both readers previously returned an
+  empty list where a reason existed only in a source comment.
+
+- **Four system entities that were read and never named**:
+  `system.hostname`, `system.os.version`, `system.kernel.version` and
+  `system.architecture`. `os_info` had them all along; nothing exposed them.
+
+- **A capability and vocabulary ontology.** `ontology::capability` declares each
+  surface and platform's level of support — including `unverified`, for code
+  that compiles and has never run on hardware. `ontology::vocabulary` declares
+  the closed value sets an agent parses, so `{"status":"no_baseline"}` can be
+  handled exhaustively. Both are cross-checked against the code by tests derived
+  from the declarations rather than written beside them.
+
 ### Fixed
 
 - **Three live defects found by renaming the zero-constructors.** The rename was
