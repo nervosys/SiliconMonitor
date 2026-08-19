@@ -87,6 +87,7 @@ impl Default for ProcessStats {
 #[cfg(target_os = "linux")]
 pub(crate) mod linux {
     use super::*;
+    use crate::error::Result;
     use crate::error::SimonError;
     use std::fs;
     use std::path::Path;

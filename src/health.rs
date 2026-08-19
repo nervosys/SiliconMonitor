@@ -187,7 +187,7 @@ impl SystemHealth {
         // Reads the platform. This called `CpuStats::new()`, a zero-constructor,
         // so every CPU health check saw 100% idle and could never report high
         // usage — the check existed and could not fire.
-        if let Ok(cpu) = crate::stats::read_cpu_stats() {
+        if let Ok(cpu) = crate::stats::platform_cpu_stats() {
             let cpu_usage = 100.0 - cpu.total.idle;
             let (status, message) = if cpu_usage >= thresholds.cpu_critical {
                 (
@@ -220,7 +220,7 @@ impl SystemHealth {
 
         // Memory Health Check
         // Reads the platform, for the reason above.
-        if let Ok(mem) = crate::stats::read_memory_stats() {
+        if let Ok(mem) = crate::stats::platform_memory_stats() {
             let mem_usage = mem.ram_usage_percent();
             let (status, message) = if mem_usage >= thresholds.memory_critical {
                 (

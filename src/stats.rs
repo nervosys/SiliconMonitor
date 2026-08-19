@@ -175,7 +175,7 @@ impl Simon {
 
 // Platform-specific implementations
 #[cfg(target_os = "linux")]
-pub(crate) fn read_cpu_stats() -> Result<CpuStats> {
+fn read_cpu_stats() -> Result<CpuStats> {
     crate::platform::linux::read_cpu_stats()
 }
 
@@ -185,7 +185,7 @@ fn read_gpu_stats() -> Result<GpuStats> {
 }
 
 #[cfg(target_os = "linux")]
-pub(crate) fn read_memory_stats() -> Result<MemoryStats> {
+fn read_memory_stats() -> Result<MemoryStats> {
     crate::platform::linux::read_memory_stats()
 }
 
@@ -228,7 +228,7 @@ fn read_engine_stats() -> Result<EngineStats> {
 }
 
 #[cfg(windows)]
-pub(crate) fn read_cpu_stats() -> Result<CpuStats> {
+fn read_cpu_stats() -> Result<CpuStats> {
     crate::platform::windows::read_cpu_stats()
 }
 
@@ -238,7 +238,7 @@ fn read_gpu_stats() -> Result<GpuStats> {
 }
 
 #[cfg(windows)]
-pub(crate) fn read_memory_stats() -> Result<MemoryStats> {
+fn read_memory_stats() -> Result<MemoryStats> {
     crate::platform::windows::read_memory_stats()
 }
 
@@ -738,3 +738,20 @@ use macos_stats::{
     detect_platform_info, read_cpu_stats, read_engine_stats, read_gpu_stats, read_memory_stats,
     read_power_stats, read_process_stats, read_temperature_stats, read_uptime,
 };
+
+/// The platform CPU reader, for the rest of the crate.
+///
+/// One wrapper rather than making each platform's reader visible: the macOS
+/// implementations are `pub(super)` inside a nested module and cannot be
+/// re-exported, and three callers outside this module need a reader that works
+/// everywhere. Until 6.0.0 they used `CpuStats::new()` instead, which returns
+/// 100% idle — `SiliconMonitor::snapshot_cpu`, the health checks and the
+/// Prometheus exporter all published that as a measurement.
+pub(crate) fn platform_cpu_stats() -> Result<CpuStats> {
+    read_cpu_stats()
+}
+
+/// The platform memory reader. See [`platform_cpu_stats`].
+pub(crate) fn platform_memory_stats() -> Result<MemoryStats> {
+    read_memory_stats()
+}

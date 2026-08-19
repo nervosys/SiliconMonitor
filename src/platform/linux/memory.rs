@@ -76,12 +76,28 @@ fn parse_ram_info(meminfo: &str) -> Result<RamInfo> {
     Ok(ram)
 }
 
+/// Parse the swap figures out of `/proc/meminfo`.
+///
+/// `SwapInfo`'s fields are plain `u64`, so a total of zero has to mean exactly
+/// one thing: this machine has no swap configured. That is what the kernel
+/// reports on a swapless host, and it is a reading.
+///
+/// It must not also mean "the field was missing", which is reachable — a
+/// container without swap accounting has no `SwapTotal:` line at all. Starting
+/// at zero and filling in whatever is present quietly conflated the two, so an
+/// absent field became a confident "no swap".
+///
+/// A missing `SwapTotal` is therefore an error rather than a zero. The
+/// type-level fix is `Option` fields on `SwapInfo`, which would make the whole
+/// class impossible; it is 62 read sites away and is recorded in HANDOFF.md
+/// rather than half-done here.
 fn parse_swap_info(meminfo: &str) -> Result<SwapInfo> {
     let mut swap = SwapInfo {
         total: 0,
         used: 0,
         cached: 0,
     };
+    let mut saw_total = false;
 
     for line in meminfo.lines() {
         let parts: Vec<&str> = line.split_whitespace().collect();
@@ -93,7 +109,10 @@ fn parse_swap_info(meminfo: &str) -> Result<SwapInfo> {
         let value: u64 = parts[1].parse().unwrap_or(0);
 
         match key {
-            "SwapTotal" => swap.total = value,
+            "SwapTotal" => {
+                swap.total = value;
+                saw_total = true;
+            }
             "SwapFree" => {
                 let free = value;
                 swap.used = swap.total.saturating_sub(free);
@@ -101,6 +120,13 @@ fn parse_swap_info(meminfo: &str) -> Result<SwapInfo> {
             "SwapCached" => swap.cached = value,
             _ => {}
         }
+    }
+
+    if !saw_total {
+        return Err(crate::error::SimonError::Parse(
+            "/proc/meminfo has no SwapTotal line, so whether this machine has swap              is unknown; reporting zero would claim it has none"
+                .into(),
+        ));
     }
 
     Ok(swap)

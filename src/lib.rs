@@ -697,14 +697,14 @@ impl SiliconMonitor {
     /// The same defect had already been found and fixed twice in the GUI and
     /// once in the HTTP server before anyone looked at the library's own API.
     pub fn snapshot_cpu(&self) -> Result<CpuStats> {
-        crate::stats::read_cpu_stats()
+        crate::stats::platform_cpu_stats()
     }
 
     /// Snapshot current memory statistics.
     ///
     /// Reads the platform, for the reason given on [`Self::snapshot_cpu`].
     pub fn snapshot_memory(&self) -> Result<MemoryStats> {
-        crate::stats::read_memory_stats()
+        crate::stats::platform_memory_stats()
     }
 
     /// Snapshot disk information for all detected volumes.
