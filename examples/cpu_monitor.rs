@@ -16,17 +16,25 @@ use simonlib::silicon::windows::WindowsSiliconMonitor;
 use simonlib::silicon::apple::AppleSiliconMonitor;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("=== Silicon Monitor - CPU Monitoring Example ===\n");
+    println!(
+        "=== Silicon Monitor - CPU Monitoring Example ===
+"
+    );
 
-    // Create platform-specific monitor
+    // Each supported platform hands its own monitor to `report`. Until 6.0.0
+    // the selection bound a `monitor` local under three separate `cfg`s and the
+    // rest of the body used it unconditionally, so on a target with no arm --
+    // macOS without the `apple` feature -- the example failed to compile. The
+    // early `return` in the fallback did not help: the code after it is still
+    // type-checked.
     #[cfg(target_os = "linux")]
-    let monitor = LinuxSiliconMonitor::new()?;
+    return report(&LinuxSiliconMonitor::new()?);
 
     #[cfg(target_os = "windows")]
-    let monitor = WindowsSiliconMonitor::new()?;
+    return report(&WindowsSiliconMonitor::new()?);
 
     #[cfg(all(feature = "apple", target_os = "macos"))]
-    let monitor = AppleSiliconMonitor::new()?;
+    return report(&AppleSiliconMonitor::new()?);
 
     #[cfg(not(any(
         target_os = "linux",
@@ -35,9 +43,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )))]
     {
         eprintln!("Platform not supported for this example");
-        return Ok(());
+        Ok(())
     }
+}
 
+#[cfg(any(
+    target_os = "linux",
+    target_os = "windows",
+    all(feature = "apple", target_os = "macos")
+))]
+fn report<M: SiliconMonitor>(monitor: &M) -> Result<(), Box<dyn std::error::Error>> {
     // Get CPU information
     let (cores, clusters) = monitor.cpu_info()?;
 

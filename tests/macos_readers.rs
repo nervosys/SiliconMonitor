@@ -162,17 +162,22 @@ fn memory_totals_are_internally_consistent() {
         "hw.memsize should report installed RAM"
     );
 
+    // `RamInfo` is in KB, not bytes: `read_memory_stats` divides `hw.memsize`
+    // by 1024 before it stores it. An earlier version of this test compared the
+    // KB figure against a byte floor, so a correct 7 GiB reading on the CI
+    // runner — 7340032 KB — read as 7 MB and failed.
+    //
     // No Mac ships with under 1 GiB, and none has 1 PiB. A page size misread as
     // 4096 on Apple Silicon would land far below this floor.
-    const ONE_GIB: u64 = 1024 * 1024 * 1024;
+    const ONE_GIB_IN_KB: u64 = 1024 * 1024;
     assert!(
-        memory.ram.total >= ONE_GIB,
-        "total RAM reported as {} bytes, below any real Mac — suspect the page size",
+        memory.ram.total >= ONE_GIB_IN_KB,
+        "total RAM reported as {} KB, below any real Mac — suspect the page size",
         memory.ram.total
     );
     assert!(
-        memory.ram.total < 1024 * ONE_GIB,
-        "total RAM reported as {} bytes",
+        memory.ram.total < 1024 * ONE_GIB_IN_KB,
+        "total RAM reported as {} KB",
         memory.ram.total
     );
 
