@@ -372,19 +372,33 @@ fn resolve_cpu(out: &mut Vec<Reading>) {
         // — which produced an impossible percentage under heavy load. Deriving from
         // idle is bounded by the same value the total already trusts.
         match core.idle {
-            Some(idle) => out.push(Reading::derived(
-                format!("{base}.utilization"),
-                serde_json::json!(100.0 - idle),
-                Some(Unit::Percent),
-            )),
+            Some(idle) => {
+                // The measured input is published beside the figure derived from
+                // it. It was read either way and discarding it left the
+                // derivation naming an input no consumer could fetch.
+                out.push(Reading::measured(
+                    format!("{base}.idle"),
+                    serde_json::json!(idle),
+                    Some(Unit::Percent),
+                ));
+                out.push(Reading::derived(
+                    format!("{base}.utilization"),
+                    serde_json::json!(100.0 - idle),
+                    Some(Unit::Percent),
+                ));
+            }
             // The platform exposes no per-processor times. Reporting the system
             // average here would look per-core and be one number repeated.
-            _ => out.push(Reading::unavailable(
-                format!("{base}.utilization"),
-                Some(Unit::Percent),
-                "platform exposes no per-processor times; the system-wide average \
-                 is not a per-core reading",
-            )),
+            _ => {
+                for suffix in ["idle", "utilization"] {
+                    out.push(Reading::unavailable(
+                        format!("{base}.{suffix}"),
+                        Some(Unit::Percent),
+                        "platform exposes no per-processor times; the system-wide \
+                         average is not a per-core reading",
+                    ));
+                }
+            }
         }
         match &core.frequency {
             Some(f) if f.current > 0 => out.push(Reading::measured(

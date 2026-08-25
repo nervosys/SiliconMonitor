@@ -202,3 +202,57 @@ fn unreadable_entities_carry_a_reason_rather_than_vanishing() {
          claims not to produce"
     );
 }
+
+/// An entity declared as a live observation must resolve as one, or be absent.
+///
+/// The gap this closes was found by reading declarations, not by a test.
+/// `resolve_codecs` chooses provenance per row — a capability the driver was
+/// asked about resolves `Measured`, one concluded from the GPU model resolves
+/// `Specification` — while all five entities those rows populate declared
+/// `Measured`. The schema therefore promised a live observation for values that
+/// had never been observed, and nothing anywhere compared the two.
+///
+/// **The assertion is deliberately one-directional.** Requiring equality would
+/// be wrong: `Entity` carries a single provenance and cannot say "varies per
+/// row", so a cluster whose rows legitimately differ has to declare the weakest
+/// one its rows can carry and then over-deliver on the queried rows. A reading
+/// resolving *stronger* than its declaration costs a consumer nothing. The
+/// reverse hands an agent a spec-sheet inference wearing a measurement's
+/// authority, which is the one thing this crate exists to prevent.
+///
+/// Only the `Measured` direction is checked, and that is on purpose too.
+/// Ranking `Derived` against `Specification` is not meaningful — a value derived
+/// from measured inputs is live, one derived from a vendor table is not — so a
+/// total order over `Provenance` would invent a comparison the type does not
+/// support and fail on entities that are perfectly honest.
+#[test]
+fn a_reading_never_resolves_weaker_than_its_entity_declares() {
+    use simonlib::ontology::Provenance;
+
+    let ontology = simonlib::ontology::Ontology::build();
+    let violations: Vec<String> = simonlib::ontology::resolve::snapshot()
+        .iter()
+        .filter(|r| r.provenance != Provenance::Unavailable)
+        .filter_map(|r| {
+            let entity = ontology.template_for(&r.id)?;
+            if entity.provenance != Provenance::Measured {
+                return None;
+            }
+            if r.provenance == Provenance::Measured {
+                return None;
+            }
+            Some(format!(
+                "{} is declared measured but resolved {}",
+                r.id,
+                r.provenance.as_str()
+            ))
+        })
+        .collect();
+
+    assert!(
+        violations.is_empty(),
+        "these entities promise a live observation and delivered something \
+         weaker. Either the resolver should measure them, or the declaration \
+         should carry the weakest provenance its rows can have: {violations:#?}"
+    );
+}

@@ -394,10 +394,26 @@ impl Ontology {
             D::Cpu,
             K::Measurement,
             Some(U::Percent),
-            P::Measured,
+            P::Derived,
             true,
             "Per-core busy percentage. Null where the platform exposes no \
-             per-processor times — deliberately not the system average.",
+             per-processor times — deliberately not the system average. Derived \
+             rather than measured because no platform reports it: the resolver \
+             computes `100 - idle` from per-core times, which is what the \
+             reading has always been.",
+        )
+        .derived(&["cpu.core.{n}.idle"]));
+        add(Entity::new(
+            "cpu.core.{n}.idle",
+            D::Cpu,
+            K::Measurement,
+            Some(U::Percent),
+            P::Measured,
+            true,
+            "Per-core idle percentage over the last sampling interval. The \
+             measured half of the pair: `utilization` beside it is `100 - idle`, \
+             and naming the input is what lets a consumer see that the two are \
+             one reading rather than two.",
         ));
         add(Entity::new(
             "cpu.core.{n}.frequency",
@@ -1678,10 +1694,12 @@ impl Ontology {
             D::Gpu,
             K::Limit,
             Some(U::Count),
-            P::Measured,
+            P::Specification,
             true,
             "Bit depth per channel the engine supports. Eight against ten is the \
-             difference between HDR working and not.",
+             difference between HDR working and not. Measured on a queried row; \
+             declared at the weaker provenance an inferred row carries, like the \
+             rest of this cluster.",
         ));
         add(Entity::new(
             "gpu.codec.{n}.max_fps",
