@@ -7,6 +7,13 @@
 //! the choice of which clusters to add is made from evidence rather than from
 //! the module list.
 //!
+//! Three statuses, and the distinction between the last two is the point:
+//! `ok` enumerated something, `err` failed to construct and says why, and
+//! `none` constructed and found nothing. A `none` does **not** mean the machine
+//! lacks the hardware -- it equally means the reader is a stub on this platform
+//! that returns an empty list without saying so. Establish which before
+//! concluding a cluster needs different hardware to verify.
+//!
 //! Run with `cargo run --example probe_readers --all-features`.
 
 macro_rules! probe {
@@ -14,9 +21,16 @@ macro_rules! probe {
         match <$ty>::new() {
             Ok(m) => {
                 let n: usize = ($count)(&m);
-                println!("{:<22} ok      {}", $name, n);
+                // A reader that constructed and enumerated nothing is not a
+                // reader that answered, and both arrive here as `Ok`. Printing
+                // both as "ok" is how a stub returning `Ok(vec![])` on this
+                // platform reads as a machine that genuinely has none of the
+                // thing -- which is the defect this table exists to avoid
+                // making, and the one RAPL already shipped once.
+                let status = if n == 0 { "none" } else { "ok" };
+                println!("{:<22} {:<7} {}", $name, status, n);
             }
-            Err(e) => println!("{:<22} err     {}", $name, e),
+            Err(e) => println!("{:<22} {:<7} {}", $name, "err", e),
         }
     }};
 }
