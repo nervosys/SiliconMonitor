@@ -3,7 +3,7 @@
 //! # Platform Support
 //!
 //! - **Linux**: Reads `/sys/class/video4linux/`, `/dev/video*`
-//! - **Windows**: Uses WMI (`Win32_PnPEntity` with Image device class)
+//! - **Windows**: Uses WMI (`Win32_PnPEntity` with the `Camera` PnP class)
 //! - **macOS**: Uses `system_profiler SPCameraDataType`
 //!
 //! # Examples
@@ -283,7 +283,15 @@ impl CameraMonitor {
     fn refresh_windows(&mut self) {
         if let Ok(output) = std::process::Command::new("powershell")
             .args(["-NoProfile", "-Command",
-                "Get-CimInstance Win32_PnPEntity | Where-Object { $_.PNPClass -eq 'Camera' -or $_.PNPClass -eq 'Image' } | Select-Object Name, Manufacturer, DeviceID, Status, PNPClass | ConvertTo-Json -Compress"])
+                // `Image` is the PnP class for still-image devices --
+                // scanners, and the scanner half of a multifunction printer.
+                // Including it here made `simon` report a Brother MFC-L2900DW
+                // as two cameras, which is not a camera enumeration that is
+                // slightly too generous; it is a wrong answer to the question
+                // "can this machine see". Windows 10 1703 and later put every
+                // webcam under `Camera`, so nothing real is lost by asking only
+                // for that.
+                "Get-CimInstance Win32_PnPEntity | Where-Object { $_.PNPClass -eq 'Camera' } | Select-Object Name, Manufacturer, DeviceID, Status, PNPClass | ConvertTo-Json -Compress"])
             .output()
         {
             if let Ok(text) = String::from_utf8(output.stdout) {

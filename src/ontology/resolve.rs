@@ -64,6 +64,20 @@ impl Reading {
         }
     }
 
+    /// A value the hardware or firmware declares about itself rather than one
+    /// simon sampled. A DIMM part number and a CPU base clock are both this: a
+    /// consumer may rely on them to be stable, and may not treat them as
+    /// evidence of the machine's state right now.
+    fn spec(id: impl Into<String>, value: serde_json::Value, unit: Option<Unit>) -> Self {
+        Self {
+            id: id.into(),
+            value: Some(value),
+            provenance: Provenance::Specification,
+            unit,
+            note: None,
+        }
+    }
+
     /// A value that could not be obtained. The reason is mandatory: "unavailable"
     /// without a cause is the same dead end as a fabricated number.
     fn unavailable(id: impl Into<String>, unit: Option<Unit>, why: impl Into<String>) -> Self {
@@ -111,6 +125,17 @@ pub fn snapshot() -> Vec<Reading> {
     resolve_ecc(&mut out);
     resolve_pci(&mut out);
     resolve_usb(&mut out);
+    resolve_memory_bandwidth(&mut out);
+    resolve_microarch(&mut out);
+    resolve_crypto(&mut out);
+    resolve_input(&mut out);
+    resolve_audio(&mut out);
+    resolve_cameras(&mut out);
+    resolve_printers(&mut out);
+    resolve_bluetooth(&mut out);
+    resolve_storage_controllers(&mut out);
+    resolve_power_profiles(&mut out);
+    resolve_codecs(&mut out);
 
     // Anything the ontology names but nothing above produced.
     let produced: std::collections::HashSet<&str> = out.iter().map(|r| r.id.as_str()).collect();
@@ -1063,8 +1088,10 @@ fn resolve_memory_dimms(out: &mut Vec<Reading>) {
 
     for (i, dimm) in monitor.topology().dimms.iter().enumerate() {
         let base = format!("memory.dimm.{i}");
-        push_text(out, format!("{base}.locator"), &dimm.locator);
-        out.push(Reading::measured(
+        push_spec_text(out, format!("{base}.locator"), &dimm.locator);
+        // Firmware-declared like the rest of the cluster: the board says the
+        // slot is filled, and simon did not look inside the case.
+        out.push(Reading::spec(
             format!("{base}.populated"),
             serde_json::json!(dimm.populated),
             None,
@@ -1084,42 +1111,42 @@ fn resolve_memory_dimms(out: &mut Vec<Reading>) {
             continue;
         }
 
-        push_opt(
+        push_spec_opt(
             out,
             format!("{base}.capacity"),
             (dimm.capacity_bytes > 0).then(|| serde_json::json!(dimm.capacity_bytes)),
             Some(Unit::Bytes),
             "SMBIOS reported no capacity for a slot it marked populated",
         );
-        push_opt(
+        push_spec_opt(
             out,
             format!("{base}.speed"),
             (dimm.speed_mts > 0).then(|| serde_json::json!(dimm.speed_mts)),
             Some(Unit::Count),
             "SMBIOS reported no rated speed",
         );
-        push_opt(
+        push_spec_opt(
             out,
             format!("{base}.configured_speed"),
             (dimm.configured_speed_mts > 0).then(|| serde_json::json!(dimm.configured_speed_mts)),
             Some(Unit::Count),
             "SMBIOS reported no configured speed",
         );
-        push_id(
+        push_spec_id(
             out,
             format!("{base}.type"),
             &format!("{:?}", dimm.memory_type).to_lowercase(),
         );
-        push_text(out, format!("{base}.manufacturer"), &dimm.manufacturer);
-        push_text(out, format!("{base}.part_number"), &dimm.part_number);
-        push_opt(
+        push_spec_text(out, format!("{base}.manufacturer"), &dimm.manufacturer);
+        push_spec_text(out, format!("{base}.part_number"), &dimm.part_number);
+        push_spec_opt(
             out,
             format!("{base}.data_width"),
             (dimm.data_width_bits > 0).then(|| serde_json::json!(dimm.data_width_bits)),
             Some(Unit::Count),
             "SMBIOS reported no data width",
         );
-        push_opt(
+        push_spec_opt(
             out,
             format!("{base}.total_width"),
             (dimm.total_width_bits > 0).then(|| serde_json::json!(dimm.total_width_bits)),
@@ -1141,7 +1168,7 @@ fn resolve_memory_dimms(out: &mut Vec<Reading>) {
                 "ECC is inferred from the data and total widths, and one is unknown",
             ));
         }
-        push_opt(
+        push_spec_opt(
             out,
             format!("{base}.voltage"),
             (dimm.voltage > 0.0).then(|| serde_json::json!(dimm.voltage)),
@@ -1429,59 +1456,66 @@ fn names_an_absence(value: &str) -> bool {
 }
 
 fn push_text(out: &mut Vec<Reading>, id: impl Into<String>, value: &str) {
-    let id = id.into();
-    if value.trim().is_empty() {
-        out.push(Reading::unavailable(
-            id,
-            Some(Unit::Text),
-            "reader returned an empty string",
-        ));
-    } else if names_an_absence(value) {
-        out.push(Reading::unavailable(
-            id,
-            Some(Unit::Text),
-            format!(
-                "reader returned {:?}, which names an absence rather than a value",
-                value.trim()
-            ),
-        ));
-    } else {
-        out.push(Reading::measured(
-            id,
-            serde_json::json!(value),
-            Some(Unit::Text),
-        ));
-    }
+    push_str_as(out, id, value, Unit::Text, Provenance::Measured);
+}
+
+/// `push_text` for a firmware-declared string. The absence handling is
+/// identical; only the provenance differs, and it differs because a DIMM's
+/// manufacturer was not measured off the module -- the SMBIOS table said so.
+fn push_spec_text(out: &mut Vec<Reading>, id: impl Into<String>, value: &str) {
+    push_str_as(out, id, value, Unit::Text, Provenance::Specification);
 }
 
 fn push_id(out: &mut Vec<Reading>, id: impl Into<String>, value: &str) {
+    push_str_as(out, id, value, Unit::Identifier, Provenance::Measured);
+}
+
+/// `push_id` for a firmware-declared identifier.
+fn push_spec_id(out: &mut Vec<Reading>, id: impl Into<String>, value: &str) {
+    push_str_as(out, id, value, Unit::Identifier, Provenance::Specification);
+}
+
+/// The one place a string reading becomes a `Reading`.
+///
+/// Both guards below were added after the fact, each because a reader had
+/// already tripped it. An empty string is an absence, and a string that spells
+/// an absence -- an enum's `Unknown` variant lowercased, most often -- is also
+/// an absence however confidently it arrives. Keeping this in one function is
+/// why the second guard only had to be written once: the conformance test has
+/// caught this class three times, in three different readers.
+fn push_str_as(
+    out: &mut Vec<Reading>,
+    id: impl Into<String>,
+    value: &str,
+    unit: Unit,
+    provenance: Provenance,
+) {
     let id = id.into();
     if value.trim().is_empty() {
         out.push(Reading::unavailable(
             id,
-            Some(Unit::Identifier),
+            Some(unit),
             "reader returned an empty string",
         ));
-    } else if names_an_absence(value) {
-        // Enum debug output is the usual source here: an `Unknown` variant
-        // lowercased into "unknown" reads as a measured identifier while
-        // meaning the opposite. That is the exact mistake that put five
-        // entities wrong across two releases.
+        return;
+    }
+    if names_an_absence(value) {
         out.push(Reading::unavailable(
             id,
-            Some(Unit::Identifier),
+            Some(unit),
             format!(
                 "reader returned {:?}, which names an absence rather than a value",
                 value.trim()
             ),
         ));
-    } else {
-        out.push(Reading::measured(
-            id,
-            serde_json::json!(value),
-            Some(Unit::Identifier),
-        ));
+        return;
     }
+    let json = serde_json::json!(value);
+    out.push(match provenance {
+        Provenance::Specification => Reading::spec(id, json, Some(unit)),
+        Provenance::Derived => Reading::derived(id, json, Some(unit)),
+        _ => Reading::measured(id, json, Some(unit)),
+    });
 }
 
 fn push_opt(
@@ -2201,6 +2235,844 @@ fn resolve_sensors(out: &mut Vec<Reading>) {
             serde_json::json!(sensor.active),
             None,
         ));
+    }
+}
+
+/// Whether a string is a PCI address in either of the two forms that appear.
+///
+/// Domain-qualified `0000:03:00.0` and the bare `03:00.0` are both accepted;
+/// anything else -- a Windows device instance path, a SCSI target triple, an
+/// empty string -- is not. The check is deliberately shallow: it exists to stop
+/// a value being published under a name that promises a PCI bus when it names
+/// something else, not to validate that the address points at a real device.
+fn looks_like_pci_address(value: &str) -> bool {
+    let value = value.trim();
+    let (bus_dev, function) = match value.rsplit_once('.') {
+        Some(parts) => parts,
+        None => return false,
+    };
+    if function.is_empty() || !function.chars().all(|c| c.is_ascii_hexdigit()) {
+        return false;
+    }
+    let fields: Vec<&str> = bus_dev.split(':').collect();
+    if !matches!(fields.len(), 2 | 3) {
+        return false;
+    }
+    fields
+        .iter()
+        .all(|f| !f.is_empty() && f.chars().all(|c| c.is_ascii_hexdigit()))
+}
+
+/// The controllers the disks are attached to.
+fn resolve_storage_controllers(out: &mut Vec<Reading>) {
+    let monitor = match crate::storage_controller::StorageControllerMonitor::new() {
+        Ok(m) => m,
+        Err(e) => {
+            out.push(Reading::unavailable(
+                "disk.controller.<none>",
+                None,
+                format!("storage controllers could not be enumerated here: {e}"),
+            ));
+            return;
+        }
+    };
+
+    let controllers = monitor.controllers();
+    if controllers.is_empty() {
+        out.push(Reading::unavailable(
+            "disk.controller.<none>",
+            None,
+            "controller enumeration succeeded and found none, which on a machine with \
+             disks means the enumeration is incomplete rather than that the disks are \
+             attached to nothing",
+        ));
+        return;
+    }
+
+    for (i, c) in controllers.iter().enumerate() {
+        let base = format!("disk.controller.{i}");
+        push_text(out, format!("{base}.name"), &c.name);
+        push_text(out, format!("{base}.vendor"), &c.vendor);
+        push_text(out, format!("{base}.model"), &c.model);
+        push_id(out, format!("{base}.driver"), &c.driver);
+        push_id(
+            out,
+            format!("{base}.interface"),
+            &format!("{:?}", c.interface),
+        );
+        // Windows fills this field with a device instance path --
+        // `ROOT\\SPACEPORT\\0000` for a Storage Spaces controller -- which is
+        // not a PCI address and cannot be joined against `pci.*`. Publishing it
+        // under a name that says PCI would send a consumer looking for a link
+        // width to a bus the device is not on. Only a value that looks like one
+        // is published as one, and the rest arrive as an absence naming what
+        // was actually found.
+        push_opt(
+            out,
+            format!("{base}.pci_address"),
+            looks_like_pci_address(&c.pci_address).then(|| serde_json::json!(c.pci_address)),
+            Some(Unit::Identifier),
+            if c.pci_address.trim().is_empty() {
+                "this controller reports no bus address".to_string()
+            } else {
+                format!(
+                    "the platform reports `{}` for this controller, which is not a PCI \
+                     address and cannot be joined against `pci.*`",
+                    c.pci_address.trim()
+                )
+            }
+            .as_str(),
+        );
+        push_opt(
+            out,
+            format!("{base}.ports"),
+            (c.ports > 0).then(|| serde_json::json!(c.ports)),
+            Some(Unit::Count),
+            "this controller reports no port count",
+        );
+    }
+}
+
+/// Operating system power plans, and which one is in force.
+fn resolve_power_profiles(out: &mut Vec<Reading>) {
+    let monitor = match crate::power_profile::PowerProfileMonitor::new() {
+        Ok(m) => m,
+        Err(e) => {
+            out.push(Reading::unavailable(
+                "power.profile.<none>",
+                None,
+                format!("power plans could not be enumerated here: {e}"),
+            ));
+            return;
+        }
+    };
+
+    let plans = monitor.power_plans();
+    if plans.is_empty() {
+        out.push(Reading::unavailable(
+            "power.profile.<none>",
+            None,
+            "no power plan was enumerated; this platform may manage power without \
+             presenting named plans",
+        ));
+        return;
+    }
+
+    for (i, p) in plans.iter().enumerate() {
+        let base = format!("power.profile.{i}");
+        push_text(out, format!("{base}.name"), &p.name);
+        out.push(Reading::measured(
+            format!("{base}.active"),
+            serde_json::json!(p.active),
+            None,
+        ));
+    }
+}
+
+/// Hardware video encode and decode, each row carrying how it was learned.
+///
+/// The reader distinguishes a capability it asked the driver about from one it
+/// concluded from the GPU model, and that distinction survives into the
+/// provenance of every reading below. It is the one place in this module where
+/// the provenance is chosen per row rather than per entity, and it is the
+/// clearest illustration of why the field exists: an inferred AV1 encode
+/// capability and a queried one look identical until you ask where each came
+/// from, and only one of them will still be true after a driver update.
+fn resolve_codecs(out: &mut Vec<Reading>) {
+    use crate::codec::{BitDepth, CapabilitySource, MaxResolution};
+
+    let monitor = match crate::codec::CodecMonitor::new() {
+        Ok(m) => m,
+        Err(e) => {
+            out.push(Reading::unavailable(
+                "gpu.codec.<none>",
+                None,
+                format!("hardware codec support could not be determined here: {e}"),
+            ));
+            return;
+        }
+    };
+
+    let caps = monitor.capabilities();
+    if caps.is_empty() {
+        out.push(Reading::unavailable(
+            "gpu.codec.<none>",
+            None,
+            "no hardware codec capability was found; the GPU may have no media engine",
+        ));
+        return;
+    }
+
+    for (i, c) in caps.iter().enumerate() {
+        let base = format!("gpu.codec.{i}");
+        let queried = c.source == CapabilitySource::DirectQuery;
+
+        // Every identity field on this row is exactly as good as the row's
+        // source. Pushing them all as measured would have hidden that behind a
+        // `confidence` number a consumer has to remember to read.
+        let push_str = |out: &mut Vec<Reading>, id: String, v: &str| {
+            if queried {
+                push_id(out, id, v);
+            } else {
+                push_spec_id(out, id, v);
+            }
+        };
+
+        if queried {
+            push_text(out, format!("{base}.device"), &c.device);
+        } else {
+            push_spec_text(out, format!("{base}.device"), &c.device);
+        }
+        push_str(out, format!("{base}.codec"), &format!("{:?}", c.codec));
+        push_str(
+            out,
+            format!("{base}.direction"),
+            &format!("{:?}", c.direction),
+        );
+        push_str(out, format!("{base}.engine"), &c.engine);
+        push_str(
+            out,
+            format!("{base}.max_resolution"),
+            &format!("{:?}", c.max_resolution),
+        );
+
+        // Pixel dimensions for the frame class. A table, and declared as one:
+        // the class is what the reader knows, and these two are what a consumer
+        // sizing a buffer actually needs.
+        let pixels = match c.max_resolution {
+            MaxResolution::SD => Some((720, 480)),
+            MaxResolution::HD => Some((1280, 720)),
+            MaxResolution::FullHD => Some((1920, 1080)),
+            MaxResolution::QHD => Some((2560, 1440)),
+            MaxResolution::UHD4K => Some((3840, 2160)),
+            MaxResolution::UHD8K => Some((7680, 4320)),
+            MaxResolution::Unknown => None,
+        };
+        match pixels {
+            Some((w, h)) => {
+                out.push(Reading::derived(
+                    format!("{base}.max_width"),
+                    serde_json::json!(w),
+                    Some(Unit::Count),
+                ));
+                out.push(Reading::derived(
+                    format!("{base}.max_height"),
+                    serde_json::json!(h),
+                    Some(Unit::Count),
+                ));
+            }
+            None => {
+                for suffix in ["max_width", "max_height"] {
+                    out.push(Reading::unavailable(
+                        format!("{base}.{suffix}"),
+                        Some(Unit::Count),
+                        "the engine reports no frame class, so no dimensions follow from it",
+                    ));
+                }
+            }
+        }
+
+        let depth = match c.max_bit_depth {
+            BitDepth::Bit8 => Some(8),
+            BitDepth::Bit10 => Some(10),
+            BitDepth::Bit12 => Some(12),
+            BitDepth::Unknown => None,
+        };
+        match depth {
+            Some(d) if queried => out.push(Reading::measured(
+                format!("{base}.max_bit_depth"),
+                serde_json::json!(d),
+                Some(Unit::Count),
+            )),
+            Some(d) => out.push(Reading::spec(
+                format!("{base}.max_bit_depth"),
+                serde_json::json!(d),
+                Some(Unit::Count),
+            )),
+            None => out.push(Reading::unavailable(
+                format!("{base}.max_bit_depth"),
+                Some(Unit::Count),
+                "the engine reports no bit depth",
+            )),
+        }
+
+        // Derived even on a queried row: no driver reports a frame rate, so
+        // this figure is arithmetic over the engine generation whatever the
+        // rest of the row came from.
+        match c.max_fps {
+            0 => out.push(Reading::unavailable(
+                format!("{base}.max_fps"),
+                Some(Unit::Count),
+                "no frame rate estimate is held for this engine",
+            )),
+            fps => out.push(Reading::derived(
+                format!("{base}.max_fps"),
+                serde_json::json!(fps),
+                Some(Unit::Count),
+            )),
+        }
+        // The reader's confidence is a 0.0-1.0 fraction and the entity declares
+        // a percentage, so it is scaled here rather than at the consumer, where
+        // a 1.0 would read as one percent.
+        out.push(Reading::derived(
+            format!("{base}.confidence"),
+            serde_json::json!(c.confidence * 100.0),
+            Some(Unit::Percent),
+        ));
+    }
+}
+
+/// Keyboards, pointing devices and controllers, as attached right now.
+fn resolve_input(out: &mut Vec<Reading>) {
+    let monitor = match crate::input::InputMonitor::new() {
+        Ok(m) => m,
+        Err(e) => {
+            out.push(Reading::unavailable(
+                "board.input.<none>",
+                None,
+                format!("input devices could not be enumerated here: {e}"),
+            ));
+            return;
+        }
+    };
+
+    let devices = monitor.devices();
+    if devices.is_empty() {
+        out.push(Reading::unavailable(
+            "board.input.<none>",
+            None,
+            "input enumeration succeeded and found no device, which is ordinary on a \
+             headless machine",
+        ));
+        return;
+    }
+
+    for (i, d) in devices.iter().enumerate() {
+        let base = format!("board.input.{i}");
+        push_text(out, format!("{base}.name"), &d.name);
+        push_id(out, format!("{base}.type"), &format!("{:?}", d.device_type));
+        push_id(
+            out,
+            format!("{base}.interface"),
+            &format!("{:?}", d.interface),
+        );
+        push_text(out, format!("{base}.vendor"), &d.vendor);
+        push_text(out, format!("{base}.product"), &d.product);
+        out.push(Reading::measured(
+            format!("{base}.active"),
+            serde_json::json!(d.is_active),
+            None,
+        ));
+    }
+}
+
+/// Audio endpoints, in whichever direction they carry sound.
+fn resolve_audio(out: &mut Vec<Reading>) {
+    let monitor = match crate::audio::AudioMonitor::new() {
+        Ok(m) => m,
+        Err(e) => {
+            out.push(Reading::unavailable(
+                "board.audio.<none>",
+                None,
+                format!("audio endpoints could not be enumerated here: {e}"),
+            ));
+            return;
+        }
+    };
+
+    let devices = monitor.devices();
+    if devices.is_empty() {
+        out.push(Reading::unavailable(
+            "board.audio.<none>",
+            None,
+            "audio enumeration succeeded and found no endpoint",
+        ));
+        return;
+    }
+
+    for (i, d) in devices.iter().enumerate() {
+        let base = format!("board.audio.{i}");
+        push_text(out, format!("{base}.name"), &d.name);
+        push_id(
+            out,
+            format!("{base}.direction"),
+            &format!("{:?}", d.device_type),
+        );
+        push_id(out, format!("{base}.state"), &format!("{:?}", d.state));
+        out.push(Reading::measured(
+            format!("{base}.default"),
+            serde_json::json!(d.is_default),
+            None,
+        ));
+        push_opt(
+            out,
+            format!("{base}.volume"),
+            d.volume.map(|v| serde_json::json!(v)),
+            Some(Unit::Percent),
+            "this endpoint exposes no volume level",
+        );
+        out.push(Reading::measured(
+            format!("{base}.muted"),
+            serde_json::json!(d.muted),
+            None,
+        ));
+    }
+}
+
+/// Cameras, and whether any of them is streaming.
+fn resolve_cameras(out: &mut Vec<Reading>) {
+    let monitor = match crate::camera::CameraMonitor::new() {
+        Ok(m) => m,
+        Err(e) => {
+            out.push(Reading::unavailable(
+                "board.camera.<none>",
+                None,
+                format!("cameras could not be enumerated here: {e}"),
+            ));
+            return;
+        }
+    };
+
+    let cameras = monitor.cameras();
+    if cameras.is_empty() {
+        out.push(Reading::unavailable(
+            "board.camera.<none>",
+            None,
+            "camera enumeration succeeded and found no device",
+        ));
+        return;
+    }
+
+    for (i, c) in cameras.iter().enumerate() {
+        let base = format!("board.camera.{i}");
+        push_text(out, format!("{base}.name"), &c.name);
+        push_id(
+            out,
+            format!("{base}.connection"),
+            &format!("{:?}", c.connection),
+        );
+        push_id(out, format!("{base}.driver"), &c.driver);
+        // A camera that lists no modes reports zeros here. Zero pixels is not a
+        // frame size; it is the absence of a mode list.
+        push_opt(
+            out,
+            format!("{base}.max_width"),
+            (c.max_width > 0).then(|| serde_json::json!(c.max_width)),
+            Some(Unit::Count),
+            "this camera reports no supported mode list",
+        );
+        push_opt(
+            out,
+            format!("{base}.max_height"),
+            (c.max_height > 0).then(|| serde_json::json!(c.max_height)),
+            Some(Unit::Count),
+            "this camera reports no supported mode list",
+        );
+        out.push(Reading::measured(
+            format!("{base}.active"),
+            serde_json::json!(c.is_active),
+            None,
+        ));
+    }
+}
+
+/// Print queues the spooler knows about.
+fn resolve_printers(out: &mut Vec<Reading>) {
+    let monitor = match crate::printer::PrinterMonitor::new() {
+        Ok(m) => m,
+        Err(e) => {
+            out.push(Reading::unavailable(
+                "system.printer.<none>",
+                None,
+                format!("printers could not be enumerated here: {e}"),
+            ));
+            return;
+        }
+    };
+
+    let printers = monitor.printers();
+    if printers.is_empty() {
+        out.push(Reading::unavailable(
+            "system.printer.<none>",
+            None,
+            "the spooler was reachable and holds no queue",
+        ));
+        return;
+    }
+
+    for (i, p) in printers.iter().enumerate() {
+        let base = format!("system.printer.{i}");
+        push_text(out, format!("{base}.name"), &p.name);
+        push_text(out, format!("{base}.description"), &p.description);
+        push_id(
+            out,
+            format!("{base}.connection"),
+            &format!("{:?}", p.connection),
+        );
+        // `PrinterStatus::Unknown` renders as "unknown", which `push_id` turns
+        // into an absence with a reason. That is the right outcome and it is
+        // why the status goes through the guarded helper rather than being
+        // pushed directly.
+        push_id(out, format!("{base}.status"), &format!("{:?}", p.status));
+        out.push(Reading::measured(
+            format!("{base}.default"),
+            serde_json::json!(p.is_default),
+            None,
+        ));
+        out.push(Reading::measured(
+            format!("{base}.accepting_jobs"),
+            serde_json::json!(p.accepting_jobs),
+            None,
+        ));
+        out.push(Reading::measured(
+            format!("{base}.color"),
+            serde_json::json!(p.color),
+            None,
+        ));
+    }
+}
+
+/// Bluetooth adapters. Deliberately not the devices they can see.
+fn resolve_bluetooth(out: &mut Vec<Reading>) {
+    let monitor = match crate::bluetooth::BluetoothMonitor::new() {
+        Ok(m) => m,
+        Err(e) => {
+            out.push(Reading::unavailable(
+                "network.bluetooth.<none>",
+                None,
+                format!("Bluetooth adapters could not be enumerated here: {e}"),
+            ));
+            return;
+        }
+    };
+
+    let adapters = monitor.adapters();
+    if adapters.is_empty() {
+        out.push(Reading::unavailable(
+            "network.bluetooth.<none>",
+            None,
+            "Bluetooth enumeration succeeded and found no adapter",
+        ));
+        return;
+    }
+
+    for (i, a) in adapters.iter().enumerate() {
+        let base = format!("network.bluetooth.{i}");
+        push_text(out, format!("{base}.name"), &a.name);
+        out.push(Reading::measured(
+            format!("{base}.powered"),
+            serde_json::json!(a.powered),
+            None,
+        ));
+    }
+}
+
+/// What the processor says about itself, and which instructions it implements.
+///
+/// The reader's inferred performance scores are read and discarded here. They
+/// are a table lookup keyed on the microarchitecture name, and publishing one
+/// through an interface whose whole promise is that a value carries its own
+/// provenance would be the clearest possible violation of that promise: there
+/// is no provenance to give it. `Derived` would be a lie about the inputs and
+/// `Measured` a lie about the method.
+fn resolve_microarch(out: &mut Vec<Reading>) {
+    let monitor = match crate::cpu_microarch::CpuMicroarchMonitor::new() {
+        Ok(m) => m,
+        Err(e) => {
+            out.push(Reading::unavailable(
+                "cpu.microarch.<none>",
+                None,
+                format!("the processor could not be identified here: {e}"),
+            ));
+            return;
+        }
+    };
+
+    let report = monitor.report();
+    let uarch = &report.microarch;
+
+    // Field by field. An earlier version pushed `{:?}` of the whole struct,
+    // which put a Rust debug rendering -- braces, quotes, `None` -- into a
+    // reading declared as an identifier. It parsed as a value and was one only
+    // in the sense that a screenshot of a table is a table.
+    push_spec_id(out, "cpu.microarch.name", &uarch.name);
+    push_spec_id(out, "cpu.microarch.codename", &uarch.codename);
+    push_spec_id(out, "cpu.microarch.vendor", &format!("{:?}", uarch.vendor));
+    push_spec_id(out, "cpu.microarch.isa", &uarch.arch);
+    push_spec_opt(
+        out,
+        "cpu.microarch.process",
+        (uarch.process_nm > 0).then(|| serde_json::json!(uarch.process_nm)),
+        Some(Unit::Count),
+        "simon holds no process node for this microarchitecture",
+    );
+    push_spec_opt(
+        out,
+        "cpu.microarch.year",
+        (uarch.year > 0).then(|| serde_json::json!(uarch.year)),
+        Some(Unit::Count),
+        "simon holds no introduction date for this microarchitecture",
+    );
+    out.push(Reading::spec(
+        "cpu.microarch.hybrid",
+        serde_json::json!(uarch.hybrid),
+        None,
+    ));
+
+    // Family zero identifies no x86 part that has ever shipped, so it means the
+    // CPUID triple was not read rather than that this is family 0. When it is
+    // missing the model and stepping beside it are missing too -- they are
+    // decoded from the same leaf -- and stepping 0 is a legitimate value, so
+    // publishing it while family is absent would present a default as a
+    // reading. All three go together or none of them do.
+    let cpuid_read = report.family > 0;
+    for (suffix, value) in [
+        ("family", report.family),
+        ("model", report.model),
+        ("stepping", report.stepping),
+    ] {
+        push_spec_opt(
+            out,
+            format!("cpu.microarch.{suffix}"),
+            cpuid_read.then(|| serde_json::json!(value)),
+            Some(Unit::Count),
+            "the CPUID family/model/stepping triple was not read on this platform",
+        );
+    }
+    for (suffix, value) in [
+        ("physical_cores", report.physical_cores),
+        ("logical_cores", report.logical_cores),
+    ] {
+        out.push(Reading::spec(
+            format!("cpu.microarch.{suffix}"),
+            serde_json::json!(value),
+            Some(Unit::Count),
+        ));
+    }
+    out.push(Reading::measured(
+        "cpu.microarch.smt_enabled",
+        serde_json::json!(report.smt_enabled),
+        None,
+    ));
+
+    // Supported only. An extension the processor does not implement is not a
+    // property of this machine, and listing it with a false flag invites a
+    // consumer that forgets to read the flag to conclude the opposite.
+    let supported: Vec<_> = report.extensions.iter().filter(|x| x.supported).collect();
+    if supported.is_empty() {
+        out.push(Reading::unavailable(
+            "cpu.microarch.extension.<none>",
+            None,
+            "the processor was identified and reported no instruction set extensions, \
+             which means the extension probe failed rather than that the CPU has none",
+        ));
+        return;
+    }
+    for (i, x) in supported.iter().enumerate() {
+        let base = format!("cpu.microarch.extension.{i}");
+        push_spec_id(out, format!("{base}.name"), &x.name);
+        push_spec_id(
+            out,
+            format!("{base}.category"),
+            &format!("{:?}", x.category),
+        );
+        push_spec_text(out, format!("{base}.description"), &x.description);
+    }
+}
+
+/// Hardware cryptographic acceleration and random sources.
+///
+/// Both lists are filtered to what is actually present, and both carry their own
+/// `<none>` row. A machine with no hardware RNG is a real state an agent may
+/// need to act on -- it changes how a key should be generated -- and it must not
+/// be reachable by the same silence as a reader that failed.
+fn resolve_crypto(out: &mut Vec<Reading>) {
+    let monitor = match crate::crypto_accel::CryptoAccelMonitor::new() {
+        Ok(m) => m,
+        Err(e) => {
+            out.push(Reading::unavailable(
+                "cpu.crypto.<none>",
+                None,
+                format!("hardware crypto support could not be determined here: {e}"),
+            ));
+            return;
+        }
+    };
+
+    let report = monitor.report();
+
+    let accelerated: Vec<_> = report
+        .features
+        .iter()
+        .filter(|f| f.hardware_accelerated)
+        .collect();
+    if accelerated.is_empty() {
+        out.push(Reading::unavailable(
+            "cpu.crypto.<none>",
+            None,
+            "the processor reports no hardware-accelerated cryptographic primitive",
+        ));
+    }
+    for (i, f) in accelerated.iter().enumerate() {
+        let base = format!("cpu.crypto.feature.{i}");
+        push_spec_id(out, format!("{base}.name"), &f.name);
+        push_spec_id(out, format!("{base}.flag"), &f.cpu_flag);
+        push_spec_id(
+            out,
+            format!("{base}.category"),
+            &format!("{:?}", f.category),
+        );
+        // GB/s to bytes per second. Decimal, matching how the constants were
+        // written down; and `Derived`, because a constant is not a measurement
+        // however plausible the number looks.
+        match f.estimated_throughput_gbs {
+            Some(gbs) => out.push(Reading::derived(
+                format!("{base}.throughput"),
+                serde_json::json!(gbs * 1_000_000_000.0),
+                Some(Unit::BytesPerSecond),
+            )),
+            None => out.push(Reading::unavailable(
+                format!("{base}.throughput"),
+                Some(Unit::BytesPerSecond),
+                "simon holds no throughput estimate for this primitive",
+            )),
+        }
+    }
+
+    let sources: Vec<_> = report.rng_sources.iter().filter(|r| r.available).collect();
+    if sources.is_empty() {
+        // Two very different situations reach here, and saying "this machine
+        // has no hardware RNG" would be wrong in one of them. On Windows the
+        // feature list above routinely carries RDRAND and RDSEED while
+        // `rng_sources` comes back empty, because the two are filled by
+        // different probes and only one of them is implemented there. Asserting
+        // the machine has no random source while simon has just reported the
+        // instruction that provides one is a contradiction an agent would be
+        // right to act on and wrong to believe.
+        let instruction_present = accelerated.iter().any(|f| {
+            matches!(
+                f.category,
+                crate::crypto_accel::CryptoCategory::RandomNumberGen
+            )
+        });
+        out.push(Reading::unavailable(
+            "cpu.crypto.rng.<none>",
+            None,
+            if instruction_present {
+                "the hardware random source probe enumerated nothing, but the feature \
+                 list above reports a random number instruction - this is a gap in the \
+                 probe on this platform rather than a machine without an RNG"
+            } else {
+                "no hardware random source was found, and no random number instruction \
+                 was reported either"
+            },
+        ));
+        return;
+    }
+    for (i, r) in sources.iter().enumerate() {
+        let base = format!("cpu.crypto.rng.{i}");
+        push_spec_id(out, format!("{base}.name"), &r.name);
+        push_spec_id(
+            out,
+            format!("{base}.source"),
+            &format!("{:?}", r.source_type),
+        );
+        push_spec_opt(
+            out,
+            format!("{base}.quality"),
+            r.quality.map(|q| serde_json::json!(q)),
+            Some(Unit::Count),
+            "this source declares no entropy figure, and assuming one would be worse \
+             than saying nothing",
+        );
+    }
+}
+
+/// Memory bandwidth, every figure of which is arithmetic.
+///
+/// The estimate is worth publishing and worth labelling. `Derived` is not a
+/// weaker `Measured`; it is a different claim, and the difference is the whole
+/// reason an agent can use these numbers safely. Nothing here was benchmarked.
+fn resolve_memory_bandwidth(out: &mut Vec<Reading>) {
+    let monitor = match crate::memory_bandwidth::MemoryBandwidthMonitor::new() {
+        Ok(m) => m,
+        Err(e) => {
+            out.push(Reading::unavailable(
+                "memory.bandwidth.<none>",
+                None,
+                format!(
+                    "the memory configuration needed for an estimate is not readable here: {e}"
+                ),
+            ));
+            return;
+        }
+    };
+
+    let est = monitor.estimate();
+
+    push_spec_id(
+        out,
+        "memory.bandwidth.generation",
+        &format!("{:?}", est.generation),
+    );
+    out.push(Reading::spec(
+        "memory.bandwidth.speed",
+        serde_json::json!(est.speed_mts),
+        Some(Unit::Count),
+    ));
+    out.push(Reading::spec(
+        "memory.bandwidth.channels",
+        serde_json::json!(est.channels.active_channels),
+        Some(Unit::Count),
+    ));
+    out.push(Reading::spec(
+        "memory.bandwidth.max_channels",
+        serde_json::json!(est.channels.max_channels),
+        Some(Unit::Count),
+    ));
+
+    // GB/s to bytes per second, which is the unit the entities declare. Decimal
+    // gigabytes, not gibibytes: memory bandwidth is quoted in the same decimal
+    // units as the transfer rate it is computed from, and converting with 1024
+    // would inflate every figure by 7%.
+    const GB: f64 = 1_000_000_000.0;
+    out.push(Reading::derived(
+        "memory.bandwidth.peak",
+        serde_json::json!(est.peak_bandwidth_gbs * GB),
+        Some(Unit::BytesPerSecond),
+    ));
+    out.push(Reading::derived(
+        "memory.bandwidth.achievable",
+        serde_json::json!(est.achievable_bandwidth_gbs * GB),
+        Some(Unit::BytesPerSecond),
+    ));
+    out.push(Reading::derived(
+        "memory.bandwidth.stream_triad",
+        serde_json::json!(est.stream_triad_estimate_gbs * GB),
+        Some(Unit::BytesPerSecond),
+    ));
+}
+
+/// `push_opt` for firmware-declared values: same absence handling, but the
+/// present case carries `Specification` rather than `Measured`. Without this a
+/// DIMM's part number would claim to have been measured off the module.
+fn push_spec_opt(
+    out: &mut Vec<Reading>,
+    id: impl Into<String>,
+    value: Option<serde_json::Value>,
+    unit: Option<Unit>,
+    why_absent: &str,
+) {
+    match value {
+        Some(v) if v.as_str().is_some_and(names_an_absence) => {
+            out.push(Reading::unavailable(
+                id,
+                unit,
+                format!("reader returned {v}, which names an absence rather than a value"),
+            ));
+        }
+        Some(v) => out.push(Reading::spec(id, v, unit)),
+        None => out.push(Reading::unavailable(id, unit, why_absent)),
     }
 }
 

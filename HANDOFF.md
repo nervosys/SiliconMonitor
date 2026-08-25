@@ -1,7 +1,38 @@
 # Status
 
-Current as of 5.0.0. This file is excluded from the published crate
+Current as of 6.0.0. This file is excluded from the published crate
 (`Cargo.toml`'s `exclude` list) and is for whoever picks the work up next.
+
+## Read this first: there is uncommitted work in the tree
+
+The last session ended with a shell that stopped executing mid-task, so a batch
+of ontology work is **written, type-checked and linted, but never committed and
+never run through the full test suite.** Do not build on it before verifying it.
+
+Committed and green: `58bffa4`, which fixed the CI failure described under
+*Verification* below. `gh run list` confirms it passes on all three platforms.
+
+Uncommitted, in `src/ontology/{mod,resolve}.rs`, `src/camera/mod.rs` and
+`examples/probe_readers.rs`: eleven new ontology clusters and five honesty
+defects fixed, all detailed under plan item F below — read that section before
+touching any of it, because two of the five are corrections to clusters that
+already existed and shipped.
+
+`cargo check --all-features`, `cargo fmt --check`
+and `cargo clippy --all-features --all-targets` were all clean at the point the
+shell died. `cargo test --all-features` was **not** completed against the final
+state — the last two changes (codec per-row provenance, the PCI address guard)
+have only been type-checked.
+
+So the first command of the next session is:
+
+```bash
+cargo test --all-features
+```
+
+and nothing should be committed before it passes. The version is 6.0.0 and is
+**not tagged**; `v5.2.0` is many commits behind. Publishing to crates.io was
+explicitly declined by the maintainer for 6.0.0 and 5.2.0 — tag only.
 
 ## Released
 
@@ -27,6 +58,7 @@ Current as of 5.0.0. This file is excluded from the published crate
 | 5.0.0 | **The Dewey port is withdrawn and the egui GUI restored.** Claimed MSRV back to 1.70 — which was not true, see 5.2.0. Published, tagged `v5.0.0`. See open work 9. |
 | 5.1.0 | Applied settings are reversible: `read_current`, `ApplyOutcome.previous`, `revert_setting`, `revert_cycle`. Published, tagged `v5.1.0`. See open work 13. |
 | 5.2.0 | `simon ai models` reads an IronVault vault, behind an optional `vault` feature. **MSRV corrected to 1.88**, having been wrong since 5.0.0. The tuning loop is closed (open work 13). **CI made green after twelve consecutive failures**; macOS CPU/memory wired into the resolver. Tagged `v5.2.0`, **not published**. |
+| 6.0.0 | **Zero-constructors renamed to `empty()`** and the `Option` refactor on `SwapInfo`/`RamInfo` done — all three "queued for the next major version" items closed. Ontology grew a capability and vocabulary layer with tests derived from the declarations; JSON-LD output with QUDT units; `simon status` (coloured, per-OS ASCII art); network and file intrusion detection; the tuning ledger. **Not tagged, not published.** |
 | 2.1.5 | Committed, never published. Documentation only; superseded by 3.0.0. |
 
 ## Verification that is worth repeating
@@ -40,6 +72,19 @@ cargo +1.88 check --all-targets  # the declared MSRV, actually built
 cargo check --target x86_64-unknown-linux-gnu --all-targets --no-default-features --features cpu,npu,io,network,amd,nvidia,intel
 cargo check --target aarch64-apple-darwin --all-targets --no-default-features --features cpu,npu,io,network,apple,nvidia,num_cpus
 ```
+
+**The cross-checks cannot use `--all-features`, and the reason is not obvious.**
+`gui` pulls `egui_extras → ehttp → ureq → rustls → ring`, and `ring`'s build
+script needs a C cross-compiler for the target. Without one the check dies in a
+build script having compiled none of this crate's own code, which reads at a
+glance like a broken toolchain rather than a missing one. Keep the feature lists
+above; `cargo tree -i ring --target <t> -e normal,dev` is how that was traced.
+
+The corollary is that a feature combination the cross-check *can* build is one
+CI never tries — CI checks `--all-features` and each feature *alone*, never the
+subset above. `examples/cpu_monitor.rs` failed to compile on macOS without the
+`apple` feature for exactly that reason and nothing noticed until a cross-check
+ran with `--all-targets`.
 
 **Build the MSRV, do not declare it.** `rust-version` said 1.70 from 3.x through
 5.1.0 and had been false since 5.0.0: restoring the egui GUI brought in
@@ -85,6 +130,19 @@ library and skips the test targets, and `tests/macos_readers.rs` is
 `cfg(target_os = "macos")` — so a signature change that broke it was invisible to
 both the local suite and the cross-check, and reached CI. The `Option` fields on
 `SwapInfo` did exactly that.
+
+**A test can be wrong about units, and it fails on the machine that is right.**
+The macOS job went red at `2b8bf16` on `memory_totals_are_internally_consistent`,
+which asserted `ram.total >= 1 GiB` with the constant written in bytes — while
+`read_memory_stats` divides `hw.memsize` by 1024 before storing it. The runner's
+correct 7 GiB reading, 7340032 KB, read as 7 MB and failed the floor. The reader
+was right and the assertion was wrong, and the failure message printed the word
+"bytes" beside a KB figure, which is what made it take longer than it should
+have.
+
+Worth generalising: this crate stores memory in KB in `RamInfo` and in bytes in
+several readers, and the compiler cannot tell them apart because both are `u64`.
+Before believing a plausibility bound, check which unit the field is actually in.
 
 CI additionally checks every feature in isolation (job **Feature combinations**).
 That job exists because `--all-features` cannot catch a feature that only builds
@@ -150,17 +208,16 @@ feature stayed broken through eight published versions.
    what remains to benefit is USB storage — and every Linux machine, where a
    sweep spawns `smartctl` once per drive and the old shape was quadratic.
 
-5. **The ontology names 134 entities; the library has ~88 subsystem modules.**
-   3.3.0 added 34 (disk SMART/health/NVMe, CPU cache, firmware, TPM), 3.4.0 added
-   19 (DIMM slot topology, USB), 3.5.0 added PCI, 3.7.0 added virtualization, NUMA
-   and ECC.
+5. **The ontology names ~232 entities; the library has ~88 subsystem modules.**
+   The running list of which clusters exist, which readers answer on which
+   machine, and what is left is under **plan item F** below — it is kept in one
+   place rather than two, because the last time it lived in both they disagreed.
 
-   What is left is mostly readers that answer nothing on a desktop, and so cannot
-   be verified here: RAPL energy counters (Linux MSR interface), environmental
-   sensors (accelerometer, ambient light — laptop and tablet hardware), cgroup and
-   container accounting, and the datacenter and fleet modules. Each is a phase of
-   the same shape as the ones above; none should be declared until someone can
-   watch its resolver answer on hardware that has the thing.
+   The standing rule is here because it governs every addition: **none should be
+   declared until someone can watch its resolver answer on hardware that has the
+   thing** — or, failing that, watch it decline with a true reason. A cluster
+   that resolves to `unavailable` carrying a real explanation satisfies this. One
+   that resolves to silence does not.
 
    **`tests/ontology_conformance.rs` now checks the things that used to need an
    eye.** Five entities across 3.3.0 and 3.4.0 shipped an enum's `Unknown` through
@@ -255,31 +312,22 @@ feature stayed broken through eight published versions.
    Four releases went into making the replacement presentable and it never got
    close. Budget accordingly.
 
-10. **`CpuStats::new()` and `MemoryStats::new()` are zero-constructors with
-   constructor-shaped names.** Neither reads anything: `MemoryStats::new()`
-   returns all zeros, `CpuStats::new()` returns no cores and 100% idle. The real
-   values come from the per-platform `read_cpu_stats` / `read_memory_stats`.
+10. ~~**`CpuStats::new()` and `MemoryStats::new()` are zero-constructors with
+   constructor-shaped names.**~~ Fixed in 6.0.0. Both are `empty()` returning
+   `Self`, and `tests/zero_constructors.rs` holds an empty list: no `new()` in
+   this crate fabricates a reading.
 
-   Both GUI call sites are fixed (4.0.0), and the Dewey CPU tab asserts against
-   the zero-constructor's exact signature so a regression fails loudly. **The
-   Linux arms are verified by inspection, not compilation** — the documented Linux
-   cross-check cannot include `gui`, which drags in reqwest and so
-   ring/openssl-sys, needing a C toolchain this box lacks. CI compiles Linux.
+   **Five defects came out of this one pattern, across three separate
+   discoveries** — two GUI call sites, `SiliconMonitor::snapshot_cpu` and
+   `snapshot_memory` returning zeros from the *public* API, `SystemHealth::check`
+   computing CPU usage from 100% idle so no threshold could ever be crossed, and
+   the Prometheus exporter publishing 0% CPU on every scrape. Three of those were
+   found only because the rename forced every call site to be read.
 
-   macOS still reaches both zero-constructors: there is no
-   `platform::macos::read_cpu_stats` or `read_memory_stats` to call (open work 2).
-
-   **The real fix is a rename, and it is breaking.** `SystemStats::new()` shows
-   the right shape — it dispatches to the platform reader. The other two cannot
-   follow it: `platform::linux::memory::read_memory_stats` calls
-   `MemoryStats::new()?` as its starting struct, so making `new()` read would
-   recurse forever. They are builder bases wearing a constructor's name, and
-   `empty()` or `zeroed()` would have prevented both defects. 4.0.0 was the moment
-   to do it and it was not taken — the GUI migration was already the breaking
-   change and stacking a second one would have muddied it. Next major version.
-
-   This has now caused two defects found a day apart. **Assume any other
-   `T::new()` in this crate may be a zero-constructor until checked.**
+   The rule that outlived the bug: **assume any `T::new()` in this crate may be a
+   zero-constructor until checked**, and prefer `empty()` for a builder base. The
+   name is the whole defect — every call site was written by someone who
+   reasonably believed `new()` constructs a thing from the system.
 
 11. **Verify with `--lib --tests` when the disk is tight.** `cargo test
    --all-features` links every example. That is affordable again now the duplicate
@@ -450,31 +498,31 @@ places cannot preserve it without an API change.
    exporter published 0% CPU on every scrape. Five defects total from this one
    pattern, over three separate discoveries.
 
-2. **`Option` fields on `SwapInfo`** — still open, and the one reachable
-   instance is now closed at the reader.
+2. ~~**`Option` fields on `SwapInfo`.**~~ Done in 6.0.0. `total`, `used` and
+   `cached` are `Option<u64>`, with `total_or_zero()`, `used_or_zero()`,
+   `cached_or_zero()`, `is_reported()` and `swap_usage_percent() -> Option<f32>`
+   for callers that genuinely want the old behaviour.
 
-   `total: 0` means both "no swap" and "the reader failed", and the resolver
-   reads it as the first. Every current reader now either produces a real number
-   or errors: Linux `parse_swap_info` treats a missing `SwapTotal:` line as an
-   error rather than a zero (reachable in a container with no swap accounting),
-   and the macOS reader fails the whole memory read rather than pass a zero
-   through — which costs the RAM figures with it, and is the concrete price of
-   not having done this.
+   The 62 read sites were the reason this was deferred, and they were the cheap
+   part. What the change actually bought: it **ended three workarounds and one
+   unit bug**. The macOS reader no longer fails the entire memory read to avoid
+   claiming a machine has no swap — it says `None` and keeps the RAM figures.
+   Linux's missing-`SwapTotal:` error path and the resolver's two-way swap
+   branch both collapsed into the type. Deferring on cost was the wrong call:
+   the cost was in the mechanical part and the value was in the parts that had
+   been bent around the missing case.
 
-   The type change would make the class impossible rather than closing instances
-   one at a time. It is 62 read sites in this crate alone, across two different
-   types named `SwapInfo`. Deferred on cost, not on doubt about its value.
+3. ~~**`Option` fields on `RamInfo`.**~~ Done in 6.0.0. `shared` is
+   `Option<u64>`; `buffers` stays a plain `u64` and stays 0 on macOS, because
+   that platform keeps no buffer pool distinct from the file cache and the zero
+   is a fact about the platform rather than a missing reading. That asymmetry is
+   deliberate — do not "finish the job" by making `buffers` an `Option` too.
 
-3. **`Option` fields on `RamInfo`, or a documented contract for its zeros.**
-   `RamInfo::shared` is 0 on macOS because simon does not read it, not because
-   the machine shares nothing. No ontology entity surfaces the field, so no agent
-   is misled today — a library caller reading `MemoryStats` directly is.
-   `buffers: 0` on macOS is fine and should stay: that platform keeps no buffer
-   pool distinct from the file cache, so the zero is a fact.
-
-None of these are urgent and none should be done piecemeal — they are one
-change of principle applied in three places, and doing them together is what
-makes the principle legible in the diff.
+All three are closed. The section is kept because the pattern will recur: **a
+type with no way to say "not read"** encodes absence as zero, and zero is
+indistinguishable from a measurement. When the next one appears, the lesson from
+items 1 and 2 is that the rename or the `Option` is not the work — the defects
+it uncovers are, and there are always more than expected. Item 1 turned up five.
 
 ## The plan for what is left
 
@@ -584,15 +632,94 @@ Item F is complete for every cluster **the plan named** — NUMA, RAPL, sensors,
 virtualization and EDAC. That is not the same as every reader having a schema,
 and an earlier version of this line said so, which was an overclaim.
 
-Around 28 module directories still have no ontology entities: `audio`,
-`bluetooth`, `camera`, `codec`, `display`, `input`, `printer`, `services`,
-`wsl`, `iommu`, `interrupt_map`, `io_scheduler`, `kernel_params`,
-`memory_bandwidth`, `memory_topology`, `cpu_microarch`, `crypto_accel`,
-`dma_engine`, `drm_monitor`, `gpu_topology`, `hardware_ai`, `interconnect`,
-`power_profile`, `scheduler`, `security_mitigations`, `storage_controller`,
-`thermal_zone`, `voltage_regulator`, `watchdog`. Each is a candidate for the
-same treatment, and each needs the same check first: does its reader answer on
-the machine at hand, and what does it say when it does not?
+### Probe before declaring: `examples/probe_readers.rs`
+
+Adding clusters one at a time and guessing which readers answer was slow and got
+one of them wrong. The example constructs every uncovered monitor and prints
+what each produced, which turns "which cluster next" into a table. On this
+Windows desktop:
+
+| Answers here | Silent here |
+|---|---|
+| `input` 6, `services` 311, `storage_controller` 9, `power_profile` 3, `audio` 12, `bluetooth` 2, `camera` 2, `codec` 15, `printer` 4, `kernel_params` 1, `memory_bandwidth` 1, `memory_topology` 2, `cpu_microarch` 8, `crypto_accel` 1, `interconnect` 1 | `iommu`, `interrupt_map`, `io_scheduler`, `dma_engine`, `gpu_topology`, `thermal_zone`, `voltage_regulator`, `watchdog`, `security_mitigations` |
+
+The silent column is almost entirely Linux sysfs. Those are not blocked in the
+way the hardware items A–D are — a Linux box would let all nine be verified in
+one sitting, and item F's remaining work is mostly that.
+
+### Clusters added in the uncommitted batch
+
+`memory.bandwidth.*`, `cpu.microarch.*`, `cpu.crypto.*` (features and RNG
+sources), `board.input.*`, `board.audio.*`, `board.camera.*`, `system.printer.*`,
+`network.bluetooth.*`, `disk.controller.*`, `power.profile.*`, `gpu.codec.*`.
+Each has its own `<none>` diagnostic, per the sub-cluster rule above.
+
+Three judgement calls in there worth preserving, because each is a place where
+publishing *more* would have been publishing worse:
+
+- **Scores were left out on purpose.** `cpu_microarch` computes a 0–100
+  `single_thread_score` and `crypto_accel` an `acceleration_score`. Both are
+  table lookups keyed on a name, not measurements of the processor in front of
+  you. There is no provenance that fits: `Measured` lies about the method and
+  `Derived` lies about the inputs. An agent choosing between machines on a
+  number called a performance score would be trusting a guess wearing a
+  benchmark's authority. The extension list beside it is the part that is a
+  fact, and facts are what got published.
+- **`gpu.codec.*` picks its provenance per row**, and it is the only cluster
+  that does. The reader records whether it asked the driver (`DirectQuery`) or
+  concluded the capability from the GPU model, so a queried row resolves
+  `Measured` and an inferred one `Specification`. This is the clearest
+  illustration in the crate of why the field exists — the two look identical
+  until you ask, and only one survives a driver update.
+- **Serial numbers and Bluetooth MACs are readable and are not published.** They
+  identify a unit rather than describe it, no agent task needs one, and a
+  hardware report carrying them is harder to share than one that does not.
+
+### Five defects the batch turned up, all found by reading the output
+
+None of these were found by a test. Every one came from running
+`simon snapshot --format text` and looking at the rows.
+
+1. **The existing `memory.dimm.*` cluster declared SMBIOS data as `Measured`.**
+   A part number was not measured off the module — the firmware said so. Now
+   `Specification` throughout, which is what that provenance is for. A board
+   that lies about its own DIMMs makes simon repeat the lie, and a consumer
+   deciding whether to trust the figure needs to know that before it decides.
+2. **`cpu.microarch.name` emitted `{:?}` of an entire struct** — braces, nested
+   quotes, `None` — into a reading declared as an identifier. It parsed as a
+   value and was one only in the sense that a screenshot of a table is a table.
+   Now split into `name`, `codename`, `vendor`, `isa`, `process`, `year`,
+   `hybrid`.
+3. **CPUID family/model/stepping published `0` as a reading** on Windows, where
+   the triple is never decoded. Family 0 identifies no x86 part that has shipped,
+   so it means "not read". All three now go together or not at all: stepping 0 is
+   a legitimate value, and publishing it while family is absent would present a
+   default as a measurement.
+4. **The Windows camera reader enumerated scanners.** Its WMI query accepted
+   PnP class `Image` as well as `Camera`, so a Brother MFC-L2900DW appeared as
+   two cameras. That is not a slightly generous enumeration; it is a wrong answer
+   to "can this machine see". Windows 10 1703 and later put every webcam under
+   `Camera`, so narrowing the query loses nothing real.
+5. **`disk.controller.pci_address` published device instance paths.** Windows
+   returns things like `ROOT\SPACEPORT\0000`, which is not a PCI address and
+   cannot be joined against `pci.*`. A consumer looking for a link width would
+   have been sent to a bus the device is not on. `looks_like_pci_address` now
+   gates it, and the absence names what was actually found.
+
+That is five defects in one afternoon from one habit. **The conformance tests
+catch what a value *is* — null, wrong JSON type, an absence with no reason. They
+cannot catch what it *means*.** A debug dump is a non-empty string; a scanner is
+a plausible camera name; a device path is a plausible identifier; zero is a
+plausible integer. Read the rows.
+
+### What is left
+
+Readers that answer here and still have no schema: `services` (311 rows — needs
+a summary shape rather than one entity per service, or every snapshot doubles),
+`kernel_params`, `interconnect`. Then the nine Linux-only readers in the silent
+column above, which need a Linux box.
+
+Still uncovered and not probed: `wsl`, `drm_monitor`, `hardware_ai`, `scheduler`.
 
 Add a cluster per change, verify each field resolves to a true provenance on the
 machine at hand, and check the absent variant first — see open work 5 for why
@@ -603,6 +730,34 @@ SMART READ THRESHOLDS, which has no `IOCTL_STORAGE_*` equivalent, so the only
 route is an elevated pass-through — giving back exactly what 3.3.0 bought. The
 drive's own `PredictFailure` verdict is the same judgement the thresholds would
 have produced, and is already reported.
+
+## How the ontology is put together
+
+Three layers, added in 6.0.0, each answering a different question. Knowing which
+layer a change belongs in saves rediscovering the split:
+
+- **`Entity`** (`src/ontology/mod.rs`) — *what a value means.* Id, domain, kind,
+  unit, declared provenance, nullability, prose. Templated ids use `{n}`.
+- **`Capability`** (`src/ontology/capability.rs`) — *whether simon can produce it
+  on this platform, on this build.* `Support` is `Implemented`, `Partial`,
+  `Unimplemented` or `Unverified`, and the last three carry a reason. This is the
+  layer that stops the docs from claiming a feature the build does not have.
+- **`Vocabulary`** (`src/ontology/vocabulary.rs`) — *what values are possible.*
+  Closed sets for provenance, verdict, severity, scan status and the rest, so an
+  agent can enumerate the range without parsing prose.
+
+`src/ontology/resolve.rs` produces `Reading`s against the entities;
+`src/ontology/jsonld.rs` maps the result to JSON-LD with QUDT units, mapped only
+where an exact equivalent exists rather than approximated.
+
+**Write conformance tests against invariants, not against today's state.** Three
+tests here had to be rewritten because they asserted a fact that was true when
+written: one required every reading marked usable to actually resolve, which
+failed on a GPU-less runner and again on a battery-less one; another asserted
+that *all* detection capabilities were stranded without commands, and broke the
+moment detection gained one. The durable forms are "all-or-nothing" and "these
+two counts agree" — properties that survive the code getting better. A test that
+fails when a gap is *closed* is a test that punishes progress.
 
 ## Guardrails, and why each exists
 
@@ -618,6 +773,10 @@ have produced, and is already reported.
 | `tests/plausibility.rs` | Physically impossible readings |
 | `tests/agentic_contract.rs` | Schema/resolver disagreement on the agent surface |
 | `tests/ontology_conformance.rs` | Anything a new entity can get wrong: unreachable ids, absences with no reason, non-nullable nulls, values whose JSON type contradicts their unit, `Unknown` dressed as a measurement. Derives its cases from the ontology, so a domain added later is covered without editing it |
+| `tests/capability_conformance.rs` | A declared capability with no command behind it, or a surface whose handler count and declaration disagree. Checked in both directions, so an implementation with no declaration fails too |
+| `tests/vocabulary_conformance.rs` | A closed value set drifting from the enum it describes. Caught `Provenance::Reported` — a variant that does not exist — being written into a resolver twice |
+| `tests/honesty.rs` | Absences without usable reasons, and readings claiming a provenance the resolver did not actually have |
+| `tests/zero_constructors.rs` | A `new()` that fabricates a reading instead of constructing from the system. The list is empty and must stay empty |
 
 Each was checked against a deliberate break before being kept, because a test
 that cannot fail is worse than none.
@@ -646,6 +805,15 @@ access bits in the definition, and the mask the handle was opened with, decide i
 ATA in 3.3.0), and one was scoped as reachable and is not
 (`IOCTL_ATA_PASS_THROUGH`). Reading the `CTL_CODE` first would have settled all
 three in a minute each.
+
+**The absence-word guard lives in one place, and that is why it only had to be
+written once.** `push_text`, `push_id` and `push_opt` in `resolve.rs` all funnel
+through `push_str_as`, which rejects empty strings and the words "unknown",
+"unspecified", "undetermined", "n/a" and "none". An enum's `Unknown` variant
+lowercased into a measured identifier is the single most repeated defect in this
+crate — it has been caught in five entities, in three different readers, across
+three releases. Push string readings through the helpers, never
+`Reading::measured` directly.
 
 **A manual grep is not a substitute for asking the binary.** A hand sweep for
 documented-but-nonexistent commands missed 29 of 38 cases; a test comparing docs

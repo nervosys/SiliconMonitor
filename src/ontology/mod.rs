@@ -659,13 +659,345 @@ impl Ontology {
              the platform does not publish the sharing map.",
         ));
 
+        // ── Microarchitecture and instruction set ────────────────────────────
+        //
+        // CPUID and its equivalents, which is the processor describing itself.
+        // `Specification` rather than `Measured` for that reason: these values
+        // do not change while the machine runs, and simon read a declaration
+        // rather than sampling anything.
+        //
+        // The reader also computes a `single_thread_score` and a matching
+        // multi-thread figure, both 0-100, and neither is published here. They
+        // come from a lookup table over microarchitecture names, not from any
+        // measurement of this processor, and an agent choosing between machines
+        // on a number called a performance score would be relying on a guess
+        // with a benchmark's authority. The extension list below is the part of
+        // that reader an agent can actually act on: whether AVX-512 is present
+        // is a fact, and it is the fact that decides a kernel.
+        add(Entity::new(
+            "cpu.microarch.<none>",
+            D::Cpu,
+            K::Diagnostic,
+            None,
+            P::Unavailable,
+            true,
+            "Present when the processor could not be identified, carrying why.",
+        ));
+        add(Entity::new(
+            "cpu.microarch.name",
+            D::Cpu,
+            K::Identity,
+            Some(U::Identifier),
+            P::Specification,
+            false,
+            "Microarchitecture as simon recognises it - Zen 5, Golden Cove, \
+             Firestorm. Distinct from `cpu.model`, which is the marketing \
+             string: processors with different model names share a \
+             microarchitecture, and it is the microarchitecture that decides \
+             which instructions are fast.",
+        ));
+        add(Entity::new(
+            "cpu.microarch.codename",
+            D::Cpu,
+            K::Identity,
+            Some(U::Identifier),
+            P::Specification,
+            true,
+            "Vendor code name for this silicon - Granite Ridge, Raptor Lake-S. \
+             Nullable: simon does not hold one for every part it can name.",
+        ));
+        add(Entity::new(
+            "cpu.microarch.vendor",
+            D::Cpu,
+            K::Identity,
+            Some(U::Identifier),
+            P::Specification,
+            false,
+            "Who made the processor.",
+        ));
+        add(Entity::new(
+            "cpu.microarch.isa",
+            D::Cpu,
+            K::Identity,
+            Some(U::Identifier),
+            P::Specification,
+            false,
+            "Instruction set architecture - x86_64, aarch64, riscv64. The coarsest \
+             compatibility question there is, and the first one a consumer \
+             selecting a binary has to answer.",
+        ));
+        add(Entity::new(
+            "cpu.microarch.process",
+            D::Cpu,
+            K::Identity,
+            Some(U::Count),
+            P::Specification,
+            true,
+            "Manufacturing process node in nanometres. A marketing figure as much \
+             as a physical one across vendors, so it is comparable within a \
+             vendor and not between them. Nullable where simon holds none.",
+        ));
+        add(Entity::new(
+            "cpu.microarch.year",
+            D::Cpu,
+            K::Identity,
+            Some(U::Count),
+            P::Specification,
+            true,
+            "Year this microarchitecture was introduced. From simon's own table \
+             rather than from the silicon - it is the age of the design, not of \
+             this chip. Nullable where simon holds no date.",
+        ));
+        add(Entity::new(
+            "cpu.microarch.hybrid",
+            D::Cpu,
+            K::Identity,
+            None,
+            P::Specification,
+            false,
+            "Whether the design mixes performance and efficiency cores. True means \
+             the per-core figures elsewhere are not comparable to each other, \
+             which is worth knowing before averaging any of them.",
+        ));
+        add(Entity::new(
+            "cpu.microarch.family",
+            D::Cpu,
+            K::Identity,
+            Some(U::Count),
+            P::Specification,
+            true,
+            "CPUID family. Reported alongside model and stepping because the three \
+             together identify the silicon exactly, which the name does not. \
+             Nullable because Windows never decodes the triple, and all three go \
+             together or not at all: publishing a stepping beside an absent family \
+             would present a default as a measurement.",
+        ));
+        add(Entity::new(
+            "cpu.microarch.model",
+            D::Cpu,
+            K::Identity,
+            Some(U::Count),
+            P::Specification,
+            true,
+            "CPUID model number within the family. Nullable with family and \
+             stepping, which it is only meaningful beside.",
+        ));
+        add(Entity::new(
+            "cpu.microarch.stepping",
+            D::Cpu,
+            K::Identity,
+            Some(U::Count),
+            P::Specification,
+            true,
+            "CPUID stepping - the revision of this particular silicon. Errata are \
+             published against steppings, so a consumer checking for one needs \
+             this and not the model name. Nullable with family and model; a \
+             stepping of 0 is a legitimate value, which is why it is withheld \
+             rather than defaulted when the triple was not read.",
+        ));
+        add(Entity::new(
+            "cpu.microarch.physical_cores",
+            D::Cpu,
+            K::Identity,
+            Some(U::Count),
+            P::Specification,
+            false,
+            "Physical core count. Below `logical_cores` when SMT is on, and the \
+             right denominator for anything that scales with execution \
+             resources rather than with schedulable threads.",
+        ));
+        add(Entity::new(
+            "cpu.microarch.logical_cores",
+            D::Cpu,
+            K::Identity,
+            Some(U::Count),
+            P::Specification,
+            false,
+            "Logical processor count, SMT threads included. The right denominator \
+             for a thread pool.",
+        ));
+        add(Entity::new(
+            "cpu.microarch.smt_enabled",
+            D::Cpu,
+            K::Identity,
+            None,
+            P::Measured,
+            false,
+            "Whether simultaneous multithreading is on right now. Measured rather \
+             than declared: the silicon supports it or does not, but firmware \
+             and the kernel both get a say, and this is the state as found.",
+        ));
+        add(Entity::new(
+            "cpu.microarch.extension.<none>",
+            D::Cpu,
+            K::Diagnostic,
+            None,
+            P::Unavailable,
+            true,
+            "Present when no instruction set extension was enumerated, carrying \
+             why. An empty list is never the answer: every processor simon runs \
+             on supports something, so nothing enumerated means the reader \
+             failed rather than that the CPU is bare.",
+        ));
+        add(Entity::new(
+            "cpu.microarch.extension.{n}.name",
+            D::Cpu,
+            K::Identity,
+            Some(U::Identifier),
+            P::Specification,
+            false,
+            "Extension the processor reports as present - AVX-512, AES-NI, SVE. \
+             The list holds only supported extensions, so membership is the \
+             claim and there is no `supported` flag to check.",
+        ));
+        add(Entity::new(
+            "cpu.microarch.extension.{n}.category",
+            D::Cpu,
+            K::Identity,
+            Some(U::Identifier),
+            P::Specification,
+            false,
+            "What the extension is for - vector arithmetic, cryptography, atomics.",
+        ));
+        add(Entity::new(
+            "cpu.microarch.extension.{n}.description",
+            D::Cpu,
+            K::Identity,
+            Some(U::Text),
+            P::Specification,
+            false,
+            "A sentence on what the extension does. simon's own text rather than \
+             the vendor's, and it is there so an agent that has not met an \
+             extension can still tell whether it matters to the task at hand.",
+        ));
+
+        // ── Cryptographic acceleration ───────────────────────────────────────
+        //
+        // Which crypto primitives this processor implements in hardware. The
+        // reader's `acceleration_score` and its free-text recommendations are
+        // left out for the same reason the performance scores above are: a
+        // score compresses a set of facts into a number whose scale nothing
+        // documents, and an agent is better served by the facts.
+        //
+        // Throughput estimates are published, and as `Derived`. They come from
+        // per-primitive constants rather than from running anything on this
+        // machine, so they are a calculation and are labelled as one.
+        add(Entity::new(
+            "cpu.crypto.<none>",
+            D::Cpu,
+            K::Diagnostic,
+            None,
+            P::Unavailable,
+            true,
+            "Present when no hardware crypto feature was enumerated, carrying why.",
+        ));
+        add(Entity::new(
+            "cpu.crypto.feature.{n}.name",
+            D::Cpu,
+            K::Identity,
+            Some(U::Identifier),
+            P::Specification,
+            false,
+            "Hardware-accelerated primitive - AES-NI, SHA extensions, carry-less \
+             multiply. Only accelerated primitives appear; a primitive absent \
+             from this list runs in software.",
+        ));
+        add(Entity::new(
+            "cpu.crypto.feature.{n}.flag",
+            D::Cpu,
+            K::Identity,
+            Some(U::Identifier),
+            P::Specification,
+            false,
+            "The CPU flag that reports it, as the platform spells it. Included so              a consumer can match against the flag names it already has rather              than against the naming simon chose.",
+        ));
+        add(Entity::new(
+            "cpu.crypto.feature.{n}.category",
+            D::Cpu,
+            K::Identity,
+            Some(U::Identifier),
+            P::Specification,
+            false,
+            "Primitive class - symmetric cipher, hash, public key, random.",
+        ));
+        add(Entity::new(
+            "cpu.crypto.feature.{n}.throughput",
+            D::Cpu,
+            K::Limit,
+            Some(U::BytesPerSecond),
+            P::Derived,
+            true,
+            "Estimated per-core throughput for this primitive. A constant scaled \
+             to bytes, not a measurement of this processor: a consumer sizing a \
+             pipeline from it is reading a rule of thumb. Nullable, because \
+             simon holds no estimate for every primitive.",
+        )
+        .derived(&["cpu.crypto.feature.{n}.name"]));
+        add(Entity::new(
+            "cpu.crypto.rng.<none>",
+            D::Cpu,
+            K::Diagnostic,
+            None,
+            P::Unavailable,
+            true,
+            "Present when no hardware random source was found, carrying why. Worth \
+             its own diagnostic: a machine with no hardware RNG is a real and \
+             consequential state, and it must not look like a failed read.",
+        ));
+        add(Entity::new(
+            "cpu.crypto.rng.{n}.name",
+            D::Cpu,
+            K::Identity,
+            Some(U::Identifier),
+            P::Specification,
+            false,
+            "Hardware random source the platform reports as available - RDRAND, \
+             RDSEED, a TPM. Unavailable sources are omitted rather than listed \
+             as present-but-off.",
+        ));
+        add(Entity::new(
+            "cpu.crypto.rng.{n}.source",
+            D::Cpu,
+            K::Identity,
+            Some(U::Identifier),
+            P::Specification,
+            false,
+            "Where the entropy comes from - a CPU instruction, a discrete chip, \
+             the kernel pool. The distinction matters: a CPU instruction and a \
+             TPM fail in different ways and are trusted differently.",
+        ));
+        add(Entity::new(
+            "cpu.crypto.rng.{n}.quality",
+            D::Cpu,
+            K::Identity,
+            Some(U::Count),
+            P::Specification,
+            true,
+            "Entropy bits per sample, where the source declares a figure. Nullable \
+             and usually null - most sources state nothing, and an assumed \
+             number here would be worse than silence.",
+        ));
+
         // ── Memory modules ───────────────────────────────────────────────────
+        //
+        // Everything here comes from the SMBIOS type-17 tables, which the board
+        // fills in at POST. Until 6.0.0 the whole cluster was declared
+        // `Measured`, which claimed simon had sampled a part number off the
+        // module -- it had not; it read a table the firmware wrote. A board that
+        // lies about its own DIMMs makes simon repeat the lie, and a consumer
+        // deciding whether to trust one of these figures needs to know that
+        // before it decides. `ecc` stays `Derived`: it is a comparison of two of
+        // the fields below rather than a field of its own.
+        //
+        // Serial numbers are readable here and deliberately left out. They
+        // identify the individual module rather than describe it, no agent task
+        // needs one, and a hardware report carrying them is harder to share.
         add(Entity::new(
             "memory.dimm.{n}.locator",
             D::Memory,
             K::Identity,
             Some(U::Text),
-            P::Measured,
+            P::Specification,
             true,
             "Slot label as silkscreened on the board — DIMM_A1, ChannelA-DIMM0. \
              The id index is enumeration order; this is what a human replacing the \
@@ -676,7 +1008,7 @@ impl Ontology {
             D::Memory,
             K::Identity,
             None,
-            P::Measured,
+            P::Specification,
             false,
             "Whether this slot holds a module. False is a reading, and the reason \
              the fields below may be absent for a slot that genuinely exists.",
@@ -686,7 +1018,7 @@ impl Ontology {
             D::Memory,
             K::Identity,
             Some(U::Bytes),
-            P::Measured,
+            P::Specification,
             true,
             "Module capacity. Null for an empty slot rather than zero, since zero \
              would read as a module of no size.",
@@ -696,7 +1028,7 @@ impl Ontology {
             D::Memory,
             K::Identity,
             Some(U::Count),
-            P::Measured,
+            P::Specification,
             true,
             "Rated speed in MT/s. Counted rather than given a frequency unit \
              because megatransfers are not megahertz — DDR transfers twice per \
@@ -707,7 +1039,7 @@ impl Ontology {
             D::Memory,
             K::Identity,
             Some(U::Count),
-            P::Measured,
+            P::Specification,
             true,
             "Speed the module is actually running at, in MT/s. Differs from the \
              rated speed whenever the board declined to train at the module's \
@@ -718,7 +1050,7 @@ impl Ontology {
             D::Memory,
             K::Identity,
             Some(U::Identifier),
-            P::Measured,
+            P::Specification,
             true,
             "Memory technology — ddr4, ddr5, lpddr5.",
         ));
@@ -727,7 +1059,7 @@ impl Ontology {
             D::Memory,
             K::Identity,
             Some(U::Text),
-            P::Measured,
+            P::Specification,
             true,
             "Module manufacturer from SPD.",
         ));
@@ -736,7 +1068,7 @@ impl Ontology {
             D::Memory,
             K::Identity,
             Some(U::Text),
-            P::Measured,
+            P::Specification,
             true,
             "Module part number from SPD.",
         ));
@@ -757,7 +1089,7 @@ impl Ontology {
             D::Memory,
             K::Identity,
             Some(U::Count),
-            P::Measured,
+            P::Specification,
             true,
             "Usable data width in bits.",
         ));
@@ -766,7 +1098,7 @@ impl Ontology {
             D::Memory,
             K::Identity,
             Some(U::Count),
-            P::Measured,
+            P::Specification,
             true,
             "Total width in bits, including any ECC bits.",
         ));
@@ -775,10 +1107,598 @@ impl Ontology {
             D::Memory,
             K::Identity,
             Some(U::Volts),
-            P::Measured,
+            P::Specification,
             true,
             "Operating voltage.",
         ));
+
+        // ── Attached peripherals ─────────────────────────────────────────────
+        //
+        // Input devices, audio endpoints, cameras and printers, each with its
+        // own `<none>` row. They share a shape and a reason for existing: an
+        // agent asked to check whether a machine can join a call needs to know
+        // whether a camera and a microphone are attached, and the answer "no
+        // rows" cannot distinguish a headless server from a reader that is not
+        // implemented on this platform.
+        //
+        // Everything here is `Measured`. These are enumerations of what is
+        // plugged in right now, not declarations the firmware made at boot, and
+        // a device unplugged between two snapshots really does disappear.
+        add(Entity::new(
+            "board.input.<none>",
+            D::Board,
+            K::Diagnostic,
+            None,
+            P::Unavailable,
+            true,
+            "Present when no input device was enumerated, carrying why. A machine \
+             with no keyboard is an ordinary server; a machine whose input \
+             enumeration failed is not, and the two must not look alike.",
+        ));
+        add(Entity::new(
+            "board.input.{n}.name",
+            D::Board,
+            K::Identity,
+            Some(U::Text),
+            P::Measured,
+            false,
+            "Device name as the platform reports it.",
+        ));
+        add(Entity::new(
+            "board.input.{n}.type",
+            D::Board,
+            K::Identity,
+            Some(U::Identifier),
+            P::Measured,
+            false,
+            "What kind of device this is - keyboard, mouse, touchpad, game \
+             controller, tablet.",
+        ));
+        add(Entity::new(
+            "board.input.{n}.interface",
+            D::Board,
+            K::Identity,
+            Some(U::Identifier),
+            P::Measured,
+            false,
+            "How it is attached - USB, Bluetooth, PS/2, internal.",
+        ));
+        add(Entity::new(
+            "board.input.{n}.vendor",
+            D::Board,
+            K::Identity,
+            Some(U::Text),
+            P::Measured,
+            true,
+            "Vendor name or numeric id, whichever the platform gave. Nullable: \
+             many devices report neither.",
+        ));
+        add(Entity::new(
+            "board.input.{n}.product",
+            D::Board,
+            K::Identity,
+            Some(U::Text),
+            P::Measured,
+            true,
+            "Product name or numeric id. Nullable for the same reason as vendor.",
+        ));
+        add(Entity::new(
+            "board.input.{n}.active",
+            D::Board,
+            K::Identity,
+            None,
+            P::Measured,
+            false,
+            "Whether the platform reports the device as connected and usable. A \
+             present but inactive device is a different fact from an absent one \
+             - a Bluetooth keyboard out of range is still enumerated.",
+        ));
+        add(Entity::new(
+            "board.audio.<none>",
+            D::Board,
+            K::Diagnostic,
+            None,
+            P::Unavailable,
+            true,
+            "Present when no audio endpoint was enumerated, carrying why.",
+        ));
+        add(Entity::new(
+            "board.audio.{n}.name",
+            D::Board,
+            K::Identity,
+            Some(U::Text),
+            P::Measured,
+            false,
+            "Endpoint name as the platform presents it to a user.",
+        ));
+        add(Entity::new(
+            "board.audio.{n}.direction",
+            D::Board,
+            K::Identity,
+            Some(U::Identifier),
+            P::Measured,
+            false,
+            "Whether this endpoint plays, captures, or does both. The only \
+             classification the platform provides - there is no separate \
+             headset-or-speaker field, and declaring one would put a question \
+             in the schema that no reader can answer.",
+        ));
+        add(Entity::new(
+            "board.audio.{n}.state",
+            D::Board,
+            K::Identity,
+            Some(U::Identifier),
+            P::Measured,
+            false,
+            "Endpoint state as the platform reports it - active, disabled, \
+             unplugged, not present.",
+        ));
+        add(Entity::new(
+            "board.audio.{n}.default",
+            D::Board,
+            K::Identity,
+            None,
+            P::Measured,
+            false,
+            "Whether this is the endpoint the system routes to by default.",
+        ));
+        add(Entity::new(
+            "board.audio.{n}.volume",
+            D::Board,
+            K::Measurement,
+            Some(U::Percent),
+            P::Measured,
+            true,
+            "Endpoint volume. Nullable: not every endpoint exposes a level, and a \
+             silent zero would read as muted rather than as unknown.",
+        ));
+        add(Entity::new(
+            "board.audio.{n}.muted",
+            D::Board,
+            K::Identity,
+            None,
+            P::Measured,
+            false,
+            "Whether the endpoint is muted. Independent of volume - a muted \
+             endpoint at 80% is not the same as an unmuted one at zero, and \
+             only one of the two is fixed by turning it up.",
+        ));
+        add(Entity::new(
+            "board.camera.<none>",
+            D::Board,
+            K::Diagnostic,
+            None,
+            P::Unavailable,
+            true,
+            "Present when no camera was enumerated, carrying why.",
+        ));
+        add(Entity::new(
+            "board.camera.{n}.name",
+            D::Board,
+            K::Identity,
+            Some(U::Text),
+            P::Measured,
+            false,
+            "Camera name as the platform reports it.",
+        ));
+        add(Entity::new(
+            "board.camera.{n}.connection",
+            D::Board,
+            K::Identity,
+            Some(U::Identifier),
+            P::Measured,
+            false,
+            "How the camera is attached - USB, MIPI CSI, integrated, network.",
+        ));
+        add(Entity::new(
+            "board.camera.{n}.driver",
+            D::Board,
+            K::Identity,
+            Some(U::Identifier),
+            P::Measured,
+            true,
+            "Driver bound to the device. Nullable where the platform does not say.",
+        ));
+        add(Entity::new(
+            "board.camera.{n}.max_width",
+            D::Board,
+            K::Limit,
+            Some(U::Count),
+            P::Measured,
+            true,
+            "Widest frame the device reports supporting, in pixels. Nullable \
+             rather than zero: a camera that reports no mode list is not a \
+             camera with a zero-pixel frame.",
+        ));
+        add(Entity::new(
+            "board.camera.{n}.max_height",
+            D::Board,
+            K::Limit,
+            Some(U::Count),
+            P::Measured,
+            true,
+            "Tallest frame the device reports supporting, in pixels. Nullable for \
+             the same reason as the width.",
+        ));
+        add(Entity::new(
+            "board.camera.{n}.active",
+            D::Board,
+            K::Measurement,
+            None,
+            P::Measured,
+            false,
+            "Whether the camera is streaming right now. The one genuinely live \
+             field in this cluster, and the reason it is a measurement rather \
+             than an identity.",
+        ));
+        add(Entity::new(
+            "system.printer.<none>",
+            D::System,
+            K::Diagnostic,
+            None,
+            P::Unavailable,
+            true,
+            "Present when no printer was enumerated, carrying why.",
+        ));
+        add(Entity::new(
+            "system.printer.{n}.name",
+            D::System,
+            K::Identity,
+            Some(U::Text),
+            P::Measured,
+            false,
+            "Queue name, which is what a print job is addressed to.",
+        ));
+        add(Entity::new(
+            "system.printer.{n}.description",
+            D::System,
+            K::Identity,
+            Some(U::Text),
+            P::Measured,
+            true,
+            "Human description or model. Nullable: many queues carry none.",
+        ));
+        add(Entity::new(
+            "system.printer.{n}.connection",
+            D::System,
+            K::Identity,
+            Some(U::Identifier),
+            P::Measured,
+            true,
+            "How the printer is reached - USB, network, virtual. Nullable because \
+             the classification is drawn from the port string and the device name, \
+             and a local printer on a port shape neither recognises is a real \
+             configuration rather than a failed read.",
+        ));
+        add(Entity::new(
+            "system.printer.{n}.status",
+            D::System,
+            K::Measurement,
+            Some(U::Identifier),
+            P::Measured,
+            true,
+            "Queue state as the spooler reports it - idle, printing, stopped, \
+             error. A measurement, because it changes while the machine runs. \
+             Nullable because the spooler itself has \"Other\" and \"Unknown\" \
+             states, and reporting either as a queue state would invent one.",
+        ));
+        add(Entity::new(
+            "system.printer.{n}.default",
+            D::System,
+            K::Identity,
+            None,
+            P::Measured,
+            false,
+            "Whether this is the queue a job goes to when none is named.",
+        ));
+        add(Entity::new(
+            "system.printer.{n}.accepting_jobs",
+            D::System,
+            K::Measurement,
+            None,
+            P::Measured,
+            false,
+            "Whether the queue is taking new work. Distinct from `status`: a \
+             stopped queue may still accept jobs and hold them, which is the \
+             difference between a delayed print and a rejected one.",
+        ));
+        add(Entity::new(
+            "system.printer.{n}.color",
+            D::System,
+            K::Identity,
+            None,
+            P::Measured,
+            false,
+            "Whether the device prints in colour, as the driver declares.",
+        ));
+
+        // ── Bluetooth radios ─────────────────────────────────────────────────
+        //
+        // Adapters only. Paired and nearby devices are readable too and are not
+        // published here: they are other people's hardware as much as this
+        // machine's, they change without anything on this machine doing
+        // anything, and a hardware report that enumerates the phones in the
+        // room is a different and more sensitive artefact than one that
+        // describes the computer.
+        add(Entity::new(
+            "network.bluetooth.<none>",
+            D::Network,
+            K::Diagnostic,
+            None,
+            P::Unavailable,
+            true,
+            "Present when no Bluetooth adapter was enumerated, carrying why.",
+        ));
+        add(Entity::new(
+            "network.bluetooth.{n}.name",
+            D::Network,
+            K::Identity,
+            Some(U::Text),
+            P::Measured,
+            false,
+            "Adapter name as the platform reports it.",
+        ));
+        add(Entity::new(
+            "network.bluetooth.{n}.powered",
+            D::Network,
+            K::Measurement,
+            None,
+            P::Measured,
+            false,
+            "Whether the radio is on. A measurement: it is a runtime state, and it \
+             is the field that answers whether the adapter is usable now.",
+        ));
+
+        // ── Storage controllers ──────────────────────────────────────────────
+        //
+        // The controllers the disks hang off, which is a different question
+        // from the disks themselves. An agent diagnosing throughput needs both:
+        // four NVMe drives behind one x4 controller do not add up the way four
+        // drives behind four controllers do, and nothing in `disk.*` says which
+        // arrangement this machine has.
+        add(Entity::new(
+            "disk.controller.<none>",
+            D::Disk,
+            K::Diagnostic,
+            None,
+            P::Unavailable,
+            true,
+            "Present when no storage controller was enumerated, carrying why.",
+        ));
+        add(Entity::new(
+            "disk.controller.{n}.name",
+            D::Disk,
+            K::Identity,
+            Some(U::Text),
+            P::Measured,
+            false,
+            "Controller name as the platform reports it.",
+        ));
+        add(Entity::new(
+            "disk.controller.{n}.vendor",
+            D::Disk,
+            K::Identity,
+            Some(U::Text),
+            P::Measured,
+            true,
+            "Controller vendor. Nullable where the platform names none.",
+        ));
+        add(Entity::new(
+            "disk.controller.{n}.model",
+            D::Disk,
+            K::Identity,
+            Some(U::Text),
+            P::Measured,
+            true,
+            "Controller model. Nullable for the same reason as the vendor.",
+        ));
+        add(Entity::new(
+            "disk.controller.{n}.driver",
+            D::Disk,
+            K::Identity,
+            Some(U::Identifier),
+            P::Measured,
+            true,
+            "Driver bound to the controller. The field that most often explains a \
+             performance difference between two otherwise identical machines.",
+        ));
+        add(Entity::new(
+            "disk.controller.{n}.interface",
+            D::Disk,
+            K::Identity,
+            Some(U::Identifier),
+            P::Measured,
+            false,
+            "Interface the controller speaks - NVMe, SATA, SAS, USB, RAID.",
+        ));
+        add(Entity::new(
+            "disk.controller.{n}.pci_address",
+            D::Disk,
+            K::Identity,
+            Some(U::Identifier),
+            P::Measured,
+            true,
+            "PCI address, where the controller sits on a PCI bus. Nullable for \
+             controllers that do not - a USB bridge has none. Present so a \
+             consumer can join this against `pci.*` and find the link width.",
+        ));
+        add(Entity::new(
+            "disk.controller.{n}.ports",
+            D::Disk,
+            K::Limit,
+            Some(U::Count),
+            P::Measured,
+            true,
+            "Port count the controller reports. Nullable rather than zero: a \
+             controller that reports no count still has ports.",
+        ));
+
+        // ── Power profiles ───────────────────────────────────────────────────
+        //
+        // Which power plans the operating system offers and which one is in
+        // force. A setting in every sense -- it is writable, and it changes
+        // every frequency and power figure elsewhere in this snapshot -- but it
+        // is declared as an identity here because the ontology's `Setting` kind
+        // is bound to the apply layer, and simon does not yet write these.
+        // Declaring it writable when nothing can write it would be the same
+        // overclaim in a different field.
+        add(Entity::new(
+            "power.profile.<none>",
+            D::Power,
+            K::Diagnostic,
+            None,
+            P::Unavailable,
+            true,
+            "Present when no power plan was enumerated, carrying why.",
+        ));
+        add(Entity::new(
+            "power.profile.{n}.name",
+            D::Power,
+            K::Identity,
+            Some(U::Text),
+            P::Measured,
+            false,
+            "Plan name as the operating system presents it - Balanced, High \
+             performance, Power saver.",
+        ));
+        add(Entity::new(
+            "power.profile.{n}.active",
+            D::Power,
+            K::Measurement,
+            None,
+            P::Measured,
+            false,
+            "Whether this plan is the one in force. Exactly one plan should carry \
+             true; a snapshot where none does means the active plan was not \
+             identified rather than that the machine is running unmanaged.",
+        ));
+
+        // ── Video codec engines ──────────────────────────────────────────────
+        //
+        // What the GPU can encode and decode in hardware. This cluster is the
+        // clearest case in the whole ontology for per-reading provenance: the
+        // underlying reader records how it learned each capability, and the two
+        // answers are not equally good. A capability the driver was asked about
+        // directly is `Measured`; one concluded from the GPU model is `Derived`,
+        // and it is wrong exactly as often as the lookup table is out of date.
+        // Both are published, and which is which is never hidden.
+        add(Entity::new(
+            "gpu.codec.<none>",
+            D::Gpu,
+            K::Diagnostic,
+            None,
+            P::Unavailable,
+            true,
+            "Present when no hardware codec capability was found, carrying why. A \
+             GPU with no media engine is a real configuration - many datacentre \
+             parts ship without one - and it must not look like a failed probe.",
+        ));
+        add(Entity::new(
+            "gpu.codec.{n}.device",
+            D::Gpu,
+            K::Identity,
+            Some(U::Text),
+            P::Measured,
+            false,
+            "The GPU this capability belongs to. Present on every row because a \
+             machine with two GPUs has two independent sets of engines.",
+        ));
+        add(Entity::new(
+            "gpu.codec.{n}.codec",
+            D::Gpu,
+            K::Identity,
+            Some(U::Identifier),
+            P::Measured,
+            false,
+            "Codec - H.264, HEVC, AV1, VP9.",
+        ));
+        add(Entity::new(
+            "gpu.codec.{n}.direction",
+            D::Gpu,
+            K::Identity,
+            Some(U::Identifier),
+            P::Measured,
+            false,
+            "Whether the engine encodes, decodes, or both. Asymmetry is normal: \
+             AV1 decode is common on hardware that cannot encode it.",
+        ));
+        add(Entity::new(
+            "gpu.codec.{n}.engine",
+            D::Gpu,
+            K::Identity,
+            Some(U::Identifier),
+            P::Measured,
+            true,
+            "Vendor name for the engine - NVENC, NVDEC, QuickSync, VCN. Nullable \
+             where the capability was inferred rather than queried, since an \
+             inference names no engine.",
+        ));
+        add(Entity::new(
+            "gpu.codec.{n}.max_resolution",
+            D::Gpu,
+            K::Limit,
+            Some(U::Identifier),
+            P::Measured,
+            false,
+            "Largest frame class this engine handles, as the reader classifies it -              hd, full_hd, qhd, uhd_4k, uhd_8k. A class rather than a pixel              count because that is what the underlying source provides.",
+        ));
+        add(Entity::new(
+            "gpu.codec.{n}.max_width",
+            D::Gpu,
+            K::Limit,
+            Some(U::Count),
+            P::Derived,
+            true,
+            "Width in pixels of the frame class above. Derived, and the derivation              is a table: uhd_4k means 3840 here. An engine whose real limit sits              between two classes will be described by the lower one, so this is              a floor rather than a measured ceiling.",
+        )
+        .derived(&["gpu.codec.{n}.max_resolution"]));
+        add(Entity::new(
+            "gpu.codec.{n}.max_height",
+            D::Gpu,
+            K::Limit,
+            Some(U::Count),
+            P::Derived,
+            true,
+            "Height in pixels of the frame class above, from the same table and              with the same caveat.",
+        )
+        .derived(&["gpu.codec.{n}.max_resolution"]));
+        add(Entity::new(
+            "gpu.codec.{n}.max_bit_depth",
+            D::Gpu,
+            K::Limit,
+            Some(U::Count),
+            P::Measured,
+            true,
+            "Bit depth per channel the engine supports. Eight against ten is the \
+             difference between HDR working and not.",
+        ));
+        add(Entity::new(
+            "gpu.codec.{n}.max_fps",
+            D::Gpu,
+            K::Limit,
+            Some(U::Count),
+            P::Derived,
+            true,
+            "Frames per second at the maximum resolution. An estimate in every \
+             case, including where the capability itself was queried directly - \
+             no driver reports a frame rate, so this is arithmetic over the \
+             engine generation.",
+        )
+        .derived(&["gpu.codec.{n}.codec", "gpu.codec.{n}.max_resolution"]));
+        add(Entity::new(
+            "gpu.codec.{n}.confidence",
+            D::Gpu,
+            K::Identity,
+            Some(U::Percent),
+            P::Derived,
+            false,
+            "How sure the reader is of this row, as a percentage. Full confidence \
+             means the driver was asked; anything less means the capability was \
+             concluded from the GPU model. Published alongside the reading's \
+             own provenance rather than instead of it: the provenance says what \
+             kind of claim this is and the confidence says how strong.",
+        )
+        .derived(&["gpu.codec.{n}.codec", "gpu.codec.{n}.device"]));
 
         // ── Virtualization ───────────────────────────────────────────────────
         add(Entity::new(
@@ -1546,6 +2466,114 @@ impl Ontology {
             false,
             "Whether the platform reports this domain as enabled. A disabled              domain still has a counter and it does not advance.",
         ));
+
+        // ── Memory bandwidth ─────────────────────────────────────
+        //
+        // Every figure here except the configuration itself is `Derived`, and
+        // that matters more than usual: nothing in this cluster was measured.
+        // The peak is arithmetic over the channel count and the transfer rate,
+        // and the achievable and STREAM figures are that peak scaled by a
+        // constant. An agent choosing a batch size from these should know it is
+        // reading a calculation and not a benchmark - which is what the
+        // provenance field is for.
+        add(Entity::new(
+            "memory.bandwidth.<none>",
+            D::Memory,
+            K::Diagnostic,
+            None,
+            P::Unavailable,
+            true,
+            "Present when the memory configuration needed to estimate bandwidth \
+             could not be read, carrying why.",
+        ));
+        add(Entity::new(
+            "memory.bandwidth.generation",
+            D::Memory,
+            K::Identity,
+            Some(U::Identifier),
+            P::Specification,
+            false,
+            "Memory generation the estimate rests on - DDR5, LPDDR5X, HBM3.",
+        ));
+        add(Entity::new(
+            "memory.bandwidth.speed",
+            D::Memory,
+            K::Identity,
+            Some(U::Count),
+            P::Specification,
+            false,
+            "Transfer rate in megatransfers per second, as used in the estimate.",
+        ));
+        add(Entity::new(
+            "memory.bandwidth.channels",
+            D::Memory,
+            K::Identity,
+            Some(U::Count),
+            P::Specification,
+            false,
+            "Active channel count. The largest single term in the estimate: a \
+             dual-channel machine misread as single-channel halves every figure \
+             below it.",
+        ));
+        add(Entity::new(
+            "memory.bandwidth.max_channels",
+            D::Memory,
+            K::Limit,
+            Some(U::Count),
+            P::Specification,
+            false,
+            "Channels the controller supports. Above `channels` means the machine \
+             is running below the bandwidth its board allows, which is usually a \
+             populated-slot problem and worth being able to see.",
+        ));
+        add(Entity::new(
+            "memory.bandwidth.peak",
+            D::Memory,
+            K::Limit,
+            Some(U::BytesPerSecond),
+            P::Derived,
+            false,
+            "Theoretical peak bandwidth, computed from the transfer rate, the bus \
+             width and the channel count. No workload reaches it.",
+        )
+        .derived(&[
+            "memory.bandwidth.generation",
+            "memory.bandwidth.speed",
+            "memory.bandwidth.channels",
+        ]));
+        add(Entity::new(
+            "memory.bandwidth.achievable",
+            D::Memory,
+            K::Limit,
+            Some(U::BytesPerSecond),
+            P::Derived,
+            false,
+            "Peak scaled by a fixed efficiency factor. A rule of thumb rendered as \
+             a number; it carries no information the peak and the factor do not \
+             already contain.",
+        )
+        .derived(&[
+            "memory.bandwidth.generation",
+            "memory.bandwidth.speed",
+            "memory.bandwidth.channels",
+        ]));
+        add(Entity::new(
+            "memory.bandwidth.stream_triad",
+            D::Memory,
+            K::Limit,
+            Some(U::BytesPerSecond),
+            P::Derived,
+            false,
+            "What the STREAM Triad benchmark would be expected to report. Named \
+             after the benchmark but not produced by running it - simon runs no \
+             benchmarks, and a consumer comparing this against a real STREAM \
+             result is comparing an estimate to a measurement.",
+        )
+        .derived(&[
+            "memory.bandwidth.generation",
+            "memory.bandwidth.speed",
+            "memory.bandwidth.channels",
+        ]));
 
         // ── System and board ─────────────────────────────────────────────────
         //
