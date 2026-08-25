@@ -75,15 +75,40 @@ narrowed query.** `board.camera.{0,1}` are a Lenovo 510 IR and a Lenovo 510 RGB
 — one dual-sensor Windows Hello webcam, correctly two rows — and the Brother
 scanner is gone. Before the fix it was a scanner wearing a camera's name.
 
-Two gaps remain, both real:
+**CI is green on all three platforms** — Format, Clippy, Check, Feature
+combinations, and Test on windows, macos and ubuntu (run `32885784468`).
 
-1. **`cargo +1.88 check --all-targets` could not run.** That toolchain's sysroot
-   is missing its rlibs on this machine. `da769bf` introduces
-   `slice::as_chunks`, and whether it exists at the 1.88 floor is *inferred*
-   from clippy's MSRV-gated lint firing, not built. **This project has shipped a
-   false `rust-version` twice.** Run it before tagging.
-2. **One machine, one platform.** `gh run list` after pushing is the only thing
-   that speaks for Linux and macOS.
+`cargo +1.88 check --all-targets` was also run, and passes. `slice::as_chunks`
+in `da769bf` does exist at the declared floor, built rather than inferred.
+
+### The declared MSRV is true for default features and false for `vault`
+
+Running the MSRV check with `--all-features` as well as the documented default
+turned up something the documented command cannot see:
+
+```
+error: rustc 1.88.0 is not supported by the following package:
+  ironvault@7.0.0 requires rustc 1.89
+```
+
+So `rust-version = "1.88"` holds for this crate's own code and for a default
+build, and enabling the optional `vault` feature raises the real floor to 1.89.
+This predates the batch — `ironvault` arrived in 5.2.0 — and **nothing in the
+project checks it**: CI builds `--all-features` on stable, and the MSRV check in
+the list above builds 1.88 on default features, so the one combination that
+fails is the one neither runs.
+
+It is much milder than the 5.0.0 case, because cargo refuses the build with the
+message above rather than silently misleading anyone. But `rust-version` is a
+single value per package and cannot say "1.89 with `vault`", so the options are
+to raise the floor to 1.89, pin `ironvault` back to a version supporting 1.88,
+or document the exception. **That is a maintainer's call about who gets dropped,
+not a mechanical fix**, which is why it is recorded here rather than made.
+
+Whichever way it goes, `cargo +<msrv> check --all-features --all-targets`
+belongs in the verification list beside the default-feature one — the same
+lesson the *Feature combinations* job already exists for, arriving one level
+down in the dependency graph.
 
 ### The environment ate most of this session
 
@@ -144,6 +169,7 @@ cargo clippy --all-features --all-targets -- -D warnings
 cargo test --all-features
 cargo test                       # default features: the `vault` tests must drop out
 cargo +1.88 check --all-targets  # the declared MSRV, actually built
+cargo +1.88 check --all-features --all-targets  # currently FAILS: see below
 cargo check --target x86_64-unknown-linux-gnu --all-targets --no-default-features --features cpu,npu,io,network,amd,nvidia,intel
 cargo check --target aarch64-apple-darwin --all-targets --no-default-features --features cpu,npu,io,network,apple,nvidia,num_cpus
 ```
