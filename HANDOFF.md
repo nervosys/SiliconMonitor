@@ -3,18 +3,22 @@
 Current as of 6.0.0. This file is excluded from the published crate
 (`Cargo.toml`'s `exclude` list) and is for whoever picks the work up next.
 
-## Read this first: the batch is committed, on a branch, and not pushed
+## Read this first: the work is on a branch, green, and unmerged
 
-The previously-uncommitted ontology work is now four commits on
-**`ontology-sweep-clusters`**, off `58bffa4`. Nothing is pushed and `master` is
-untouched; `git merge --ff-only ontology-sweep-clusters` fast-forwards it.
+All of it is on **`ontology-sweep-clusters`**, off `58bffa4`, pushed, with
+**CI green on all three platforms**. `master` is untouched;
+`git merge --ff-only ontology-sweep-clusters` fast-forwards it.
 
 | Commit | What |
 |---|---|
-| `9452a01` | The eleven clusters, their five honesty defects, and five nullability fixes |
+| `9452a01` | Eleven clusters, five honesty defects, five nullability fixes |
 | `2e6f9e9` | The `CACHE_STATS` test race |
-| `b2dd07b` | `gpu.codec` declared `Measured` for rows that resolve `Specification` |
+| `b2dd07b` | `gpu.codec` declared `Measured` for rows resolving `Specification` |
 | `da769bf` | A clippy 1.98 lint that would have failed CI |
+| `b7bc21d` | Two more non-nullable entities a VM resolves absent |
+| `099c604` | The provenance guardrail: stronger than declared is fine, weaker is not |
+| `2687dbb` | `memory.bandwidth` published defaults; `services` became a summary |
+| `ebab956` | Nine readers said "none" where they meant "cannot look" |
 
 **Running the gate was worth it, which is the point of the rule.** The batch was
 type-checked and linted and looked finished; `cargo test --all-features` failed
@@ -51,12 +55,18 @@ substitute for other platforms, would have passed. Anything resolving off
 SMBIOS, a device enumeration or a bus classification can differ this way, and
 CI is the only instrument here that sees it.
 
-One loose thread deliberately not pulled: `memory.bandwidth.{achievable,
-stream_triad}` declare `derived_from` including `generation`, yet both resolved
-on CI while `generation` was unavailable. Either the derivation does not truly
-need it or the declared inputs overstate the dependency. It is an honesty
-wrinkle rather than a failure, and it wants looking at when nothing else is on
-fire.
+That loose thread was pulled, and it ran the other way. `memory.bandwidth.
+{achievable,stream_triad}` resolving while `generation` was unavailable did not
+mean the declaration overstated the dependency — the derivation genuinely needs
+the generation and **proceeded without it**, substituting 3200 MT/s, a 64-bit bus
+and a 0.75 efficiency factor. Every VM, both CI runners included, was being
+handed built-in defaults dressed as `Specification` and `Derived` readings. Fixed
+in `2687dbb`.
+
+The lesson is about reading evidence, not about memory: a derived value resolving
+while its declared input is absent is *more* suspicious than it looks, not less.
+The comfortable reading was that the schema was too strict. The true one was that
+the code was inventing numbers.
 
 ### What is verified, and what is not
 
@@ -81,34 +91,22 @@ combinations, and Test on windows, macos and ubuntu (run `32885784468`).
 `cargo +1.88 check --all-targets` was also run, and passes. `slice::as_chunks`
 in `da769bf` does exist at the declared floor, built rather than inferred.
 
-### The declared MSRV is true for default features and false for `vault`
+### The MSRV is 1.89, and one value now covers every feature combination
 
-Running the MSRV check with `--all-features` as well as the documented default
-turned up something the documented command cannot see:
+It was 1.88, which held for a default build and not with `vault`:
+`ironvault` requires 1.89 and **all fourteen of its published versions do**, so
+there was nothing to pin back to. The choice was between claiming 1.88 with a
+footnote or claiming what is true everywhere.
 
-```
-error: rustc 1.88.0 is not supported by the following package:
-  ironvault@7.0.0 requires rustc 1.89
-```
+Raised to 1.89. A field meaning "1.88, except…" is the same shape of defect as an
+entity declaring a provenance stronger than a row can carry — the reader has to
+know the exception to avoid being misled. `cargo +1.89 check --all-features
+--all-targets` now verifies the whole thing in one command, instead of two with
+one expected to fail.
 
-So `rust-version = "1.88"` holds for this crate's own code and for a default
-build, and enabling the optional `vault` feature raises the real floor to 1.89.
-This predates the batch — `ironvault` arrived in 5.2.0 — and **nothing in the
-project checks it**: CI builds `--all-features` on stable, and the MSRV check in
-the list above builds 1.88 on default features, so the one combination that
-fails is the one neither runs.
-
-It is much milder than the 5.0.0 case, because cargo refuses the build with the
-message above rather than silently misleading anyone. But `rust-version` is a
-single value per package and cannot say "1.89 with `vault`", so the options are
-to raise the floor to 1.89, pin `ironvault` back to a version supporting 1.88,
-or document the exception. **That is a maintainer's call about who gets dropped,
-not a mechanical fix**, which is why it is recorded here rather than made.
-
-Whichever way it goes, `cargo +<msrv> check --all-features --all-targets`
-belongs in the verification list beside the default-feature one — the same
-lesson the *Feature combinations* job already exists for, arriving one level
-down in the dependency graph.
+Note what found it: the documented MSRV check builds default features, CI builds
+`--all-features` on stable, and the failing combination was the one neither ran.
+That is the *Feature combinations* lesson one level down, in the dependency graph.
 
 ### Two local failures that were the machine, not the code
 
@@ -184,8 +182,7 @@ cargo fmt --all -- --check
 cargo clippy --all-features --all-targets -- -D warnings
 cargo test --all-features
 cargo test                       # default features: the `vault` tests must drop out
-cargo +1.88 check --all-targets  # the declared MSRV, actually built
-cargo +1.88 check --all-features --all-targets  # currently FAILS: see below
+cargo +1.89 check --all-features --all-targets  # the declared MSRV, actually built
 cargo check --target x86_64-unknown-linux-gnu --all-targets --no-default-features --features cpu,npu,io,network,amd,nvidia,intel
 cargo check --target aarch64-apple-darwin --all-targets --no-default-features --features cpu,npu,io,network,apple,nvidia,num_cpus
 ```
