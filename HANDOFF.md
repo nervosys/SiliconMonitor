@@ -32,6 +32,32 @@ Generalising, because it will recur: **a fix that makes a reader stop lying
 usually makes some entity nullable, and the declaration does not follow
 automatically.** Both defects here were introduced by honesty fixes.
 
+CI then found two more of exactly that shape — `board.input.{n}.interface` and
+`memory.bandwidth.generation`, `Unknown` on both runners, fine here. Seven in
+total from this batch.
+
+**Those two are worth more than their size, because they name a blind spot this
+file did not have.** The recorded lesson is that a local Windows run says
+nothing about Linux or macOS. These were not that: **macOS passed**, and the two
+failures were on *different operating systems*. What the runners share is that
+they are **virtual machines** — a virtualised input device reports an interface
+nothing classifies, and a VM's SMBIOS names no memory generation — and this
+desktop is bare metal.
+
+So the axis is hardware, not platform, and **no cross-target check can find it**:
+the code compiles identically either way and only the readings differ. The two
+`cargo check --target` commands above, which are the recommended cheap
+substitute for other platforms, would have passed. Anything resolving off
+SMBIOS, a device enumeration or a bus classification can differ this way, and
+CI is the only instrument here that sees it.
+
+One loose thread deliberately not pulled: `memory.bandwidth.{achievable,
+stream_triad}` declare `derived_from` including `generation`, yet both resolved
+on CI while `generation` was unavailable. Either the derivation does not truly
+need it or the declared inputs overstate the dependency. It is an honesty
+wrinkle rather than a failure, and it wants looking at when nothing else is on
+fire.
+
 ### What is verified, and what is not
 
 Verified on stable 1.98.0: `cargo fmt --all -- --check`,
