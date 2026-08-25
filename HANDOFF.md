@@ -3,36 +3,79 @@
 Current as of 6.0.0. This file is excluded from the published crate
 (`Cargo.toml`'s `exclude` list) and is for whoever picks the work up next.
 
-## Read this first: there is uncommitted work in the tree
+## Read this first: the batch is committed, on a branch, and not pushed
 
-The last session ended with a shell that stopped executing mid-task, so a batch
-of ontology work is **written, type-checked and linted, but never committed and
-never run through the full test suite.** Do not build on it before verifying it.
+The previously-uncommitted ontology work is now four commits on
+**`ontology-sweep-clusters`**, off `58bffa4`. Nothing is pushed and `master` is
+untouched; `git merge --ff-only ontology-sweep-clusters` fast-forwards it.
 
-Committed and green: `58bffa4`, which fixed the CI failure described under
-*Verification* below. `gh run list` confirms it passes on all three platforms.
+| Commit | What |
+|---|---|
+| `9452a01` | The eleven clusters, their five honesty defects, and five nullability fixes |
+| `2e6f9e9` | The `CACHE_STATS` test race |
+| `b2dd07b` | `gpu.codec` declared `Measured` for rows that resolve `Specification` |
+| `da769bf` | A clippy 1.98 lint that would have failed CI |
 
-Uncommitted, in `src/ontology/{mod,resolve}.rs`, `src/camera/mod.rs` and
-`examples/probe_readers.rs`: eleven new ontology clusters and five honesty
-defects fixed, all detailed under plan item F below — read that section before
-touching any of it, because two of the five are corrections to clusters that
-already existed and shipped.
+**Running the gate was worth it, which is the point of the rule.** The batch was
+type-checked and linted and looked finished; `cargo test --all-features` failed
+on `non_nullable_entities_are_never_null` with five violations. Two causes, both
+wrong declarations rather than broken readers:
 
-`cargo check --all-features`, `cargo fmt --check`
-and `cargo clippy --all-features --all-targets` were all clean at the point the
-shell died. `cargo test --all-features` was **not** completed against the final
-state — the last two changes (codec per-row provenance, the PCI address guard)
-have only been type-checked.
+- The CPUID triple was left non-nullable by the very fix that made it honest.
+  Withholding family/model/stepping on Windows is correct, and the entity then
+  has to say it may be absent.
+- `system.printer.{n}.{connection,status}` — the Windows spooler reports
+  `PrinterStatus` 1 and 2, which *are* "Other" and "Unknown", and the connection
+  is classified from a port string that does not cover every local printer.
 
-So the first command of the next session is:
+Generalising, because it will recur: **a fix that makes a reader stop lying
+usually makes some entity nullable, and the declaration does not follow
+automatically.** Both defects here were introduced by honesty fixes.
 
-```bash
-cargo test --all-features
+### What is verified, and what is not
+
+Verified on stable 1.98.0: `cargo fmt --all -- --check`,
+`cargo clippy --all-features --all-targets -- -D warnings`, and
+`cargo test --all-features --lib --tests --no-fail-fast` — green on every
+target, 826 in the lib, `ontology_conformance` 21, `honesty` 6.
+
+Three gaps, all real:
+
+1. **Doc-tests and example *execution* never ran.** `--lib --tests` skips both.
+   That split was forced by the environment (see below), not chosen because it
+   was sufficient. Clippy `--all-targets` compiles the examples, so
+   `examples/probe_readers.rs` is type-checked and has still never been run.
+2. **`cargo +1.88 check --all-targets` could not run.** That toolchain's sysroot
+   is missing its rlibs on this machine. `da769bf` introduces
+   `slice::as_chunks`, and whether it exists at the 1.88 floor is *inferred*
+   from clippy's MSRV-gated lint firing, not built. **This project has shipped a
+   false `rust-version` twice.** Run it before tagging.
+3. **One machine, one platform.** `gh run list` after pushing is the only thing
+   that speaks for Linux and macOS.
+
+### The environment ate most of this session
+
+Windows Defender was quarantining Rust binaries and build artifacts live.
+Symptoms, so the next person recognises it in one minute rather than an hour:
+`rustc.exe` vanishing from a toolchain *while running*; builds dying at
+`Compiling silicon-monitor` with exit 127; `EPERM` on deleting anything under
+`~/.rustup`; every toolchain's `.rlib` files gone (21 left of 81,034 files) and
+then partially reappearing with identical hashes. `rustup` cannot self-repair
+through it, because it cannot delete what it cannot delete.
+
+```powershell
+Add-MpPreference -ExclusionPath "$HOME\.rustup","$HOME\.cargo","<repo>\target"
+Get-MpThreatDetection | Select-Object -Last 20
 ```
 
-and nothing should be committed before it passes. The version is 6.0.0 and is
-**not tagged**; `v5.2.0` is many commits behind. Publishing to crates.io was
-explicitly declined by the maintainer for 6.0.0 and 5.2.0 — tag only.
+**Do not attempt a `rustup toolchain uninstall` to fix it.** It was tried here
+and made things worse: the uninstall half-completed against undeletable files,
+leaving stable with no manifest and no `bin/`. It recovered on its own; the
+lesson is that the failure is underneath rustup and rustup has no answer to it.
+
+The version is 6.0.0 and is **not tagged**; `v5.2.0` is many commits behind.
+Publishing to crates.io was explicitly declined by the maintainer for 6.0.0 and
+5.2.0 — tag only.
 
 ## Released
 
@@ -777,6 +820,32 @@ fails when a gap is *closed* is a test that punishes progress.
 | `tests/vocabulary_conformance.rs` | A closed value set drifting from the enum it describes. Caught `Provenance::Reported` — a variant that does not exist — being written into a resolver twice |
 | `tests/honesty.rs` | Absences without usable reasons, and readings claiming a provenance the resolver did not actually have |
 | `tests/zero_constructors.rs` | A `new()` that fabricates a reading instead of constructing from the system. The list is empty and must stay empty |
+
+**One gap in that table, found by reading declarations rather than by a test.**
+Nothing compares a *reading's* provenance against its *entity's declared*
+provenance. `gpu.codec.*` resolves per row — `Measured` where the driver was
+queried, `Specification` where the capability was inferred from the GPU model —
+while all five entities declared `Measured`, so the schema promised a live
+observation for values that had never been observed. Fixed in `b2dd07b` by
+declaring the weakest provenance a row can carry, which is the rule `Derived`
+already follows for its inputs.
+
+The class is still uncaught. `Entity` holds one provenance and cannot say
+"varies per row", and a `Varies` variant is not the answer — it would poison
+`is_observation()`, the guard an agent applies before treating a value as fact,
+for every consumer of every entity. The test worth writing asserts the safe
+direction rather than equality: **a reading may resolve stronger than its
+declaration, never weaker.** `honesty.rs` is where it belongs.
+
+**A flaky test is the same instrument as a red pipeline.**
+`profile::cache::tests::invalidate_forces_refresh` asserted on `CACHE_STATS`, a
+process-global, while a sibling test reset it — so it failed on thread
+scheduling, passed single-threaded, passed three times in isolation, and only
+failed under the full 825-test parallel load. That profile is exactly what makes
+one get dismissed as noise, and this project has already lost time to
+"an intermittent failure at three runs in five". Fixed in `2e6f9e9`. When a test
+touches a global, every test in the module that moves that global has to
+serialise, including the ones that assert nothing about it.
 
 Each was checked against a deliberate break before being kept, because a test
 that cannot fail is worse than none.
