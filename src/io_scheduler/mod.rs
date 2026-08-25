@@ -380,32 +380,38 @@ impl IoSchedulerMonitor {
 
     #[cfg(target_os = "windows")]
     fn scan() -> Result<IoSchedulerOverview, SimonError> {
-        Ok(IoSchedulerOverview {
-            devices: Vec::new(),
-            total_devices: 0,
-            non_optimal_count: 0,
-            recommendations: Vec::new(),
-        })
+        // Returning an empty overview here made "this platform cannot
+        // answer" indistinguishable from "this machine has none", which
+        // is the same defect RAPL shipped once. The reason travels with
+        // the error so a caller can report it.
+        Err(SimonError::UnsupportedPlatform(
+            "the block I/O scheduler is read from `/sys/block/*/queue/scheduler`, which Windows does not expose"
+                .into(),
+        ))
     }
 
     #[cfg(target_os = "macos")]
     fn scan() -> Result<IoSchedulerOverview, SimonError> {
-        Ok(IoSchedulerOverview {
-            devices: Vec::new(),
-            total_devices: 0,
-            non_optimal_count: 0,
-            recommendations: Vec::new(),
-        })
+        // Returning an empty overview here made "this platform cannot
+        // answer" indistinguishable from "this machine has none", which
+        // is the same defect RAPL shipped once. The reason travels with
+        // the error so a caller can report it.
+        Err(SimonError::UnsupportedPlatform(
+            "the block I/O scheduler is read from `/sys/block/*/queue/scheduler`, which macOS does not expose"
+                .into(),
+        ))
     }
 
     #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
     fn scan() -> Result<IoSchedulerOverview, SimonError> {
-        Ok(IoSchedulerOverview {
-            devices: Vec::new(),
-            total_devices: 0,
-            non_optimal_count: 0,
-            recommendations: Vec::new(),
-        })
+        // Returning an empty overview here made "this platform cannot
+        // answer" indistinguishable from "this machine has none", which
+        // is the same defect RAPL shipped once. The reason travels with
+        // the error so a caller can report it.
+        Err(SimonError::UnsupportedPlatform(
+            "the block I/O scheduler is read from `/sys/block/*/queue/scheduler`, which this platform does not expose"
+                .into(),
+        ))
     }
 }
 

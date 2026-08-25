@@ -361,25 +361,33 @@ impl InterruptMapMonitor {
 
     #[cfg(target_os = "windows")]
     fn read_interrupts() -> Result<(Vec<InterruptInfo>, u32), SimonError> {
-        Ok((Vec::new(), num_cpus()))
+        // An empty list plus a CPU count read as "this machine has no
+        // interrupts", which is impossible. The error carries the reason.
+        Err(SimonError::UnsupportedPlatform(
+            "interrupt affinity is read from `/proc/interrupts` and `/proc/irq`, which Windows does not expose"
+                .into(),
+        ))
     }
 
     #[cfg(target_os = "macos")]
     fn read_interrupts() -> Result<(Vec<InterruptInfo>, u32), SimonError> {
-        Ok((Vec::new(), num_cpus()))
+        // An empty list plus a CPU count read as "this machine has no
+        // interrupts", which is impossible. The error carries the reason.
+        Err(SimonError::UnsupportedPlatform(
+            "interrupt affinity is read from `/proc/interrupts` and `/proc/irq`, which macOS does not expose"
+                .into(),
+        ))
     }
 
     #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
     fn read_interrupts() -> Result<(Vec<InterruptInfo>, u32), SimonError> {
-        Ok((Vec::new(), 1))
+        // An empty list plus a CPU count read as "this machine has no
+        // interrupts", which is impossible. The error carries the reason.
+        Err(SimonError::UnsupportedPlatform(
+            "interrupt affinity is read from `/proc/interrupts` and `/proc/irq`, which this platform does not expose"
+                .into(),
+        ))
     }
-}
-
-#[cfg(any(target_os = "windows", target_os = "macos"))]
-fn num_cpus() -> u32 {
-    std::thread::available_parallelism()
-        .map(|n| n.get() as u32)
-        .unwrap_or(1)
 }
 
 impl Default for InterruptMapMonitor {

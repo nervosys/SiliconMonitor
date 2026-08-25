@@ -305,7 +305,14 @@ impl VoltageRegulatorMonitor {
 
     #[cfg(not(target_os = "linux"))]
     fn scan() -> Result<VoltageRegulatorOverview, SimonError> {
-        Ok(Self::empty_overview())
+        // Returning an empty overview here made "this platform cannot
+        // answer" indistinguishable from "this machine has none", which
+        // is the same defect RAPL shipped once. The reason travels with
+        // the error so a caller can report it.
+        Err(SimonError::UnsupportedPlatform(
+            "voltage regulators are read from `/sys/class/regulator`, which this platform does not expose"
+                .into(),
+        ))
     }
 
     fn empty_overview() -> VoltageRegulatorOverview {

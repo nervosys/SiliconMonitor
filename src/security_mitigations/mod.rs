@@ -454,19 +454,41 @@ impl SecurityMitigationsMonitor {
 
     #[cfg(target_os = "windows")]
     fn detect_vulnerabilities() -> Result<Vec<CpuVulnerability>, SimonError> {
-        // Windows: can try Get-SpeculationControlSettings but requires admin
-        Ok(Vec::new())
+        // Returning an empty list meant `unmitigated()` reported zero, which
+        // reads as "this machine has no unmitigated CPU vulnerabilities" when
+        // it means "nothing was checked". Of every absence in this crate that
+        // one is the least acceptable to guess at: a reassuring security
+        // reading is acted on.
+        Err(SimonError::UnsupportedPlatform(
+            "CPU vulnerability status is read from `/sys/devices/system/cpu/vulnerabilities`; Windows exposes it only through Get-SpeculationControlSettings, which needs Administrator"
+                .into(),
+        ))
     }
 
     #[cfg(target_os = "macos")]
     fn detect_vulnerabilities() -> Result<Vec<CpuVulnerability>, SimonError> {
-        // macOS doesn't expose vulnerability status directly
-        Ok(Vec::new())
+        // Returning an empty list meant `unmitigated()` reported zero, which
+        // reads as "this machine has no unmitigated CPU vulnerabilities" when
+        // it means "nothing was checked". Of every absence in this crate that
+        // one is the least acceptable to guess at: a reassuring security
+        // reading is acted on.
+        Err(SimonError::UnsupportedPlatform(
+            "CPU vulnerability status is read from `/sys/devices/system/cpu/vulnerabilities`; macOS does not expose it"
+                .into(),
+        ))
     }
 
     #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
     fn detect_vulnerabilities() -> Result<Vec<CpuVulnerability>, SimonError> {
-        Ok(Vec::new())
+        // Returning an empty list meant `unmitigated()` reported zero, which
+        // reads as "this machine has no unmitigated CPU vulnerabilities" when
+        // it means "nothing was checked". Of every absence in this crate that
+        // one is the least acceptable to guess at: a reassuring security
+        // reading is acted on.
+        Err(SimonError::UnsupportedPlatform(
+            "CPU vulnerability status is read from `/sys/devices/system/cpu/vulnerabilities`; this platform does not expose it"
+                .into(),
+        ))
     }
 
     #[cfg(target_os = "linux")]

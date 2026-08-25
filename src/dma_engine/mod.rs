@@ -384,7 +384,14 @@ impl DmaEngineMonitor {
 
     #[cfg(not(target_os = "linux"))]
     fn scan() -> Result<DmaOverview, SimonError> {
-        Ok(Self::empty_overview())
+        // Returning an empty overview here made "this platform cannot
+        // answer" indistinguishable from "this machine has none", which
+        // is the same defect RAPL shipped once. The reason travels with
+        // the error so a caller can report it.
+        Err(SimonError::UnsupportedPlatform(
+            "DMA engine channels are read from `/sys/class/dma`, which this platform does not expose"
+                .into(),
+        ))
     }
 
     fn empty_overview() -> DmaOverview {

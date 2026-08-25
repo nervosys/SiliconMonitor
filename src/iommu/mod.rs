@@ -278,53 +278,38 @@ impl IommuMonitor {
 
     #[cfg(target_os = "windows")]
     fn scan() -> Result<IommuOverview, SimonError> {
-        // Check VT-d via WMI SecureBoot/virtualization features
-        let enabled = std::env::var("PROCESSOR_IDENTIFIER")
-            .unwrap_or_default()
-            .contains("Intel");
-
-        Ok(IommuOverview {
-            enabled: false, // Can't reliably detect on Windows without admin
-            iommu_type: if enabled {
-                IommuType::IntelVtd
-            } else {
-                IommuType::Unknown
-            },
-            groups: Vec::new(),
-            total_groups: 0,
-            passthrough_groups: 0,
-            interrupt_remapping: false,
-            dmar_present: false,
-            recommendations: vec!["IOMMU group enumeration not available on Windows".into()],
-        })
+        // Returning an empty overview here made "this platform cannot
+        // answer" indistinguishable from "this machine has none", which
+        // is the same defect RAPL shipped once. The reason travels with
+        // the error so a caller can report it.
+        Err(SimonError::UnsupportedPlatform(
+            "IOMMU groups are read from `/sys/kernel/iommu_groups`, which Windows does not expose"
+                .into(),
+        ))
     }
 
     #[cfg(target_os = "macos")]
     fn scan() -> Result<IommuOverview, SimonError> {
-        Ok(IommuOverview {
-            enabled: true, // Apple DART is always active on Apple Silicon
-            iommu_type: IommuType::AppleDart,
-            groups: Vec::new(),
-            total_groups: 0,
-            passthrough_groups: 0,
-            interrupt_remapping: false,
-            dmar_present: false,
-            recommendations: Vec::new(),
-        })
+        // Returning an empty overview here made "this platform cannot
+        // answer" indistinguishable from "this machine has none", which
+        // is the same defect RAPL shipped once. The reason travels with
+        // the error so a caller can report it.
+        Err(SimonError::UnsupportedPlatform(
+            "IOMMU groups are read from `/sys/kernel/iommu_groups`, which macOS does not expose"
+                .into(),
+        ))
     }
 
     #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
     fn scan() -> Result<IommuOverview, SimonError> {
-        Ok(IommuOverview {
-            enabled: false,
-            iommu_type: IommuType::Unknown,
-            groups: Vec::new(),
-            total_groups: 0,
-            passthrough_groups: 0,
-            interrupt_remapping: false,
-            dmar_present: false,
-            recommendations: Vec::new(),
-        })
+        // Returning an empty overview here made "this platform cannot
+        // answer" indistinguishable from "this machine has none", which
+        // is the same defect RAPL shipped once. The reason travels with
+        // the error so a caller can report it.
+        Err(SimonError::UnsupportedPlatform(
+            "IOMMU groups are read from `/sys/kernel/iommu_groups`, which this platform does not expose"
+                .into(),
+        ))
     }
 }
 
