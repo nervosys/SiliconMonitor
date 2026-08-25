@@ -39,18 +39,24 @@ Verified on stable 1.98.0: `cargo fmt --all -- --check`,
 `cargo test --all-features --lib --tests --no-fail-fast` — green on every
 target, 826 in the lib, `ontology_conformance` 21, `honesty` 6.
 
-Three gaps, all real:
+Also run and green: `cargo test --all-features --doc` (73 passed),
+`cargo run --example probe_readers --all-features`, and
+`simon snapshot --format text`.
 
-1. **Doc-tests and example *execution* never ran.** `--lib --tests` skips both.
-   That split was forced by the environment (see below), not chosen because it
-   was sufficient. Clippy `--all-targets` compiles the examples, so
-   `examples/probe_readers.rs` is type-checked and has still never been run.
-2. **`cargo +1.88 check --all-targets` could not run.** That toolchain's sysroot
+That last one is the check the handoff keeps insisting on, and it paid again:
+**the camera fix is now confirmed against hardware rather than against a
+narrowed query.** `board.camera.{0,1}` are a Lenovo 510 IR and a Lenovo 510 RGB
+— one dual-sensor Windows Hello webcam, correctly two rows — and the Brother
+scanner is gone. Before the fix it was a scanner wearing a camera's name.
+
+Two gaps remain, both real:
+
+1. **`cargo +1.88 check --all-targets` could not run.** That toolchain's sysroot
    is missing its rlibs on this machine. `da769bf` introduces
    `slice::as_chunks`, and whether it exists at the 1.88 floor is *inferred*
    from clippy's MSRV-gated lint firing, not built. **This project has shipped a
    false `rust-version` twice.** Run it before tagging.
-3. **One machine, one platform.** `gh run list` after pushing is the only thing
+2. **One machine, one platform.** `gh run list` after pushing is the only thing
    that speaks for Linux and macOS.
 
 ### The environment ate most of this session
@@ -689,6 +695,16 @@ Windows desktop:
 The silent column is almost entirely Linux sysfs. Those are not blocked in the
 way the hardware items A–D are — a Linux box would let all nine be verified in
 one sitting, and item F's remaining work is mostly that.
+
+**Read the silent column carefully, because it was over-read once already.** The
+probe originally printed `ok 0` for those nine, which says only that the monitor
+constructed and enumerated nothing — not that this machine lacks the hardware.
+This desktop certainly has an IOMMU and thermal zones. The table now prints
+`none` for that case and `ok` only when something was enumerated, but the
+underlying readers still return `Ok(vec![])` rather than an error carrying a
+reason, so `none` remains ambiguous between "absent here" and "unimplemented
+here". Establishing which, per reader, is the first step of that Linux sitting —
+and giving each an error with a reason, as RAPL got, is the fix.
 
 ### Clusters added in the uncommitted batch
 
