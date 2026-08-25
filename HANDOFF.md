@@ -110,6 +110,22 @@ belongs in the verification list beside the default-feature one — the same
 lesson the *Feature combinations* job already exists for, arriving one level
 down in the dependency graph.
 
+### Two local failures that were the machine, not the code
+
+Both look exactly like defects and neither is. Recognising them saves an hour:
+
+- **`LNK1104: cannot open file …-<hash>.exe`** means a stale test binary from a
+  killed run is still holding it. `ps -W | grep <testname>` finds it; it will
+  reproduce on every build until killed. Nothing to do with the quarantine below,
+  though the symptom is similar.
+- **`memory allocation of N bytes failed`** during `cargo test --lib` is an OOM
+  abort, not an assertion. `--no-fail-fast` runs every target's binary and each
+  spawns a thread per core. `-- --test-threads=4` completes cleanly.
+
+Same lesson as the red pipeline, one level down: **a broken instrument and a
+real failure produce similar-looking output**, and the difference is in the
+message rather than the exit code.
+
 ### The environment ate most of this session
 
 Windows Defender was quarantining Rust binaries and build artifacts live.
@@ -825,10 +841,26 @@ plausible integer. Read the rows.
 
 ### What is left
 
-Readers that answer here and still have no schema: `services` (311 rows — needs
-a summary shape rather than one entity per service, or every snapshot doubles),
-`kernel_params`, `interconnect`. Then the nine Linux-only readers in the silent
-column above, which need a Linux box.
+**`services` is done** — counts plus named failures, not an enumeration. See
+`2687dbb`. **The nine silent readers now decline with reasons** rather than
+returning an empty list; see `ebab956`. Verifying what they *read* still needs a
+Linux box, but the Windows behaviour is now honest and was verified here.
+
+Two readers remain, and neither is the simple schema job the old wording implied:
+
+- **`interconnect` ships nothing, deliberately.** Decided rather than deferred.
+  Its numbers come from `name.contains("GRANITE")` against a table of constants,
+  and no provenance fits: `Measured` lies about the method, `Specification` lies
+  about the inputs, because a spec sheet describes a part rather than a guess
+  keyed on its marketing name. Publishing only the structural fields would be
+  worse than publishing nothing — a legitimate-looking `type` and `generation`
+  lend credibility to a cluster whose numbers are invented.
+- **`kernel_params` needs a split, not a subset.** `name` and `value` are real
+  sysctl reads and belong in the ontology. `is_recommended`, `recommended`,
+  `security_score`, `network_score` and `recommendations` are this crate's
+  opinion about what the values ought to be, which is what `simon tune`'s
+  standing rule forbids publishing as fact. That is implementation work and is
+  the next ready item.
 
 **Two of those three are traps, and "answers here" is what makes them look
 safe.** The probe table says a reader produced rows; it does not say the rows
