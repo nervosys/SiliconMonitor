@@ -132,6 +132,7 @@ pub fn snapshot() -> Vec<Reading> {
     resolve_audio(&mut out);
     resolve_cameras(&mut out);
     resolve_printers(&mut out);
+    resolve_services(&mut out);
     resolve_bluetooth(&mut out);
     resolve_storage_controllers(&mut out);
     resolve_power_profiles(&mut out);
@@ -2691,6 +2692,63 @@ fn resolve_cameras(out: &mut Vec<Reading>) {
 }
 
 /// Print queues the spooler knows about.
+/// Services, as counts plus the names of the broken ones.
+///
+/// Deliberately not one entity per service. This machine runs 311, and
+/// enumerating them would more than double every snapshot to carry a list no
+/// consumer reads in full. The question being answered is "is anything broken,
+/// and what" — so failures are named and the rest are counted.
+fn resolve_services(out: &mut Vec<Reading>) {
+    let monitor = match crate::services::ServiceMonitor::new() {
+        Ok(m) => m,
+        Err(e) => {
+            out.push(Reading::unavailable(
+                "system.service.<none>",
+                None,
+                format!("the service manager could not be reached: {e}"),
+            ));
+            return;
+        }
+    };
+
+    let services = monitor.services();
+    if services.is_empty() {
+        out.push(Reading::unavailable(
+            "system.service.<none>",
+            None,
+            "the service manager was reached and reported no services, which on \
+             a running machine means the enumeration is incomplete rather than \
+             that nothing is installed",
+        ));
+        return;
+    }
+
+    let running = services.iter().filter(|s| s.is_active()).count();
+    let failed: Vec<&str> = services
+        .iter()
+        .filter(|s| s.is_failed())
+        .map(|s| s.name.as_str())
+        .collect();
+
+    for (id, n) in [
+        ("system.service.count.total", services.len()),
+        ("system.service.count.running", running),
+        ("system.service.count.failed", failed.len()),
+    ] {
+        out.push(Reading::measured(
+            id,
+            serde_json::json!(n),
+            Some(Unit::Count),
+        ));
+    }
+
+    // Nothing is pushed when nothing has failed. The count above already says
+    // zero, and a `<none>` here would claim the enumeration failed.
+    for (i, name) in failed.iter().enumerate() {
+        push_id(out, format!("system.service.failed.{i}"), name);
+    }
+}
+
 fn resolve_printers(out: &mut Vec<Reading>) {
     let monitor = match crate::printer::PrinterMonitor::new() {
         Ok(m) => m,
@@ -3029,6 +3087,47 @@ fn resolve_memory_bandwidth(out: &mut Vec<Reading>) {
         "memory.bandwidth.generation",
         &format!("{:?}", est.generation),
     );
+
+    // Everything below rests on the generation, and an unidentified generation
+    // does not stop the estimator producing numbers -- it falls back to 3200
+    // MT/s, a 64-bit bus and a 0.75 efficiency factor, none of which is a fact
+    // about this machine. A VM's SMBIOS routinely names no generation, so on
+    // those the whole chain was publishing defaults as `Specification` and
+    // `Derived` readings with nothing to distinguish them from figures that had
+    // been read. Withholding the chain is the only honest answer: the inputs
+    // were not read, so the outputs are not estimates of anything.
+    let unidentified = est.generation == crate::memory_bandwidth::MemoryGeneration::Unknown;
+    const NO_GENERATION: &str = "the memory generation was not identified, so the transfer \
+                                 rate and every bandwidth figure below it would be a built-in \
+                                 default rather than a property of this machine";
+
+    if unidentified {
+        for id in [
+            "memory.bandwidth.speed",
+            "memory.bandwidth.peak",
+            "memory.bandwidth.achievable",
+            "memory.bandwidth.stream_triad",
+        ] {
+            let unit = if id == "memory.bandwidth.speed" {
+                Unit::Count
+            } else {
+                Unit::BytesPerSecond
+            };
+            out.push(Reading::unavailable(id, Some(unit), NO_GENERATION));
+        }
+        out.push(Reading::spec(
+            "memory.bandwidth.channels",
+            serde_json::json!(est.channels.active_channels),
+            Some(Unit::Count),
+        ));
+        out.push(Reading::spec(
+            "memory.bandwidth.max_channels",
+            serde_json::json!(est.channels.max_channels),
+            Some(Unit::Count),
+        ));
+        return;
+    }
+
     out.push(Reading::spec(
         "memory.bandwidth.speed",
         serde_json::json!(est.speed_mts),

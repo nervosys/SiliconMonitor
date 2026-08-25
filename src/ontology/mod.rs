@@ -1351,6 +1351,62 @@ impl Ontology {
              field in this cluster, and the reason it is a measurement rather \
              than an identity.",
         ));
+        // Services are counted, not enumerated. This machine runs 311 of them,
+        // and one entity per service would more than double every snapshot to
+        // carry a list nothing reads in full. What a consumer actually asks is
+        // how many there are, how many are up, and which ones are broken — so
+        // the failed units are named and the working ones are a number.
+        add(Entity::new(
+            "system.service.count.total",
+            D::System,
+            K::Measurement,
+            Some(U::Count),
+            P::Measured,
+            false,
+            "How many services the platform's service manager knows about.",
+        ));
+        add(Entity::new(
+            "system.service.count.running",
+            D::System,
+            K::Measurement,
+            Some(U::Count),
+            P::Measured,
+            false,
+            "How many are active right now.",
+        ));
+        add(Entity::new(
+            "system.service.count.failed",
+            D::System,
+            K::Measurement,
+            Some(U::Count),
+            P::Measured,
+            false,
+            "How many are in a failed state. Zero is a real and common reading \
+             here, and distinct from the absence carried by \
+             `system.service.<none>` — a machine with no failures and a machine \
+             whose services could not be enumerated must not look alike.",
+        ));
+        add(Entity::new(
+            "system.service.failed.{n}",
+            D::System,
+            K::Identity,
+            Some(U::Identifier),
+            P::Measured,
+            true,
+            "Name of a failed service. The counts above say how much is wrong; \
+             this says what, which is the part a consumer can act on. Absent \
+             when nothing has failed.",
+        ));
+        add(Entity::new(
+            "system.service.<none>",
+            D::System,
+            K::Diagnostic,
+            None,
+            P::Unavailable,
+            true,
+            "Present when the service manager could not be reached, carrying \
+             why. Distinguishes that from a genuine count of zero.",
+        ));
         add(Entity::new(
             "system.printer.<none>",
             D::System,
@@ -2534,8 +2590,8 @@ impl Ontology {
             K::Identity,
             Some(U::Count),
             P::Specification,
-            false,
-            "Transfer rate in megatransfers per second, as used in the estimate.",
+            true,
+            "Transfer rate in megatransfers per second, as used in the estimate. Nullable because it is the generation's figure: with no generation identified the estimator substitutes 3200 MT/s, which is a default and not a reading.",
         ));
         add(Entity::new(
             "memory.bandwidth.channels",
@@ -2565,9 +2621,9 @@ impl Ontology {
             K::Limit,
             Some(U::BytesPerSecond),
             P::Derived,
-            false,
+            true,
             "Theoretical peak bandwidth, computed from the transfer rate, the bus \
-             width and the channel count. No workload reaches it.",
+             width and the channel count. No workload reaches it. Nullable: withheld entirely when the generation was not identified, since the transfer rate and bus width it needs would both be built-in defaults.",
         )
         .derived(&[
             "memory.bandwidth.generation",
@@ -2580,10 +2636,10 @@ impl Ontology {
             K::Limit,
             Some(U::BytesPerSecond),
             P::Derived,
-            false,
+            true,
             "Peak scaled by a fixed efficiency factor. A rule of thumb rendered as \
              a number; it carries no information the peak and the factor do not \
-             already contain.",
+             already contain. Nullable with peak, and for the same reason -- the efficiency factor also falls back to a default when the generation is unknown.",
         )
         .derived(&[
             "memory.bandwidth.generation",
@@ -2596,11 +2652,11 @@ impl Ontology {
             K::Limit,
             Some(U::BytesPerSecond),
             P::Derived,
-            false,
+            true,
             "What the STREAM Triad benchmark would be expected to report. Named \
              after the benchmark but not produced by running it - simon runs no \
              benchmarks, and a consumer comparing this against a real STREAM \
-             result is comparing an estimate to a measurement.",
+             result is comparing an estimate to a measurement. Nullable with peak and achievable, which it is scaled from.",
         )
         .derived(&[
             "memory.bandwidth.generation",
