@@ -830,6 +830,37 @@ a summary shape rather than one entity per service, or every snapshot doubles),
 `kernel_params`, `interconnect`. Then the nine Linux-only readers in the silent
 column above, which need a Linux box.
 
+**Two of those three are traps, and "answers here" is what makes them look
+safe.** The probe table says a reader produced rows; it does not say the rows
+are readings. Both were checked before declaring anything, and neither is ready:
+
+- **`interconnect` measures nothing at all.** `InterconnectMonitor::infer_topology`
+  is a string match on the CPU marketing name — `name.contains("GRANITE")` —
+  returning hardcoded constants for link type, width, `speed_gts` and
+  coherence protocol, with `bandwidth_gbs` arithmetic over those constants and
+  `latency_ns` documented in its own field comment as "estimated". Not one
+  value comes from the hardware. It is the same defect as the withheld
+  `single_thread_score`, except a field called `bandwidth_gbs` reads as a
+  measurement in a way a field called `score` does not. If any of it is ever
+  declared, the structural facts (type, generation, coherence protocol) are
+  `Specification` at best, `sockets` and `is_numa` are the only genuinely
+  measured fields, and the bandwidth and latency numbers should not be
+  published in any provenance — there is no honest one.
+- **`kernel_params` is half fact and half opinion.** `name` and `value` are real
+  sysctl reads. `is_recommended`, `recommended`, `security_score`,
+  `network_score` and `recommendations` are this crate's judgement about what
+  the value ought to be — which is precisely what `simon tune`'s standing rule
+  forbids publishing as fact ("a proposed value comes from what the driver
+  declared, never from this crate"). Declare the first two; the rest belong to
+  the tuning surface if anywhere.
+
+The generalisable point, since this is the third time the same shape has come
+up in this file: **a reader that returns rows on this machine has cleared the
+availability bar and nothing else.** Whether each field is a reading is a
+separate question, answered by reading the reader, and a plausible unit is not
+evidence — `bandwidth_gbs`, `latency_ns` and `single_thread_score` all look
+exactly like measurements at the call site.
+
 Still uncovered and not probed: `wsl`, `drm_monitor`, `hardware_ai`, `scheduler`.
 
 Add a cluster per change, verify each field resolves to a true provenance on the
