@@ -1598,49 +1598,56 @@ impl Ontology {
             D::Gpu,
             K::Identity,
             Some(U::Text),
-            P::Measured,
+            P::Specification,
             false,
             "The GPU this capability belongs to. Present on every row because a \
-             machine with two GPUs has two independent sets of engines.",
+             machine with two GPUs has two independent sets of engines. Declared \
+             at the weakest provenance a row can carry: a queried row resolves \
+             Measured, an inferred one Specification, and a schema that promised \
+             Measured for both would overstate half of them.",
         ));
         add(Entity::new(
             "gpu.codec.{n}.codec",
             D::Gpu,
             K::Identity,
             Some(U::Identifier),
-            P::Measured,
+            P::Specification,
             false,
-            "Codec - H.264, HEVC, AV1, VP9.",
+            "Codec - H.264, HEVC, AV1, VP9. Measured on a queried row; declared \
+             here at the weaker provenance an inferred row carries.",
         ));
         add(Entity::new(
             "gpu.codec.{n}.direction",
             D::Gpu,
             K::Identity,
             Some(U::Identifier),
-            P::Measured,
+            P::Specification,
             false,
             "Whether the engine encodes, decodes, or both. Asymmetry is normal: \
-             AV1 decode is common on hardware that cannot encode it.",
+             AV1 decode is common on hardware that cannot encode it. Measured on \
+             a queried row; declared at the weaker provenance an inferred row \
+             carries.",
         ));
         add(Entity::new(
             "gpu.codec.{n}.engine",
             D::Gpu,
             K::Identity,
             Some(U::Identifier),
-            P::Measured,
+            P::Specification,
             true,
             "Vendor name for the engine - NVENC, NVDEC, QuickSync, VCN. Nullable \
              where the capability was inferred rather than queried, since an \
-             inference names no engine.",
+             inference names no engine. Measured on a queried row; declared at \
+             the weaker provenance an inferred row carries.",
         ));
         add(Entity::new(
             "gpu.codec.{n}.max_resolution",
             D::Gpu,
             K::Limit,
             Some(U::Identifier),
-            P::Measured,
+            P::Specification,
             false,
-            "Largest frame class this engine handles, as the reader classifies it -              hd, full_hd, qhd, uhd_4k, uhd_8k. A class rather than a pixel              count because that is what the underlying source provides.",
+            "Largest frame class this engine handles, as the reader classifies it -              hd, full_hd, qhd, uhd_4k, uhd_8k. A class rather than a pixel              count because that is what the underlying source provides. Measured              on a queried row; declared at the weaker provenance an inferred row              carries.",
         ));
         add(Entity::new(
             "gpu.codec.{n}.max_width",
