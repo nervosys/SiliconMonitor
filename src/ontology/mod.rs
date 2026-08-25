@@ -1160,8 +1160,12 @@ impl Ontology {
             K::Identity,
             Some(U::Identifier),
             P::Measured,
-            false,
-            "How it is attached - USB, Bluetooth, PS/2, internal.",
+            true,
+            "How it is attached - USB, Bluetooth, PS/2, internal. Nullable \
+             because a virtualised input device commonly reports no interface \
+             the classification recognises - both CI runners resolve it absent \
+             while bare metal resolves it - and a guess here would name a bus \
+             the device is not on.",
         ));
         add(Entity::new(
             "board.input.{n}.vendor",
@@ -2499,8 +2503,12 @@ impl Ontology {
             K::Identity,
             Some(U::Identifier),
             P::Specification,
-            false,
-            "Memory generation the estimate rests on - DDR5, LPDDR5X, HBM3.",
+            true,
+            "Memory generation the estimate rests on - DDR5, LPDDR5X, HBM3. \
+             Nullable because a virtual machine's SMBIOS routinely names no \
+             generation at all, which is what both CI runners see; naming one \
+             anyway would put a spec-sheet figure behind a bandwidth estimate \
+             that has no memory type to rest on.",
         ));
         add(Entity::new(
             "memory.bandwidth.speed",
