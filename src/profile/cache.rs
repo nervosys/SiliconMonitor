@@ -138,8 +138,24 @@ impl Default for CachedProfileInspector {
 mod tests {
     use super::*;
 
+    /// `CACHE_STATS` is one process-global counter and cargo runs these tests
+    /// as threads in one process, so without this they interleave: a `reset()`
+    /// landing between another test's `miss_before` read and its assertion
+    /// makes the count go backwards and the assertion fails on scheduling
+    /// rather than on behaviour. Every test that resets or reads the global
+    /// takes this, `snapshot_all` included -- it takes no reading itself but
+    /// increments the same counters the others are asserting on.
+    static STATS_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// A poisoned guard still serialises correctly: the data is `()`, so an
+    /// earlier panic has nothing to have corrupted.
+    fn lock_stats() -> std::sync::MutexGuard<'static, ()> {
+        STATS_GUARD.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     #[test]
     fn cold_call_misses_warm_call_hits() {
+        let _guard = lock_stats();
         CACHE_STATS.reset();
         let mut c = CachedProfileInspector::new();
         c.set_ttl(Subsystem::Cpu, Duration::from_secs(60));
@@ -153,6 +169,7 @@ mod tests {
 
     #[test]
     fn invalidate_forces_refresh() {
+        let _guard = lock_stats();
         CACHE_STATS.reset();
         let mut c = CachedProfileInspector::new();
         c.set_ttl(Subsystem::Cpu, Duration::from_secs(60));
@@ -165,6 +182,7 @@ mod tests {
 
     #[test]
     fn snapshot_all_populates_all_subsystems() {
+        let _guard = lock_stats();
         let mut c = CachedProfileInspector::new();
         let snap = c.snapshot_all();
         for sub in Subsystem::ALL {
