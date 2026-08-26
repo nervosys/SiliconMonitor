@@ -3024,11 +3024,16 @@ fn resolve_printers(out: &mut Vec<Reading>) {
             serde_json::json!(p.accepting_jobs),
             None,
         ));
-        out.push(Reading::measured(
+        push_opt(
+            out,
             format!("{base}.color"),
-            serde_json::json!(p.color),
+            p.color.map(|c| serde_json::json!(c)),
             None,
-        ));
+            concat!(
+                "the spooler listed no capabilities for this printer, so whether ",
+                "it prints in colour was not reported",
+            ),
+        );
     }
 }
 

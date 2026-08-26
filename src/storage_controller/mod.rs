@@ -553,7 +553,16 @@ impl StorageControllerMonitor {
                             driver: "nvme".to_string(),
                             interface: StorageInterface::NVMe,
                             pci_address: String::new(),
-                            ports: 1,
+                            // Not read. The Windows NVMe paths learn nothing
+                            // about a port or namespace count, and a literal 1
+                            // published under `disk.controller.{n}.ports` --- which
+                            // is declared `Measured` and described as "port count
+                            // the controller reports" --- is a constant wearing a
+                            // measurement's provenance. Zero is what the resolver
+                            // already reads as absent, and the entity is nullable
+                            // for exactly this. The sysfs path above uses the real
+                            // namespace count.
+                            ports: 0,
                             nvme_info: Some(NvmeControllerInfo {
                                 name: format!("nvme{}", i),
                                 model,
@@ -651,7 +660,8 @@ impl StorageControllerMonitor {
                                 driver: "nvme".to_string(),
                                 interface: StorageInterface::NVMe,
                                 pci_address: String::new(),
-                                ports: 1,
+                                // Not read here either; see above.
+                                ports: 0,
                                 nvme_info: Some(nvme_info),
                             });
                         }

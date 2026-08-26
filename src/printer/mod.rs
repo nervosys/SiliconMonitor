@@ -101,8 +101,15 @@ pub struct PrinterInfo {
     pub accepting_jobs: bool,
     /// Whether the printer is shared over the network
     pub shared: bool,
-    /// Whether the printer supports color
-    pub color: bool,
+    /// Whether the printer supports colour. `None` when the platform said
+    /// nothing about it, which is not the same as a monochrome printer.
+    ///
+    /// This was a `bool` filled from a `Color` property that `Win32_Printer`
+    /// does not have. It came back null for every printer, `unwrap_or(false)`
+    /// made it monochrome, and `system.printer.{n}.color` published that as a
+    /// measurement on every Windows machine. Three of the four printers on the
+    /// machine that found it do support colour.
+    pub color: Option<bool>,
     /// Whether the printer supports duplex (double-sided)
     pub duplex: bool,
     /// Number of jobs in queue
@@ -252,7 +259,8 @@ impl PrinterMonitor {
                         is_default: current_name == default_name,
                         accepting_jobs: accepting,
                         shared: false,
-                        color: false,
+                        // Not read on this path.
+                        color: None,
                         duplex: false,
                         jobs_in_queue: 0,
                         location: String::new(),
@@ -304,7 +312,8 @@ impl PrinterMonitor {
                 is_default: current_name == default_name,
                 accepting_jobs: accepting,
                 shared: false,
-                color: false,
+                // Not read on this path.
+                color: None,
                 duplex: false,
                 jobs_in_queue: 0,
                 location: String::new(),
@@ -340,7 +349,7 @@ impl PrinterMonitor {
     fn refresh_windows(&mut self) {
         let output = match std::process::Command::new("powershell")
             .args(["-NoProfile", "-Command",
-                "Get-CimInstance Win32_Printer | Select-Object Name, DriverName, PortName, PrinterStatus, Comment, Location, Shared, Color, Default, PrinterState, JobCountSinceLastReset, Network | ConvertTo-Json -Compress"])
+                "Get-CimInstance Win32_Printer | Select-Object Name, DriverName, PortName, PrinterStatus, Comment, Location, Shared, Capabilities, Default, PrinterState, JobCountSinceLastReset, Network | ConvertTo-Json -Compress"])
             .output()
         {
             Ok(o) => o,
@@ -362,7 +371,16 @@ impl PrinterMonitor {
                 let location = item["Location"].as_str().unwrap_or("").to_string();
                 let description = item["Comment"].as_str().unwrap_or("").to_string();
                 let shared = item["Shared"].as_bool().unwrap_or(false);
-                let color = item["Color"].as_bool().unwrap_or(false);
+                // `Win32_Printer` publishes no `Color` property. Colour lives in
+                // `Capabilities`, a `uint16[]` where 2 means Color --- the same
+                // array whose `CapabilityDescriptions` spell it out. A printer
+                // that reports no capabilities at all has said nothing about
+                // colour, and `None` says that.
+                let color = item["Capabilities"].as_array().map(|caps| {
+                    caps.iter()
+                        .filter_map(serde_json::Value::as_u64)
+                        .any(|c| c == 2)
+                });
                 let is_default = item["Default"].as_bool().unwrap_or(false);
                 let is_network = item["Network"].as_bool().unwrap_or(false);
 
@@ -509,7 +527,7 @@ mod tests {
             is_default: true,
             accepting_jobs: true,
             shared: false,
-            color: true,
+            color: Some(true),
             duplex: true,
             jobs_in_queue: 0,
             location: "Office".into(),

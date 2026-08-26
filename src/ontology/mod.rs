@@ -1539,8 +1539,14 @@ impl Ontology {
             K::Identity,
             None,
             P::Measured,
-            false,
-            "Whether the device prints in colour, as the driver declares.",
+            true,
+            concat!(
+                "Whether the device prints in colour, as the driver declares. ",
+                "Nullable: a spooler that lists no capabilities has not said the ",
+                "printer is monochrome, and this read `false` for every printer ",
+                "on Windows until it was taken from `Capabilities` rather than ",
+                "from a property `Win32_Printer` does not have.",
+            ),
         ));
 
         // ── Bluetooth radios ─────────────────────────────────────────────────
