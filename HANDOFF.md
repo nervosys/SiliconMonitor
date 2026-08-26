@@ -116,6 +116,34 @@ Note what found it: the documented MSRV check builds default features, CI builds
 `--all-features` on stable, and the failing combination was the one neither ran.
 That is the *Feature combinations* lesson one level down, in the dependency graph.
 
+### A reader wired into one consumer leaves the others fabricating
+
+`platform::macos::read_cpu_stats` and `read_memory_stats` were added in 5.2.0 and
+wired into the ontology resolver. **`MonitoringBackend` — what the `simon` CLI
+runs — kept its own hand-rolled macOS arm for two releases**, and almost every
+field it produced was invented: the system-wide figure repeated across every
+core, a fixed 60/40 user/system split, `governor: "performance"` on a platform
+with no governors, `min = max/2`, and `"Apple CPU"` when the brand string was
+missing. A failed load-average parse fell to 0.0 and published 100% idle.
+
+So one Mac had two CPU paths that disagreed — one measured, one invented — and
+`update_memory` had no macOS arm at all, so `simon` reported no memory there.
+Fixed in `24a7314`.
+
+**Three things worth carrying:**
+
+- Adding a reader is not the same as adopting it. Grep for the other consumers
+  of whatever the new reader replaces, because the old fabrication keeps running
+  where it was not swapped in, and no test compares the two paths.
+- **A fabricated number is more dangerous than an absent one.** The nine silent
+  readers reported nothing; this reported a believable 43% on every core, which
+  a user cannot tell from a measurement.
+- It was found by grepping comments — `requires admin`, `assume`, `approximation`,
+  `hardcoded`, `placeholder` — next to returned values. That sweep is cheap and
+  it has not been run over the whole crate; `src/cpufreq.rs`, `src/ai_workload.rs`,
+  `src/dma_engine/mod.rs` and `src/audio/mod.rs` all still carry such comments and
+  have not been looked at.
+
 ### Two local failures that were the machine, not the code
 
 Both look exactly like defects and neither is. Recognising them saves an hour:
