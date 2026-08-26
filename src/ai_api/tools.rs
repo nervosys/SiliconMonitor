@@ -1482,79 +1482,48 @@ impl AiDataApi {
             }))
         }
 
-        #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+        // Was hand-rolled from `sysctl` and `vm_stat`, with four defects an
+        // agent had no way to see: a hardcoded 16384-byte page size ("Apple
+        // Silicon default") that reports memory 4x too large on an Intel Mac; a
+        // failed `vm_stat` falling to zero pages, which publishes 100% memory
+        // used; a failed `hw.memsize` giving a total of 0; and an unreadable
+        // `vm.swapusage` reported as no swap -- the exact claim the `SwapInfo`
+        // `Option` refactor was done to stop making.
+        //
+        // `platform::macos::read_memory_stats` has existed since 5.2.0. This is
+        // the third consumer found still fabricating around it, after the
+        // ontology resolver adopted it and `MonitoringBackend` did not.
+        #[cfg(target_os = "macos")]
         {
-            use std::process::Command;
-            let memsize = Command::new("sysctl")
-                .args(["-n", "hw.memsize"])
-                .output()
-                .ok()
-                .and_then(|o| String::from_utf8(o.stdout).ok())
-                .and_then(|s| s.trim().parse::<u64>().ok())
-                .unwrap_or(0);
-            let total_mb = memsize / (1024 * 1024);
-            // Parse vm_stat for page counts
-            let vm_stat = Command::new("vm_stat")
-                .output()
-                .ok()
-                .and_then(|o| String::from_utf8(o.stdout).ok())
-                .unwrap_or_default();
-            let page_size: u64 = 16384; // Apple Silicon default
-            let mut free_pages: u64 = 0;
-            let mut active_pages: u64 = 0;
-            let mut inactive_pages: u64 = 0;
-            let mut speculative_pages: u64 = 0;
-            for line in vm_stat.lines() {
-                let val = || -> Option<u64> {
-                    line.split(':')
-                        .nth(1)?
-                        .trim()
-                        .trim_end_matches('.')
-                        .parse()
-                        .ok()
-                };
-                if line.starts_with("Pages free") {
-                    free_pages = val().unwrap_or(0);
-                } else if line.starts_with("Pages active") {
-                    active_pages = val().unwrap_or(0);
-                } else if line.starts_with("Pages inactive") {
-                    inactive_pages = val().unwrap_or(0);
-                } else if line.starts_with("Pages speculative") {
-                    speculative_pages = val().unwrap_or(0);
-                }
-            }
-            let free_mb = (free_pages + speculative_pages) * page_size / (1024 * 1024);
-            let used_mb =
-                total_mb.saturating_sub(free_mb + inactive_pages * page_size / (1024 * 1024));
-            // Swap
-            let swap_info = Command::new("sysctl")
-                .args(["-n", "vm.swapusage"])
-                .output()
-                .ok()
-                .and_then(|o| String::from_utf8(o.stdout).ok())
-                .unwrap_or_default();
-            let parse_swap = |key: &str| -> u64 {
-                swap_info
-                    .split_whitespace()
-                    .collect::<Vec<_>>()
-                    .windows(3)
-                    .find(|w| w[0] == key && w[1] == "=")
-                    .and_then(|w| w[2].trim_end_matches('M').parse::<f64>().ok())
-                    .map(|v| v as u64)
-                    .unwrap_or(0)
-            };
-            let swap_total = parse_swap("total");
-            let swap_used = parse_swap("used");
+            let stats = crate::platform::macos::read_memory_stats()
+                .map_err(|e| SimonError::MemoryError(e.to_string()))?;
+
             Ok(json!({
                 "ram": {
-                    "total_mb": total_mb, "used_mb": used_mb, "free_mb": free_mb,
-                    "usage_percent": if total_mb > 0 { used_mb as f64 / total_mb as f64 * 100.0 } else { 0.0 },
+                    "total_mb": stats.ram.total / 1024,
+                    "used_mb": stats.ram.used / 1024,
+                    "free_mb": stats.ram.free / 1024,
+                    "usage_percent": if stats.ram.total > 0 {
+                        (stats.ram.used as f64 / stats.ram.total as f64) * 100.0
+                    } else { 0.0 },
                 },
+                // `null` rather than 0 where the platform reported no swap
+                // figure. An agent reading 0 cannot tell "no swap configured"
+                // from "swap was not readable"; `null` says which.
                 "swap": {
-                    "total_mb": swap_total, "used_mb": swap_used,
-                    "usage_percent": if swap_total > 0 { swap_used as f64 / swap_total as f64 * 100.0 } else { 0.0 },
+                    "total_mb": stats.swap.total.map(|t| t / 1024),
+                    "used_mb": stats.swap.used.map(|u| u / 1024),
+                    "usage_percent": stats.swap_usage_percent(),
                 }
             }))
+        }
+
+        #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
+        {
+            Err(SimonError::UnsupportedPlatform(
+                "memory is read through per-platform APIs and this platform has none implemented"
+                    .into(),
+            ))
         }
     }
 
