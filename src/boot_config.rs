@@ -590,19 +590,41 @@ impl BootMonitor {
             }
         }
 
-        // Try to get boot time from event log (Event 12, Kernel-General)
+        // Boot duration, from the only Windows source that actually measures one.
+        //
+        // This used to subtract `Win32_OperatingSystem.LastBootUpTime` from the
+        // timestamp of System event 12 (Kernel-General, "the operating system
+        // started at"). Those are two records of the *same* instant, so the
+        // difference is clock skew between how they are written down, not a boot.
+        // On the machine this was found on it returned 0.61 seconds, and the
+        // `secs > 0.0` guard waved it through as a measurement. A boot duration of
+        // 0.6s is not a plausible reading of anything; it was a confident wrong
+        // answer, and worse than the 45-second constant it replaced because it
+        // looks derived rather than invented.
+        //
+        // Windows records a real boot duration in exactly one place:
+        // Microsoft-Windows-Diagnostics-Performance/Operational event 100, whose
+        // `BootTime` and `MainPathBootTime` fields the boot tracing subsystem
+        // writes. That log is not readable without Administrator -- verified two
+        // ways, `Get-WinEvent` and `wevtutil`, both denied unelevated. So an
+        // ordinary run leaves `total` at `Duration::ZERO`, which the surrounding
+        // code already reads as "not measured", and an elevated run gets the
+        // genuine article.
         let output = Command::new("powershell")
             .args([
                 "-Command",
-                "try { $boot = Get-WinEvent -FilterHashtable @{LogName='System';Id=12;ProviderName='Microsoft-Windows-Kernel-General'} -MaxEvents 1 -ErrorAction Stop; ($boot.TimeCreated - (Get-CimInstance Win32_OperatingSystem).LastBootUpTime).TotalSeconds } catch { 0 }"
+                "try { $e = Get-WinEvent -LogName 'Microsoft-Windows-Diagnostics-Performance/Operational' -MaxEvents 1 -FilterXPath \"*[System[(EventID=100)]]\" -ErrorAction Stop; $x = [xml]$e.ToXml(); ($x.Event.EventData.Data | Where-Object { $_.Name -eq 'BootTime' }).'#text' } catch { }"
             ])
             .output();
 
         if let Ok(output) = output {
             let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if let Ok(secs) = stdout.parse::<f64>() {
-                if secs > 0.0 {
-                    self.boot_time.total = Duration::from_secs_f64(secs);
+            // The field is milliseconds. Empty stdout is the unelevated case, and
+            // it has to stay empty rather than parsing to a zero that reads as a
+            // measurement of zero.
+            if let Ok(ms) = stdout.parse::<f64>() {
+                if ms > 0.0 {
+                    self.boot_time.total = Duration::from_secs_f64(ms / 1000.0);
                 }
             }
         }

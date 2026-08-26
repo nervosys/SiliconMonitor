@@ -925,7 +925,7 @@ impl Ontology {
             Some(U::Identifier),
             P::Specification,
             false,
-            "The CPU flag that reports it, as the platform spells it. Included so              a consumer can match against the flag names it already has rather              than against the naming simon chose.",
+            "The CPU flag that reports it, as the platform spells it. Included so a consumer can match against the flag names it already has rather than against the naming simon chose.",
         ));
         add(Entity::new(
             "cpu.crypto.feature.{n}.category",
@@ -1778,7 +1778,7 @@ impl Ontology {
             Some(U::Identifier),
             P::Specification,
             false,
-            "Largest frame class this engine handles, as the reader classifies it -              hd, full_hd, qhd, uhd_4k, uhd_8k. A class rather than a pixel              count because that is what the underlying source provides. Measured              on a queried row; declared at the weaker provenance an inferred row              carries.",
+            "Largest frame class this engine handles, as the reader classifies it - hd, full_hd, qhd, uhd_4k, uhd_8k. A class rather than a pixel count because that is what the underlying source provides. Measured on a queried row; declared at the weaker provenance an inferred row carries.",
         ));
         add(Entity::new(
             "gpu.codec.{n}.max_width",
@@ -1787,7 +1787,7 @@ impl Ontology {
             Some(U::Count),
             P::Derived,
             true,
-            "Width in pixels of the frame class above. Derived, and the derivation              is a table: uhd_4k means 3840 here. An engine whose real limit sits              between two classes will be described by the lower one, so this is              a floor rather than a measured ceiling.",
+            "Width in pixels of the frame class above. Derived, and the derivation is a table: uhd_4k means 3840 here. An engine whose real limit sits between two classes will be described by the lower one, so this is a floor rather than a measured ceiling.",
         )
         .derived(&["gpu.codec.{n}.max_resolution"]));
         add(Entity::new(
@@ -1797,7 +1797,7 @@ impl Ontology {
             Some(U::Count),
             P::Derived,
             true,
-            "Height in pixels of the frame class above, from the same table and              with the same caveat.",
+            "Height in pixels of the frame class above, from the same table and with the same caveat.",
         )
         .derived(&["gpu.codec.{n}.max_resolution"]));
         add(Entity::new(
@@ -2447,7 +2447,7 @@ impl Ontology {
             None,
             P::Unavailable,
             true,
-            "Present when no display was enumerated, carrying why. A headless               server reporting none is a reading; a failed query is not.",
+            "Present when no display was enumerated, carrying why. A headless server reporting none is a reading; a failed query is not.",
         ));
         add(Entity::new(
             "board.display.{n}.name",
@@ -2456,7 +2456,7 @@ impl Ontology {
             Some(U::Text),
             P::Measured,
             true,
-            "Display name as the platform reports it. Nullable: a monitor that              publishes no EDID name genuinely has none to report.",
+            "Display name as the platform reports it. Nullable: a monitor that publishes no EDID name genuinely has none to report.",
         ));
         add(Entity::new(
             "board.display.{n}.connection",
@@ -2465,7 +2465,7 @@ impl Ontology {
             Some(U::Identifier),
             P::Measured,
             true,
-            "How the display is attached - hdmi, displayport, edp, internal.              Nullable, and measured to be so: two of the three displays on the              development machine report a connection the reader cannot classify,              and it says `unknown`, which the resolver turns into an absence              rather than an identifier reading `unknown`.",
+            "How the display is attached - hdmi, displayport, edp, internal. Nullable, and measured to be so: two of the three displays on the development machine report a connection the reader cannot classify, and it says `unknown`, which the resolver turns into an absence rather than an identifier reading `unknown`.",
         ));
         add(Entity::new(
             "board.display.{n}.width",
@@ -2474,7 +2474,11 @@ impl Ontology {
             Some(U::Count),
             P::Measured,
             true,
-            "Horizontal resolution in pixels, at the mode currently set. Nullable: \n             an attached display whose mode is unreadable has no resolution to \n             report, and zero is not one.",
+            concat!(
+                "Horizontal resolution in pixels, at the mode currently set. Nullable: ",
+                "an attached display whose mode is unreadable has no resolution to ",
+                "report, and zero is not one.",
+            ),
         ));
         add(Entity::new(
             "board.display.{n}.height",
@@ -2516,7 +2520,7 @@ impl Ontology {
             None,
             P::Unavailable,
             true,
-            "Present when no platform sensor was enumerated, carrying why. A              desktop reporting none is the common case and a true reading; this              row distinguishes it from a query that could not be made.",
+            "Present when no platform sensor was enumerated, carrying why. A desktop reporting none is the common case and a true reading; this row distinguishes it from a query that could not be made.",
         ));
         add(Entity::new(
             "board.sensor.{n}.name",
@@ -2525,7 +2529,7 @@ impl Ontology {
             Some(U::Text),
             P::Measured,
             false,
-            "Sensor name as the platform reports it. A sensor the platform did              not name is skipped rather than called \"Unknown\".",
+            "Sensor name as the platform reports it. A sensor the platform did not name is skipped rather than called \"Unknown\".",
         ));
         add(Entity::new(
             "board.sensor.{n}.type",
@@ -2543,7 +2547,7 @@ impl Ontology {
             None,
             P::Measured,
             false,
-            "Whether the platform reports this sensor as ready. A present but              inactive sensor is a different fact from an absent one.",
+            "Whether the platform reports this sensor as ready. A present but inactive sensor is a different fact from an absent one.",
         ));
 
         // ── Package energy (RAPL) ────────────────────────────────────────────
@@ -2559,7 +2563,7 @@ impl Ontology {
             None,
             P::Unavailable,
             true,
-            "Present when no RAPL energy domain was enumerated, carrying why. A              sub-cluster diagnostic rather than the domain-wide `power.<none>`:              a machine can have a readable battery and no RAPL interface, and              claiming the whole power domain enumerated nothing would be false.",
+            "Present when no RAPL energy domain was enumerated, carrying why. A sub-cluster diagnostic rather than the domain-wide `power.<none>`: a machine can have a readable battery and no RAPL interface, and claiming the whole power domain enumerated nothing would be false.",
         ));
         add(Entity::new(
             "power.rapl.{n}.name",
@@ -2568,7 +2572,7 @@ impl Ontology {
             Some(U::Text),
             P::Measured,
             false,
-            "RAPL domain name as the platform reports it - package-0, core,              dram, uncore.",
+            "RAPL domain name as the platform reports it - package-0, core, dram, uncore.",
         ));
         add(Entity::new(
             "power.rapl.{n}.energy",
@@ -2577,7 +2581,7 @@ impl Ontology {
             Some(U::Count),
             P::Measured,
             false,
-            "Cumulative energy counter in microjoules. A counter, not a rate: it              wraps at `max_energy_range`, and power in watts is the difference              between two readings divided by the interval. Reported raw because              a single sample cannot be converted to watts and pretending              otherwise would invent a rate.",
+            "Cumulative energy counter in microjoules. A counter, not a rate: it wraps at `max_energy_range`, and power in watts is the difference between two readings divided by the interval. Reported raw because a single sample cannot be converted to watts and pretending otherwise would invent a rate.",
         ));
         add(Entity::new(
             "power.rapl.{n}.max_energy_range",
@@ -2586,7 +2590,7 @@ impl Ontology {
             Some(U::Count),
             P::Specification,
             false,
-            "The value the energy counter wraps at, in microjoules. Needed to              compute power across a wrap; a consumer without it will read a              wrap as a negative delta.",
+            "The value the energy counter wraps at, in microjoules. Needed to compute power across a wrap; a consumer without it will read a wrap as a negative delta.",
         ));
         add(Entity::new(
             "power.rapl.{n}.power_limit",
@@ -2595,7 +2599,7 @@ impl Ontology {
             Some(U::Watts),
             P::Specification,
             true,
-            "The configured power limit for this domain. Nullable: not every              RAPL domain publishes a constraint.",
+            "The configured power limit for this domain. Nullable: not every RAPL domain publishes a constraint.",
         ));
         add(Entity::new(
             "power.rapl.{n}.enabled",
@@ -2604,7 +2608,7 @@ impl Ontology {
             None,
             P::Specification,
             false,
-            "Whether the platform reports this domain as enabled. A disabled              domain still has a counter and it does not advance.",
+            "Whether the platform reports this domain as enabled. A disabled domain still has a counter and it does not advance.",
         ));
 
         // ── Memory bandwidth ─────────────────────────────────────
@@ -2732,7 +2736,7 @@ impl Ontology {
             Some(U::Text),
             P::Measured,
             true,
-            "The machine's hostname. Nullable: a container or a freshly imaged              host may genuinely have none set.",
+            "The machine's hostname. Nullable: a container or a freshly imaged host may genuinely have none set.",
         ));
         add(Entity::new(
             "system.os.version",
@@ -2741,7 +2745,7 @@ impl Ontology {
             Some(U::Text),
             P::Measured,
             true,
-            "Operating system version string, as distinct from the build number              and from the product name.",
+            "Operating system version string, as distinct from the build number and from the product name.",
         ));
         add(Entity::new(
             "system.kernel.version",
@@ -2750,7 +2754,7 @@ impl Ontology {
             Some(U::Text),
             P::Measured,
             true,
-            "Kernel version. On Windows this is the NT build rather than a              separate kernel line, which is why it can equal the OS build.",
+            "Kernel version. On Windows this is the NT build rather than a separate kernel line, which is why it can equal the OS build.",
         ));
         add(Entity::new(
             "system.architecture",
@@ -2759,7 +2763,7 @@ impl Ontology {
             Some(U::Identifier),
             P::Measured,
             true,
-            "CPU architecture the OS reports — x86_64, aarch64. The architecture              of the running kernel, which on some hosts differs from the              hardware's.",
+            "CPU architecture the OS reports — x86_64, aarch64. The architecture of the running kernel, which on some hosts differs from the hardware's.",
         ));
         add(Entity::new(
             "system.os.name",

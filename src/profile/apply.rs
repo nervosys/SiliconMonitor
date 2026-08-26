@@ -161,7 +161,7 @@ pub fn apply_setting_reversible(
                 requested: value,
                 status: ApplyStatus::Refused,
                 message: format!(
-                    "Refused: the value currently in effect for {setting_id:?} could not be                      read, so this write could not be undone. Use apply_setting (or                      `simon profile set`) to write it anyway, accepting that it is one-way."
+                    "Refused: the value currently in effect for {setting_id:?} could not be read, so this write could not be undone. Use apply_setting (or `simon profile set`) to write it anyway, accepting that it is one-way."
                 ),
                 timestamp: now,
                 previous: None,
@@ -217,7 +217,7 @@ pub fn revert_setting(applied: &ApplyOutcome, confirm: bool) -> ApplyOutcome {
             requested: applied.requested.clone(),
             status: ApplyStatus::NotWritable,
             message: format!(
-                "Cannot revert {:?}: no prior value was recorded, because the handler                  could not read the setting before writing it. The setting is still at                  the applied value.",
+                "Cannot revert {:?}: no prior value was recorded, because the handler could not read the setting before writing it. The setting is still at the applied value.",
                 applied.setting_id
             ),
             timestamp: now,

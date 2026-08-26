@@ -761,7 +761,7 @@ mod tests {
         let ids: Vec<&str> = reverts.iter().map(|r| r.setting_id.as_str()).collect();
         assert!(
             !ids.contains(&"already_undone"),
-            "verification put this one back; reverting it again would restore the              value that was measured as worse. got {ids:?}"
+            "verification put this one back; reverting it again would restore the value that was measured as worse. got {ids:?}"
         );
         assert!(
             ids.contains(&"kept"),

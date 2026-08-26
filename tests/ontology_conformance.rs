@@ -577,3 +577,39 @@ fn entities_serialize_with_the_fields_agents_rely_on() {
         );
     }
 }
+
+/// Prose that ships to a reader has to read as prose.
+///
+/// Thirty-one descriptions and absence reasons were found carrying runs of a
+/// dozen or more spaces mid-sentence — `simon describe` printed "a freshly
+/// imaged              host". They were written as `\`-continued literals whose
+/// continuation stopped taking effect at some point, leaving the source
+/// indentation inside the string. Nothing caught it because every other test
+/// asks what a description *says*, and this is about what it *looks like*.
+///
+/// A run of spaces is never meaningful in either of these: descriptions are
+/// sentences and absence reasons are sentences. Alignment belongs in the code
+/// that lays out a table, not in the text handed to it.
+#[test]
+fn descriptions_and_reasons_contain_no_stray_whitespace() {
+    let mut bad: Vec<String> = ontology()
+        .entities
+        .values()
+        .filter(|e| e.description.contains("  ") || e.description.contains('\n'))
+        .map(|e| format!("description of {}: {:?}", e.id, e.description))
+        .collect();
+
+    bad.extend(
+        readings()
+            .iter()
+            .filter_map(|r| r.note.as_ref().map(|n| (&r.id, n)))
+            .filter(|(_, n)| n.contains("  ") || n.contains('\n'))
+            .map(|(id, n)| format!("note on {id}: {n:?}")),
+    );
+
+    assert!(
+        bad.is_empty(),
+        "text that ships to a reader carries collapsed source indentation \
+         — join the literal with `concat!` or a single line instead:\n{bad:#?}"
+    );
+}

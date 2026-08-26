@@ -462,7 +462,7 @@ impl SensorMonitor {
             .output();
         if let Err(e) = probe {
             self.last_note = Some(format!(
-                "the Windows Sensor API is queried through powershell, which                  could not be run: {e}"
+                "the Windows Sensor API is queried through powershell, which could not be run: {e}"
             ));
             return;
         }

@@ -564,19 +564,19 @@ pub fn catalogue() -> Vec<Capability> {
     out.push(cap(
         "interface.tui",
         Surface::Interface,
-        "an interactive terminal dashboard, and a headless frame renderer for          scripted inspection",
+        "an interactive terminal dashboard, and a headless frame renderer for scripted inspection",
         all(Support::Implemented),
         Some("tui::headless script tests render frames without a terminal"),
     ));
     out.push(cap(
         "interface.gui",
         Surface::Interface,
-        "a native desktop window, and a headless frame renderer for scripted          inspection",
+        "a native desktop window, and a headless frame renderer for scripted inspection",
         all(Support::Partial {
-            missing: "the window needs a display server; the headless renderer does                       not and is what CI exercises"
+            missing: "the window needs a display server; the headless renderer does not and is what CI exercises"
                 .into(),
         }),
-        Some("every_gui_tab_paints_text renders each tab and asserts it carries               substance rather than a spinner"),
+        Some("every_gui_tab_paints_text renders each tab and asserts it carries substance rather than a spinner"),
     ));
     out.push(cap(
         "interface.mcp",

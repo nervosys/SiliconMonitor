@@ -447,7 +447,7 @@ mod tests {
                 for l in &ls {
                     assert_ne!(
                         l.local_port, 0,
-                        "current_listeners must filter unbound sockets: nothing can connect \n                         to them and they would churn every baseline",
+                        "current_listeners must filter unbound sockets: nothing can connect \n to them and they would churn every baseline",
                     );
                     assert!(
                         !l.protocol.is_empty(),

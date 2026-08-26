@@ -135,6 +135,7 @@ pub fn snapshot() -> Vec<Reading> {
     resolve_services(&mut out);
     resolve_kernel_params(&mut out);
     resolve_secure_boot(&mut out);
+    resolve_boot_duration(&mut out);
     resolve_bluetooth(&mut out);
     resolve_storage_controllers(&mut out);
     resolve_power_profiles(&mut out);
@@ -244,7 +245,7 @@ pub fn snapshot() -> Vec<Reading> {
         reading.value = None;
         reading.provenance = Provenance::Unavailable;
         reading.note = Some(format!(
-            "reader returned {quoted:?}, which names an absence rather than a              value, so it is reported as unavailable rather than as a reading"
+            "reader returned {quoted:?}, which names an absence rather than a value, so it is reported as unavailable rather than as a reading"
         ));
     }
 
@@ -489,7 +490,7 @@ fn resolve_memory(out: &mut Vec<Reading>) {
                 out.push(Reading::unavailable(
                     id,
                     Some(Unit::Bytes),
-                    "the platform did not report swap, so whether this machine has                      any is unknown",
+                    "the platform did not report swap, so whether this machine has any is unknown",
                 ));
             }
         }
@@ -2152,7 +2153,10 @@ fn resolve_displays(out: &mut Vec<Reading>) {
         out.push(Reading::unavailable(
             "board.display.<none>",
             None,
-            "no display is attached, or none is visible to this session - a              headless server and a locked-down service account both look like              this",
+            concat!(
+                "no display is attached, or none is visible to this session — a ",
+                "headless server and a locked-down service account both look like this",
+            ),
         ));
         return;
     }
@@ -2691,6 +2695,64 @@ fn resolve_cameras(out: &mut Vec<Reading>) {
             None,
         ));
     }
+}
+
+/// How long the machine took to boot, when the platform measured it.
+///
+/// Bound late: the entity was declared and nothing resolved it, so it read "no
+/// resolver bound on this build" — which was the wrong absence. The entity is
+/// supported on Windows; what stops it here is privilege, and saying so is a
+/// different fact than saying simon has not implemented it.
+///
+/// `BootMonitor` leaves `total` at `Duration::ZERO` when nothing was measured,
+/// so zero is the sentinel and must not be published as a boot that took no
+/// time. The reason given for the absence is platform-specific because the
+/// reasons genuinely differ: Windows keeps the only real measurement in a log
+/// that needs Administrator, while elsewhere it comes from `systemd-analyze`,
+/// which is simply absent on a machine without systemd.
+fn resolve_boot_duration(out: &mut Vec<Reading>) {
+    let monitor = match crate::boot_config::BootMonitor::new() {
+        Ok(m) => m,
+        Err(e) => {
+            out.push(Reading::unavailable(
+                "system.boot.duration",
+                Some(Unit::Seconds),
+                format!("the boot configuration could not be read: {e}"),
+            ));
+            return;
+        }
+    };
+
+    let secs = monitor.boot_time.total.as_secs_f64();
+    if secs > 0.0 {
+        out.push(Reading::measured(
+            "system.boot.duration",
+            serde_json::json!(secs),
+            Some(Unit::Seconds),
+        ));
+        return;
+    }
+
+    #[cfg(target_os = "windows")]
+    let reason = concat!(
+        "Windows records a boot duration only in ",
+        "Microsoft-Windows-Diagnostics-Performance/Operational event 100, which ",
+        "is not readable without Administrator — this is a privilege ",
+        "boundary, not a missing reader",
+    );
+    #[cfg(target_os = "linux")]
+    let reason = concat!(
+        "`systemd-analyze` reported no total, which is what a machine without ",
+        "systemd or with an incomplete boot transaction looks like",
+    );
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+    let reason = "this platform publishes no boot duration simon knows how to read";
+
+    out.push(Reading::unavailable(
+        "system.boot.duration",
+        Some(Unit::Seconds),
+        reason,
+    ));
 }
 
 /// Whether Secure Boot is enforcing, from the firmware flag.
