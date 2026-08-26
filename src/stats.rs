@@ -173,6 +173,17 @@ impl Simon {
     }
 }
 
+/// Seconds since boot, without building a [`Simon`].
+///
+/// [`Simon::uptime`] needs an instance, and constructing one collects board
+/// information a caller who only wants uptime has no use for. The agent tool
+/// surface reported `uptime_seconds: 0` with the comment "would need
+/// platform-specific impl" while `read_uptime` had one on all three platforms;
+/// the missing piece was a way to reach it, not the reader.
+pub fn uptime() -> Result<Duration> {
+    read_uptime()
+}
+
 // Platform-specific implementations
 #[cfg(target_os = "linux")]
 fn read_cpu_stats() -> Result<CpuStats> {

@@ -557,14 +557,16 @@ pub struct SensorReading {
 /// System information
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SystemInfoDetails {
-    /// Hostname
-    pub hostname: String,
+    /// Hostname. `None` when the platform did not report one -- a container
+    /// or a freshly imaged host may genuinely have none set, and an empty
+    /// string does not say that.
+    pub hostname: Option<String>,
     /// OS name
     pub os_name: String,
     /// OS version
     pub os_version: String,
-    /// Kernel version
-    pub kernel_version: String,
+    /// Kernel version. `None` when it could not be read, rather than empty.
+    pub kernel_version: Option<String>,
     /// Architecture
     pub architecture: String,
     /// BIOS vendor
@@ -575,10 +577,13 @@ pub struct SystemInfoDetails {
     pub manufacturer: Option<String>,
     /// System model
     pub model: Option<String>,
-    /// Uptime in seconds
-    pub uptime_seconds: u64,
-    /// Boot time (Unix timestamp)
-    pub boot_time: u64,
+    /// Seconds since boot. `None` when uptime could not be read. This was a
+    /// hardcoded `0` presented to an agent as a measurement, which reads as a
+    /// machine that just booted.
+    pub uptime_seconds: Option<u64>,
+    /// Unix timestamp of boot, derived from uptime. `None` for the same
+    /// reason, rather than the epoch.
+    pub boot_time: Option<u64>,
 }
 
 /// Driver information

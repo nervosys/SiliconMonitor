@@ -777,18 +777,30 @@ impl AiDataApi {
         let info = crate::motherboard::get_system_info()
             .map_err(|e| SimonError::NotImplemented(e.to_string()))?;
 
+        let uptime = crate::stats::uptime().ok().map(|d| d.as_secs());
+
         let details = SystemInfoDetails {
-            hostname: info.hostname.clone().unwrap_or_default(),
+            hostname: info.hostname.clone(),
             os_name: info.os_name.clone(),
             os_version: info.os_version.clone(),
-            kernel_version: info.kernel_version.clone().unwrap_or_default(),
+            kernel_version: info.kernel_version.clone(),
             architecture: info.architecture.clone(),
             bios_vendor: info.bios.vendor.clone(),
             bios_version: info.bios.version.clone(),
             manufacturer: info.manufacturer.clone(),
             model: info.product_name.clone(),
-            uptime_seconds: 0, // Would need platform-specific impl
-            boot_time: 0,      // Would need platform-specific impl
+            // `read_uptime` has had a platform-specific implementation on
+            // Linux, Windows and macOS the whole time; what was missing was a
+            // way to call it without building a `Simon`. Boot time follows from
+            // uptime, so both are present or both absent -- deriving one from a
+            // clock that failed would be worse than reporting neither.
+            uptime_seconds: uptime,
+            boot_time: uptime.and_then(|u| {
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .ok()
+                    .map(|now| now.as_secs().saturating_sub(u))
+            }),
         };
 
         Ok(serde_json::to_value(details)?)
@@ -1195,7 +1207,7 @@ impl AiDataApi {
                     "idle_percent": stats.total.idle,
                     "usage_percent": 100.0 - stats.total.idle,
                 },
-                "model": stats.cores.first().map(|c| &c.model).cloned().unwrap_or_default(),
+                "model": stats.cores.first().map(|c| &c.model).cloned(),
             }))
         }
 
@@ -1214,39 +1226,37 @@ impl AiDataApi {
                     "idle_percent": stats.total.idle,
                     "usage_percent": 100.0 - stats.total.idle,
                 },
-                "model": stats.cores.first().map(|c| &c.model).cloned().unwrap_or_default(),
+                "model": stats.cores.first().map(|c| &c.model).cloned(),
             }))
         }
 
+        // macOS. This arm used to shell out to `sysctl vm.loadavg` and publish
+        // `load / ncpu * 100` as `usage_percent`. Load average is not
+        // utilization: it counts runnable and uninterruptible tasks, so a box
+        // blocked on disk reads high while its cores idle, and a saturated one
+        // with no queue reads low. It also fell back to 0.0 when the sysctl
+        // failed, reporting an idle machine, and named an unreadable CPU
+        // literally "CPU".
+        //
+        // `platform::macos::read_cpu_stats` has existed since 5.2.0 and was
+        // wired only into the ontology. This is the fourth consumer found
+        // fabricating alongside a real reader it never adopted. Adding a
+        // reader is not the same as adopting it.
         #[cfg(not(any(target_os = "linux", target_os = "windows")))]
         {
-            use std::process::Command;
-            let model = Command::new("sysctl")
-                .args(["-n", "machdep.cpu.brand_string"])
-                .output()
-                .ok()
-                .and_then(|o| String::from_utf8(o.stdout).ok())
-                .map(|s| s.trim().to_string())
-                .unwrap_or_else(|| "CPU".to_string());
-            let ncpu = num_cpus::get();
-            let load = Command::new("sysctl")
-                .args(["-n", "vm.loadavg"])
-                .output()
-                .ok()
-                .and_then(|o| String::from_utf8(o.stdout).ok())
-                .and_then(|s| {
-                    s.trim()
-                        .trim_matches(|c: char| c == '{' || c == '}')
-                        .split_whitespace()
-                        .next()
-                        .and_then(|v| v.parse::<f64>().ok())
-                })
-                .unwrap_or(0.0);
-            let usage = (load / ncpu as f64 * 100.0).clamp(0.0, 100.0);
+            let stats = crate::platform::macos::read_cpu_stats()
+                .map_err(|e| SimonError::CpuError(e.to_string()))?;
+
             Ok(json!({
-                "core_count": ncpu,
-                "total": { "usage_percent": usage, "idle_percent": 100.0 - usage },
-                "model": model,
+                "core_count": stats.cores.len(),
+                "total": {
+                    "user_percent": stats.total.user,
+                    "system_percent": stats.total.system,
+                    "nice_percent": stats.total.nice,
+                    "idle_percent": stats.total.idle,
+                    "usage_percent": 100.0 - stats.total.idle,
+                },
+                "model": stats.cores.first().map(|c| &c.model).cloned(),
             }))
         }
     }

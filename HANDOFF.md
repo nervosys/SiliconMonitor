@@ -142,7 +142,14 @@ Fixed in `24a7314`.
   three consumers of the macOS memory path, not two** — the ontology adopted the
   real reader in 5.2.0, `MonitoringBackend` kept fabricating (`24a7314`), and
   `ai_api::tools` kept a third hand-rolled copy (`1cf1980`) with a hardcoded page
-  size. Count the consumers before assuming a migration finished.
+  size. Count the consumers before assuming a migration finished. **Then there
+  was a fourth**, and it was CPU rather than memory: `ai_api::tools`'
+  `get_cpu_status` shelled out to `sysctl vm.loadavg` and published
+  `load / ncpu * 100` as `usage_percent`, next to `read_cpu_stats` it never
+  called. Load average is not utilization — it counts runnable *and*
+  uninterruptible tasks, so a machine blocked on I/O reads high while its cores
+  idle. Grepping for the reader's name finds the consumers that adopted it; the
+  ones still fabricating do not mention it, so grep for what they call instead.
 - **A fabricated number is more dangerous than an absent one.** The nine silent
   readers reported nothing; this reported a believable 43% on every core, which
   a user cannot tell from a measurement.
