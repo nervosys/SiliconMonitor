@@ -25,6 +25,21 @@ Merged to `master` as a fast-forward and tagged **`v6.0.0`** at `1947426`, with
 | `7b606fe` | A GPU-holding Python process was reported as PyTorch |
 | `1cf1980` | The agent-facing memory tool invented figures on macOS |
 
+Since the tag, on `master` and green on all three platforms:
+
+| Commit | What |
+|---|---|
+| `afb377d` | Secure Boot was readable all along, unelevated |
+| `2f7be76` | Boot duration bound; 32 descriptions printed collapsed indentation |
+| `8961a1c` | The agent surface reported an uptime of zero and a load average |
+| `4dd5cce` | A test for the agent tool surface, which had none |
+| `a584dd0` | Five wrong conclusions in `hardware_ai`, each with a confidence attached |
+| `7607401` | A 24GB card read as 4GB, because `AdapterRAM` is 32 bits |
+
+**Those six were found by running things and reading the output, not by
+grepping.** The method, and why the greps missed them, is below under *Run it
+and read the output*.
+
 **Eighteen defects came out of verifying a batch that arrived type-checked,
 linted and looking finished.** Two were caught by tests that already existed.
 The rest came from running the gate, reading snapshot output, CI, one new test,
@@ -102,6 +117,50 @@ Clippy, Check, Feature combinations, and Test on windows, macos and ubuntu.
 The MSRV is built rather than inferred: `cargo +1.89 check --all-features
 --all-targets` passes, which also settles that `slice::as_chunks` in `da769bf`
 exists at the declared floor.
+
+### Run it and read the output — the only method that found any of this
+
+Grepping for `unwrap_or` finds candidate sites. It does not tell you which of
+the 884 matter, and it never once pointed at the worst defects. Every serious
+finding in the `hardware_ai` and `ai_api` work came from **running the thing and
+reading what it said**, then checking each claim against the machine:
+
+- The inference report said "No SSD detected — HDD will severely bottleneck
+  modern workloads" at 0.85 confidence on a host with three NVMe drives.
+  `Get-PhysicalDisk` settled it in one command.
+- It classified a desktop tower as a GamingLaptop.
+  `(Get-CimInstance Win32_SystemEnclosure).ChassisTypes` returned 3.
+- It dated a Ryzen 9 9900X to 2018.
+- It reported 4GB of VRAM on a 24GB card, and recommended against ML training
+  on that basis.
+
+None of those are visible in a diff, and none would be caught by a test that
+asserts a report *is produced*. They are only visible when a human-or-model
+reads the sentences and asks whether each is true of this machine.
+
+**Check ground truth in a second tool before believing the fix.** Every one of
+the above was confirmed with a PowerShell query independent of the code path
+being fixed, and the derived `boot_time` was checked against the kernel-start
+event in the System log — two seconds apart, from sources that share nothing.
+The one time this session that a plausible reading went unchecked, it was the
+0.61-second boot duration, which was two timestamps of the same instant
+subtracted from each other.
+
+**A fallback is how a module fails completely and still looks like it works.**
+`Get-PhysicalDisk | ConvertTo-Json` serialises MediaType and BusType as the
+strings `"SSD"` and `"NVMe"`; the code read them with `as_u64()` and got `None`
+for every disk on every Windows machine since the module was written.
+`unwrap_or(0)` turned that total failure into a confident, plausible, wrong
+answer. Nothing was ever logged, nothing ever errored, and the module kept
+producing a full report.
+
+**Watch for a guess placed in front of a reading.** Twice in one module: Windows
+inferred the chassis from battery presence while Linux read the real DMI code,
+and then the classifier scored a battery 0.4 against a read chassis at 0.3. The
+same shape appeared in the ontology the same day, where `system.boot.secure_boot`
+was bound to a reader needing Administrator while the value sat in the registry,
+unelevated. When two sources disagree, check which one is *read* and which is
+*inferred* before tuning weights.
 
 ### The MSRV is 1.89, and one value now covers every feature combination
 
@@ -361,6 +420,30 @@ because another supplies what it is missing — which is exactly how the `cli`
 feature stayed broken through eight published versions.
 
 ## Open work
+
+0. **`hardware_ai` was audited on one machine, and only one.** Every conclusion
+   corrected in `a584dd0` and `7607401` was verifiably wrong on this desktop, and
+   each fix was checked against a second source. That is not the same as being
+   right in general. Two things specifically want a second machine before they
+   are trusted:
+
+   - **The classifier weights were rebalanced against a single data point.** A
+     read chassis now scores 0.6 where a battery scores 0.25, and the Desktop
+     branch is no longer gated on `!has_battery`. The *direction* is defensible
+     on principle — a reading should outrank a guess — but the numbers are still
+     tuned to one host. `test_laptop_bottleneck` and
+     `test_gaming_desktop_classification` pass, and both use synthetic features
+     rather than hardware. **Run `HardwareInferenceEngine::new()?.full_analysis()`
+     on a real laptop and read the report.** If it does not say Laptop, the
+     weights are wrong in the other direction now.
+   - **`adapter_vram_bytes` was tested against NVIDIA and AMD adapters in one
+     box.** Intel Arc and older drivers may not publish
+     `HardwareInformation.qwMemorySize`. Those adapters get no VRAM reading at
+     all, which is the intended failure — but nobody has watched it happen.
+
+   Also still imprecise, in a heuristic table rather than a reader: the RTX 3090
+   Ti dates to 2020 because it matches the RTX 30 series rule, and the Ti shipped
+   in 2022. `infer_gpu_year` and the TDP tables were not audited.
 
 1. **The Windows ATA SMART path has never met a SATA drive.** 3.3.0 reads the
    attribute table unelevated through `IOCTL_STORAGE_PREDICT_FAILURE`, and the
