@@ -648,14 +648,50 @@ impl HardwareInferenceEngine {
                         .unwrap_or_default()
                 };
 
+                // True VRAM comes from the driver's registry key, not from WMI.
+                //
+                // `AdapterRAM` is a 32-bit field, so the RTX 3090 Ti in this
+                // machine reports 4293918720 --- just under 4GiB --- for a card
+                // with 24GB. Divided by 2^30 that is 4.0, and the report said
+                // "Insufficient VRAM for ML training" about a card that has more
+                // VRAM than most machines have RAM. Every card above 4GB is
+                // misreported the same way, so the larger the card the more wrong
+                // the answer, which is the opposite of a safe failure.
+                //
+                // `HardwareInformation.qwMemorySize` is a REG_QWORD holding the
+                // real figure and needs no elevation. Adapters missing from it
+                // keep `gpu_vram_gb` at its default rather than taking the
+                // overflowed value: not knowing is the honest outcome, and a
+                // confident 4.0 is what caused this.
+                let vram_by_desc = crate::platform::windows::adapter_vram_bytes();
+
                 for gpu in gpus {
                     let name = gpu.get("Name").and_then(|v| v.as_str()).unwrap_or("");
-                    let vram = gpu.get("AdapterRAM").and_then(|v| v.as_u64()).unwrap_or(0);
 
                     if !name.is_empty() {
                         self.features.gpu_model = name.to_string();
                         self.features.gpu_count += 1;
-                        self.features.gpu_vram_gb = vram as f32 / 1_073_741_824.0;
+
+                        // `DriverDesc` and the WMI `Name` are the same string for
+                        // every adapter seen so far, but match case-insensitively
+                        // rather than relying on that.
+                        if let Some((_, bytes)) = vram_by_desc
+                            .iter()
+                            .find(|(desc, _)| desc.eq_ignore_ascii_case(name))
+                        {
+                            // Rounded to whole GiB. A card sold as 24GB reports
+                            // 25757220864 bytes --- 23.988 GiB, twelve mebibytes
+                            // short, because the driver reserves some. Every
+                            // threshold downstream is written as `>= 24.0`,
+                            // `>= 16.0`, `>= 8.0`, so an unrounded value fails all
+                            // of them for a card of exactly that size: this 3090
+                            // Ti missed the `>= 24.0` strength by 0.012. VRAM is
+                            // provisioned in whole GiB, so rounding reports the
+                            // size the hardware actually has rather than the
+                            // remainder after the driver takes its cut.
+                            let gib = *bytes as f32 / 1_073_741_824.0;
+                            self.features.gpu_vram_gb = gib.round();
+                        }
 
                         let lower = name.to_lowercase();
                         if lower.contains("nvidia") || lower.contains("geforce")

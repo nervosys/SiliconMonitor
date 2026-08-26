@@ -428,6 +428,51 @@ pub(crate) fn read_registry_u32(subkey: &str, value: &str) -> Option<u32> {
     key.get_value(value).ok()
 }
 
+/// True VRAM in bytes for each display adapter, from the driver's own registry
+/// key, paired with the `DriverDesc` it belongs to.
+///
+/// `Win32_VideoController.AdapterRAM` is a 32-bit field. An RTX 3090 Ti with 24GB
+/// reports 4293918720 through it — just under 4GiB — and every card above 4GB
+/// reports something similarly wrong. `hardware_ai` divided that by 2^30, got
+/// 4.0, and concluded "Insufficient VRAM for ML training" about a card that has
+/// 24GB of it.
+///
+/// The display-adapter class key carries `HardwareInformation.qwMemorySize`, a
+/// `REG_QWORD` with the real figure: 25757220864 on the same machine. It needs no
+/// elevation. The 32-bit `HardwareInformation.MemorySize` sits beside it holding
+/// the same wrong number as WMI, which is a useful reminder that the overflow is
+/// in the field width and not in the query.
+///
+/// Adapters whose key carries no `qwMemorySize` are omitted rather than reported
+/// at whatever the 32-bit value says. A caller that cannot find its adapter here
+/// has not learnt that the card has 4GB; it has learnt nothing, which is the
+/// truth.
+pub(crate) fn adapter_vram_bytes() -> Vec<(String, u64)> {
+    use winreg::enums::HKEY_LOCAL_MACHINE;
+    use winreg::RegKey;
+
+    // The GUID_DEVCLASS_DISPLAY class key. Subkeys are `0000`, `0001`, ... one
+    // per adapter the driver stack knows about.
+    const DISPLAY_CLASS: &str =
+        r"SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}";
+
+    let Ok(class_key) = RegKey::predef(HKEY_LOCAL_MACHINE).open_subkey(DISPLAY_CLASS) else {
+        return Vec::new();
+    };
+
+    let names: Vec<String> = class_key.enum_keys().flatten().collect();
+
+    names
+        .into_iter()
+        .filter_map(|name| {
+            let key = class_key.open_subkey(&name).ok()?;
+            let desc: String = key.get_value("DriverDesc").ok()?;
+            let bytes: u64 = key.get_value("HardwareInformation.qwMemorySize").ok()?;
+            (bytes > 0).then(|| (desc.trim().to_string(), bytes))
+        })
+        .collect()
+}
+
 /// Whether the machine booted via UEFI, legacy BIOS, or something unreported.
 ///
 /// `GetFirmwareType` is the documented Win32 answer. The alternative in use before
