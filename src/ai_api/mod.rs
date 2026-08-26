@@ -164,6 +164,45 @@ pub struct ToolCall {
     pub parameters: serde_json::Value,
 }
 
+/// Replace values that name an absence with `null`, in place.
+///
+/// The ontology has rejected `"Unknown"`-as-a-value since the absence-word guard
+/// went into `push_str_as`; the agent tool surface never had the equivalent. On
+/// one machine `get_usb_devices` returned `"speed": "Unknown"` for thirty-odd
+/// devices, `get_bluetooth_devices` returned `"type": "Unknown"` for nine and an
+/// empty `"address"` for one — seventy values in total, each of which an agent
+/// reads as a fact about the hardware. `null` says the same thing truthfully.
+///
+/// This is weaker than what the ontology does, and deliberately so: a `Reading`
+/// carries *why* it is unavailable, and a `null` here carries nothing but the
+/// absence. Getting the reason onto this surface means giving each tool the
+/// `Reading` shape, which is a larger change than this one. Until then, `null`
+/// beats a string that looks like a measurement and is not.
+///
+/// The predicate is `ontology::resolve::names_an_absence` rather than a second
+/// copy of the word list, so the two surfaces cannot drift apart.
+fn null_out_absence_words(v: &mut serde_json::Value) {
+    use serde_json::Value;
+    match v {
+        Value::String(s) => {
+            if s.trim().is_empty() || crate::ontology::resolve::names_an_absence(s) {
+                *v = Value::Null;
+            }
+        }
+        Value::Object(m) => {
+            for val in m.values_mut() {
+                null_out_absence_words(val);
+            }
+        }
+        Value::Array(a) => {
+            for val in a.iter_mut() {
+                null_out_absence_words(val);
+            }
+        }
+        _ => {}
+    }
+}
+
 /// AI Data API - Main interface for AI system data access
 pub struct AiDataApi {
     /// GPU collection for GPU queries
@@ -353,7 +392,10 @@ impl AiDataApi {
         let exec_time = start.elapsed().as_millis() as u64;
 
         match result {
-            Ok(data) => Ok(ToolResult::success(name, data, exec_time)),
+            Ok(mut data) => {
+                null_out_absence_words(&mut data);
+                Ok(ToolResult::success(name, data, exec_time))
+            }
             Err(e) => Ok(ToolResult::error(name, e, exec_time)),
         }
     }

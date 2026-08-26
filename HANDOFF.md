@@ -760,11 +760,35 @@ it uncovers are, and there are always more than expected. Item 1 turned up five.
    which is the only reason it was left — a `false` nobody reads misleads nobody,
    and 6.0.0 had been tagged an hour earlier. Fix it before something calls it.
 
+6. **Historical metrics for the agent surface.** `get_historical_data` and
+   `compare_metrics` were advertised in the tool catalogue — full descriptions,
+   worked examples, `minutes_ago` parameters — and neither was ever implemented.
+   An agent that read the catalogue and called one got "Unknown tool", which it
+   would read as its own mistake. They were removed rather than stubbed, because
+   a stub is the same lie with more code. Building them for real needs three
+   things: timestamps on `backend::HistoryBuffer` (it is a bare `VecDeque` today,
+   so "five minutes ago" is not answerable from it), a handle to that buffer from
+   `AiDataApi` (which holds only `historical_context: Option<String>`, a blob a
+   caller sets), and a decision about what happens when the window does not reach
+   back as far as the question — which is an absence with a reason, not an
+   interpolation.
+
 **Both were found by the fallback grep, and it is nowhere near exhausted:** 780
 `unwrap_or(0|false|…)` / `unwrap_or_default()` sites outside tests and the GUI.
 Most are legitimate. Triage by consequence rather than by count — a fallback in a
 reader path that reaches the ontology or the agent tools is worth reading; one in
-a filter predicate is not.
+a filter predicate is not. **Triaging by blast radius rather than in file order
+is what found the agent-surface defects:** a `0` in a TUI gauge is cosmetic, a
+`0` handed to an LLM becomes a premise it reasons from. The Linux `/proc` parse
+sites in `system_stats.rs` are deliberately untouched — they cannot be run or
+observed here, and reworking unrunnable readers is the debt this project already
+carries.
+
+**The agent tool surface had no test at all until `tests/ai_tool_surface.rs`.**
+That is why three fabrications lived in `ai_api/tools.rs` undisturbed. The suite
+asserts about shape rather than about particular hardware, so it says the same
+thing on a desktop and on a CI runner with no GPU. It found the two phantom tools
+above on its first run.
 
 ## The plan for what is left
 

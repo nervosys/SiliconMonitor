@@ -1462,13 +1462,18 @@ fn id_segment(raw: &str) -> String {
 /// with "n/a".
 ///
 /// The list matches `unknown_is_never_dressed_as_a_measurement` in
-/// `tests/ontology_conformance.rs`, which forbids these values crate-wide. It is
-/// enforced here, at the one place every text reading passes through, rather
+/// `tests/ontology_conformance.rs`, which forbids these values in readings. It
+/// is enforced here, at the one place every text reading passes through, rather
 /// than in each reader — the conformance test has caught this class three times
 /// now, always in a different reader.
 const ABSENCE_WORDS: [&str; 5] = ["unknown", "unspecified", "undetermined", "n/a", "none"];
 
-fn names_an_absence(value: &str) -> bool {
+/// Public because the agent tool surface needs the *same* predicate, not a
+/// second copy of the list. `ai_api::call_tool` applies it to every value it
+/// returns; before that it had no guard at all, and `get_usb_devices` handed an
+/// agent `"speed": "Unknown"` seventy times on one machine while the ontology
+/// was rejecting that exact string.
+pub fn names_an_absence(value: &str) -> bool {
     let v = value.trim().to_ascii_lowercase();
     ABSENCE_WORDS.contains(&v.as_str())
 }

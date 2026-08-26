@@ -613,40 +613,20 @@ pub fn get_all_tool_definitions() -> Vec<ToolDefinition> {
         example: Some("get_usb_device_details()".to_string()),
     });
 
-    // Historical data tools
-    tools.push(ToolDefinition {
-        name: "get_historical_data".to_string(),
-        description: "Get historical system metrics from a specific time in the past. Useful for questions like 'What was the GPU temperature 5 minutes ago?' or 'What was CPU usage 10 minutes ago?'. Data is available for up to 30 minutes in the past.".to_string(),
-        parameters: json!({
-            "type": "object",
-            "properties": {
-                "minutes_ago": {
-                    "type": "integer",
-                    "description": "How many minutes ago to query (0 = current, 1-30 for historical). Default: 0"
-                }
-            },
-            "required": []
-        }),
-        category: ToolCategory::System,
-        example: Some("get_historical_data({\"minutes_ago\": 5})".to_string()),
-    });
-
-    tools.push(ToolDefinition {
-        name: "compare_metrics".to_string(),
-        description: "Compare current system metrics with metrics from a specific time in the past. Shows the change in CPU, memory, GPU temperature and utilization.".to_string(),
-        parameters: json!({
-            "type": "object",
-            "properties": {
-                "minutes_ago": {
-                    "type": "integer",
-                    "description": "Compare with metrics from this many minutes ago (1-30). Default: 5"
-                }
-            },
-            "required": []
-        }),
-        category: ToolCategory::System,
-        example: Some("compare_metrics({\"minutes_ago\": 10})".to_string()),
-    });
+    // `get_historical_data` and `compare_metrics` were advertised here with full
+    // descriptions and worked examples, and neither had an implementation --- no
+    // `tool_*` function and no arm in `call_tool`, so an agent that read the
+    // catalogue and called one got "Unknown tool", which reads as the agent's
+    // own mistake rather than as simon's. The only other mention of the name was
+    // a label pushed into a text blob, which is not the tool.
+    //
+    // They are removed rather than stubbed. Answering "what was the GPU
+    // temperature five minutes ago" needs a time-series store, and the only
+    // buffer in the crate (`backend::HistoryBuffer`) carries no timestamps and is
+    // not reachable from here; `historical_context` is an `Option<String>` a
+    // caller sets, not history. Advertising a capability that does not exist is
+    // the capability-level version of reporting "Unknown" as a value. What it
+    // would take to build properly is in HANDOFF.
 
     // Profile inspector tools (NVPI / XTU / Ryzen Master / nvme-cli style)
     tools.push(ToolDefinition {
