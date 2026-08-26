@@ -93,7 +93,6 @@ fn read_windows_storage_temps() -> Vec<HwSensor> {
 #[cfg(target_os = "windows")]
 fn read_smart_temperature(drive_path: &str, drive_num: u32) -> Option<HwSensor> {
     use std::ffi::OsStr;
-    use std::mem;
     use std::os::windows::ffi::OsStrExt;
 
     unsafe {
@@ -142,17 +141,6 @@ fn read_smart_temperature(drive_path: &str, drive_num: u32) -> Option<HwSensor> 
             reserved: u8,
         }
 
-        #[repr(C)]
-        #[derive(Default)]
-        struct SmartAttribute {
-            id: u8,
-            status: u16,
-            current: u8,
-            worst: u8,
-            raw: [u8; 6],
-            reserved: u8,
-        }
-
         // Prepare SMART READ DATA command
         let mut cmd_in = vec![0u8; 32 + 512];
         let cmd = cmd_in.as_mut_ptr() as *mut SendCmdInParams;
@@ -186,45 +174,66 @@ fn read_smart_temperature(drive_path: &str, drive_num: u32) -> Option<HwSensor> 
             return None;
         }
 
-        // Parse SMART attributes (start at offset 32 + 2 for attribute table)
-        let attr_start = 32 + 2;
-        let _attr_size = mem::size_of::<SmartAttribute>();
-
-        for i in 0..30 {
-            let offset = attr_start + i * 12; // Each attribute is 12 bytes
-            if offset + 12 > out_buffer.len() {
-                break;
-            }
-
-            let id = out_buffer[offset];
-
-            // Check for temperature attributes
-            if id == SMART_ATTR_TEMPERATURE
-                || id == SMART_ATTR_AIRFLOW_TEMP
-                || id == SMART_ATTR_TEMPERATURE_2
-                || id == SMART_ATTR_DRIVE_TEMP
-            {
-                // Raw value is at offset 5-10, temperature is usually the first byte
-                let raw_value = out_buffer[offset + 5];
-
-                // Temperature should be reasonable (0-100°C typically)
-                if raw_value > 0 && raw_value < 100 {
-                    let drive_name = get_drive_model(drive_path)
-                        .unwrap_or_else(|| format!("Drive {}", drive_num));
-
-                    return Some(HwSensor {
-                        name: drive_name,
-                        value: raw_value as f32,
-                        min: None,
-                        max: None,
-                        sensor_type: HwSensorType::Temperature,
-                        hardware_type: HwType::Storage,
-                    });
-                }
-            }
+        // `SMART_RCV_DRIVE_DATA` replies with `SENDCMDOUTPARAMS`, whose payload
+        // begins after `cBufferSize` and a `DRIVERSTATUS` --- sixteen bytes, not
+        // the thirty-two of the *input* struct. The attribute walk below used to
+        // start at `32 + 2`, borrowing the input layout for the output, so every
+        // attribute id it read came from sixteen bytes into the neighbouring
+        // entry. Nothing caught it because this machine has no SATA drive and
+        // the path never runs here.
+        //
+        // The offset is taken from a declared struct rather than written as a
+        // number, so the compiler checks it against the layout instead of a
+        // reader checking it against my arithmetic.
+        #[repr(C)]
+        struct DriverStatus {
+            driver_error: u8,
+            ide_error: u8,
+            reserved: [u8; 2],
+            reserved2: [u32; 2],
         }
 
-        None
+        #[repr(C)]
+        struct SendCmdOutParams {
+            buffer_size: u32,
+            driver_status: DriverStatus,
+            buffer: [u8; 1],
+        }
+
+        const PAYLOAD_OFFSET: usize = std::mem::offset_of!(SendCmdOutParams, buffer);
+
+        // Sixteen is what ntdddisk.h gives: a `ULONG` then a twelve-byte
+        // `DRIVERSTATUS`. This pins the struct above against that number, so a
+        // later edit to a field cannot shift the payload without failing to
+        // compile. It does not confirm my reading of the header --- nothing here
+        // can, since no SATA drive on this machine reaches this code. What it
+        // buys is that the offset stops being a literal somebody has to re-derive.
+        const _: () = assert!(
+            PAYLOAD_OFFSET == 16,
+            "SENDCMDOUTPARAMS payload follows cBufferSize and DRIVERSTATUS"
+        );
+
+        let payload = out_buffer
+            .get(PAYLOAD_OFFSET..PAYLOAD_OFFSET + crate::disk::ata_smart::STRUCTURE_LEN)?;
+
+        // Parsed by `disk::ata_smart`, which walks the same table this used to
+        // walk by hand --- but from ACS-4 offsets, and refusing a structure whose
+        // checksum does not validate. Two parsers for one 512-byte layout is how
+        // one of them stays wrong; the hand-rolled one is gone.
+        let smart = crate::disk::ata_smart::AtaSmartData::parse(payload)?;
+        let celsius = smart.temperature_celsius()?;
+
+        let drive_name =
+            get_drive_model(drive_path).unwrap_or_else(|| format!("Drive {}", drive_num));
+
+        Some(HwSensor {
+            name: drive_name,
+            value: celsius as f32,
+            min: None,
+            max: None,
+            sensor_type: HwSensorType::Temperature,
+            hardware_type: HwType::Storage,
+        })
     }
 }
 
