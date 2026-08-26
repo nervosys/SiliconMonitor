@@ -128,12 +128,24 @@ fn main() {
     probe!(
         "kernel_params",
         simonlib::kernel_params::KernelParamsMonitor,
-        |_: &simonlib::kernel_params::KernelParamsMonitor| 1
+        // Was a hardcoded `1`, which counted nothing and reported "answers here"
+        // for a reader that returns nothing on this machine. The table exists to
+        // replace guesses about which readers answer; a constant in it is the
+        // one thing it must not contain.
+        |m: &simonlib::kernel_params::KernelParamsMonitor| m.report().params.len()
     );
     probe!(
         "memory_bandwidth",
         simonlib::memory_bandwidth::MemoryBandwidthMonitor,
-        |_: &simonlib::memory_bandwidth::MemoryBandwidthMonitor| 1
+        // 1 only when the memory generation was identified. Everything this
+        // reader produces rests on that, and without it the estimator falls back
+        // to 3200 MT/s and a 0.75 efficiency factor -- so a constant here would
+        // report "answers" for a machine where nothing was read.
+        |m: &simonlib::memory_bandwidth::MemoryBandwidthMonitor| {
+            usize::from(
+                m.estimate().generation != simonlib::memory_bandwidth::MemoryGeneration::Unknown,
+            )
+        }
     );
     probe!(
         "memory_topology",
@@ -148,7 +160,11 @@ fn main() {
     probe!(
         "crypto_accel",
         simonlib::crypto_accel::CryptoAccelMonitor,
-        |_: &simonlib::crypto_accel::CryptoAccelMonitor| 1
+        // The features and RNG sources are the facts this reader holds; the
+        // score beside them is a table lookup and is not published anywhere.
+        |m: &simonlib::crypto_accel::CryptoAccelMonitor| {
+            m.report().features.len() + m.report().rng_sources.len()
+        }
     );
     probe!(
         "interconnect",

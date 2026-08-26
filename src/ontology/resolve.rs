@@ -133,6 +133,7 @@ pub fn snapshot() -> Vec<Reading> {
     resolve_cameras(&mut out);
     resolve_printers(&mut out);
     resolve_services(&mut out);
+    resolve_kernel_params(&mut out);
     resolve_bluetooth(&mut out);
     resolve_storage_controllers(&mut out);
     resolve_power_profiles(&mut out);
@@ -2692,6 +2693,51 @@ fn resolve_cameras(out: &mut Vec<Reading>) {
 }
 
 /// Print queues the spooler knows about.
+/// Kernel parameters: what the platform reported, and none of what this crate
+/// thinks about it.
+///
+/// The reader also computes `is_recommended`, `recommended`, `security_score`,
+/// `network_score` and a list of free-text recommendations. Those are opinions
+/// about what a value ought to be, and `simon tune`'s standing rule is that a
+/// proposed value comes from what the system declared and never from this crate.
+/// A score published beside a measured value borrows its authority, so the split
+/// is here rather than a subset of the fields being passed through.
+fn resolve_kernel_params(out: &mut Vec<Reading>) {
+    let monitor = match crate::kernel_params::KernelParamsMonitor::new() {
+        Ok(m) => m,
+        Err(e) => {
+            out.push(Reading::unavailable(
+                "system.kernel_param.<none>",
+                None,
+                format!("kernel parameters could not be read here: {e}"),
+            ));
+            return;
+        }
+    };
+
+    let params = &monitor.report().params;
+    if params.is_empty() {
+        out.push(Reading::unavailable(
+            "system.kernel_param.<none>",
+            None,
+            "no kernel parameter was readable here; on Windows the reader knows \
+             one setting and reports nothing when the query returns empty",
+        ));
+        return;
+    }
+
+    for (i, p) in params.iter().enumerate() {
+        let base = format!("system.kernel_param.{i}");
+        push_id(out, format!("{base}.name"), &p.name);
+        push_id(out, format!("{base}.value"), &p.value);
+        push_id(
+            out,
+            format!("{base}.category"),
+            &format!("{:?}", p.category),
+        );
+    }
+}
+
 /// Services, as counts plus the names of the broken ones.
 ///
 /// Deliberately not one entity per service. This machine runs 311, and

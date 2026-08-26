@@ -1351,6 +1351,61 @@ impl Ontology {
              field in this cluster, and the reason it is a measurement rather \
              than an identity.",
         ));
+        // Kernel parameters are split, not subsetted. `name`, `value` and
+        // `category` are what the platform reported and are published here.
+        // `is_recommended`, `recommended`, `security_score`, `network_score` and
+        // `recommendations` are this crate's judgement about what the values
+        // ought to be, and they are deliberately absent: `simon tune`'s standing
+        // rule is that a proposed value comes from what the system declared,
+        // never from this crate. An agent reading `security_score` off a
+        // hardware report would be taking an opinion for a measurement, and the
+        // ontology is the wrong surface for it.
+        add(Entity::new(
+            "system.kernel_param.<none>",
+            D::System,
+            K::Diagnostic,
+            None,
+            P::Unavailable,
+            true,
+            "Present when no kernel parameter could be read, carrying why. \
+             Windows reads exactly one — the TCP auto-tuning level — so its \
+             absence here is common and says nothing about Linux.",
+        ));
+        add(Entity::new(
+            "system.kernel_param.{n}.name",
+            D::System,
+            K::Identity,
+            Some(U::Identifier),
+            P::Measured,
+            false,
+            "Parameter name in the platform's own namespace: a sysctl key on \
+             Linux and macOS, a synthesised dotted name on Windows where the \
+             setting comes from a cmdlet rather than a key.",
+        ));
+        add(Entity::new(
+            "system.kernel_param.{n}.value",
+            D::System,
+            K::Measurement,
+            Some(U::Identifier),
+            P::Measured,
+            false,
+            "The value as the platform reported it, unparsed. A measurement \
+             rather than an identity because it changes while the machine runs, \
+             and text rather than a number because sysctl values are not all \
+             numeric — a list of ports and a boolean live in the same namespace.",
+        ));
+        add(Entity::new(
+            "system.kernel_param.{n}.category",
+            D::System,
+            K::Identity,
+            Some(U::Identifier),
+            P::Measured,
+            true,
+            "Which subsystem the parameter governs — network, memory, security. \
+             The reader's classification of a real key, not a judgement about \
+             its value.",
+        ));
+
         // Services are counted, not enumerated. This machine runs 311 of them,
         // and one entity per service would more than double every snapshot to
         // carry a list nothing reads in full. What a consumer actually asks is

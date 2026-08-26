@@ -458,14 +458,21 @@ impl KernelParamsMonitor {
 
         if let Ok(out) = output {
             let val = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            params.push(KernelParam {
-                name: "net.tcp.autotuninglevel".into(),
-                value: val.clone(),
-                category: ParamCategory::Network,
-                is_recommended: val.to_lowercase() == "normal",
-                recommended: Some("Normal".into()),
-                description: "TCP auto-tuning level".into(),
-            });
+            // A missing powershell, a failed cmdlet and a machine that genuinely
+            // reports nothing all arrive here as an empty string. Pushing the
+            // parameter anyway published a named setting whose value was "",
+            // which reads as a setting that exists and is blank rather than one
+            // that was never read.
+            if !val.is_empty() {
+                params.push(KernelParam {
+                    name: "net.tcp.autotuninglevel".into(),
+                    value: val.clone(),
+                    category: ParamCategory::Network,
+                    is_recommended: val.to_lowercase() == "normal",
+                    recommended: Some("Normal".into()),
+                    description: "TCP auto-tuning level".into(),
+                });
+            }
         }
 
         params
