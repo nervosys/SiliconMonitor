@@ -730,12 +730,34 @@ it uncovers are, and there are always more than expected. Item 1 turned up five.
 
 **It has recurred, and this is the 7.0.0 list.**
 
-4. **`cpufreq::is_turbo` returns `bool` where it means "cannot tell".** With no
+4. **`BatteryInfo::charge_percent` reports 0% when the charge was not read.**
+   *This one is live and is the first to fix.* `power_supply.rs` models it
+   correctly as `Option<u8>` — its own doc comment demonstrates
+   `if let Some(capacity) = supply.capacity_percent` — and `battery/mod.rs:102`
+   discards that with `unwrap_or(0)` into an `f32` field that cannot say "not
+   read". The ontology then publishes it: `resolve.rs` pushes `charge_percent`
+   as `Reading::measured` with no guard, so `power.battery.percentage` resolves
+   **0% as a measurement** on a laptop whose capacity is unreadable.
+
+   0% is not a neutral wrong answer. It means "about to shut down", and an agent
+   acting on it would defer work or warn a user. Wants `Option<f32>` on
+   `BatteryInfo` and a `push_opt` in the resolver; both are breaking, which is
+   the only reason it is here rather than fixed. **No non-breaking mitigation
+   exists** — the `Option` is destroyed at construction, so nothing downstream
+   can recover it.
+
+5. **`cpufreq::is_turbo` returns `bool` where it means "cannot tell".** With no
    base frequency it guesses turbo from `current > 95% of max`; with neither base
    nor max it returns `false`, so "unknown" and "turbo is off" are the same
    answer. Wants `Option<bool>`, which is breaking. It has no callers today,
    which is the only reason it was left — a `false` nobody reads misleads nobody,
    and 6.0.0 had been tagged an hour earlier. Fix it before something calls it.
+
+**Both were found by the fallback grep, and it is nowhere near exhausted:** 780
+`unwrap_or(0|false|…)` / `unwrap_or_default()` sites outside tests and the GUI.
+Most are legitimate. Triage by consequence rather than by count — a fallback in a
+reader path that reaches the ontology or the agent tools is worth reading; one in
+a filter predicate is not.
 
 ## The plan for what is left
 
