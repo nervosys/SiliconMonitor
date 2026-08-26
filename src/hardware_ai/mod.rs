@@ -329,6 +329,30 @@ struct HardwareFeatures {
 // Inference engine
 // ────────────────────────────────────────────────────────────────────
 
+/// Read a CIM enum property that may arrive as a number or as its friendly name.
+///
+/// `ConvertTo-Json` serialises `MSFT_PhysicalDisk.MediaType` and `.BusType` using
+/// PowerShell's display formatting, so they come back as `"SSD"` and `"NVMe"`
+/// rather than as `4` and `17`. Code that reached for `as_u64()` alone got
+/// `None` for every disk on every Windows machine and never noticed, because the
+/// fallback beneath it was a plausible-looking `0`.
+///
+/// Returns `None` when the property is absent or names nothing known --- which is
+/// a real answer for a USB mass-storage gadget reporting `"Unspecified"`, and is
+/// not the same as "this is a hard disk".
+#[cfg(target_os = "windows")]
+fn wmi_enum(value: Option<&serde_json::Value>, names: &[(&str, u64)]) -> Option<u64> {
+    let value = value?;
+    if let Some(n) = value.as_u64() {
+        return Some(n);
+    }
+    let text = value.as_str()?.trim().to_ascii_lowercase();
+    names
+        .iter()
+        .find(|(name, _)| *name == text)
+        .map(|(_, code)| *code)
+}
+
 /// The hardware inference engine.
 pub struct HardwareInferenceEngine {
     features: HardwareFeatures,
@@ -452,7 +476,17 @@ impl HardwareInferenceEngine {
             {
                 let text = String::from_utf8(output.stdout).unwrap_or_default();
                 if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
-                    self.features.cpu_model = json.get("Name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    // WMI pads `Name` to a fixed width: this machine reports
+                    // "AMD Ryzen 9 9900X 12-Core Processor            ". The
+                    // padding reached the age-estimate `reasoning` string and the
+                    // hardware fingerprint, so two machines differing only in how
+                    // WMI padded them would fingerprint apart.
+                    self.features.cpu_model = json
+                        .get("Name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .trim()
+                        .to_string();
                     self.features.cpu_vendor = json.get("Manufacturer").and_then(|v| v.as_str()).unwrap_or("").to_string();
                     self.features.cpu_cores_physical = json.get("NumberOfCores").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
                     self.features.cpu_cores_logical = json.get("NumberOfLogicalProcessors").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
@@ -711,21 +745,42 @@ impl HardwareInferenceEngine {
                 };
 
                 for disk in disks {
-                    let media_type = disk.get("MediaType").and_then(|v| v.as_u64()).unwrap_or(0);
+                    // `Get-PhysicalDisk | ConvertTo-Json` serialises MediaType and
+                    // BusType as their *friendly strings* -- "SSD", "NVMe",
+                    // "Unspecified" -- not as the integers the MSFT_PhysicalDisk
+                    // class defines. This read them with `as_u64()`, got `None`
+                    // for every disk, and `unwrap_or(0)` turned a total parse
+                    // failure into "not an SSD".
+                    //
+                    // So SSD detection has never once worked on Windows. The
+                    // machine this was found on has three NVMe drives and no
+                    // rotating disk, and the report led with "No SSD detected --
+                    // HDD will severely bottleneck modern workloads" at 0.85
+                    // confidence, plus a priority-10 recommendation to replace a
+                    // drive that does not exist. A fallback that stands in for a
+                    // reading nobody took is how a module fails completely and
+                    // still produces confident output.
+                    //
+                    // Both forms are accepted: the strings PowerShell emits and
+                    // the integers the CIM class documents, in case a caller
+                    // reaches this through a path that preserves them.
+                    let media_type = wmi_enum(disk.get("MediaType"), &[("ssd", 4), ("hdd", 3)]);
+                    let bus_type = wmi_enum(disk.get("BusType"), &[("nvme", 17), ("sata", 11)]);
                     let size = disk.get("Size").and_then(|v| v.as_u64()).unwrap_or(0);
-                    let bus_type = disk.get("BusType").and_then(|v| v.as_u64()).unwrap_or(0);
 
                     self.features.total_storage_gb += size as f32 / 1e9;
 
                     // MediaType: 3 = HDD, 4 = SSD
-                    if media_type == 4 {
+                    if media_type == Some(4) {
                         self.features.has_ssd = true;
                     }
                     // BusType: 17 = NVMe
-                    if bus_type == 17 {
+                    if bus_type == Some(17) {
                         self.features.has_nvme = true;
                         self.features.has_ssd = true;
                         self.features.boot_drive_type = "NVMe".into();
+                    } else if media_type == Some(4) && self.features.boot_drive_type != "NVMe" {
+                        self.features.boot_drive_type = "SSD".into();
                     }
                 }
             }
@@ -807,12 +862,57 @@ impl HardwareInferenceEngine {
                 self.features.is_virtual = model.contains("virtual")
                     || model.contains("vmware")
                     || model.contains("hyper-v");
+            }
+
+            // Chassis type, read rather than guessed.
+            //
+            // This used to be inferred: virtual, else battery present means
+            // "Laptop", else "Desktop". A UPS presents as a `Win32_Battery`, so
+            // the desktop workstation this was found on classified as a
+            // GamingLaptop, and the misclassification cascaded --- thermal
+            // headroom "Insufficient", a cooling score of 15, and the advice
+            // "High GPU TDP in a laptop --- may experience thermal throttling".
+            //
+            // `Win32_SystemEnclosure.ChassisTypes` is the same SMBIOS enumeration
+            // the Linux arm already reads out of `/sys/class/dmi/id/chassis_type`,
+            // it is readable without elevation, and this machine reports 3 for
+            // Desktop. One platform reading it and the other guessing at it is
+            // how the two arms disagreed about the same hardware.
+            if let Ok(output) = std::process::Command::new("powershell")
+                .args([
+                    "-NoProfile",
+                    "-Command",
+                    "(Get-CimInstance Win32_SystemEnclosure).ChassisTypes[0]",
+                ])
+                .output()
+            {
+                let code = String::from_utf8(output.stdout)
+                    .unwrap_or_default()
+                    .trim()
+                    .to_string();
+                let read = match code.as_str() {
+                    "3" | "4" | "5" | "6" | "7" | "15" => Some("Desktop"),
+                    "8" | "9" | "10" | "14" | "31" | "32" => Some("Laptop"),
+                    "11" | "12" => Some("Handheld"),
+                    "13" => Some("All-in-One"),
+                    "17" | "23" | "28" => Some("Server"),
+                    "35" | "36" => Some("Mini PC"),
+                    _ => None,
+                };
+
                 self.features.chassis_type = if self.features.is_virtual {
                     "Virtual".into()
-                } else if self.features.has_battery {
-                    "Laptop".into()
+                } else if let Some(kind) = read {
+                    kind.into()
                 } else {
-                    "Desktop".into()
+                    // The enclosure did not name a chassis this understands. The
+                    // battery guess is kept only here, where there is nothing
+                    // better, rather than in front of a reading that works.
+                    if self.features.has_battery {
+                        "Laptop".into()
+                    } else {
+                        "Desktop".into()
+                    }
                 };
             }
 
@@ -937,14 +1037,33 @@ impl HardwareInferenceEngine {
             scores.push((SystemClass::Server, server_score));
         }
 
-        // Laptop indicators
+        // Laptop indicators.
+        //
+        // A battery used to score 0.4 here while a *read* chassis type scored
+        // 0.3, so the guess outranked the reading: any desktop with a UPS --- which
+        // presents as a `Win32_Battery` --- cleared the 0.3 threshold on battery
+        // alone and classified as a laptop. The machine this was found on is an
+        // enclosure-type-3 Desktop and was reported as a GamingLaptop.
+        //
+        // The chassis is now what decides, and the battery only speaks where the
+        // enclosure did not. Both are still combined, because a read chassis can
+        // be wrong on a whitebox whose vendor left the field at its default.
+        let chassis_is_mobile =
+            f.chassis_type.contains("Laptop") || f.chassis_type.contains("Handheld");
+        let chassis_is_stationary = f.chassis_type.contains("Desktop")
+            || f.chassis_type.contains("Server")
+            || f.chassis_type.contains("Mini PC")
+            || f.chassis_type.contains("All-in-One");
+
         let laptop_score = {
             let mut s = 0.0f32;
-            if f.has_battery {
-                s += 0.4;
+            if chassis_is_mobile {
+                s += 0.6;
             }
-            if f.chassis_type.contains("Laptop") {
-                s += 0.3;
+            // Only where the enclosure did not answer. A UPS on a desktop is a
+            // battery, and it is not evidence of a laptop.
+            if f.has_battery && !chassis_is_stationary {
+                s += 0.25;
             }
             if f.cpu_cores_physical <= 8 {
                 s += 0.05;
@@ -965,8 +1084,12 @@ impl HardwareInferenceEngine {
             }
         }
 
-        // Desktop indicators
-        if !f.has_battery && !f.is_virtual && !f.chassis_type.contains("Server") {
+        // Desktop indicators.
+        //
+        // This was gated on `!f.has_battery`, so a desktop with a UPS was never
+        // scored as a desktop at all --- not merely outvoted, but absent from the
+        // ballot. The gate is now the chassis.
+        if !f.is_virtual && !chassis_is_mobile && !f.chassis_type.contains("Server") {
             let gpu_lower = f.gpu_model.to_lowercase();
             let is_gaming_gpu = gpu_lower.contains("rtx")
                 || gpu_lower.contains("gtx")
@@ -1651,39 +1774,54 @@ impl HardwareInferenceEngine {
     }
 
     fn infer_cpu_year(model: &str) -> Option<u16> {
+        // Vendor first, because the Intel rules below match bare model numbers
+        // and those numbers are not unique to Intel.
+        //
+        // "AMD Ryzen 9 9900X" contains "9900", so it matched the Intel 9th-gen
+        // Core rule and was dated to 2018 --- a 2024 Zen 5 part reported as six
+        // years old, at 0.85 confidence, with the correct `ryzen 9 9` rule
+        // sitting unreached thirty lines below. The existing test covered
+        // "ryzen 7 7800x3d", which happens not to collide with anything.
+        let is_amd = model.contains("amd")
+            || model.contains("ryzen")
+            || model.contains("epyc")
+            || model.contains("threadripper");
+
         // Intel Core generations
-        if model.contains("14th gen")
-            || model.contains("core ultra")
-            || model.contains("14900")
-            || model.contains("14700")
-        {
-            return Some(2024);
-        }
-        if model.contains("13th gen")
-            || model.contains("13900")
-            || model.contains("13700")
-            || model.contains("13600")
-        {
-            return Some(2022);
-        }
-        if model.contains("12th gen")
-            || model.contains("12900")
-            || model.contains("12700")
-            || model.contains("12600")
-        {
-            return Some(2021);
-        }
-        if model.contains("11th gen") || model.contains("11900") || model.contains("11700") {
-            return Some(2021);
-        }
-        if model.contains("10th gen") || model.contains("10900") || model.contains("10700") {
-            return Some(2020);
-        }
-        if model.contains("9th gen") || model.contains("9900") || model.contains("9700") {
-            return Some(2018);
-        }
-        if model.contains("8th gen") || model.contains("8700") {
-            return Some(2017);
+        if !is_amd {
+            if model.contains("14th gen")
+                || model.contains("core ultra")
+                || model.contains("14900")
+                || model.contains("14700")
+            {
+                return Some(2024);
+            }
+            if model.contains("13th gen")
+                || model.contains("13900")
+                || model.contains("13700")
+                || model.contains("13600")
+            {
+                return Some(2022);
+            }
+            if model.contains("12th gen")
+                || model.contains("12900")
+                || model.contains("12700")
+                || model.contains("12600")
+            {
+                return Some(2021);
+            }
+            if model.contains("11th gen") || model.contains("11900") || model.contains("11700") {
+                return Some(2021);
+            }
+            if model.contains("10th gen") || model.contains("10900") || model.contains("10700") {
+                return Some(2020);
+            }
+            if model.contains("9th gen") || model.contains("9900") || model.contains("9700") {
+                return Some(2018);
+            }
+            if model.contains("8th gen") || model.contains("8700") {
+                return Some(2017);
+            }
         }
 
         // AMD Ryzen (generation from model number pattern: 3xxx=Zen2, 5xxx=Zen3, 7xxx=Zen4, 9xxx=Zen5)
@@ -1832,7 +1970,14 @@ impl HardwareInferenceEngine {
         let gpu_tdp = f.gpu_tdp_watts;
         let total_tdp = cpu_tdp + gpu_tdp + 30.0; // +30W for RAM, storage, board
 
-        let headroom = if f.has_battery {
+        // `has_battery` used to stand in for "laptop" here. A UPS made this
+        // desktop workstation take the laptop cooling curve, which reported
+        // headroom "Insufficient" and a cooling score of 15 for a tower with
+        // room for a 500W envelope. The chassis is read now, so use it.
+        let is_mobile_chassis =
+            f.chassis_type.contains("Laptop") || f.chassis_type.contains("Handheld");
+
+        let headroom = if is_mobile_chassis {
             // Laptop — limited cooling
             if total_tdp > 150.0 {
                 ThermalHeadroom::Insufficient
@@ -1873,7 +2018,7 @@ impl HardwareInferenceEngine {
                 "Consider improving cooling (better fans, repasting, or external cooling)".into(),
             );
         }
-        if f.has_battery && gpu_tdp > 80.0 {
+        if is_mobile_chassis && gpu_tdp > 80.0 {
             recommendations.push(
                 "High GPU TDP in a laptop — may experience thermal throttling under sustained load"
                     .into(),
@@ -2119,8 +2264,11 @@ impl HardwareInferenceEngine {
             });
         }
 
-        // Server CPU in laptop
-        if f.is_server_cpu && f.has_battery {
+        // Server CPU in laptop. Gated on the chassis rather than on a battery:
+        // a server with a UPS is the ordinary case, not an anomaly.
+        if f.is_server_cpu
+            && (f.chassis_type.contains("Laptop") || f.chassis_type.contains("Handheld"))
+        {
             anomalies.push(HardwareAnomaly {
                 description: "Server-class CPU detected in a battery-powered system".into(),
                 severity: AnomalySeverity::Info,
@@ -2390,6 +2538,36 @@ mod tests {
         assert_eq!(
             HardwareInferenceEngine::infer_cpu_year("amd epyc 9554"),
             Some(2023)
+        );
+    }
+
+    /// Model numbers are not unique to a vendor, and the Intel rules match them
+    /// bare.
+    ///
+    /// "AMD Ryzen 9 9900X" contains "9900" and was dated 2018 by the Intel
+    /// 9th-gen Core rule --- a 2024 part reported as six years old. The cases
+    /// already here happened not to collide, which is why nothing caught it.
+    /// These are the collisions, in both directions.
+    #[test]
+    fn a_model_number_is_read_for_the_right_vendor() {
+        // The collision that was wrong.
+        assert_eq!(
+            HardwareInferenceEngine::infer_cpu_year("amd ryzen 9 9900x 12-core processor"),
+            Some(2024)
+        );
+        assert_eq!(
+            HardwareInferenceEngine::infer_cpu_year("amd ryzen 9 9950x3d"),
+            Some(2024)
+        );
+        // The Intel part whose number it was borrowing must still resolve.
+        assert_eq!(
+            HardwareInferenceEngine::infer_cpu_year("intel core i9-9900k"),
+            Some(2018)
+        );
+        // Ryzen 7000 against Intel 7th gen, the same shape one generation over.
+        assert_eq!(
+            HardwareInferenceEngine::infer_cpu_year("amd ryzen 7 7700x"),
+            Some(2022)
         );
     }
 
