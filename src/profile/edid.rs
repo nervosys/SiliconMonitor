@@ -212,14 +212,22 @@ pub fn decode_block(bytes: &[u8], source: String, locator: String) -> Option<Pro
         "DPMS Active-Off Supported",
         SettingValue::Bool(dpms_active_off),
     ));
-    if let Some((h, v, refresh_hz)) = preferred {
+    if let Some((h, v, refresh_hz, interlaced)) = preferred {
         group.push(
             Setting::info(
                 "edid.preferred_timing",
                 "Preferred Native Timing",
-                SettingValue::Text(format!("{}×{} @ {:.2} Hz", h, v, refresh_hz)),
+                SettingValue::Text(format!(
+                    "{}×{}{} @ {:.2} Hz",
+                    h,
+                    v,
+                    if interlaced { "i" } else { "" },
+                    refresh_hz
+                )),
             )
-            .with_description("First Detailed Timing Descriptor — manufacturer's recommended mode.")
+            .with_description(
+                "First Detailed Timing Descriptor — manufacturer's recommended mode.                  An `i` marks an interlaced mode, whose line count the descriptor                  stores per field and which is doubled here to whole frames.",
+            )
             .with_risk(SettingRisk::Safe),
         );
     }
@@ -284,7 +292,17 @@ fn read_monitor_name_descriptor(bytes: &[u8]) -> Option<String> {
 
 /// Decode the first Detailed Timing Descriptor at offset 54 (the
 /// manufacturer-preferred / native mode). Returns (h_active, v_active, refresh_hz).
-fn read_preferred_timing(bytes: &[u8]) -> Option<(u32, u32, f64)> {
+/// The first Detailed Timing Descriptor: active pixels, refresh, and whether the
+/// mode is interlaced.
+///
+/// The interlace flag is not decoration. For an interlaced timing the spec stores
+/// **vertical active as lines per field**, so a 1080i mode carries 540 in the
+/// DTD. Ignoring the flag reported an AV receiver on this machine as
+/// `1920×540 @ 60.05 Hz` — a resolution no equipment has — where the real mode
+/// is 1920×1080 interlaced at a 60 Hz field rate. The frame lines are what a
+/// reader means by a resolution, so they are what is returned, with the flag
+/// alongside so the caller can say which it is.
+fn read_preferred_timing(bytes: &[u8]) -> Option<(u32, u32, f64, bool)> {
     if bytes.len() < 72 {
         return None;
     }
@@ -314,7 +332,15 @@ fn read_preferred_timing(bytes: &[u8]) -> Option<(u32, u32, f64)> {
         return None;
     }
     let refresh = (pixel_clock_khz as f64 * 1000.0) / (h_total as f64 * v_total as f64);
-    Some((h_active, v_active, refresh))
+
+    // Byte 17 bit 7. The refresh computed above is the field rate for an
+    // interlaced mode, which is the number equipment is labelled with — 1080i60
+    // means sixty fields — so it is left as it is and only the line count is
+    // doubled back to whole frames.
+    let interlaced = (dtd[17] & 0x80) != 0;
+    let v_frame = if interlaced { v_active * 2 } else { v_active };
+
+    Some((h_active, v_frame, refresh, interlaced))
 }
 
 #[cfg(test)]
@@ -365,6 +391,62 @@ mod tests {
             b[77 + n.len()] = 0x0A;
         }
         b
+    }
+
+    /// An interlaced mode reports whole frames, not fields.
+    ///
+    /// The bytes below are the real first DTD from a Yamaha RX-A740 read out of
+    /// this machine's registry, not a synthesised one — a fixture built by the
+    /// same hand as the parser is what let four NVMe SMART fields ship sixteen
+    /// bytes out of place. Decoded against the EDID specification it is
+    /// 1920 active pixels, 540 lines *per field*, pixel clock 74.25 MHz, flags
+    /// byte 0x9E with bit 7 set for interlace: 1080i60.
+    ///
+    /// Before the flag was read this reported `1920×540`, a resolution no
+    /// equipment has.
+    #[test]
+    fn an_interlaced_mode_reports_frame_lines_not_field_lines() {
+        const RX_A740_DTD: [u8; 18] = [
+            0x01, 0x1D, 0x80, 0x18, 0x71, 0x1C, 0x16, 0x20, 0x58, 0x2C, 0x25, 0x00, 0xC4, 0x8E,
+            0x21, 0x00, 0x00, 0x9E,
+        ];
+
+        let mut b = synth_edid("RX-A740", 1920, 1080, 74_250);
+        b[54..72].copy_from_slice(&RX_A740_DTD);
+
+        let (h, v, refresh, interlaced) = read_preferred_timing(&b).expect("a timing");
+        assert_eq!(h, 1920);
+        assert_eq!(
+            v, 1080,
+            "540 field lines must be reported as 1080 frame lines"
+        );
+        assert!(interlaced, "flags byte 0x9E has bit 7 set");
+        // 74.25 MHz over 2200 × 562 is the field rate, which is what 1080i60 names.
+        assert!(
+            (refresh - 60.05).abs() < 0.05,
+            "field rate was {refresh}, expected ~60.05"
+        );
+
+        let g = decode_block(&b, "test".into(), "hdmi".into()).expect("decodes");
+        let shown = g
+            .settings
+            .iter()
+            .find(|s| s.id == "edid.preferred_timing")
+            .map(|s| s.value.to_string())
+            .expect("preferred timing is published");
+        assert!(
+            shown.contains("1920×1080i"),
+            "an interlaced mode must be marked as one, got {shown:?}"
+        );
+    }
+
+    /// A progressive mode is left alone by the same code path.
+    #[test]
+    fn a_progressive_mode_is_not_doubled() {
+        let b = synth_edid("Test Display", 2560, 1440, 241_500);
+        let (h, v, _, interlaced) = read_preferred_timing(&b).expect("a timing");
+        assert_eq!((h, v), (2560, 1440));
+        assert!(!interlaced);
     }
 
     #[test]
