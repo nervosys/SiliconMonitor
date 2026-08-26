@@ -23,8 +23,9 @@ Merged to `master` as a fast-forward and tagged **`v6.0.0`** at `1947426`, with
 | `014e4dd` | Kernel parameters, split from this crate's opinions about them |
 | `24a7314` | The macOS CPU path in the CLI backend invented almost everything |
 | `7b606fe` | A GPU-holding Python process was reported as PyTorch |
+| `1cf1980` | The agent-facing memory tool invented figures on macOS |
 
-**Seventeen defects came out of verifying a batch that arrived type-checked,
+**Eighteen defects came out of verifying a batch that arrived type-checked,
 linted and looking finished.** Two were caught by tests that already existed.
 The rest came from running the gate, reading snapshot output, CI, one new test,
 and a grep over comments admitting the code could not determine something. That
@@ -137,7 +138,11 @@ Fixed in `24a7314`.
 
 - Adding a reader is not the same as adopting it. Grep for the other consumers
   of whatever the new reader replaces, because the old fabrication keeps running
-  where it was not swapped in, and no test compares the two paths.
+  where it was not swapped in, and no test compares the two paths. **There were
+  three consumers of the macOS memory path, not two** — the ontology adopted the
+  real reader in 5.2.0, `MonitoringBackend` kept fabricating (`24a7314`), and
+  `ai_api::tools` kept a third hand-rolled copy (`1cf1980`) with a hardcoded page
+  size. Count the consumers before assuming a migration finished.
 - **A fabricated number is more dangerous than an absent one.** The nine silent
   readers reported nothing; this reported a believable 43% on every core, which
   a user cannot tell from a measurement.
@@ -151,6 +156,19 @@ Fixed in `24a7314`.
   **A comment admitting the code cannot determine something, sitting beside a
   returned value, is a reliable marker for a fabricated reading.** Run it before
   trusting any reader.
+
+  **A second grep finds a different and larger population** — the defects nobody
+  bothered to comment on:
+
+  ```bash
+  grep -rn --include=*.rs -E "unwrap_or\((0|0\.0|false|true|1)\)" src/
+  ```
+
+  This one needs triage rather than blanket treatment: `unwrap_or(true)` as "no
+  filter given, include everything" is correct and common. **The signal is a
+  fallback in a *reader* path**, where the value flows outward as a reading. It
+  found the worst defect of the sweep — a hardcoded page size on the agent-facing
+  memory tool that would report memory four times too large on an Intel Mac.
 
 ### What that sweep found, and the one class it turned up
 
