@@ -270,6 +270,23 @@ pub fn coverage() -> Coverage {
     coverage_of(&snapshot())
 }
 
+/// Why no current per-core clock is reported.
+///
+/// Named per platform because the causes differ, and a caller deciding whether to
+/// look elsewhere needs to know which one it hit. On Windows this is not a
+/// missing reader: `CallNtPowerInformation` answers, and its answer is the
+/// nominal clock rather than the current one — see `get_cpu_frequency`.
+#[cfg(target_os = "windows")]
+const FREQUENCY_ABSENT: &str = concat!(
+    "Windows reports the nominal clock through CallNtPowerInformation, not the ",
+    "current one — it returned the maximum unchanged for every core, so there is ",
+    "no per-core reading here to report. The real figure needs the ",
+    "'% Processor Performance' counter, which simon does not read yet",
+);
+
+#[cfg(not(target_os = "windows"))]
+const FREQUENCY_ABSENT: &str = "no per-core clock reported";
+
 /// Coverage of an existing snapshot.
 ///
 /// Split out because a caller wanting both the readings and their tally must not
@@ -413,7 +430,7 @@ fn resolve_cpu(out: &mut Vec<Reading>) {
             _ => out.push(Reading::unavailable(
                 format!("{base}.frequency"),
                 Some(Unit::Megahertz),
-                "no per-core clock reported",
+                FREQUENCY_ABSENT,
             )),
         }
         // Deliberately not derived from the maximum: a minimum is a distinct

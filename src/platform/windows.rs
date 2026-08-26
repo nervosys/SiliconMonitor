@@ -358,6 +358,29 @@ fn query_processor_power(cpu_count: usize) -> Option<Vec<ProcessorPowerInformati
 /// Reads `CallNtPowerInformation` rather than shelling out to `wmic`, which Microsoft
 /// removed in Windows 11 24H2 — on any current build the subprocess simply failed to
 /// spawn, so this returned `None` and the frontends printed "0 MHz" as if measured.
+///
+/// **`CurrentMhz` is not a current frequency on Windows 10 or later.** It is the
+/// nominal clock, and it is returned unchanged whatever the cores are doing. On
+/// the 9900X this was found on it read 4400 for all 24 logical processors, idle
+/// and under load, across repeated samples — while
+/// `\Processor Information(*)\% Processor Performance` showed those same cores
+/// at 105–119% of nominal, boosting past 5GHz and differing from each other.
+/// WMI agrees with the wrong answer: `CurrentClockSpeed` and `MaxClockSpeed` are
+/// both 4400. This is why Task Manager reads the performance counter instead.
+///
+/// So a `CurrentMhz` equal to `MaxMhz` is reported as no current reading rather
+/// than as a measurement. `cpu.core.{n}.frequency` is declared `Measured` and
+/// described as "current core clock"; publishing the nominal figure there put a
+/// specification behind a measurement's provenance on every core of every
+/// Windows machine, and it passed every conformance test because nothing checks
+/// whether a value that claims to be current ever changes.
+///
+/// This does suppress the genuine case of a core sitting exactly at nominal. That
+/// trade is deliberate: the two are indistinguishable through this API, and an
+/// absence that is occasionally too cautious is worth more than a number that is
+/// wrong on every boosting core. Reporting the real per-core clock needs
+/// `PdhGetFormattedCounterArrayW` over `% Processor Performance`, which is two
+/// samples with an interval between them — see HANDOFF.
 fn get_cpu_frequency(
     power: Option<&Vec<ProcessorPowerInformation>>,
     index: usize,
@@ -367,7 +390,13 @@ fn get_cpu_frequency(
         return None;
     }
     Some(CpuFrequency {
-        current: entry.current_mhz,
+        // Zero is what the resolver already reads as "not measured" here, the
+        // same way `min` uses it below.
+        current: if entry.current_mhz == entry.max_mhz {
+            0
+        } else {
+            entry.current_mhz
+        },
         // No Win32 API reports a minimum operating frequency; leaving it at the
         // measured current would claim a floor that was never read.
         min: 0,
@@ -1214,6 +1243,41 @@ pub fn logical_drives() -> Result<Vec<LogicalDrive>> {
 
 #[cfg(test)]
 mod tests {
+
+    /// The nominal clock must not be reported as the current one.
+    ///
+    /// `CallNtPowerInformation` returns `CurrentMhz == MaxMhz` on Windows 10 and
+    /// later whatever the cores are doing, so publishing it put a specification
+    /// behind `cpu.core.{n}.frequency`, which is declared `Measured` and
+    /// described as the current clock. Every conformance test passed, because
+    /// none of them ask whether a value claiming to be current ever changes.
+    #[test]
+    fn a_nominal_clock_is_not_reported_as_the_current_one() {
+        let entry = |current_mhz, max_mhz| ProcessorPowerInformation {
+            number: 0,
+            max_mhz,
+            current_mhz,
+            mhz_limit: 0,
+            max_idle_state: 0,
+            current_idle_state: 0,
+        };
+
+        // The case this fixes: 4400/4400 on all 24 cores of a 9900X that was
+        // actually boosting past 5GHz.
+        let power = vec![entry(4400, 4400)];
+        let f = get_cpu_frequency(Some(&power), 0).expect("max is known, so a row is returned");
+        assert_eq!(f.current, 0, "nominal reported as current");
+        assert_eq!(f.max, 4400, "the maximum is still known");
+
+        // A genuine current reading below the maximum survives untouched.
+        let power = vec![entry(3200, 4400)];
+        let f = get_cpu_frequency(Some(&power), 0).expect("a real reading");
+        assert_eq!(f.current, 3200);
+
+        // Nothing known at all stays absent rather than becoming a zero.
+        let power = vec![entry(0, 0)];
+        assert!(get_cpu_frequency(Some(&power), 0).is_none());
+    }
     use super::*;
 
     /// Per-core figures must be genuinely per-core, not one number replicated.
