@@ -742,84 +742,25 @@ impl MonitoringBackend {
 
         #[cfg(target_os = "macos")]
         {
-            // macOS CPU stats via sysctl and host_processor_info
-            // Use Command to get CPU info from sysctl
-            use std::process::Command;
-            let mut stats = CpuStats::empty();
-
-            // Get CPU model name
-            let model = Command::new("sysctl")
-                .args(["-n", "machdep.cpu.brand_string"])
-                .output()
-                .ok()
-                .and_then(|o| String::from_utf8(o.stdout).ok())
-                .map(|s| s.trim().to_string())
-                .unwrap_or_else(|| "Apple CPU".to_string());
-
-            // Get CPU frequency
-            let freq_hz = Command::new("sysctl")
-                .args(["-n", "hw.cpufrequency"])
-                .output()
-                .ok()
-                .and_then(|o| String::from_utf8(o.stdout).ok())
-                .and_then(|s| s.trim().parse::<u64>().ok())
-                .unwrap_or(0);
-            let freq_mhz = (freq_hz / 1_000_000) as u32;
-
-            // Get core count
-            let ncpu = num_cpus::get();
-
-            // Get load averages for overall utilization
-            let load_avg = Command::new("sysctl")
-                .args(["-n", "vm.loadavg"])
-                .output()
-                .ok()
-                .and_then(|o| String::from_utf8(o.stdout).ok())
-                .and_then(|s| {
-                    // Format: "{ 1.23 4.56 7.89 }"
-                    let parts: Vec<&str> = s
-                        .trim()
-                        .trim_matches(|c| c == '{' || c == '}')
-                        .split_whitespace()
-                        .collect();
-                    parts.first().and_then(|v| v.parse::<f32>().ok())
-                })
-                .unwrap_or(0.0);
-
-            let utilization = (load_avg / ncpu as f32 * 100.0).clamp(0.0, 100.0);
-
-            // Build per-core entries (uniform distribution as approximation)
-            for i in 0..ncpu {
-                stats.cores.push(crate::core::cpu::CpuCore {
-                    id: i,
-                    online: true,
-                    governor: "performance".to_string(),
-                    frequency: if freq_mhz > 0 {
-                        Some(crate::core::cpu::CpuFrequency {
-                            current: freq_mhz,
-                            min: freq_mhz / 2,
-                            max: freq_mhz,
-                        })
-                    } else {
-                        None
-                    },
-                    user: Some(utilization * 0.6),
-                    nice: Some(0.0),
-                    system: Some(utilization * 0.4),
-                    idle: Some(100.0 - utilization),
-                    model: model.clone(),
-                });
+            // Was hand-rolled from `sysctl` and the load average, and every
+            // per-core field it produced was invented: the system-wide figure
+            // repeated across all cores, a fixed 60/40 user/system split, a
+            // `governor` of "performance" on a platform with no governors, a
+            // minimum frequency of max/2, and `"Apple CPU"` when the brand
+            // string was missing. A failed load-average parse fell to 0.0, which
+            // published 100% idle -- the same shape as the zero-constructor
+            // defects 6.0.0 removed, where no threshold could ever be crossed.
+            //
+            // `platform::macos::read_cpu_stats` has existed since 5.2.0 and reads
+            // real per-core ticks from `host_processor_info`. It was wired into
+            // the ontology resolver and not into this backend, so `simon` and the
+            // ontology reported different CPU figures on the same Mac. This is
+            // now the same call Windows and Linux make above.
+            if let Ok(stats) = crate::platform::macos::read_cpu_stats() {
+                self.cpu_stats = Some(stats.clone());
+                let utilization = 100.0 - stats.total.idle;
+                self.cpu_history.push(utilization);
             }
-
-            stats.total = crate::core::cpu::CpuTotal {
-                user: utilization * 0.6,
-                nice: 0.0,
-                system: utilization * 0.4,
-                idle: 100.0 - utilization,
-            };
-
-            self.cpu_stats = Some(stats);
-            self.cpu_history.push(utilization);
         }
 
         Ok(())
@@ -855,6 +796,20 @@ impl MonitoringBackend {
         #[cfg(target_os = "linux")]
         {
             if let Ok(stats) = crate::platform::linux::read_memory_stats() {
+                self.memory_stats = Some(stats.clone());
+                let usage = stats.ram_usage_percent();
+                self.memory_history.push(usage);
+            }
+        }
+
+        // There was no macOS arm here at all, so `memory_stats` stayed `None` on
+        // a Mac and every caller saw memory as simply absent. That is quieter
+        // than the CPU path's invented figures and wrong in the same way: the
+        // reader has existed since 5.2.0 and was wired only into the ontology, so
+        // `simon` reported no memory on a machine the ontology could read.
+        #[cfg(target_os = "macos")]
+        {
+            if let Ok(stats) = crate::platform::macos::read_memory_stats() {
                 self.memory_stats = Some(stats.clone());
                 let usage = stats.ram_usage_percent();
                 self.memory_history.push(usage);
