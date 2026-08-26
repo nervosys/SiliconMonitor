@@ -21,11 +21,14 @@ Merged to `master` as a fast-forward and tagged **`v6.0.0`** at `1947426`, with
 | `ebab956` | Nine readers said "none" where they meant "cannot look" |
 | `1947426` | MSRV raised to 1.89, true of every feature combination |
 | `014e4dd` | Kernel parameters, split from this crate's opinions about them |
+| `24a7314` | The macOS CPU path in the CLI backend invented almost everything |
+| `7b606fe` | A GPU-holding Python process was reported as PyTorch |
 
-**Fourteen defects came out of verifying a batch that arrived type-checked,
+**Seventeen defects came out of verifying a batch that arrived type-checked,
 linted and looking finished.** Two were caught by tests that already existed.
-The rest came from running the gate, reading snapshot output, CI, and one new
-test. That ratio is the argument for every rule in this file.
+The rest came from running the gate, reading snapshot output, CI, one new test,
+and a grep over comments admitting the code could not determine something. That
+ratio is the argument for every rule in this file.
 
 **Running the gate was worth it, which is the point of the rule.** The batch was
 type-checked and linted and looked finished; `cargo test --all-features` failed
@@ -139,10 +142,43 @@ Fixed in `24a7314`.
   readers reported nothing; this reported a believable 43% on every core, which
   a user cannot tell from a measurement.
 - It was found by grepping comments — `requires admin`, `assume`, `approximation`,
-  `hardcoded`, `placeholder` — next to returned values. That sweep is cheap and
-  it has not been run over the whole crate; `src/cpufreq.rs`, `src/ai_workload.rs`,
-  `src/dma_engine/mod.rs` and `src/audio/mod.rs` all still carry such comments and
-  have not been looked at.
+  `hardcoded`, `placeholder` — next to returned values:
+
+  ```bash
+  grep -rn --include=*.rs -iE "//.*(requires admin|assume|approximation|hardcoded|placeholder|can'?t (detect|read))" src/
+  ```
+
+  **A comment admitting the code cannot determine something, sitting beside a
+  returned value, is a reliable marker for a fabricated reading.** Run it before
+  trusting any reader.
+
+### What that sweep found, and the one class it turned up
+
+A second pass over the four modules the grep flagged found one live defect and
+two latent ones. The distinction matters and is easy to overstate:
+
+- **Live: `ai_workload` reported any GPU-holding Python process as PyTorch.** The
+  guess reached users through `signals.ai_frameworks`, which `tuning::classify`
+  publishes beside the evidence string *"an AI framework was identified in a
+  running process"* at 0.8–0.9 confidence. Fixed in `7b606fe`.
+
+  **This is a different failure mode from the rest.** Every other defect this
+  round invented a *number*; this invented an *identity*, and a second module
+  then attested to it. A wrong number invites a sanity check; a plausible
+  framework name does not — and `simon tune` is where acting on it has
+  consequences.
+
+- **Latent, fixed:** `dma_engine` claimed memcpy support whenever the `cap` file
+  was unreadable. Nothing calls it.
+- **Latent, deliberately not fixed:** `cpufreq::is_turbo` returns `bool` where it
+  means "cannot tell" — with no base frequency it guesses from ">95% of max", and
+  with neither base nor max it returns `false`, encoding unknown as "no turbo".
+  It has no callers, and the fix is `Option<bool>`, which is breaking. **This is
+  the pattern in *Queued for the next major version* recurring exactly as that
+  section predicted**, and it is the first entry for 7.0.0.
+
+`src/audio/mod.rs` was checked and is clean — the "placeholder" comment is in a
+test, not a reader.
 
 ### Two local failures that were the machine, not the code
 
@@ -673,6 +709,15 @@ type with no way to say "not read"** encodes absence as zero, and zero is
 indistinguishable from a measurement. When the next one appears, the lesson from
 items 1 and 2 is that the rename or the `Option` is not the work — the defects
 it uncovers are, and there are always more than expected. Item 1 turned up five.
+
+**It has recurred, and this is the 7.0.0 list.**
+
+4. **`cpufreq::is_turbo` returns `bool` where it means "cannot tell".** With no
+   base frequency it guesses turbo from `current > 95% of max`; with neither base
+   nor max it returns `false`, so "unknown" and "turbo is off" are the same
+   answer. Wants `Option<bool>`, which is breaking. It has no callers today,
+   which is the only reason it was left — a `false` nobody reads misleads nobody,
+   and 6.0.0 had been tagged an hour earlier. Fix it before something calls it.
 
 ## The plan for what is left
 
