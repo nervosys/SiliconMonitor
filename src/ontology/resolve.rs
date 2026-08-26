@@ -134,6 +134,7 @@ pub fn snapshot() -> Vec<Reading> {
     resolve_printers(&mut out);
     resolve_services(&mut out);
     resolve_kernel_params(&mut out);
+    resolve_secure_boot(&mut out);
     resolve_bluetooth(&mut out);
     resolve_storage_controllers(&mut out);
     resolve_power_profiles(&mut out);
@@ -2692,7 +2693,103 @@ fn resolve_cameras(out: &mut Vec<Reading>) {
     }
 }
 
-/// Print queues the spooler knows about.
+/// Whether Secure Boot is enforcing, from the firmware flag.
+///
+/// The entity has been declared since the boot cluster was written and nothing
+/// resolved it, so it fell to the unbound-id sweep and reported "no resolver
+/// bound on this build" — on a machine where the flag is perfectly readable.
+///
+/// Two readers hold this and only one is honest. `boot_config` keeps it in a
+/// `bool` and collapses a failed query with `unwrap_or(false)`, which reports
+/// Secure Boot as *disabled* when it could not be read. `firmware` models it as
+/// `SecureBootStatus`, which separates `Disabled` from `NotSupported` from
+/// `Unknown`. That distinction is the whole reading, so `boot_config` is not
+/// used here: off, unsupported and unread are three different answers and only
+/// one of them is `false`.
+fn resolve_secure_boot(out: &mut Vec<Reading>) {
+    // Windows first, and unelevated. `firmware` asks `Confirm-SecureBootUEFI`,
+    // which needs Administrator and so returns `Unknown` in normal use — this
+    // machine reported "the firmware flag was not readable here" while the flag
+    // sat in the registry the whole time. `SecureBoot\State\UEFISecureBootEnabled`
+    // is readable without elevation and `secure_boot_enabled` already returns an
+    // `Option`, so the absence survives.
+    //
+    // Same shape as the NVMe and ATA capabilities: both were scoped as needing
+    // Administrator on a second reading and turned out not to. Check for an
+    // unelevated source before accepting that a reading needs privilege.
+    #[cfg(target_os = "windows")]
+    {
+        match crate::platform::windows::secure_boot_enabled() {
+            Some(on) => {
+                out.push(Reading::measured(
+                    "system.boot.secure_boot",
+                    serde_json::json!(on),
+                    None,
+                ));
+            }
+            None => {
+                out.push(Reading::unavailable(
+                    "system.boot.secure_boot",
+                    None,
+                    "the SecureBoot state key is absent, which is what a BIOS/CSM \
+                     machine looks like — it is not the same as Secure Boot being \
+                     turned off",
+                ));
+            }
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        resolve_secure_boot_from_firmware(out);
+    }
+}
+
+/// The non-Windows arm, split out so the `cfg` above stays readable.
+#[cfg(not(target_os = "windows"))]
+fn resolve_secure_boot_from_firmware(out: &mut Vec<Reading>) {
+    use crate::firmware::SecureBootStatus;
+
+    let monitor = match crate::firmware::FirmwareInventory::new() {
+        Ok(m) => m,
+        Err(e) => {
+            out.push(Reading::unavailable(
+                "system.boot.secure_boot",
+                None,
+                format!("the firmware inventory could not be read: {e}"),
+            ));
+            return;
+        }
+    };
+
+    match monitor.secure_boot_status() {
+        SecureBootStatus::Enabled => out.push(Reading::measured(
+            "system.boot.secure_boot",
+            serde_json::json!(true),
+            None,
+        )),
+        SecureBootStatus::Disabled => out.push(Reading::measured(
+            "system.boot.secure_boot",
+            serde_json::json!(false),
+            None,
+        )),
+        // Not the same as `false`. A firmware without Secure Boot cannot have it
+        // turned off, and an agent auditing posture needs to tell "off" from
+        // "unavailable on this hardware" before recommending anything.
+        SecureBootStatus::NotSupported => out.push(Reading::unavailable(
+            "system.boot.secure_boot",
+            None,
+            "this firmware does not implement Secure Boot, which is not the same \
+             as having it disabled",
+        )),
+        SecureBootStatus::Unknown => out.push(Reading::unavailable(
+            "system.boot.secure_boot",
+            None,
+            "the firmware flag was not readable here",
+        )),
+    }
+}
+
 /// Kernel parameters: what the platform reported, and none of what this crate
 /// thinks about it.
 ///
@@ -2795,6 +2892,7 @@ fn resolve_services(out: &mut Vec<Reading>) {
     }
 }
 
+/// Print queues the spooler knows about.
 fn resolve_printers(out: &mut Vec<Reading>) {
     let monitor = match crate::printer::PrinterMonitor::new() {
         Ok(m) => m,
