@@ -144,8 +144,13 @@ pub fn collect_signals() -> Signals {
         if let Ok(workloads) = monitor.detect_workloads() {
             signals.ai_present = !workloads.is_empty();
             signals.ai_training = workloads.iter().any(|w| w.is_training());
+            // An unidentified framework is dropped rather than listed. Without
+            // this the set carries the literal "unknown" as if it were a
+            // framework name -- the same absence-word defect `push_str_as`
+            // guards against in the ontology, arriving through a different door.
             signals.ai_frameworks = workloads
                 .iter()
+                .filter(|w| w.framework != crate::ai_workload::AiFramework::Unknown)
                 .map(|w| format!("{:?}", w.framework).to_lowercase())
                 .collect::<std::collections::BTreeSet<_>>()
                 .into_iter()

@@ -542,11 +542,18 @@ impl AiWorkloadMonitor {
             pid,
             name: exe_name.to_string(),
             cmdline: exe_name.to_string(), // Full cmdline requires more complex WMI query
-            framework: if framework == AiFramework::Unknown && !gpu_indices.is_empty() {
-                AiFramework::PyTorch // Assume PyTorch for GPU Python processes
-            } else {
-                framework
-            },
+            // Previously promoted an unidentified framework to PyTorch whenever
+            // the process held a GPU. A Python process on a GPU is as likely to
+            // be JAX, TensorFlow, ONNX Runtime or vLLM -- or a CUDA program that
+            // is not machine learning at all -- and the guess reached the user
+            // through `tuning::serve`, which reports `ai_frameworks` beside the
+            // evidence string "an AI framework was identified in a running
+            // process". Identified is exactly what it was not.
+            //
+            // `ai_present` does not depend on this and is unaffected: holding a
+            // GPU is still evidence of an AI workload. Only the claim about
+            // *which* framework is withdrawn.
+            framework,
             workload_type,
             training_metrics: None,
             inference_metrics: None,

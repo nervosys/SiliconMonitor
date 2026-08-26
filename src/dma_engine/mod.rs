@@ -291,7 +291,11 @@ impl DmaEngineMonitor {
         };
 
         DmaCapabilities {
-            memcpy: caps_str.contains("copy") || caps_str.is_empty(), // assume memcpy if no caps info
+            // Was `|| caps_str.is_empty()`, which claimed memcpy support
+            // whenever the `cap` file was missing or unreadable -- asserting a
+            // hardware capability the reader never observed. An unreadable cap
+            // file is not evidence of a capability.
+            memcpy: caps_str.contains("copy"),
             xor: caps_str.contains("xor"),
             memset: caps_str.contains("fill") || caps_str.contains("memset"),
             sg: caps_str.contains("sg"),
