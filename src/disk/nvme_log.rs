@@ -37,6 +37,12 @@ pub struct HealthLog {
     pub host_read_commands: u128,
     /// Host write commands issued.
     pub host_write_commands: u128,
+    /// Controller busy time, in minutes.
+    ///
+    /// Not previously parsed, and its absence is what shifted every field below
+    /// it by sixteen bytes. It sits between the host command counters and the
+    /// power cycles in the spec's layout.
+    pub controller_busy_time: u128,
     /// Power cycles.
     pub power_cycles: u128,
     /// Power-on hours.
@@ -93,10 +99,25 @@ impl HealthLog {
             data_units_written: u128_at(d, 48),
             host_read_commands: u128_at(d, 64),
             host_write_commands: u128_at(d, 80),
-            power_cycles: u128_at(d, 128),
-            power_on_hours: u128_at(d, 144),
-            unsafe_shutdowns: u128_at(d, 160),
-            media_errors: u128_at(d, 176),
+            // Offsets from the NVMe Base Specification, SMART / Health
+            // Information log page (LID 02h). Controller Busy Time occupies
+            // 111:96, and omitting it shifted everything from here down by
+            // sixteen bytes: `power_cycles` was reading Power On Hours,
+            // `power_on_hours` was reading Unsafe Shutdowns, `unsafe_shutdowns`
+            // was reading Media and Data Integrity Errors, and `media_errors`
+            // was reading the error-log entry count.
+            //
+            // On the machine that found it, a drive reported 2189 "power cycles"
+            // and 43 "power-on hours" — a power cycle every seventy seconds,
+            // which is what made it visible. The true reading is 2189 hours and
+            // 43 unsafe shutdowns. `media_errors` is the field a person uses to
+            // decide whether a drive is failing, and it was reading a different
+            // counter entirely.
+            controller_busy_time: u128_at(d, 96),
+            power_cycles: u128_at(d, 112),
+            power_on_hours: u128_at(d, 128),
+            unsafe_shutdowns: u128_at(d, 144),
+            media_errors: u128_at(d, 160),
         })
     }
 
@@ -244,10 +265,21 @@ mod tests {
         d[48..64].copy_from_slice(&353_311_735u128.to_le_bytes());
         d[64..80].copy_from_slice(&1_234_567u128.to_le_bytes());
         d[80..96].copy_from_slice(&7_654_321u128.to_le_bytes());
-        d[128..144].copy_from_slice(&1892u128.to_le_bytes());
-        d[144..160].copy_from_slice(&27u128.to_le_bytes());
-        d[160..176].copy_from_slice(&5u128.to_le_bytes());
-        d[176..192].copy_from_slice(&0u128.to_le_bytes());
+        // Written at the offsets the NVMe specification gives, not at the ones
+        // the parser happened to use. The previous fixture used the parser's
+        // offsets, so the test agreed with the code and both were wrong by
+        // sixteen bytes for four fields.
+        //
+        // Every value below is distinct and non-zero so that a shift by one
+        // field cannot pass: with the old parser these assertions fail on
+        // `power_cycles` and everything after it. That is the property the test
+        // name claims, and it did not hold before.
+        d[96..112].copy_from_slice(&444u128.to_le_bytes()); // controller busy time
+        d[112..128].copy_from_slice(&1892u128.to_le_bytes()); // power cycles
+        d[128..144].copy_from_slice(&27u128.to_le_bytes()); // power on hours
+        d[144..160].copy_from_slice(&5u128.to_le_bytes()); // unsafe shutdowns
+        d[160..176].copy_from_slice(&9u128.to_le_bytes()); // media errors
+        d[176..192].copy_from_slice(&77u128.to_le_bytes()); // error log entries
         d
     }
 
@@ -263,10 +295,43 @@ mod tests {
         assert_eq!(log.data_units_written, 353_311_735);
         assert_eq!(log.host_read_commands, 1_234_567);
         assert_eq!(log.host_write_commands, 7_654_321);
+        assert_eq!(log.controller_busy_time, 444);
         assert_eq!(log.power_cycles, 1892);
         assert_eq!(log.power_on_hours, 27);
         assert_eq!(log.unsafe_shutdowns, 5);
-        assert_eq!(log.media_errors, 0);
+        assert_eq!(log.media_errors, 9);
+    }
+
+    /// A shift by one field must fail, which is what the fixture is for.
+    ///
+    /// The bug this guards was invisible because the fixture was built from the
+    /// parser's own offsets: the test asserted that the code agreed with itself.
+    /// Distinct values are what make the assertion mean something, so this
+    /// checks they are in fact distinct rather than trusting the author of the
+    /// next fixture to remember why.
+    #[test]
+    fn the_health_log_fixture_can_tell_the_fields_apart() {
+        let log = HealthLog::parse(&sample_health_log()).expect("parses");
+        let counters = [
+            log.data_units_read,
+            log.data_units_written,
+            log.host_read_commands,
+            log.host_write_commands,
+            log.controller_busy_time,
+            log.power_cycles,
+            log.power_on_hours,
+            log.unsafe_shutdowns,
+            log.media_errors,
+        ];
+        for (i, a) in counters.iter().enumerate() {
+            assert_ne!(
+                *a, 0,
+                "counter {i} is zero, so a shift onto it is invisible"
+            );
+            for (j, b) in counters.iter().enumerate().skip(i + 1) {
+                assert_ne!(a, b, "counters {i} and {j} share a value");
+            }
+        }
     }
 
     #[test]

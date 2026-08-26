@@ -471,6 +471,18 @@ feature stayed broken through eight published versions.
    power-on hours in particular: a minority of drives report that attribute in
    minutes, and nothing in the structure says which.
 
+   **This is no longer hypothetical: the NVMe parser had exactly this bug.**
+   `nvme_log.rs` omitted Controller Busy Time (111:96), so every field below it
+   read sixteen bytes early — `power_cycles` returned Power On Hours,
+   `power_on_hours` returned Unsafe Shutdowns, and `media_errors`, the field a
+   person uses to judge whether a drive is dying, returned the error-log entry
+   count. It shipped because `health_log_reads_every_field_at_its_specified_offset`
+   built its fixture from *the parser's own offsets*: the test asserted that the
+   code agreed with itself, under a name claiming it checked the specification.
+   **A parse test whose fixture comes from the parser is a tautology.** Write the
+   fixture from the spec document, give every field a distinct non-zero value,
+   and confirm the test fails against the old code before believing it.
+
    Note for anyone re-reading the earlier plan: `IOCTL_ATA_PASS_THROUGH` was the
    scoped approach and it is a dead end. Its `CTL_CODE` carries `FILE_READ_ACCESS
    | FILE_WRITE_ACCESS`, so the access check happens before the driver is reached
