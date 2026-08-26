@@ -3,11 +3,11 @@
 Current as of 6.0.0. This file is excluded from the published crate
 (`Cargo.toml`'s `exclude` list) and is for whoever picks the work up next.
 
-## Read this first: the work is on a branch, green, and unmerged
+## Read this first: 6.0.0 is shipped
 
-All of it is on **`ontology-sweep-clusters`**, off `58bffa4`, pushed, with
-**CI green on all three platforms**. `master` is untouched;
-`git merge --ff-only ontology-sweep-clusters` fast-forwards it.
+Merged to `master` as a fast-forward and tagged **`v6.0.0`** at `1947426`, with
+**CI green on all three platforms**. Not published to crates.io — declined for
+5.2.0 and 6.0.0, tag only. `master` and the tag point at the same commit.
 
 | Commit | What |
 |---|---|
@@ -19,6 +19,13 @@ All of it is on **`ontology-sweep-clusters`**, off `58bffa4`, pushed, with
 | `099c604` | The provenance guardrail: stronger than declared is fine, weaker is not |
 | `2687dbb` | `memory.bandwidth` published defaults; `services` became a summary |
 | `ebab956` | Nine readers said "none" where they meant "cannot look" |
+| `1947426` | MSRV raised to 1.89, true of every feature combination |
+| `014e4dd` | Kernel parameters, split from this crate's opinions about them |
+
+**Fourteen defects came out of verifying a batch that arrived type-checked,
+linted and looking finished.** Two were caught by tests that already existed.
+The rest came from running the gate, reading snapshot output, CI, and one new
+test. That ratio is the argument for every rule in this file.
 
 **Running the gate was worth it, which is the point of the rule.** The batch was
 type-checked and linted and looked finished; `cargo test --all-features` failed
@@ -73,7 +80,7 @@ the code was inventing numbers.
 Verified on stable 1.98.0: `cargo fmt --all -- --check`,
 `cargo clippy --all-features --all-targets -- -D warnings`, and
 `cargo test --all-features --lib --tests --no-fail-fast` — green on every
-target, 826 in the lib, `ontology_conformance` 21, `honesty` 6.
+target, 826 in the lib, `ontology_conformance` 21, `honesty` 7.
 
 Also run and green: `cargo test --all-features --doc` (73 passed),
 `cargo run --example probe_readers --all-features`, and
@@ -85,11 +92,12 @@ narrowed query.** `board.camera.{0,1}` are a Lenovo 510 IR and a Lenovo 510 RGB
 — one dual-sensor Windows Hello webcam, correctly two rows — and the Brother
 scanner is gone. Before the fix it was a scanner wearing a camera's name.
 
-**CI is green on all three platforms** — Format, Clippy, Check, Feature
-combinations, and Test on windows, macos and ubuntu (run `32885784468`).
+**CI is green on all three platforms**, on `master` at `1947426` — Format,
+Clippy, Check, Feature combinations, and Test on windows, macos and ubuntu.
 
-`cargo +1.88 check --all-targets` was also run, and passes. `slice::as_chunks`
-in `da769bf` does exist at the declared floor, built rather than inferred.
+The MSRV is built rather than inferred: `cargo +1.89 check --all-features
+--all-targets` passes, which also settles that `slice::as_chunks` in `da769bf`
+exists at the declared floor.
 
 ### The MSRV is 1.89, and one value now covers every feature combination
 
@@ -755,7 +763,7 @@ Windows desktop:
 
 | Answers here | Silent here |
 |---|---|
-| `input` 6, `services` 311, `storage_controller` 9, `power_profile` 3, `audio` 12, `bluetooth` 2, `camera` 2, `codec` 15, `printer` 4, `kernel_params` 1, `memory_bandwidth` 1, `memory_topology` 2, `cpu_microarch` 8, `crypto_accel` 1, `interconnect` 1 | `iommu`, `interrupt_map`, `io_scheduler`, `dma_engine`, `gpu_topology`, `thermal_zone`, `voltage_regulator`, `watchdog`, `security_mitigations` |
+| `input` 6, `services` 311, `storage_controller` 9, `power_profile` 3, `audio` 12, `bluetooth` 2, `camera` 2, `codec` 15, `printer` 4, `memory_bandwidth` 1, `memory_topology` 2, `cpu_microarch` 8, `crypto_accel` 11, `interconnect` 1 | `iommu`, `interrupt_map`, `io_scheduler`, `dma_engine`, `gpu_topology`, `thermal_zone`, `voltage_regulator`, `watchdog`, `security_mitigations`, `kernel_params` |
 
 The silent column is almost entirely Linux sysfs. Those are not blocked in the
 way the hardware items A–D are — a Linux box would let all nine be verified in
@@ -852,12 +860,21 @@ Two readers remain, and neither is the simple schema job the old wording implied
   keyed on its marketing name. Publishing only the structural fields would be
   worse than publishing nothing — a legitimate-looking `type` and `generation`
   lend credibility to a cluster whose numbers are invented.
-- **`kernel_params` needs a split, not a subset.** `name` and `value` are real
-  sysctl reads and belong in the ontology. `is_recommended`, `recommended`,
-  `security_score`, `network_score` and `recommendations` are this crate's
-  opinion about what the values ought to be, which is what `simon tune`'s
-  standing rule forbids publishing as fact. That is implementation work and is
-  the next ready item.
+- **`kernel_params` is done**, as a split rather than a subset — `name`,
+  `value`, `category` published; the scores and recommendations left to the
+  tuning surface. See `014e4dd`.
+
+  **It also found a guess inside the probe table.** `kernel_params` was counted
+  by `|_| 1` — a literal — so the table reported "answers here, 1 item" for a
+  reader that answers nothing on this machine, and the count propagated into the
+  table above. The `Get-NetTCPSetting` cmdlet it depends on *fails* here, and the
+  reader was pushing a parameter with an empty value regardless.
+
+  That table exists because guessing which readers answer "was slow and got one
+  of them wrong". Worth keeping in mind before trusting it again: two other
+  readers had the same hardcoded count. **A measurement nobody checks is a
+  constant, and a constant carries no information** — the same sentence this file
+  already applies to a permanently-red pipeline, one more level down.
 
 **Two of those three are traps, and "answers here" is what makes them look
 safe.** The probe table says a reader produced rows; it does not say the rows
