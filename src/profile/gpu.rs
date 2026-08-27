@@ -25,6 +25,41 @@ pub struct GpuProfileProvider {
     _private: (),
 }
 
+/// NVML's performance state in the notation the domain uses.
+///
+/// `nvml_wrapper` names the variants `Zero`..`Fifteen`, so `{:?}` printed
+/// "Performance State = Eight" directly above a description reading "P0 =
+/// highest performance, P15 = lowest". The value and its own documentation were
+/// in different notations, and only one of them is what the driver, the vendor
+/// tooling and every overclocking guide call it.
+fn pstate_name(p: nvml_wrapper::enum_wrappers::device::PerformanceState) -> Option<String> {
+    use nvml_wrapper::enum_wrappers::device::PerformanceState as P;
+    match p {
+        P::Zero => Some("P0".into()),
+        P::One => Some("P1".into()),
+        P::Two => Some("P2".into()),
+        P::Three => Some("P3".into()),
+        P::Four => Some("P4".into()),
+        P::Five => Some("P5".into()),
+        P::Six => Some("P6".into()),
+        P::Seven => Some("P7".into()),
+        P::Eight => Some("P8".into()),
+        P::Nine => Some("P9".into()),
+        P::Ten => Some("P10".into()),
+        P::Eleven => Some("P11".into()),
+        P::Twelve => Some("P12".into()),
+        P::Thirteen => Some("P13".into()),
+        P::Fourteen => Some("P14".into()),
+        P::Fifteen => Some("P15".into()),
+        // NVML says it does not know. Publishing the string "unknown" as the
+        // value would be the exact thing the absence-word guard exists to stop:
+        // a caller cannot tell it from a state named that. The setting is
+        // dropped instead, which is what every other reader here does when it
+        // has nothing.
+        P::Unknown => None,
+    }
+}
+
 impl GpuProfileProvider {
     pub fn new() -> Self {
         Self { _private: () }
@@ -192,12 +227,12 @@ fn nvidia_groups() -> Vec<ProfileGroup> {
                 .with_source("nvmlDeviceGetClock"),
             );
         }
-        if let Ok(p) = dev.performance_state() {
+        if let Some(pstate) = dev.performance_state().ok().and_then(pstate_name) {
             g.push(
                 Setting::info(
                     "performance_state",
                     "Performance State",
-                    SettingValue::Text(format!("{:?}", p)),
+                    SettingValue::Text(pstate),
                 )
                 .with_description(
                     "P0 = highest performance, P15 = lowest. The driver picks this automatically.",

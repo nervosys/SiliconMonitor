@@ -44,9 +44,17 @@ pub struct DisplayInfo {
 }
 
 impl DisplayInfo {
-    pub fn aspect_ratio(&self) -> String {
+    /// The reduced aspect ratio, or `None` when there is no mode to reduce.
+    ///
+    /// This returned the string "unknown" for a display whose mode was not read,
+    /// which reached the agent tool surface as
+    /// `"aspect_ratio": "unknown"` and the profile surface as
+    /// `Aspect Ratio = unknown`. It is the word `push_str_as` has refused in
+    /// readings since the DMI "n/a" finding, arriving by a different road: a
+    /// return type with no way to say nothing.
+    pub fn aspect_ratio(&self) -> Option<String> {
         if self.width == 0 || self.height == 0 {
-            return "unknown".to_string();
+            return None;
         }
         fn gcd(a: u32, b: u32) -> u32 {
             if b == 0 {
@@ -57,9 +65,9 @@ impl DisplayInfo {
         }
         let g = gcd(self.width, self.height);
         if g == 0 {
-            return "unknown".to_string();
+            return None;
         }
-        format!("{}:{}", self.width / g, self.height / g)
+        Some(format!("{}:{}", self.width / g, self.height / g))
     }
 }
 
@@ -665,7 +673,7 @@ mod tests {
             physical_height_mm: None,
             bits_per_pixel: Some(32),
         };
-        assert_eq!(display.aspect_ratio(), "16:9");
+        assert_eq!(display.aspect_ratio().as_deref(), Some("16:9"));
     }
 
     #[test]
@@ -686,7 +694,7 @@ mod tests {
             physical_height_mm: Some(340),
             bits_per_pixel: Some(30),
         };
-        assert_eq!(display.aspect_ratio(), "16:9");
+        assert_eq!(display.aspect_ratio().as_deref(), Some("16:9"));
     }
 
     #[test]

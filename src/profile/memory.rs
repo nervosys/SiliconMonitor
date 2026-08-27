@@ -109,14 +109,21 @@ impl ProfileProvider for MemoryProfileProvider {
                 "Form Factor",
                 SettingValue::Text(format!("{:?}", dimm.form_factor)),
             ));
-            g.push(
-                Setting::info("voltage_v", "Voltage", SettingValue::Float(dimm.voltage))
-                    .with_unit("V")
-                    .with_risk(SettingRisk::Dangerous)
-                    .with_description(
-                        "DIMM operating voltage. Overriding via XMP/EXPO can affect stability.",
-                    ),
-            );
+            // SMBIOS Type 17 defines zero in the voltage fields as "unknown",
+            // and this machine's firmware leaves them there --- so the row read
+            // "Voltage = 0 V [dangerous]" for a DDR5 module that necessarily runs
+            // near 1.1V. A zero volts no DIMM can have, marked dangerous so it
+            // reads as significant, is worse than no row at all.
+            if dimm.voltage > 0.0 {
+                g.push(
+                    Setting::info("voltage_v", "Voltage", SettingValue::Float(dimm.voltage))
+                        .with_unit("V")
+                        .with_risk(SettingRisk::Dangerous)
+                        .with_description(
+                            "DIMM operating voltage. Overriding via XMP/EXPO can affect stability.",
+                        ),
+                );
+            }
             g.push(Setting::info(
                 "ranks",
                 "Ranks",

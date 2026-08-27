@@ -52,21 +52,32 @@ impl ProfileProvider for DisplayProfileProvider {
                     SettingValue::Text(mfg.clone()),
                 ));
             }
-            g.push(Setting::info(
-                "connection",
-                "Connection",
-                SettingValue::Text(format!("{:?}", d.connection)),
-            ));
+            // Two of the three displays here report a connection the reader
+            // cannot classify, and `{:?}` printed the literal word "Unknown" as
+            // the value. The ontology already turns that into an absence with a
+            // reason --- `push_str_as` refuses the word --- and this surface was
+            // publishing it as though it were a kind of connector. Dropped
+            // instead, the way every other row here behaves when it has nothing.
+            let connection = format!("{:?}", d.connection);
+            if !connection.eq_ignore_ascii_case("unknown") {
+                g.push(Setting::info(
+                    "connection",
+                    "Connection",
+                    SettingValue::Text(connection),
+                ));
+            }
             g.push(Setting::info(
                 "resolution",
                 "Resolution",
                 SettingValue::Text(format!("{}x{}", d.width, d.height)),
             ));
-            g.push(Setting::info(
-                "aspect_ratio",
-                "Aspect Ratio",
-                SettingValue::Text(d.aspect_ratio()),
-            ));
+            if let Some(ratio) = d.aspect_ratio() {
+                g.push(Setting::info(
+                    "aspect_ratio",
+                    "Aspect Ratio",
+                    SettingValue::Text(ratio),
+                ));
+            }
             g.push(
                 Setting::info(
                     "refresh_rate_hz",
