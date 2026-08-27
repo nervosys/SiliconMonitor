@@ -35,10 +35,47 @@ Since the tag, on `master` and green on all three platforms:
 | `4dd5cce` | A test for the agent tool surface, which had none |
 | `a584dd0` | Five wrong conclusions in `hardware_ai`, each with a confidence attached |
 | `7607401` | A 24GB card read as 4GB, because `AdapterRAM` is 32 bits |
+| `00ffef8` | The method, written down, and what the one-machine caveat costs |
+| `6617020` | The nominal clock reported as the current one, on every core |
+| `ecd1281` | Two more constants wearing a measurement's provenance |
+| `7192187` | Four NVMe SMART fields read sixteen bytes early |
+| `4846c3f` | An interlaced mode reported field lines as a resolution |
+| `1e26d01` | The SATA temperature walk used the input struct's layout |
 
-**Those six were found by running things and reading the output, not by
-grepping.** The method, and why the greps missed them, is below under *Run it
-and read the output*.
+**None of these were found by grepping.** The method, and why the greps missed
+them, is below under *Run it and read the output*.
+
+### Three scans, in the order they pay
+
+Each found things the one before it could not, and all three are cheap:
+
+1. **Read the output of anything that produces conclusions.** `hardware_ai`
+   asserted "No SSD detected" at 0.85 confidence on a machine with three NVMe
+   drives, and classified a tower as a GamingLaptop.
+2. **Group readings by entity family and flag a family whose instances are all
+   identical.** That is what a broken per-device reader looks like from outside.
+   It found `cpu.core.{n}.frequency` reading 4400 on all 24 cores,
+   `disk.controller.{n}.ports` hardcoded to 1, and
+   `system.printer.{n}.color` false for every printer.
+3. **Take two snapshots seconds apart and list the numbers that did not move.**
+   Most are legitimately static; the interesting ones are the volatile-sounding
+   survivors. That found the NVMe SMART offsets — a drive reporting 2189 power
+   cycles against 43 power-on hours, a cycle every seventy seconds.
+
+Then, once a parser is implicated, **audit the crate's other offset-based
+parsers**, because the mistake is a habit rather than an accident:
+`grep -rln "from_le_bytes|\[off" src/`. `nvme_log.rs` was sixteen bytes out,
+`hwmon/smart.rs` used the ioctl *input* layout to read the *output*, and
+`edid.rs` never read the interlace flag. `disk/ata_smart.rs` is the one that
+still cannot be checked here.
+
+**A parse test whose fixture comes from the parser is a tautology.** It is what
+let four NVMe fields ship wrong under a test named
+`health_log_reads_every_field_at_its_specified_offset`. Write the fixture from
+the spec document, or from bytes off real hardware; give every field a distinct
+non-zero value so a shift cannot pass; and **confirm the test fails against the
+old code before believing it**. Both parser fixes this session were checked that
+way, and both did fail first.
 
 **Eighteen defects came out of verifying a batch that arrived type-checked,
 linted and looking finished.** Two were caught by tests that already existed.
