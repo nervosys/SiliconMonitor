@@ -199,6 +199,29 @@ was bound to a reader needing Administrator while the value sat in the registry,
 unelevated. When two sources disagree, check which one is *read* and which is
 *inferred* before tuning weights.
 
+### The local gate cannot see a feature-gated break
+
+`cargo clippy --all-features`, `cargo test --all-features` and **both**
+cross-target checks share one blind spot: every one of them enables `nvidia`.
+The cross-checks name it in their feature lists explicitly. So a helper written
+at module scope without `#[cfg(feature = "nvidia")]` passes the entire local
+gate and fails CI's *Feature combinations* job, which builds each feature alone.
+That happened at `7c79f8b`, on a `pstate_name` helper — the fix for one defect
+breaking a build the gate does not cover.
+
+Before pushing anything that touches a vendor-gated module, check the feature
+alone:
+
+```bash
+cargo check --quiet --no-default-features --all-targets --features cpu
+```
+
+The full loop CI runs is twenty features and takes far longer than a local
+session usually allows; the cheap approximation is `(none)`, `cpu` and `cli`,
+plus whichever feature the file you touched is *not* gated by. `src/profile/`,
+`src/hwmon/` and `src/backend.rs` all hold vendor-gated code beside ungated
+code, which is where this is easy to get wrong.
+
 ### The MSRV is 1.89, and one value now covers every feature combination
 
 It was 1.88, which held for a default build and not with `vault`:

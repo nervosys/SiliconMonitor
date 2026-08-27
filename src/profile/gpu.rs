@@ -27,11 +27,17 @@ pub struct GpuProfileProvider {
 
 /// NVML's performance state in the notation the domain uses.
 ///
+/// Gated with its caller. This was written at module scope without the gate and
+/// broke the build for every feature set without `nvidia`, because that is what
+/// links `nvml_wrapper`. `--all-features` cannot catch that, and neither can the
+/// two cross-target checks, which both name `nvidia` in their feature lists.
+///
 /// `nvml_wrapper` names the variants `Zero`..`Fifteen`, so `{:?}` printed
 /// "Performance State = Eight" directly above a description reading "P0 =
 /// highest performance, P15 = lowest". The value and its own documentation were
 /// in different notations, and only one of them is what the driver, the vendor
 /// tooling and every overclocking guide call it.
+#[cfg(feature = "nvidia")]
 fn pstate_name(p: nvml_wrapper::enum_wrappers::device::PerformanceState) -> Option<String> {
     use nvml_wrapper::enum_wrappers::device::PerformanceState as P;
     match p {
