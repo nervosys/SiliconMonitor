@@ -132,6 +132,28 @@ pub fn record(paths: &[PathBuf]) -> Baseline {
 /// in their own right: a new file appearing in a watched location is the thing a
 /// watchlist is for.
 pub fn scan(paths: &[PathBuf], baseline: &Baseline) -> ScanStatus {
+    // An empty watchlist and an empty baseline are the same value and different
+    // facts. Without `--watch` the baseline is empty on every run, so this said
+    // "one has now been recorded" every time, and the next run contradicted it
+    // by saying the same thing again. Recording nothing is not recording a
+    // baseline.
+    //
+    // Worth separating for a second reason: a detector that prints "this run is
+    // not evidence that the machine is clean" on every run forever teaches the
+    // reader to skip the line, and that line is the one that matters after a
+    // genuine first run.
+    if paths.is_empty() {
+        return ScanStatus::NoBaseline {
+            recorded: 0,
+            reason: concat!(
+                "no files are being watched, so there is nothing to baseline ",
+                "and nothing was recorded — pass --watch PATH to watch one. ",
+                "The listening sockets are checked regardless.",
+            )
+            .into(),
+        };
+    }
+
     if baseline.is_empty() {
         let fresh = record(paths);
         return ScanStatus::NoBaseline {
@@ -293,6 +315,58 @@ mod tests {
         d.push(format!("simon-ids-test-{tag}-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&d);
         d
+    }
+
+    /// Watching nothing is not the same as having no baseline.
+    ///
+    /// Both are an empty map, and the message conflated them: with no `--watch`
+    /// every run said "one has now been recorded" and the next run said it again.
+    /// A recording that did not happen must not be claimed, and a detector whose
+    /// caveat line prints unchanged forever trains the reader to skip it.
+    #[test]
+    fn watching_nothing_does_not_claim_a_baseline_was_recorded() {
+        let empty = Baseline {
+            recorded_at: 0,
+            files: BTreeMap::new(),
+        };
+
+        let status = scan(&[], &empty);
+        let ScanStatus::NoBaseline { recorded, reason } = status else {
+            panic!("watching nothing cannot be compared, so it is not Clean");
+        };
+        assert_eq!(recorded, 0, "nothing was watched, so nothing was recorded");
+        assert!(
+            !reason.contains("has now been recorded"),
+            "claims a recording that did not happen: {reason:?}"
+        );
+        assert!(
+            reason.contains("--watch"),
+            "should say how to watch something: {reason:?}"
+        );
+    }
+
+    /// A watchlist with no baseline still reports the real first-run caveat.
+    #[test]
+    fn a_first_run_over_watched_files_still_warns_about_the_baseline() {
+        let dir = tmpdir("first-run");
+        let file = dir.join("watched");
+        std::fs::write(&file, b"contents").expect("write");
+
+        let empty = Baseline {
+            recorded_at: 0,
+            files: BTreeMap::new(),
+        };
+
+        let ScanStatus::NoBaseline { recorded, reason } = scan(&[file], &empty) else {
+            panic!("a first run cannot compare");
+        };
+        assert_eq!(recorded, 1);
+        assert!(
+            reason.contains("not evidence that the machine is clean"),
+            "the caveat that matters must survive: {reason:?}"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     fn write(dir: &Path, name: &str, body: &str) -> PathBuf {
