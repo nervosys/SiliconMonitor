@@ -51,7 +51,7 @@ Since the tag, on `master` and green on all three platforms:
 | `425ff4a` | 24 threads reported as 24 cores, one line under a 12-core name |
 | `1284391` | `cli temperature` found no sensors while snapshot read five |
 | `dcbd50b` | A display's mode had nowhere to be absent; five consumers printed 0x0 |
-| `HEAD` | A gamepad counted as a Bluetooth radio, GATT services as devices |
+| `c14e8c6` | A gamepad counted as a Bluetooth radio, GATT services as devices |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
