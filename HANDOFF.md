@@ -51,9 +51,44 @@ Since the tag, on `master` and green on all three platforms:
 | `425ff4a` | 24 threads reported as 24 cores, one line under a 12-core name |
 | `1284391` | `cli temperature` found no sensors while snapshot read five |
 | `dcbd50b` | A display's mode had nowhere to be absent; five consumers printed 0x0 |
+| `HEAD` | A gamepad counted as a Bluetooth radio, GATT services as devices |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### A gamepad counted as a radio, because its name contains "Controller"
+
+`simon cli bluetooth` reported **"Adapters: 2, Devices: 9"** on a machine with
+one radio and two paired peripherals. `Get-PnpDevice -Class Bluetooth` settles it
+in one command, which is how it was checked.
+
+The classification was a regex over the *display name*, inside a PowerShell
+string:
+
+```powershell
+Where-Object { $_.PNPClass -eq 'Bluetooth' -and $_.Name -match 'Radio|Adapter|Controller' }
+```
+
+An **Xbox Wireless Controller** matches `Controller`, so a gamepad was reported
+as one of the machine's Bluetooth radios — and the device query excluded the
+same three words, so it then vanished from the device list. The device filter's
+`-notmatch` also admitted "Generic Access Profile", "Device Information
+Service", "Bluetooth LE Generic Attribute Service" and "Bluetooth Device
+(RFCOMM Protocol TDI)": six GATT services and a protocol driver, counted as
+things the user had paired.
+
+**The `PNPDeviceID` was in the same query object all along and separates them
+without ambiguity** — `USB\` is the radio, `BTHENUM\DEV_`/`BTHLE\DEV_` is a
+paired peripheral, `BTHLEDEVICE\{guid}` is a GATT service on one, `BTH\MS_` is
+the stack. This is the handoff's own *guess placed in front of a reading*, with
+the reading sitting in an adjacent field.
+
+**The classifier moved from the PowerShell string into Rust**, which is the part
+worth keeping. Logic inside a shell string cannot be unit-tested at all; the
+same logic in Rust is tested against all eleven Bluetooth-class entries from
+this desktop, verbatim, asserting one adapter and two peripherals. Ordering
+matters and is now covered: `BTHLEDEVICE` also begins with `BTHLE`, so a GATT
+service classifies as a peripheral if the peripheral check runs first.
 
 ### A display's mode had nowhere to be absent
 

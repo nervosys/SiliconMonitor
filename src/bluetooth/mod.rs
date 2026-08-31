@@ -38,6 +38,112 @@ pub struct BluetoothAdapter {
     pub powered: bool,
 }
 
+/// What a Bluetooth-class PnP entry actually is.
+///
+/// Windows lists radios, remote peripherals, the GATT services those
+/// peripherals expose, and the stack's own enumerators all under
+/// `PNPClass = 'Bluetooth'`, and their display names do not separate them:
+/// "Xbox Wireless Controller" contains the word an adapter filter was matching
+/// on. The `PNPDeviceID` does separate them, unambiguously.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BtEntry {
+    /// A radio in this machine.
+    Adapter,
+    /// A remote device someone paired.
+    Peripheral,
+    /// A GATT service or profile transport belonging to a peripheral.
+    Service,
+    /// One of the stack's own software enumerators or protocol drivers.
+    Stack,
+}
+
+/// Classify one `Win32_PnPEntity` of class Bluetooth by its id.
+///
+/// Id shapes, all observed on one desktop:
+///
+/// - `USB\...` is the radio itself
+/// - `BTH\MS_...` are stack enumerators and protocol drivers
+/// - `BTHENUM\DEV_...` and `BTHLE\DEV_...` are paired remote devices
+/// - `BTHLEDEVICE\{{guid}}_DEV_...` is a GATT service on one
+/// - `BTHENUM\{{guid}}_VID...` is a profile transport on one
+pub(crate) fn classify_pnp_entry(name: &str, pnp_id: &str) -> BtEntry {
+    let id = pnp_id.to_ascii_uppercase();
+
+    // Order matters: `BTHLEDEVICE` also starts with `BTHLE`, so services are
+    // recognised before peripherals.
+    if id.starts_with(r"BTHLEDEVICE\") {
+        return BtEntry::Service;
+    }
+    if id.starts_with(r"BTHENUM\DEV_") || id.starts_with(r"BTHLE\DEV_") {
+        return BtEntry::Peripheral;
+    }
+    if id.starts_with(r"BTHENUM\") || id.starts_with(r"BTHLE\") {
+        // A brace-GUID under BTHENUM is a profile on a remote device.
+        return BtEntry::Service;
+    }
+    if id.starts_with(r"BTH\") {
+        return BtEntry::Stack;
+    }
+
+    // What is left is attached to this machine rather than reached over the
+    // air. A radio names itself; anything else here is part of the stack.
+    if name.contains("Radio") || name.contains("Adapter") {
+        BtEntry::Adapter
+    } else {
+        BtEntry::Stack
+    }
+}
+
+/// The device address embedded in a PnP id, as `AA:BB:CC:DD:EE:FF`.
+fn address_from_pnp_id(pnp_id: &str) -> Option<String> {
+    let after = pnp_id.to_ascii_uppercase();
+    let after = after.split("DEV_").nth(1)?;
+    let hex: String = after
+        .chars()
+        .take_while(|c| c.is_ascii_hexdigit())
+        .take(12)
+        .collect();
+    if hex.len() != 12 {
+        return None;
+    }
+    Some(
+        hex.as_bytes()
+            .chunks(2)
+            .map(|p| String::from_utf8_lossy(p).to_string())
+            .collect::<Vec<_>>()
+            .join(":"),
+    )
+}
+
+/// A best guess at what a peripheral is, from its advertised name.
+///
+/// This is a guess and is labelled one: an unrecognised name resolves
+/// `Unknown` rather than to a plausible default.
+fn device_type_from_name(name: &str) -> BluetoothDeviceType {
+    let n = name.to_ascii_lowercase();
+    if n.contains("keyboard") {
+        BluetoothDeviceType::Keyboard
+    } else if n.contains("mouse") || n.contains("pointing") {
+        BluetoothDeviceType::Mouse
+    } else if ["headset", "headphone", "earphone", "buds", "airpods"]
+        .iter()
+        .any(|k| n.contains(k))
+    {
+        BluetoothDeviceType::Headset
+    } else if n.contains("speaker") || n.contains("audio") {
+        BluetoothDeviceType::Speaker
+    } else if n.contains("phone") {
+        BluetoothDeviceType::Phone
+    } else if ["controller", "gamepad", "joystick"]
+        .iter()
+        .any(|k| n.contains(k))
+    {
+        BluetoothDeviceType::GameController
+    } else {
+        BluetoothDeviceType::Unknown
+    }
+}
+
 #[derive(Default)]
 pub struct BluetoothMonitor {
     adapters: Vec<BluetoothAdapter>,
@@ -69,134 +175,78 @@ impl BluetoothMonitor {
     fn refresh_windows(&mut self) {
         use std::process::Command;
 
-        // Query Bluetooth adapters and devices via WMI/PnP
+        // Ask for every Bluetooth-class PnP entry and classify them here.
+        //
+        // The classification used to live in this PowerShell string and matched
+        // 'Radio|Adapter|Controller' against the *display name*, so an "Xbox
+        // Wireless Controller" was reported as a Bluetooth adapter and then
+        // excluded from the device list by the same word. A machine with one
+        // headset and one gamepad reported two adapters and nine devices, the
+        // nine being GATT services and a protocol driver.
+        //
+        // In Rust it can be tested against real device ids; in a shell string
+        // it could not be tested at all.
         let output = Command::new("powershell")
-            .args(["-NoProfile", "-Command",
-                r#"
-                $result = @{ Adapters = @(); Devices = @() }
-                
-                # Get Bluetooth radios (adapters)
-                $radios = Get-CimInstance -ClassName Win32_PnPEntity | Where-Object { $_.PNPClass -eq 'Bluetooth' -and $_.Name -match 'Radio|Adapter|Controller' }
-                foreach ($r in $radios) {
-                    $result.Adapters += [PSCustomObject]@{
-                        Id = $r.PNPDeviceID
-                        Name = $r.Name
-                        Manufacturer = $r.Manufacturer
-                        Status = $r.Status
-                    }
-                }
-                
-                # If no radios found, check for any Bluetooth class device as adapter
-                if ($result.Adapters.Count -eq 0) {
-                    $btDevs = Get-CimInstance -ClassName Win32_PnPEntity | Where-Object { $_.PNPClass -eq 'Bluetooth' } | Select-Object -First 1
-                    foreach ($r in $btDevs) {
-                        $result.Adapters += [PSCustomObject]@{
-                            Id = $r.PNPDeviceID
-                            Name = $r.Name
-                            Manufacturer = $r.Manufacturer
-                            Status = $r.Status
-                        }
-                    }
-                }
-                
-                # Get paired/connected Bluetooth devices
-                $btDevices = Get-CimInstance -ClassName Win32_PnPEntity | Where-Object { $_.PNPClass -eq 'Bluetooth' -and $_.Name -notmatch 'Radio|Adapter|Controller|Enumerator|Microsoft' }
-                foreach ($d in $btDevices) {
-                    $dtype = 'Unknown'
-                    $name = $d.Name.ToLower()
-                    if ($name -match 'keyboard') { $dtype = 'Keyboard' }
-                    elseif ($name -match 'mouse|pointing') { $dtype = 'Mouse' }
-                    elseif ($name -match 'headset|headphone|earphone|buds|airpods') { $dtype = 'Headset' }
-                    elseif ($name -match 'speaker|audio') { $dtype = 'Speaker' }
-                    elseif ($name -match 'phone') { $dtype = 'Phone' }
-                    elseif ($name -match 'controller|gamepad|joystick') { $dtype = 'GameController' }
-                    
-                    # Extract Bluetooth address from PNPDeviceID if available
-                    $addr = ''
-                    if ($d.PNPDeviceID -match '([0-9A-Fa-f]{12})') {
-                        $hex = $Matches[1]
-                        $addr = ($hex -replace '(.{2})', '$1:').TrimEnd(':')
-                    }
-                    
-                    $result.Devices += [PSCustomObject]@{
-                        Name = $d.Name
-                        Address = $addr
-                        Type = $dtype
-                        Connected = ($d.Status -eq 'OK')
-                    }
-                }
-                
-                $result | ConvertTo-Json -Depth 3 -Compress
-                "#])
+            .args([
+                "-NoProfile",
+                "-Command",
+                concat!(
+                    "Get-CimInstance -ClassName Win32_PnPEntity | ",
+                    "Where-Object { $_.PNPClass -eq 'Bluetooth' } | ",
+                    "Select-Object @{N='Id';E={$_.PNPDeviceID}}, Name, Manufacturer, Status | ",
+                    "ConvertTo-Json -Depth 3 -Compress"
+                ),
+            ])
             .output();
 
-        if let Ok(output) = output {
-            if output.status.success() {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                if let Ok(json) = serde_json::from_str::<serde_json::Value>(stdout.trim()) {
-                    // Parse adapters
-                    if let Some(adapters) = json.get("Adapters").and_then(|v| v.as_array()) {
-                        for (idx, adapter) in adapters.iter().enumerate() {
-                            let name = adapter
-                                .get("Name")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("Bluetooth Adapter");
-                            let id = adapter.get("Id").and_then(|v| v.as_str()).unwrap_or("");
-                            let status = adapter
-                                .get("Status")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("OK");
+        let Ok(output) = output else { return };
+        if !output.status.success() {
+            return;
+        }
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let Ok(json) = serde_json::from_str::<serde_json::Value>(stdout.trim()) else {
+            return;
+        };
+        // A single match is serialised as an object rather than a one-element
+        // array.
+        let entries: Vec<&serde_json::Value> = match json.as_array() {
+            Some(a) => a.iter().collect(),
+            None => vec![&json],
+        };
 
-                            self.adapters.push(BluetoothAdapter {
-                                id: format!("bt{}", idx),
-                                name: name.to_string(),
-                                address: id.to_string(),
-                                powered: status == "OK",
-                            });
-                        }
-                    }
+        for entry in entries {
+            let id = entry.get("Id").and_then(|v| v.as_str()).unwrap_or("");
+            let name = entry.get("Name").and_then(|v| v.as_str()).unwrap_or("");
+            let powered = entry.get("Status").and_then(|v| v.as_str()) == Some("OK");
 
-                    // Parse devices
-                    if let Some(devices) = json.get("Devices").and_then(|v| v.as_array()) {
-                        for device in devices {
-                            let name = device.get("Name").and_then(|v| v.as_str());
-                            let address = device
-                                .get("Address")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("00:00:00:00:00:00");
-                            let is_connected = device
-                                .get("Connected")
-                                .and_then(|v| v.as_bool())
-                                .unwrap_or(false);
-                            let dtype = match device
-                                .get("Type")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("Unknown")
-                            {
-                                "Keyboard" => BluetoothDeviceType::Keyboard,
-                                "Mouse" => BluetoothDeviceType::Mouse,
-                                "Headset" => BluetoothDeviceType::Headset,
-                                "Speaker" => BluetoothDeviceType::Speaker,
-                                "Phone" => BluetoothDeviceType::Phone,
-                                "GameController" => BluetoothDeviceType::GameController,
-                                "Computer" => BluetoothDeviceType::Computer,
-                                _ => BluetoothDeviceType::Unknown,
-                            };
-
-                            self.devices.push(BluetoothDevice {
-                                address: address.to_string(),
-                                name: name.map(|s| s.to_string()),
-                                device_type: dtype,
-                                state: if is_connected {
-                                    BluetoothState::Connected
-                                } else {
-                                    BluetoothState::Paired
-                                },
-                                battery_percent: None,
-                            });
-                        }
-                    }
+            match classify_pnp_entry(name, id) {
+                BtEntry::Adapter => {
+                    let idx = self.adapters.len();
+                    self.adapters.push(BluetoothAdapter {
+                        id: format!("bt{idx}"),
+                        name: name.to_string(),
+                        address: id.to_string(),
+                        powered,
+                    });
                 }
+                BtEntry::Peripheral => {
+                    self.devices.push(BluetoothDevice {
+                        address: address_from_pnp_id(id)
+                            .unwrap_or_else(|| "00:00:00:00:00:00".to_string()),
+                        name: (!name.is_empty()).then(|| name.to_string()),
+                        device_type: device_type_from_name(name),
+                        state: if powered {
+                            BluetoothState::Connected
+                        } else {
+                            BluetoothState::Paired
+                        },
+                        battery_percent: None,
+                    });
+                }
+                // A GATT service or a stack enumerator is neither a radio nor
+                // something the user paired. Counting them as devices is what
+                // turned two peripherals into nine.
+                BtEntry::Service | BtEntry::Stack => {}
             }
         }
     }
@@ -575,5 +625,137 @@ mod tests {
         let deserialized: BluetoothAdapter = serde_json::from_str(&json).unwrap();
         assert_eq!(adapter.id, deserialized.id);
         assert!(deserialized.powered);
+    }
+}
+
+#[cfg(test)]
+mod pnp_classification_tests {
+    use super::*;
+
+    /// Every Bluetooth-class PnP entry on one desktop, verbatim from
+    /// `Get-PnpDevice -Class Bluetooth`, with what each one actually is.
+    ///
+    /// The machine has one radio and two paired peripherals: a Bose QC35
+    /// headset and an Xbox controller. `simon cli bluetooth` reported
+    /// "Adapters: 2, Devices: 9" — the controller counted as a radio because
+    /// its name contains "Controller", and six GATT services and a protocol
+    /// driver counted as devices.
+    const REAL_ENTRIES: &[(&str, &str, BtEntry)] = &[
+        (
+            "MediaTek Bluetooth Adapter",
+            r"USB\VID_0489&PID_E13A&MI_00\B&26E6BFF2&0&0000",
+            BtEntry::Adapter,
+        ),
+        (
+            "Xbox Wireless Controller",
+            r"BTHLE\DEV_0C35262BD48F\D&3A9C8506&0&0C35262BD48F",
+            BtEntry::Peripheral,
+        ),
+        (
+            "Bose QC35",
+            r"BTHENUM\DEV_0452C707E5BC\D&15B70467&0&BLUETOOTHDEVICE_0452C707E5BC",
+            BtEntry::Peripheral,
+        ),
+        (
+            "Generic Access Profile",
+            r"BTHLEDEVICE\{00001800-0000-1000-8000-00805F9B34FB}_DEV_VID&02045E_PID&0B13",
+            BtEntry::Service,
+        ),
+        (
+            "Generic Attribute Profile",
+            r"BTHLEDEVICE\{00001801-0000-1000-8000-00805F9B34FB}_DEV_VID&02045E_PID&0B13",
+            BtEntry::Service,
+        ),
+        (
+            "Device Information Service",
+            r"BTHLEDEVICE\{0000180A-0000-1000-8000-00805F9B34FB}_DEV_VID&02045E_PID&0B13",
+            BtEntry::Service,
+        ),
+        (
+            "Bluetooth LE Generic Attribute Service",
+            r"BTHLEDEVICE\{0000180F-0000-1000-8000-00805F9B34FB}_DEV_VID&02045E_PID&0B13",
+            BtEntry::Service,
+        ),
+        (
+            "Bose QC35 Avrcp Transport",
+            r"BTHENUM\{0000110E-0000-1000-8000-00805F9B34FB}_VID&0001009E_PID&400C\D&15B70467",
+            BtEntry::Service,
+        ),
+        (
+            "Bluetooth Device (RFCOMM Protocol TDI)",
+            r"BTH\MS_RFCOMM\C&1BA46DC9&0&0",
+            BtEntry::Stack,
+        ),
+        (
+            "Microsoft Bluetooth LE Enumerator",
+            r"BTH\MS_BTHLE\C&1BA46DC9&0&3",
+            BtEntry::Stack,
+        ),
+        (
+            "Microsoft Bluetooth Enumerator",
+            r"BTH\MS_BTHBRB\C&1BA46DC9&0&1",
+            BtEntry::Stack,
+        ),
+    ];
+
+    #[test]
+    fn one_desktop_has_one_radio_and_two_peripherals() {
+        for (name, id, want) in REAL_ENTRIES {
+            assert_eq!(classify_pnp_entry(name, id), *want, "{name} ({id})");
+        }
+
+        let adapters = REAL_ENTRIES
+            .iter()
+            .filter(|(n, i, _)| classify_pnp_entry(n, i) == BtEntry::Adapter)
+            .count();
+        let peripherals = REAL_ENTRIES
+            .iter()
+            .filter(|(n, i, _)| classify_pnp_entry(n, i) == BtEntry::Peripheral)
+            .count();
+
+        assert_eq!(adapters, 1, "the machine has one Bluetooth radio");
+        assert_eq!(
+            peripherals, 2,
+            "the machine has two paired peripherals: a headset and a gamepad"
+        );
+    }
+
+    /// `BTHLEDEVICE` also begins with `BTHLE`, so a GATT service classifies as
+    /// a peripheral if the peripheral check runs first.
+    #[test]
+    fn a_gatt_service_is_not_mistaken_for_the_device_hosting_it() {
+        assert_eq!(
+            classify_pnp_entry(
+                "Battery Service",
+                r"BTHLEDEVICE\{0000180F-0000-1000-8000-00805F9B34FB}_DEV_VID&1_PID&2"
+            ),
+            BtEntry::Service
+        );
+    }
+
+    #[test]
+    fn an_address_is_read_from_the_id_or_withheld() {
+        assert_eq!(
+            address_from_pnp_id(r"BTHLE\DEV_0C35262BD48F\D&3A9C8506"),
+            Some("0C:35:26:2B:D4:8F".to_string())
+        );
+        assert_eq!(
+            address_from_pnp_id(r"BTH\MS_RFCOMM\C&1BA46DC9&0&0"),
+            None,
+            "a stack driver has no device address to report"
+        );
+    }
+
+    /// A name nothing recognises is Unknown, not a plausible default.
+    #[test]
+    fn an_unrecognised_peripheral_is_not_given_a_category() {
+        assert_eq!(
+            device_type_from_name("Bose QC35"),
+            BluetoothDeviceType::Unknown
+        );
+        assert_eq!(
+            device_type_from_name("Xbox Wireless Controller"),
+            BluetoothDeviceType::GameController
+        );
     }
 }
