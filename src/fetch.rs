@@ -175,6 +175,48 @@ fn find<'a>(readings: &'a [Reading], id: &str) -> Option<&'a Reading> {
 }
 
 /// Render one reading as a line, carrying its reason when it has no value.
+/// Every reading measured in degrees Celsius, whatever its id.
+///
+/// `simon cli temperature` used to render `Simon::snapshot().temperature`,
+/// whose Windows reader looks only for CPU and motherboard sensors through
+/// OpenHardwareMonitor, LibreHardwareMonitor and ACPI thermal zones — and
+/// deliberately skips GPUs, with the comment "GPU temps come from NVML". That
+/// is true of the crate and false of the command. With none of those three
+/// present the map was empty and the command printed "No temperature sensors
+/// detected", on a desktop where `simon snapshot` read two GPUs and three NVMe
+/// drives seconds earlier, in the same binary.
+///
+/// Selecting on the declared unit rather than on the id shape means a
+/// temperature entity added anywhere in the ontology is shown without this
+/// function being touched. The unit is carried on unavailable readings too, so
+/// a sensor that cannot be read still appears, with its reason.
+pub fn temperatures(readings: &[Reading]) -> Vec<&Reading> {
+    let mut out: Vec<&Reading> = readings
+        .iter()
+        .filter(|r| r.unit == Some(crate::ontology::Unit::Celsius))
+        .collect();
+    out.sort_by(|a, b| a.id.cmp(&b.id));
+    out
+}
+
+/// Every reading describing power draw, limits, batteries or profiles.
+///
+/// Unit alone does not identify these — a battery percentage, a profile name
+/// and a milliwatt draw are all power facts with different units — so this
+/// matches on the id. The defect it fixes is the same one as [`temperatures`]:
+/// `PowerStats.rails` is hwmon, which Windows does not expose, so
+/// `simon cli power` said "No power rails exposed by this platform" while the
+/// ontology held both GPUs' draw and limit, the battery percentage and the
+/// active power profile.
+pub fn power(readings: &[Reading]) -> Vec<&Reading> {
+    let mut out: Vec<&Reading> = readings
+        .iter()
+        .filter(|r| r.id.starts_with("power.") || r.id.contains(".power."))
+        .collect();
+    out.sort_by(|a, b| a.id.cmp(&b.id));
+    out
+}
+
 fn line(
     readings: &[Reading],
     label: &str,
@@ -576,5 +618,69 @@ mod tests {
 
         let none = render(&[], false);
         assert!(none.lines().count() >= logo().len());
+    }
+
+    /// The command named "temperature" must not show one subsystem's sensors.
+    ///
+    /// `simon cli temperature` printed "No temperature sensors detected" on a
+    /// desktop with five readable sensors, because it rendered a struct whose
+    /// Windows reader covers CPU and motherboard only and skips GPUs on
+    /// purpose. Every temperature entity is declared in the ontology whether or
+    /// not this machine can read it, so this assertion holds on any host,
+    /// including a CI runner with no sensors at all.
+    ///
+    /// It fails if temperatures are ever sourced from one subsystem again.
+    #[test]
+    fn temperature_selection_spans_every_subsystem_that_declares_one() {
+        let readings = crate::ontology::resolve::snapshot();
+        let temps = temperatures(&readings);
+
+        assert!(
+            !temps.is_empty(),
+            "the ontology declares temperature entities; none were selected"
+        );
+
+        for r in &temps {
+            assert_eq!(
+                r.unit,
+                Some(crate::ontology::Unit::Celsius),
+                "{} was selected as a temperature and is not measured in celsius",
+                r.id
+            );
+        }
+
+        let prefixes: std::collections::BTreeSet<&str> = temps
+            .iter()
+            .filter_map(|r| r.id.split('.').next())
+            .collect();
+        assert!(
+            prefixes.len() > 1,
+            concat!(
+                "every temperature came from one subsystem ({:?}). That is what ",
+                "the defect looked like: the CPU/motherboard reader alone, ",
+                "reporting no sensors on a machine with GPU and disk sensors ",
+                "it never consulted."
+            ),
+            prefixes
+        );
+    }
+
+    /// Power is not only hwmon rails, which is the whole of what Windows lacks.
+    #[test]
+    fn power_selection_reaches_past_hwmon_rails() {
+        let readings = crate::ontology::resolve::snapshot();
+        let power = power(&readings);
+
+        assert!(
+            !power.is_empty(),
+            "the ontology declares power entities; none were selected"
+        );
+        assert!(
+            power.iter().any(|r| r.id.contains(".power.")),
+            concat!(
+                "no per-device power reading was selected; `simon cli power` ",
+                "would again report nothing on a platform without hwmon rails"
+            )
+        );
     }
 }

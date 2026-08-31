@@ -1052,21 +1052,49 @@ fn handle_cli_command(
             }
         }
         CliSubcommand::Power => {
+            // Same shape as Temperature below: `PowerStats.rails` is hwmon
+            // rails, which Windows does not expose, so this printed "No power
+            // rails exposed by this platform" while the ontology resolved two
+            // GPU power draws, both power limits, the battery percentage and
+            // the active power profile. The rails block is kept for the
+            // platforms that have them.
             let mut stats = Simon::with_interval(interval)?;
             let snapshot = stats.snapshot()?;
+            let readings = simonlib::ontology::resolve::snapshot();
+            let power = simonlib::fetch::power(&readings);
+
             if format == "json" {
-                println!("{}", serde_json::to_string_pretty(&snapshot.power)?);
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "rails": &snapshot.power,
+                        "readings": power,
+                    }))?
+                );
             } else {
-                print_power_info(&snapshot.power);
+                print_power_info(&snapshot.power, &power);
             }
         }
         CliSubcommand::Temperature => {
-            let mut stats = Simon::with_interval(interval)?;
-            let snapshot = stats.snapshot()?;
+            // `Simon::snapshot().temperature` covers CPU and motherboard
+            // sensors only — its Windows reader skips GPUs with the comment
+            // "GPU temps come from NVML", which is true of the crate and not
+            // of this command. On a desktop with no OpenHardwareMonitor
+            // installed that map is empty, so `simon cli temperature` printed
+            // "No temperature sensors detected" while `simon snapshot` read
+            // two GPUs and three NVMe drives, seconds apart, in the same
+            // binary.
+            //
+            // The ontology already resolves every temperature in the machine
+            // with a provenance and, where one is missing, a reason. Read it
+            // rather than a subset of it.
+            let readings = simonlib::ontology::resolve::snapshot();
+            let temps = simonlib::fetch::temperatures(&readings);
+
             if format == "json" {
-                println!("{}", serde_json::to_string_pretty(&snapshot.temperature)?);
+                println!("{}", serde_json::to_string_pretty(&temps)?);
             } else {
-                print_temperature_info(&snapshot.temperature);
+                print_temperature_readings(&temps);
             }
         }
         CliSubcommand::Processes => {
@@ -1532,13 +1560,27 @@ fn print_memory_info(memory: &simonlib::core::memory::MemoryStats) {
 }
 
 #[cfg(feature = "cli")]
-fn print_power_info(power: &simonlib::core::power::PowerStats) {
+fn print_power_info(
+    power: &simonlib::core::power::PowerStats,
+    readings: &[&simonlib::ontology::resolve::Reading],
+) {
     println!("{}", "═══ Power Information ═══".cyan().bold());
+
+    print_readings_with_reasons(readings, "no power entity is readable here");
 
     // With no rails the total is a fixed zero, and "Total Power: 0.00W" reads as a
     // measurement of an idle machine rather than the absence of any power sensor.
+    //
+    // Returning here used to end the command, which is why a Windows desktop
+    // saw nothing at all. The readings above are printed first now, so an
+    // absent rail set only means the rails are absent.
     if power.rails.is_empty() {
-        println!("  {}", "No power rails exposed by this platform".yellow());
+        println!();
+        println!(
+            "  {}",
+            "No hwmon power rails on this platform (Linux exposes these; Windows does not)"
+                .yellow()
+        );
         return;
     }
 
@@ -1576,33 +1618,85 @@ fn print_power_info(power: &simonlib::core::power::PowerStats) {
     }
 }
 
+/// Print a set of ontology readings, then the reason for each one that has no
+/// value.
+///
+/// Both `simon cli temperature` and `simon cli power` read a narrow platform
+/// struct and printed "No temperature sensors detected" / "No power rails
+/// exposed by this platform" on a desktop where the ontology resolved five
+/// temperatures and four power figures. The distinction this renderer keeps —
+/// a value, or a reason there is none — is the one those two messages
+/// collapsed.
 #[cfg(feature = "cli")]
-fn print_temperature_info(temp: &simonlib::core::temperature::TemperatureStats) {
-    println!("{}", "═══ Temperature Information ═══".cyan().bold());
+fn print_readings_with_reasons(
+    readings: &[&simonlib::ontology::resolve::Reading],
+    nothing_known: &str,
+) {
+    use simonlib::ontology::Provenance;
 
-    if temp.sensors.is_empty() {
-        println!("  {}", "No temperature sensors detected".yellow());
+    if readings.is_empty() {
+        println!("  {}", nothing_known.yellow());
         return;
     }
 
-    for (name, sensor) in &temp.sensors {
-        if sensor.online {
-            let temp_str = format!("{:.1}°C", sensor.temp);
-            let temp_colored = if sensor.temp > 85.0 {
-                temp_str.red().bold()
-            } else if sensor.temp > 70.0 {
-                temp_str.yellow()
-            } else {
-                temp_str.green()
-            };
+    let mut unread = Vec::new();
+    for r in readings {
+        let Some(value) = r.value.as_ref() else {
+            unread.push(*r);
+            continue;
+        };
 
-            print!("  {} {}", format!("{}:", name).white(), temp_colored);
-            if let Some(max) = sensor.max {
-                print!(" (max: {})", format!("{:.1}°C", max).red());
+        // A reading carries its own unit, so render the number and name it
+        // rather than assuming degrees or watts.
+        let rendered = match value.as_f64() {
+            // A drive reporting 40.850006103515625 °C is reporting one tenth
+            // of a degree it cannot resolve; the extra digits are the float,
+            // not the sensor. Integers stay integers so a core count does not
+            // grow a decimal point.
+            Some(n) => {
+                let number = if n.fract() == 0.0 {
+                    format!("{n}")
+                } else {
+                    format!("{n:.1}")
+                };
+                match &r.unit {
+                    Some(u) => format!("{number} {u:?}").to_lowercase(),
+                    None => number,
+                }
             }
-            println!();
+            None => value.to_string().trim_matches('"').to_string(),
+        };
+        let qualifier = match r.provenance {
+            Provenance::Measured => String::new(),
+            other => format!(" [{other:?}]").to_lowercase(),
+        };
+        println!(
+            "  {:<44} {}{}",
+            format!("{}:", r.id).white(),
+            rendered.green(),
+            qualifier
+        );
+    }
+
+    if !unread.is_empty() {
+        println!();
+        println!("{}", "  Not readable here:".white().bold());
+        for r in unread {
+            let reason = r.note.as_deref().unwrap_or("no reason recorded");
+            println!("    {:<42} {}", r.id.dimmed(), reason.dimmed());
         }
     }
+}
+
+/// Print every temperature the ontology resolved, and the reason for each one
+/// it could not.
+#[cfg(feature = "cli")]
+fn print_temperature_readings(temps: &[&simonlib::ontology::resolve::Reading]) {
+    println!("{}", "═══ Temperature Information ═══".cyan().bold());
+    print_readings_with_reasons(
+        temps,
+        "simon knows of no temperature entity on this platform",
+    );
 }
 
 #[cfg(feature = "cli")]

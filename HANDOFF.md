@@ -49,9 +49,59 @@ Since the tag, on `master` and green on all three platforms:
 | `1666a52` | A shell variable read as a debugger, and a consent UI for nothing |
 | `f9e7248` | `serve --help` named a Prometheus route that 404s |
 | `425ff4a` | 24 threads reported as 24 cores, one line under a 12-core name |
+| `HEAD` | `cli temperature` found no sensors while snapshot read five |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### The command named for the reading was the one not doing it
+
+`simon cli temperature` printed **"No temperature sensors detected"**. Seconds
+later, in the same binary, `simon snapshot` read two GPU temperatures and three
+NVMe drive temperatures, all `measured`. `--format json` returned
+`{"sensors": {}}`.
+
+The Windows reader behind it looks in three places — OpenHardwareMonitor's WMI
+namespace, LibreHardwareMonitor's, and CIMV2 thermal-zone counters — and none is
+present on a stock desktop. That part is correct and the resulting empty map is
+correct. **What was wrong is the sentence.** "No temperature sensors detected"
+is a claim about the machine; the truth was a claim about the reader.
+
+It also contains, in as many words, the reason the command was incomplete:
+
+```rust
+} else {
+    continue; // Skip other sensors (GPU temps come from NVML)
+}
+```
+
+That comment is true of the *crate* and false of the *command*. GPU temperatures
+do come from NVML — and nothing in `simon cli temperature` ever asked NVML.
+
+`simon cli power` was the same defect exactly: `PowerStats.rails` is hwmon,
+which Windows does not expose, so it printed "No power rails exposed by this
+platform" while the ontology held both GPUs' draw and limit, the battery
+percentage and the three power profiles. Someone had already fixed the
+neighbouring half of it — there is a comment explaining why "Total Power: 0.00W"
+was removed — and stopped at the rails.
+
+Both now read `ontology::resolve::snapshot()`, which is the fifth and sixth
+consumer to adopt a reader that was already right. **The selection lives in
+`fetch::{temperatures,power}` rather than in `main.rs`, so it can be tested**,
+and `temperatures` keys on the declared unit rather than the id shape, so a
+temperature entity added anywhere is shown without touching it.
+
+What the fixed command prints is the argument for the whole approach: ten
+readable temperatures, and six unreadable ones each with its own reason —
+including the two that explain the original symptom truthfully, *"on Windows
+most board sensors require a signed kernel driver"*. The old code had that fact
+and threw it away.
+
+**The regression test is hardware-independent**, because every temperature
+entity is declared whether or not a host can read it: it asserts the selection
+spans more than one subsystem prefix. Narrowing it back to `thermal.*` fails
+with `every temperature came from one subsystem ({"thermal"})`, which is the
+defect verbatim.
 
 ### CI caught a test I wrote, on prose I added after the gate
 
