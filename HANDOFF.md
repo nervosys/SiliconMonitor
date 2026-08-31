@@ -49,7 +49,7 @@ Since the tag, on `master` and green on all three platforms:
 | `1666a52` | A shell variable read as a debugger, and a consent UI for nothing |
 | `f9e7248` | `serve --help` named a Prometheus route that 404s |
 | `425ff4a` | 24 threads reported as 24 cores, one line under a 12-core name |
-| `HEAD` | `cli temperature` found no sensors while snapshot read five |
+| `1284391` | `cli temperature` found no sensors while snapshot read five |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
