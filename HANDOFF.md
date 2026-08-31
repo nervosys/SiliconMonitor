@@ -46,7 +46,7 @@ Since the tag, on `master` and green on all three platforms:
 | `3a50c99` | `pstate_name` gated with its caller, after CI caught it |
 | `2360068` | Watching nothing is not the same as having no baseline |
 | `5931069` | The recorder stored an absent sensor as zero degrees |
-| `HEAD` | A shell variable read as a debugger, and a consent UI for nothing |
+| `1666a52` | A shell variable read as a debugger, and a consent UI for nothing |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
