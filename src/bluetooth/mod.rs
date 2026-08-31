@@ -38,6 +38,10 @@ pub struct BluetoothAdapter {
     pub powered: bool,
 }
 
+// These four are used only by `refresh_windows`, so they are dead code on
+// every other target. `cargo check --target` does not deny warnings, which is
+// why the local gate missed it and CI's per-OS `clippy -D warnings` did not.
+
 /// What a Bluetooth-class PnP entry actually is.
 ///
 /// Windows lists radios, remote peripherals, the GATT services those
@@ -45,6 +49,7 @@ pub struct BluetoothAdapter {
 /// `PNPClass = 'Bluetooth'`, and their display names do not separate them:
 /// "Xbox Wireless Controller" contains the word an adapter filter was matching
 /// on. The `PNPDeviceID` does separate them, unambiguously.
+#[cfg(target_os = "windows")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum BtEntry {
     /// A radio in this machine.
@@ -66,6 +71,7 @@ pub(crate) enum BtEntry {
 /// - `BTHENUM\DEV_...` and `BTHLE\DEV_...` are paired remote devices
 /// - `BTHLEDEVICE\{{guid}}_DEV_...` is a GATT service on one
 /// - `BTHENUM\{{guid}}_VID...` is a profile transport on one
+#[cfg(target_os = "windows")]
 pub(crate) fn classify_pnp_entry(name: &str, pnp_id: &str) -> BtEntry {
     let id = pnp_id.to_ascii_uppercase();
 
@@ -95,6 +101,7 @@ pub(crate) fn classify_pnp_entry(name: &str, pnp_id: &str) -> BtEntry {
 }
 
 /// The device address embedded in a PnP id, as `AA:BB:CC:DD:EE:FF`.
+#[cfg(target_os = "windows")]
 fn address_from_pnp_id(pnp_id: &str) -> Option<String> {
     let after = pnp_id.to_ascii_uppercase();
     let after = after.split("DEV_").nth(1)?;
@@ -119,6 +126,7 @@ fn address_from_pnp_id(pnp_id: &str) -> Option<String> {
 ///
 /// This is a guess and is labelled one: an unrecognised name resolves
 /// `Unknown` rather than to a plausible default.
+#[cfg(target_os = "windows")]
 fn device_type_from_name(name: &str) -> BluetoothDeviceType {
     let n = name.to_ascii_lowercase();
     if n.contains("keyboard") {
@@ -628,7 +636,7 @@ mod tests {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "windows"))]
 mod pnp_classification_tests {
     use super::*;
 
