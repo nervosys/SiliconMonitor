@@ -59,9 +59,53 @@ Since the tag, on `master` and green on all three platforms:
 | `1a6718c` | Master volume 100% on every machine, and setters that changed nothing |
 | `308c770` | The invented-device rule generalised past displays |
 | `0121d86` | A clean bill of health drawn from 2 of 23,541 settings |
+| `HEAD` | "No engines detected" on a platform with no engine reader |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### One more "none" that meant "cannot look"
+
+`simon cli engines` printed **"No engines detected"** on Windows. Its own
+`--help` says the command reads `/sys/kernel/debug/clk` and is Linux-only, and
+`read_engine_stats` on Windows is:
+
+```rust
+// Windows doesn't have the same engine concept as Jetson
+// Return empty stats
+Ok(EngineStats::default())
+```
+
+An empty success, under a comment that knows exactly why. The help text was
+honest and the output was not, which is the worse way round: a user who runs the
+command without reading `--help` first is told their machine has no engines.
+
+The reader cannot return an error, because `Simon::snapshot` requires every
+reader to succeed and that would take the whole Windows snapshot down — so the
+message is cfg-gated at the display instead, the same shape as `FREQUENCY_ABSENT`
+in the resolver. **Tenth instance of this family**, after the nine in `ebab956`.
+
+### Surfaces checked this round that are sound
+
+Recording these so the next reader does not re-derive them. Each was checked by
+running it and confirming against a second source, not by reading the code:
+
+- **`simon daemon`** enforces what it claims. `host = "0.0.0.0"` without an
+  `api_key` refuses to start, naming the reason; loopback starts and prints
+  "Authentication: anonymous (loopback only)". Its sample config marks the fleet
+  section *"NOTE: not implemented. These keys parse, but nothing pushes"*.
+- **`simon profile active`** reports "311 of 503 processes have a known NVIDIA
+  driver profile", including `svchost.exe` and AMD's own `amdow.exe`, which
+  looks wrong and is not: scanning `nvdrsdb*.bin` independently yields 11,521
+  names and all three are genuinely in NVIDIA's database. NVIDIA ships profiles
+  for system executables.
+- **`simon ai manifest`** names a model per vendor but says in `model_discovery`
+  that the field is "only a starting suggestion" and points at the live endpoint
+  — the right handling for a value that goes stale.
+- **`simon get`** returns `unavailable` with the reason for an absent entity and
+  names unknown ids as unknown, with a search suggestion.
+- **`simon profile show cpu`** states that XTU-style MSR access needs a signed
+  kernel driver and is not implemented, rather than showing an empty table.
 
 ### A denominator of two, reported as a clean bill of health
 

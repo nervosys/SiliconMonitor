@@ -2651,7 +2651,33 @@ fn print_engine_info(engines: &simonlib::core::engine::EngineStats) {
             }
         }
     } else {
-        println!("  {}", "No engines detected".yellow());
+        // "No engines detected" is a claim about the machine. On every platform
+        // but Linux it was a claim about the reader: `read_engine_stats`
+        // returns `Ok(EngineStats::default())` there, an empty success, under a
+        // comment saying Windows has no equivalent concept. This command's
+        // `--help` already says it reads /sys/kernel/debug/clk and is Linux
+        // only; the output said something else.
+        #[cfg(target_os = "linux")]
+        println!(
+            "  {}",
+            concat!(
+                "No engines detected — /sys/kernel/debug/clk was read and ",
+                "listed no APE, DLA or NVENC clock. Those exist on Tegra and ",
+                "Jetson parts; a desktop has none."
+            )
+            .yellow()
+        );
+        #[cfg(not(target_os = "linux"))]
+        println!(
+            "  {}",
+            concat!(
+                "Not readable on this platform. Engine clocks come from ",
+                "/sys/kernel/debug/clk, which is Linux-only and present on ",
+                "Tegra and Jetson parts. For desktop GPU encoder and decoder ",
+                "utilisation, use `simon cli gpu`."
+            )
+            .yellow()
+        );
     }
 }
 
