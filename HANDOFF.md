@@ -59,7 +59,7 @@ Since the tag, on `master` and green on all three platforms:
 | `1a6718c` | Master volume 100% on every machine, and setters that changed nothing |
 | `308c770` | The invented-device rule generalised past displays |
 | `0121d86` | A clean bill of health drawn from 2 of 23,541 settings |
-| `HEAD` | "No engines detected" on a platform with no engine reader |
+| `f34f72c` | "No engines detected" on a platform with no engine reader |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
