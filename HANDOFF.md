@@ -55,7 +55,7 @@ Since the tag, on `master` and green on all three platforms:
 | `9ef5ba0` | The PnP classifier gated with the only target that calls it |
 | `cc7aac6` | Root hubs given the identifier 0000:0000, and an invented Intel hub |
 | `b16d4fb` | A terminal and a browser classified as GPU compute |
-| `HEAD` | Per-process GPU memory: NVML says N/A, simon said 0.0 MB |
+| `19a6a06` | Per-process GPU memory: NVML says N/A, simon said 0.0 MB |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
