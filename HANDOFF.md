@@ -47,7 +47,7 @@ Since the tag, on `master` and green on all three platforms:
 | `2360068` | Watching nothing is not the same as having no baseline |
 | `5931069` | The recorder stored an absent sensor as zero degrees |
 | `1666a52` | A shell variable read as a debugger, and a consent UI for nothing |
-| `HEAD` | `serve --help` named a Prometheus route that 404s |
+| `f9e7248` | `serve --help` named a Prometheus route that 404s |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
