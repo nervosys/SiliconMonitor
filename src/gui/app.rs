@@ -1527,12 +1527,13 @@ impl SiliconMonitorApp {
 
         let cpu_data = self.cpu_stats.as_ref().map(|s| {
             let usage = 100.0 - s.total.idle;
+            // `unwrap_or(0)` published 0 MHz as a frequency; null says the
+            // clock was not read.
             let freq = s
                 .cores
                 .first()
                 .and_then(|c| c.frequency.as_ref())
-                .map(|f| f.current)
-                .unwrap_or(0);
+                .and_then(|f| f.current);
             json!({
                 "usage_percent": usage,
                 "frequency_mhz": freq,
@@ -1586,11 +1587,15 @@ impl SiliconMonitorApp {
         if let Some(cpu) = &self.cpu_stats {
             let usage = 100.0 - cpu.total.idle;
             csv.push_str(&format!("cpu_usage,{:.1},percent,{}\n", usage, timestamp));
-            if let Some(freq) = cpu.cores.first().and_then(|c| c.frequency.as_ref()) {
-                csv.push_str(&format!(
-                    "cpu_frequency,{},MHz,{}\n",
-                    freq.current, timestamp
-                ));
+            // No row rather than a row of zero: an export is read later by
+            // someone who cannot ask what the zero meant.
+            if let Some(mhz) = cpu
+                .cores
+                .first()
+                .and_then(|c| c.frequency.as_ref())
+                .and_then(|f| f.current)
+            {
+                csv.push_str(&format!("cpu_frequency,{mhz},MHz,{timestamp}\n"));
             }
             csv.push_str(&format!(
                 "cpu_cores,{},count,{}\n",
@@ -2806,8 +2811,11 @@ impl SiliconMonitorApp {
                                     RichText::new("Frequency:").color(CyberColors::TEXT_SECONDARY),
                                 );
                                 ui.label(
-                                    RichText::new(format!("{} MHz", freq.current))
-                                        .color(DeviceTitleColors::CPU),
+                                    RichText::new(match freq.current {
+                                        Some(mhz) => format!("{mhz} MHz"),
+                                        None => "not read".to_string(),
+                                    })
+                                    .color(DeviceTitleColors::CPU),
                                 );
                                 ui.end_row();
                             }

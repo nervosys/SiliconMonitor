@@ -352,8 +352,15 @@ impl HttpServer {
 
             if let Some(ref cpu) = snap.cpu {
                 collector.record("simon_cpu_usage_percent", (100.0 - cpu.total.idle) as f64);
-                if let Some(freq) = cpu.cores.first().and_then(|c| c.frequency.as_ref()) {
-                    collector.record("simon_cpu_frequency_mhz", freq.current as f64);
+                // Omit the series rather than record 0 MHz, the same way the
+                // Prometheus exporter omits an absent GPU temperature.
+                if let Some(mhz) = cpu
+                    .cores
+                    .first()
+                    .and_then(|c| c.frequency.as_ref())
+                    .and_then(|f| f.current)
+                {
+                    collector.record("simon_cpu_frequency_mhz", mhz as f64);
                 }
             }
 

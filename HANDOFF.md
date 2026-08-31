@@ -60,9 +60,54 @@ Since the tag, on `master` and green on all three platforms:
 | `308c770` | The invented-device rule generalised past displays |
 | `0121d86` | A clean bill of health drawn from 2 of 23,541 settings |
 | `f34f72c` | "No engines detected" on a platform with no engine reader |
+| `HEAD` | A sentinel introduced by an earlier fix in this same session |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### A fix in this session introduced the defect it was fixing
+
+`simon cli cpu` printed **"Clock: 0 MHz (max 4400 MHz)"**. The zero came from
+`6617020`, earlier in this same session — the fix that stopped Windows reporting
+the nominal clock as the current one. Its code said:
+
+```rust
+// Zero is what the resolver already reads as "not measured" here, the
+// same way `min` uses it below.
+current: if entry.current_mhz == entry.max_mhz { 0 } else { entry.current_mhz },
+```
+
+The comment is true and the reasoning was wrong. **The ontology resolver did
+read that zero correctly. Nothing else did**: `simon cli cpu` printed it, the
+agent surface published `"frequency_mhz": 0` from four call sites, the GUI
+exported a `cpu_frequency,0,MHz` CSV row, and `http_server` recorded a
+`simon_cpu_frequency_mhz 0` Prometheus sample.
+
+**Checking one consumer is not checking the consumers.** That is the same
+mistake as every "reader wired into one consumer" finding in this file, made
+while fixing one of them, and the fields should have been `Option` from the
+start — which is what they are now.
+
+**`tests/plausibility.rs` was already warning about it and the assertion was too
+weak to fire:**
+
+```rust
+assert!(freq.current > 0 || freq.max > 0,
+    "... absence must be `None`, not zero");
+```
+
+The rule was right, the message named the exact failure, and the `||` let a zero
+`current` through whenever `max` was known — which is every Windows machine. It
+now checks each field separately, and `Some(0)` fails for any of the three.
+
+Alongside it, `simon cli cpu` said **"Cores: 24"** one line under "AMD Ryzen 9
+9900X 12-Core Processor". That is `cores.len()`, the logical count — the same
+contradiction fixed in `simon status` at `425ff4a`, still present in two other
+printers because that fix touched `fetch::summary` and nothing else. Both say
+"Threads" now.
+
+**Both halves of this entry are the same lesson**: a fix applied where the
+defect was seen, rather than where the defect is.
 
 ### One more "none" that meant "cannot look"
 

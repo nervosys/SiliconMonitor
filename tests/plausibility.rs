@@ -571,11 +571,34 @@ fn windows_cpu_reader_reports_measured_identity_and_clock() {
     );
 
     if let Some(freq) = &core.frequency {
+        // This said `current > 0 || max > 0` and warned, correctly, that
+        // "absence must be `None`, not zero". The `||` let a zero `current`
+        // through whenever `max` was known — which is exactly the sentinel the
+        // Windows nominal-clock fix introduced, and why `simon cli cpu` printed
+        // "Clock: 0 MHz" for a session before anyone read that line. The fields
+        // are `Option` now, so the rule can be stated per field.
         assert!(
-            freq.current > 0 || freq.max > 0,
-            "frequency was reported as present but reads 0/0, which is not a clock \
-             any running processor has — absence must be `None`, not zero"
+            freq.current.is_some() || freq.max.is_some() || freq.min.is_some(),
+            concat!(
+                "a frequency struct was reported with every field absent; it ",
+                "should have been `None` in the first place"
+            )
         );
+        for (what, value) in [
+            ("current", freq.current),
+            ("min", freq.min),
+            ("max", freq.max),
+        ] {
+            assert_ne!(
+                value,
+                Some(0),
+                concat!(
+                    "{} frequency reads Some(0), which is not a clock any ",
+                    "running processor has — absence must be `None`, not zero"
+                ),
+                what
+            );
+        }
     }
 }
 

@@ -5,12 +5,23 @@ use serde::{Deserialize, Serialize};
 /// CPU frequency information
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CpuFrequency {
-    /// Current frequency in MHz
-    pub current: u32,
-    /// Minimum frequency in MHz
-    pub min: u32,
-    /// Maximum frequency in MHz
-    pub max: u32,
+    /// Current frequency in MHz, or `None` where it was not read.
+    ///
+    /// These three were `u32` and a zero meant "not measured" — a sentinel
+    /// introduced by the fix that stopped Windows reporting the nominal clock
+    /// as the current one, on the reasoning that the ontology resolver already
+    /// read zero that way. It does. Nothing else did: `simon cli cpu` printed
+    /// "Clock: 0 MHz", and the agent surface published
+    /// `"frequency_mhz": 0` from four call sites.
+    ///
+    /// A CPU does not run at zero hertz, so the sentinel was at least
+    /// implausible rather than plausible — but it was still a number where
+    /// there was no reading.
+    pub current: Option<u32>,
+    /// Minimum frequency in MHz, or `None`. No Win32 API reports one.
+    pub min: Option<u32>,
+    /// Maximum frequency in MHz, or `None` where it was not read.
+    pub max: Option<u32>,
 }
 
 /// Per-core CPU information

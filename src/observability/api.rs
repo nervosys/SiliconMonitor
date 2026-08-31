@@ -806,8 +806,8 @@ impl ObservabilityApi {
                     vendor: String::new(), // parsed from model
                     core_count: stats.cores.len(),
                     thread_count: stats.cores.len(), // /proc doesn't distinguish easily
-                    base_frequency_mhz: freq.map(|f| f.current),
-                    max_frequency_mhz: freq.map(|f| f.max),
+                    base_frequency_mhz: freq.and_then(|f| f.current),
+                    max_frequency_mhz: freq.and_then(|f| f.max),
                     l1_cache_kb: None,
                     l2_cache_kb: None,
                     l3_cache_kb: None,
@@ -827,8 +827,8 @@ impl ObservabilityApi {
                     vendor: String::new(),
                     core_count: stats.cores.len(),
                     thread_count: stats.cores.len(),
-                    base_frequency_mhz: freq.map(|f| f.current),
-                    max_frequency_mhz: freq.map(|f| f.max),
+                    base_frequency_mhz: freq.and_then(|f| f.current),
+                    max_frequency_mhz: freq.and_then(|f| f.max),
                     l1_cache_kb: None,
                     l2_cache_kb: None,
                     l3_cache_kb: None,
@@ -1076,7 +1076,7 @@ impl ObservabilityApi {
                     .cores
                     .first()
                     .and_then(|c| c.frequency.as_ref())
-                    .map(|f| f.current);
+                    .and_then(|f| f.current);
                 return Some(CpuMetrics {
                     utilization_percent: utilization,
                     per_core_utilization: per_core,
@@ -1099,7 +1099,7 @@ impl ObservabilityApi {
                     .cores
                     .first()
                     .and_then(|c| c.frequency.as_ref())
-                    .map(|f| f.current);
+                    .and_then(|f| f.current);
                 return Some(CpuMetrics {
                     utilization_percent: utilization,
                     per_core_utilization: per_core,

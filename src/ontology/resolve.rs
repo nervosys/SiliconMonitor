@@ -421,8 +421,10 @@ fn resolve_cpu(out: &mut Vec<Reading>) {
                 }
             }
         }
+        // `current` is an `Option` now; the `> 0` guard stays because a reader
+        // could still produce a zero and it would mean the same thing.
         match &core.frequency {
-            Some(f) if f.current > 0 => out.push(Reading::measured(
+            Some(f) if f.current.is_some_and(|c| c > 0) => out.push(Reading::measured(
                 format!("{base}.frequency"),
                 serde_json::json!(f.current),
                 Some(Unit::Megahertz),

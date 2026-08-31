@@ -390,17 +390,15 @@ fn get_cpu_frequency(
         return None;
     }
     Some(CpuFrequency {
-        // Zero is what the resolver already reads as "not measured" here, the
-        // same way `min` uses it below.
-        current: if entry.current_mhz == entry.max_mhz {
-            0
-        } else {
-            entry.current_mhz
-        },
+        // CallNtPowerInformation returns the nominal clock, not the current
+        // one: when it equals the maximum for every core, nothing was measured.
+        // This used to say `0` and rely on each consumer reading that as an
+        // absence. Only the ontology resolver did.
+        current: (entry.current_mhz != entry.max_mhz).then_some(entry.current_mhz),
         // No Win32 API reports a minimum operating frequency; leaving it at the
         // measured current would claim a floor that was never read.
-        min: 0,
-        max: entry.max_mhz,
+        min: None,
+        max: (entry.max_mhz > 0).then_some(entry.max_mhz),
     })
 }
 
@@ -1266,13 +1264,16 @@ mod tests {
         // actually boosting past 5GHz.
         let power = vec![entry(4400, 4400)];
         let f = get_cpu_frequency(Some(&power), 0).expect("max is known, so a row is returned");
-        assert_eq!(f.current, 0, "nominal reported as current");
-        assert_eq!(f.max, 4400, "the maximum is still known");
+        assert_eq!(
+            f.current, None,
+            "the nominal clock reported as current is not a reading"
+        );
+        assert_eq!(f.max, Some(4400), "the maximum is still known");
 
         // A genuine current reading below the maximum survives untouched.
         let power = vec![entry(3200, 4400)];
         let f = get_cpu_frequency(Some(&power), 0).expect("a real reading");
-        assert_eq!(f.current, 3200);
+        assert_eq!(f.current, Some(3200));
 
         // Nothing known at all stays absent rather than becoming a zero.
         let power = vec![entry(0, 0)];

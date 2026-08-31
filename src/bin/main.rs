@@ -1433,10 +1433,15 @@ fn print_cpu_identity(cpu: &simonlib::core::cpu::CpuStats) {
         println!("  {} {}", "Model:".white().bold(), core.model.green());
     }
     if let Some(freq) = &core.frequency {
-        let mut clock = format!("{} MHz", freq.current);
+        // "Clock: 0 MHz" was this line, reading a sentinel the Windows reader
+        // wrote and only the ontology resolver understood.
+        let mut clock = match freq.current {
+            Some(mhz) => format!("{mhz} MHz"),
+            None => "not read — Windows reports the nominal clock, not the current one".to_string(),
+        };
         // Only worth stating a ceiling when it differs from what the core is doing.
-        if freq.max > 0 && freq.max != freq.current {
-            clock.push_str(&format!(" (max {} MHz)", freq.max));
+        if let Some(max) = freq.max.filter(|m| *m > 0 && Some(*m) != freq.current) {
+            clock.push_str(&format!(" (max {max} MHz)"));
         }
         println!("  {} {}", "Clock:".white().bold(), clock.green());
     }
@@ -1449,7 +1454,10 @@ fn print_cpu_info(cpu: &simonlib::core::cpu::CpuStats) {
     print_cpu_identity(cpu);
     println!(
         "  {} {} (Online: {})",
-        "Cores:".white().bold(),
+        // `core_count()` is `cores.len()` — the logical processor list. This
+        // said "Cores: 24" one line under "AMD Ryzen 9 9900X 12-Core
+        // Processor", the same contradiction `simon status` carried.
+        "Threads:".white().bold(),
         cpu.core_count().to_string().green(),
         cpu.online_count().to_string().green()
     );
@@ -1912,7 +1920,8 @@ fn print_cpu_info_backend(backend: &simonlib::backend::MonitoringBackend) {
         print_cpu_identity(cpu);
         println!(
             "  {} {} (Online: {})",
-            "Cores:".white().bold(),
+            // See the note in print_cpu_info: this is the logical count.
+            "Threads:".white().bold(),
             cpu.core_count().to_string().green(),
             cpu.online_count().to_string().green()
         );

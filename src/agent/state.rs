@@ -188,7 +188,8 @@ impl SystemState {
                     frequency_mhz: stats
                         .cores
                         .first()
-                        .and_then(|c| c.frequency.as_ref().map(|f| f.current as u64)),
+                        .and_then(|c| c.frequency.as_ref().and_then(|f| f.current))
+                        .map(u64::from),
                     per_core_usage: stats
                         .cores
                         .iter()
@@ -216,7 +217,8 @@ impl SystemState {
                     frequency_mhz: stats
                         .cores
                         .first()
-                        .and_then(|c| c.frequency.as_ref().map(|f| f.current as u64)),
+                        .and_then(|c| c.frequency.as_ref().and_then(|f| f.current))
+                        .map(u64::from),
                     per_core_usage: stats
                         .cores
                         .iter()
