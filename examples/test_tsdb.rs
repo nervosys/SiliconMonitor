@@ -48,7 +48,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 name: "test_process".to_string(),
                 cpu_percent: 10.0 + (i as f32),
                 memory_bytes: 500_000_000,
-                gpu_memory_bytes: 1_000_000_000,
+                gpu_memory_bytes: Some(1_000_000_000),
                 gpu_percent: Some(25.0),
                 disk_read_bps: Some(10_000_000),
                 disk_write_bps: Some(5_000_000),

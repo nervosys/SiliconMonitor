@@ -2143,10 +2143,14 @@ fn print_process_info_backend(
                 );
 
                 for proc in sorted.iter().take(5) {
-                    let gpu_mem = if proc.is_gpu_process() {
-                        format!("{:.1}", proc.gpu_memory_mb()).magenta().to_string()
-                    } else {
-                        "-".dimmed().to_string()
+                    // Three states, not two. A process off the GPU shows a
+                    // dash; one on the GPU whose memory no device reported
+                    // showed "0.0", which is what NVML declines to tell us
+                    // under WDDM — every process on Windows.
+                    let gpu_mem = match (proc.is_gpu_process(), proc.gpu_memory_mb()) {
+                        (true, Some(mb)) => format!("{mb:.1}").magenta().to_string(),
+                        (true, None) => "n/a".dimmed().to_string(),
+                        (false, _) => "-".dimmed().to_string(),
                     };
 
                     let cpu_str = format!("{:.1}", proc.cpu_percent);
@@ -2560,10 +2564,14 @@ fn print_process_info_v2(
                 );
 
                 for proc in sorted.iter().take(5) {
-                    let gpu_mem = if proc.is_gpu_process() {
-                        format!("{:.1}", proc.gpu_memory_mb()).magenta().to_string()
-                    } else {
-                        "-".dimmed().to_string()
+                    // Three states, not two. A process off the GPU shows a
+                    // dash; one on the GPU whose memory no device reported
+                    // showed "0.0", which is what NVML declines to tell us
+                    // under WDDM — every process on Windows.
+                    let gpu_mem = match (proc.is_gpu_process(), proc.gpu_memory_mb()) {
+                        (true, Some(mb)) => format!("{mb:.1}").magenta().to_string(),
+                        (true, None) => "n/a".dimmed().to_string(),
+                        (false, _) => "-".dimmed().to_string(),
                     };
 
                     let cpu_str = format!("{:.1}", proc.cpu_percent);

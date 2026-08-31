@@ -55,6 +55,7 @@ Since the tag, on `master` and green on all three platforms:
 | `9ef5ba0` | The PnP classifier gated with the only target that calls it |
 | `cc7aac6` | Root hubs given the identifier 0000:0000, and an invented Intel hub |
 | `b16d4fb` | A terminal and a browser classified as GPU compute |
+| `HEAD` | Per-process GPU memory: NVML says N/A, simon said 0.0 MB |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
@@ -92,9 +93,9 @@ though: under WDDM, NVML's compute list includes plain graphics apps
 that field cannot settle compute-versus-graphics either. The fix does not lean
 on it.
 
-**Still wrong, and the next thing to do here:** `GPU(MB)` prints `0.0` for every
+**Fixed in the commit after this one.** `GPU(MB)` printed `0.0` for every
 GPU-attributed process on this machine, and `nvidia-smi` reports `[N/A]` for all
-of them — WDDM does not expose per-process GPU memory to NVML. The sentinel is
+of them — WDDM does not expose per-process GPU memory to NVML. The sentinel was
 made at `process_monitor.rs`'s attribution loop:
 
 ```rust
@@ -108,9 +109,18 @@ absence — the same shape as `SystemSnapshot`'s GPU columns and `DisplayInfo`'s
 mode. **`observability/api.rs` already compensates** with
 `if total_gpu_memory_bytes > 0 { Some(..) } else { None }`, which is the fourth
 consumer this sweep found guarding a sentinel its source should not have made.
-The field wants to be `Option<u64>`; it has 45 references across the GUI, TUI,
-agent surface and examples, which is why it is written down here rather than
-done in the same commit as the classifier.
+The field is `Option<u64>` now. It had 45 references across the GUI, TUI, agent
+surface and examples, which is why it was a separate commit from the classifier.
+
+**Three of the five consumers were already compensating** — `observability/api.rs`
+with `> 0`, and the TUI in two places, printing a dash where the CLI printed
+`0.0`. That ratio is the tell for this whole family: when most consumers guard a
+value, the guard belongs in the type, not in each of them.
+
+`ProcessSnapshot::gpu_memory_bytes` went with it, so `DB_VERSION` is **3**. The
+time-series database was persisting the same zero, which is the defect the
+version-2 bump existed to remove — one field further down, and missed the first
+time because the fix stopped at the columns it was looking at.
 
 ### An identifier is a bad place for a sentinel
 

@@ -165,7 +165,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     println!("    Memory:      {:.2} GB", proc.memory_mb() / 1024.0);
 
                     if proc.is_gpu_process() {
-                        println!("    GPU Memory:  {:.2} GB", proc.gpu_memory_mb() / 1024.0);
+                        match proc.gpu_memory_mb() {
+                            Some(mb) => println!("    GPU Memory:  {:.2} GB", mb / 1024.0),
+                            None => println!(
+                                "    GPU Memory:  not reported (NVML does not expose this under WDDM)"
+                            ),
+                        }
 
                         // Show per-process engine utilization if available
                         if let Some(gfx) = proc.gfx_engine_used {

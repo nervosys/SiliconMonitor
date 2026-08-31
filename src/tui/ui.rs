@@ -1561,25 +1561,22 @@ fn draw_nvtop_processes(f: &mut Frame, app: &App, area: Rect) {
                     let enc_clr = accel_color(p.encoder_usage_percent.unwrap_or(0.0));
 
                     // Calculate GPU memory percentage from total GPU memory
-                    let gpu_mem_percent = if total_gpu_memory > 0 && p.total_gpu_memory_bytes > 0 {
-                        Some(
-                            (p.total_gpu_memory_bytes as f64 / total_gpu_memory as f64 * 100.0)
-                                as f32,
-                        )
-                    } else {
-                        p.gpu_memory_percentage
+                    let gpu_mem_percent = match p.total_gpu_memory_bytes {
+                        Some(bytes) if total_gpu_memory > 0 && bytes > 0 => {
+                            Some((bytes as f64 / total_gpu_memory as f64 * 100.0) as f32)
+                        }
+                        _ => p.gpu_memory_percentage,
                     };
                     let gpu_mem_pct_clr = accel_color(gpu_mem_percent.unwrap_or(0.0));
 
                     // Color GPU mem based on usage
-                    let gpu_mem_color = if p.total_gpu_memory_bytes > 1024 * 1024 * 1024 {
-                        glances_colors::WARNING // > 1GB
-                    } else if p.total_gpu_memory_bytes > 256 * 1024 * 1024 {
-                        glances_colors::CAREFUL // > 256MB
-                    } else if p.total_gpu_memory_bytes > 0 {
-                        glances_colors::OK
-                    } else {
-                        Color::DarkGray
+                    let gpu_mem_color = match p.total_gpu_memory_bytes {
+                        Some(b) if b > 1024 * 1024 * 1024 => glances_colors::WARNING, // > 1GB
+                        Some(b) if b > 256 * 1024 * 1024 => glances_colors::CAREFUL,  // > 256MB
+                        Some(b) if b > 0 => glances_colors::OK,
+                        // Zero reported and nothing reported both read grey
+                        // here; the column below prints them differently.
+                        _ => Color::DarkGray,
                     };
 
                     // Process state color
@@ -1667,10 +1664,11 @@ fn draw_nvtop_processes(f: &mut Frame, app: &App, area: Rect) {
                                 Style::default().fg(gpu_clr),
                             ),
                             Span::styled(
-                                if p.total_gpu_memory_bytes > 0 {
-                                    format!("{:>5}", auto_unit(p.total_gpu_memory_bytes))
-                                } else {
-                                    "    -".to_string()
+                                match p.total_gpu_memory_bytes {
+                                    Some(b) if b > 0 => format!("{:>5}", auto_unit(b)),
+                                    // This pane already printed a dash rather
+                                    // than 0, which the CLI did not.
+                                    _ => "    -".to_string(),
                                 },
                                 Style::default().fg(gpu_mem_color),
                             ),
@@ -2912,10 +2910,10 @@ fn draw_process_detail_overlay(f: &mut Frame, app: &App) {
                     "GPU Memory: ",
                     Style::default().fg(Color::Rgb(250, 179, 135)),
                 ),
-                Span::raw(if process.total_gpu_memory_bytes > 0 {
-                    auto_unit(process.total_gpu_memory_bytes)
-                } else {
-                    "-".to_string()
+                Span::raw(match process.total_gpu_memory_bytes {
+                    Some(b) if b > 0 => auto_unit(b),
+                    Some(_) => "0".to_string(),
+                    None => "-".to_string(),
                 }),
             ]),
             Line::from(vec![

@@ -78,8 +78,12 @@ pub struct ProcessSummary {
     pub cpu_percent: f32,
     /// Memory usage in MB
     pub memory_mb: u64,
-    /// GPU memory usage in MB
-    pub gpu_memory_mb: u64,
+    /// GPU memory usage in MB, or `None` where no device reported one.
+    ///
+    /// NVML does not expose per-process GPU memory under Windows' WDDM driver
+    /// model, so this was `0` for every process there and an agent had no way
+    /// to tell that from a process using none.
+    pub gpu_memory_mb: Option<u64>,
 }
 
 /// Memory summary information

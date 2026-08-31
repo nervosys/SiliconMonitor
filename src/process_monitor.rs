@@ -844,10 +844,21 @@ pub struct ProcessMonitorInfo {
     pub start_time: Option<u64>,
     /// GPU indices this process is using
     pub gpu_indices: Vec<usize>,
-    /// GPU memory usage per GPU (GPU index -> memory in bytes)
+    /// GPU memory usage per GPU (GPU index -> memory in bytes).
+    ///
+    /// A device that reports no figure for this process has no entry, rather
+    /// than an entry of zero.
     pub gpu_memory_per_device: HashMap<usize, u64>,
-    /// Total GPU memory used across all GPUs
-    pub total_gpu_memory_bytes: u64,
+    /// Total GPU memory across every device that reported one, or `None` when
+    /// no device did.
+    ///
+    /// This was `u64`, and the attribution loop wrote
+    /// `gpu_proc.memory_usage.unwrap_or(0)` into it. NVML does not expose
+    /// per-process GPU memory under Windows' WDDM driver model — `nvidia-smi`
+    /// prints `[N/A]` for every process on this desktop — so every
+    /// GPU-attributed process reported 0.0 MB as though measured.
+    /// `observability/api.rs` already had to guard `> 0` to undo it.
+    pub total_gpu_memory_bytes: Option<u64>,
     /// Process state (R=Running, S=Sleeping, D=Disk sleep, Z=Zombie, T=Stopped,
     /// U=Unknown).
     ///
@@ -894,9 +905,10 @@ impl ProcessMonitorInfo {
         self.memory_bytes as f64 / (1024.0 * 1024.0)
     }
 
-    /// Get total GPU memory usage in megabytes
-    pub fn gpu_memory_mb(&self) -> f64 {
-        self.total_gpu_memory_bytes as f64 / (1024.0 * 1024.0)
+    /// Total GPU memory in megabytes, or `None` where no device reported it.
+    pub fn gpu_memory_mb(&self) -> Option<f64> {
+        self.total_gpu_memory_bytes
+            .map(|b| b as f64 / (1024.0 * 1024.0))
     }
 
     /// Check if process is using any GPU
@@ -934,8 +946,10 @@ pub struct CategoryStats {
     pub total_cpu_percent: f32,
     /// Total memory usage in bytes
     pub total_memory_bytes: u64,
-    /// Total GPU memory usage in bytes
-    pub total_gpu_memory_bytes: u64,
+    /// Total GPU memory over the processes in this category that reported
+    /// one, or `None` when none of them did. See
+    /// [`ProcessMonitorInfo::total_gpu_memory_bytes`].
+    pub total_gpu_memory_bytes: Option<u64>,
 }
 
 impl CategoryStats {
@@ -944,9 +958,10 @@ impl CategoryStats {
         self.total_memory_bytes as f64 / (1024.0 * 1024.0)
     }
 
-    /// Get GPU memory usage in MB
-    pub fn gpu_memory_mb(&self) -> f64 {
-        self.total_gpu_memory_bytes as f64 / (1024.0 * 1024.0)
+    /// GPU memory in MB over the processes that reported one, or `None`.
+    pub fn gpu_memory_mb(&self) -> Option<f64> {
+        self.total_gpu_memory_bytes
+            .map(|b| b as f64 / (1024.0 * 1024.0))
     }
 }
 
@@ -1132,7 +1147,18 @@ impl ProcessMonitor {
                 let count = procs.len();
                 let total_cpu: f32 = procs.iter().map(|p| p.cpu_percent).sum();
                 let total_memory: u64 = procs.iter().map(|p| p.memory_bytes).sum();
-                let total_gpu_memory: u64 = procs.iter().map(|p| p.total_gpu_memory_bytes).sum();
+                // Sum what was reported. `None` when nothing in the category
+                // reported anything, which is not the same as a category whose
+                // processes all measured zero.
+                let reported: Vec<u64> = procs
+                    .iter()
+                    .filter_map(|p| p.total_gpu_memory_bytes)
+                    .collect();
+                let total_gpu_memory = if reported.is_empty() {
+                    None
+                } else {
+                    Some(reported.iter().sum())
+                };
                 let gpu_process_count = procs.iter().filter(|p| p.is_gpu_process()).count();
 
                 CategoryStats {
@@ -1213,7 +1239,9 @@ impl ProcessMonitor {
             if let Ok(gpu_processes) = gpu.processes() {
                 for gpu_proc in gpu_processes {
                     let pid = gpu_proc.pid;
-                    let gpu_mem = gpu_proc.memory_usage.unwrap_or(0);
+                    // `None` here is NVML declining to report, which is every
+                    // process under WDDM. It is not zero bytes.
+                    let gpu_mem = gpu_proc.memory_usage;
 
                     if let Some(proc_info) = process_map.get_mut(&pid) {
                         // Add this GPU to the process's GPU list
@@ -1221,9 +1249,15 @@ impl ProcessMonitor {
                             proc_info.gpu_indices.push(gpu_idx);
                         }
 
-                        // Add GPU memory for this device
-                        proc_info.gpu_memory_per_device.insert(gpu_idx, gpu_mem);
-                        proc_info.total_gpu_memory_bytes += gpu_mem;
+                        // Add GPU memory for this device, if the device gave
+                        // one. A process attributed to a GPU that reports no
+                        // figure keeps `None`, and stays distinguishable from
+                        // one measured at zero.
+                        if let Some(bytes) = gpu_mem {
+                            proc_info.gpu_memory_per_device.insert(gpu_idx, bytes);
+                            proc_info.total_gpu_memory_bytes =
+                                Some(proc_info.total_gpu_memory_bytes.unwrap_or(0) + bytes);
+                        }
 
                         // Copy user from GPU process if not already set
                         if proc_info.user.is_none() && !gpu_proc.user.is_empty() {
@@ -1597,7 +1631,7 @@ mod linux {
             start_time: process_start_time,
             gpu_indices: Vec::new(),
             gpu_memory_per_device: HashMap::new(),
-            total_gpu_memory_bytes: 0,
+            total_gpu_memory_bytes: None,
             state,
             priority: Some(priority),
             gfx_engine_used: None,
@@ -2009,7 +2043,7 @@ mod windows_impl {
                             memory_bytes,
                             gpu_indices: Vec::new(),
                             gpu_memory_per_device: HashMap::new(),
-                            total_gpu_memory_bytes: 0,
+                            total_gpu_memory_bytes: None,
                             // Windows exposes scheduling state per thread, not per
                             // process. Reporting 'R' here was a guess, not a reading.
                             state: 'U',
@@ -2072,7 +2106,7 @@ mod windows_impl {
                         memory_bytes: 0,
                         gpu_indices: Vec::new(),
                         gpu_memory_per_device: HashMap::new(),
-                        total_gpu_memory_bytes: 0,
+                        total_gpu_memory_bytes: None,
                         state: 'U',
                         priority: None,
                         gfx_engine_used: None,
@@ -2325,7 +2359,7 @@ mod macos {
                     start_time: Some(task_info.pbsd.pbi_start_tvsec),
                     gpu_indices: Vec::new(),
                     gpu_memory_per_device: HashMap::new(),
-                    total_gpu_memory_bytes: 0,
+                    total_gpu_memory_bytes: None,
                     state: status.chars().next().unwrap_or('U'), // First char of status
                     priority: Some(task_info.ptinfo.pti_priority),
                     gfx_engine_used: None,
@@ -2450,7 +2484,7 @@ mod tests {
             start_time: None,
             gpu_indices: vec![],
             gpu_memory_per_device: HashMap::new(),
-            total_gpu_memory_bytes: 0,
+            total_gpu_memory_bytes: None,
             state: 'R',
             priority: Some(0),
             gfx_engine_used: None,
@@ -2620,12 +2654,23 @@ mod tests {
         assert!(p.is_gpu_process());
     }
 
+    /// A process no device reported memory for reads back as unknown, and a
+    /// process measured at zero reads back as zero. NVML declines to report at
+    /// all under WDDM, so on Windows the first case is every process.
     #[test]
     fn test_gpu_memory_mb() {
         let mut p = make_test_process();
-        assert_eq!(p.gpu_memory_mb(), 0.0);
-        p.total_gpu_memory_bytes = 1024 * 1024 * 256;
-        assert!((p.gpu_memory_mb() - 256.0).abs() < 0.01);
+        assert_eq!(p.gpu_memory_mb(), None, "nothing reported is not zero MB");
+
+        p.total_gpu_memory_bytes = Some(0);
+        assert_eq!(
+            p.gpu_memory_mb(),
+            Some(0.0),
+            "a device reporting zero is a measurement"
+        );
+
+        p.total_gpu_memory_bytes = Some(1024 * 1024 * 256);
+        assert!((p.gpu_memory_mb().expect("reported") - 256.0).abs() < 0.01);
     }
 
     #[test]

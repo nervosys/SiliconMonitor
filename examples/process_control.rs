@@ -80,7 +80,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             for (i, proc) in gpu_only.iter().take(15).enumerate() {
                 // Format GPU memory
-                let gpu_mem = format_bytes(proc.total_gpu_memory_bytes);
+                let gpu_mem = proc
+                    .total_gpu_memory_bytes
+                    .map_or_else(|| "n/a".to_string(), format_bytes);
 
                 // Format system memory
                 let sys_mem = format_bytes(proc.memory_bytes);

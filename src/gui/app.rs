@@ -3242,7 +3242,7 @@ impl SiliconMonitorApp {
         let gpu_procs = self
             .process_list
             .iter()
-            .filter(|p| p.total_gpu_memory_bytes > 0)
+            .filter(|p| p.total_gpu_memory_bytes.is_some_and(|b| b > 0))
             .count();
 
         ui.horizontal(|ui| {
@@ -3419,7 +3419,9 @@ impl SiliconMonitorApp {
             for process in processes.iter().take(100) {
                 let cpu_color = theme::utilization_color(process.cpu_percent);
                 let mem_mb = process.memory_bytes as f64 / 1024.0 / 1024.0;
-                let gpu_mem_mb = process.total_gpu_memory_bytes as f64 / 1024.0 / 1024.0;
+                let gpu_mem_mb = process
+                    .total_gpu_memory_bytes
+                    .map(|b| b as f64 / 1024.0 / 1024.0);
 
                 // State color coding like htop
                 let state_color = match process.state {
@@ -3479,9 +3481,9 @@ impl SiliconMonitorApp {
                     );
                     ui.add_space(20.0);
                     // GPU Memory (if using GPU)
-                    if gpu_mem_mb > 0.1 {
+                    if let Some(mb) = gpu_mem_mb.filter(|m| *m > 0.1) {
                         ui.label(
-                            RichText::new(format!("{:>6.0} MB", gpu_mem_mb))
+                            RichText::new(format!("{mb:>6.0} MB"))
                                 .color(CyberColors::NEON_ORANGE)
                                 .monospace(),
                         );

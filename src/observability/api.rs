@@ -1238,11 +1238,9 @@ impl ObservabilityApi {
                         name: p.name.clone(),
                         cpu_percent: p.cpu_percent,
                         memory_mb: p.memory_bytes / (1024 * 1024),
-                        gpu_memory_mb: if p.total_gpu_memory_bytes > 0 {
-                            Some(p.total_gpu_memory_bytes / (1024 * 1024))
-                        } else {
-                            None
-                        },
+                        // This guarded `> 0` to undo a sentinel the source
+                        // should not have made. The source says None now.
+                        gpu_memory_mb: p.total_gpu_memory_bytes.map(|b| b / (1024 * 1024)),
                         threads: p.thread_count,
                         user: p.user.clone(),
                         command: Some(p.name.clone()),

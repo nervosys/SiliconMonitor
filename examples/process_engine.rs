@@ -34,7 +34,9 @@ fn main() -> Result<(), Box<dyn Error>> {
                 "{:<8} {:<12} {:<12} {:<12.1} {:<20}",
                 process.pid,
                 process.user.as_deref().unwrap_or("unknown"),
-                process.total_gpu_memory_bytes / 1024 / 1024,
+                process
+                    .total_gpu_memory_bytes
+                    .map_or_else(|| "n/a".to_string(), |b| (b / 1024 / 1024).to_string()),
                 process.cpu_percent,
                 process.name
             );

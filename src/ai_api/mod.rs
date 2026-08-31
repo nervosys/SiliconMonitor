@@ -480,7 +480,7 @@ impl AiDataApi {
                         name: p.name.clone(),
                         cpu_percent: p.cpu_percent,
                         memory_mb: (p.memory_bytes / 1024 / 1024),
-                        gpu_memory_mb: (p.total_gpu_memory_bytes / 1024 / 1024),
+                        gpu_memory_mb: p.total_gpu_memory_bytes.map(|b| b / 1024 / 1024),
                     })
                     .collect();
 
@@ -495,7 +495,7 @@ impl AiDataApi {
                         name: p.name.clone(),
                         cpu_percent: p.cpu_percent,
                         memory_mb: (p.memory_bytes / 1024 / 1024),
-                        gpu_memory_mb: (p.total_gpu_memory_bytes / 1024 / 1024),
+                        gpu_memory_mb: p.total_gpu_memory_bytes.map(|b| b / 1024 / 1024),
                     })
                     .collect();
             }
@@ -511,7 +511,7 @@ impl AiDataApi {
                         name: p.name.clone(),
                         cpu_percent: p.cpu_percent,
                         memory_mb: (p.memory_bytes / 1024 / 1024),
-                        gpu_memory_mb: (p.total_gpu_memory_bytes / 1024 / 1024),
+                        gpu_memory_mb: p.total_gpu_memory_bytes.map(|b| b / 1024 / 1024),
                     })
                     .collect();
             }

@@ -1007,7 +1007,7 @@ impl AiDataApi {
                     "name": p.name,
                     "gpu_indices": p.gpu_indices,
                     "gpu_memory_bytes": p.total_gpu_memory_bytes,
-                    "gpu_memory_mb": p.total_gpu_memory_bytes / 1024 / 1024,
+                    "gpu_memory_mb": p.total_gpu_memory_bytes.map(|b| b / 1024 / 1024),
                     "cpu_percent": p.cpu_percent,
                     "system_memory_mb": p.memory_bytes / 1024 / 1024,
                 })
@@ -1972,7 +1972,7 @@ impl AiDataApi {
                     "name": p.name,
                     "cpu_percent": p.cpu_percent,
                     "memory_mb": p.memory_bytes / 1024 / 1024,
-                    "gpu_memory_mb": p.total_gpu_memory_bytes / 1024 / 1024,
+                    "gpu_memory_mb": p.total_gpu_memory_bytes.map(|b| b / 1024 / 1024),
                     "thread_count": p.thread_count,
                     "state": p.state,
                 })
@@ -2018,7 +2018,7 @@ impl AiDataApi {
             "thread_count": proc.thread_count,
             "gpu_indices": proc.gpu_indices,
             "gpu_memory_bytes": proc.total_gpu_memory_bytes,
-            "gpu_memory_mb": proc.total_gpu_memory_bytes / 1024 / 1024,
+            "gpu_memory_mb": proc.total_gpu_memory_bytes.map(|b| b / 1024 / 1024),
         }))
     }
 
@@ -2112,7 +2112,7 @@ impl AiDataApi {
                     "name": p.name,
                     "gpu_indices": p.gpu_indices,
                     "gpu_memory_bytes": p.total_gpu_memory_bytes,
-                    "gpu_memory_mb": p.total_gpu_memory_bytes / 1024 / 1024,
+                    "gpu_memory_mb": p.total_gpu_memory_bytes.map(|b| b / 1024 / 1024),
                     "cpu_percent": p.cpu_percent,
                     "system_memory_mb": p.memory_bytes / 1024 / 1024,
                 })
@@ -2149,7 +2149,7 @@ impl AiDataApi {
                     "name": p.name,
                     "cpu_percent": p.cpu_percent,
                     "memory_mb": p.memory_bytes / 1024 / 1024,
-                    "gpu_memory_mb": p.total_gpu_memory_bytes / 1024 / 1024,
+                    "gpu_memory_mb": p.total_gpu_memory_bytes.map(|b| b / 1024 / 1024),
                 })
             })
             .collect();

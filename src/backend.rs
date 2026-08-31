@@ -217,7 +217,9 @@ pub struct ProcessState {
     pub memory_bytes: u64,
 
     /// GPU memory usage (bytes)
-    pub gpu_memory_bytes: u64,
+    /// GPU memory in bytes, or `None` where no device reported one. NVML does
+    /// not expose this under WDDM.
+    pub gpu_memory_bytes: Option<u64>,
 
     /// GPU indices used
     pub gpu_indices: Vec<usize>,
@@ -362,10 +364,10 @@ impl FullSystemState {
                     proc.cpu_percent,
                     proc.memory_bytes as f64 / 1024.0 / 1024.0
                 ));
-                if proc.gpu_memory_bytes > 0 {
+                if let Some(bytes) = proc.gpu_memory_bytes.filter(|b| *b > 0) {
                     ctx.push_str(&format!(
                         ", GPU Mem {:.0}MB",
-                        proc.gpu_memory_bytes as f64 / 1024.0 / 1024.0
+                        bytes as f64 / 1024.0 / 1024.0
                     ));
                 }
                 ctx.push('\n');

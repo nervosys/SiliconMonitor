@@ -50,6 +50,7 @@ fn main() -> Result<()> {
                 proc.memory_mb(),
                 gpus,
                 proc.gpu_memory_mb()
+                    .map_or_else(|| "n/a".to_string(), |mb| format!("{mb:.1}"))
             );
             count += 1;
         }

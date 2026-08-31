@@ -19,7 +19,7 @@ const DEFAULT_MAX_SIZE: u64 = 100 * 1024 * 1024;
 const MAGIC_BYTES: &[u8; 8] = b"SIMONDB\0";
 
 /// Current database version
-const DB_VERSION: u32 = 2;
+const DB_VERSION: u32 = 3;
 
 /// Size of the database header
 const HEADER_SIZE: u64 = 128;
@@ -86,8 +86,12 @@ pub struct ProcessSnapshot {
     pub cpu_percent: f32,
     /// Memory usage in bytes
     pub memory_bytes: u64,
-    /// GPU memory usage in bytes (if applicable)
-    pub gpu_memory_bytes: u64,
+    /// GPU memory in bytes, or `None` where no device reported one.
+    ///
+    /// This was `u64`, fed from a field that was also `u64`, so a process whose
+    /// GPU memory NVML declines to report — every process on Windows, where
+    /// WDDM does not expose it — was persisted as using zero bytes.
+    pub gpu_memory_bytes: Option<u64>,
     /// GPU utilization percentage, or `None` when no per-process GPU
     /// accounting was available for this process.
     pub gpu_percent: Option<f32>,
@@ -270,10 +274,11 @@ impl TimeSeriesDb {
             return Err(SimonError::Configuration(format!(
                 concat!(
                     "Database version {} predates version {}, which records an ",
-                    "unreadable GPU as absent rather than as zero. The layouts ",
-                    "differ and the old records cannot be converted, because a ",
-                    "stored zero does not say whether it was measured. Record ",
-                    "to a new file, or delete this one with `simon record clear`.",
+                    "unreadable GPU figure as absent rather than as zero. The ",
+                    "layouts differ and the old records cannot be converted, ",
+                    "because a stored zero does not say whether it was ",
+                    "measured. Record to a new file, or delete this one with ",
+                    "`simon record clear`.",
                 ),
                 header.version, DB_VERSION
             )));
@@ -722,7 +727,7 @@ mod tests {
                 name: "p".to_string(),
                 cpu_percent: 1.0,
                 memory_bytes: 2,
-                gpu_memory_bytes: 3,
+                gpu_memory_bytes: Some(3),
                 gpu_percent: None,
                 disk_read_bps: None,
                 disk_write_bps: None,
