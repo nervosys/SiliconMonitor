@@ -26,6 +26,7 @@
 //! }
 //! ```
 
+#[cfg(target_os = "linux")]
 use std::fs;
 use std::path::Path;
 
@@ -153,9 +154,12 @@ impl SandboxDetector {
                     "/sys/class/dmi/id/product_name",
                     vec!["VirtualBox", "VMware", "QEMU", "KVM", "Bochs"],
                 ),
+                // "Microsoft Corporation" is deliberately absent: it is the
+                // sys_vendor of every Surface, which is bare metal. A Hyper-V
+                // guest is caught by the hypervisor CPU flag below.
                 (
                     "/sys/class/dmi/id/sys_vendor",
-                    vec!["QEMU", "VMware", "VirtualBox", "Microsoft Corporation"],
+                    vec!["QEMU", "VMware", "VirtualBox"],
                 ),
                 (
                     "/sys/class/dmi/id/board_vendor",
@@ -204,20 +208,29 @@ impl SandboxDetector {
         // Windows: Check registry and WMI (would require winreg crate)
         #[cfg(windows)]
         {
-            // Check for Hyper-V
-            if let Ok(content) = fs::read_to_string("C:\\Windows\\System32\\drivers\\vmbus.sys") {
-                if !content.is_empty() {
-                    info.is_vm = true;
-                    info.environment = Some("Hyper-V".to_string());
-                    info.indicators.push("Hyper-V driver detected".to_string());
-                }
-            }
-
-            // Check environment variables
-            if std::env::var("VIRTUAL_MACHINE").is_ok() {
+            // This read `C:\Windows\System32\drivers\vmbus.sys` and set
+            // `is_vm` if the contents were non-empty. It was wrong twice over:
+            // the file ships with every modern Windows install, host or guest,
+            // so its presence proves nothing; and it is a binary driver, so
+            // `read_to_string` fails on invalid UTF-8 and the check never ran
+            // at all. Both confirmed on a bare-metal Windows 11 desktop, where
+            // the file is present, 210 KB, and invalid UTF-8 at byte 2.
+            //
+            // 3.10.0 already built the correct check in `virtualization::detect`:
+            // it reads the hypervisor bit and vendor string out of CPUID and
+            // distinguishes a Hyper-V root partition from a guest via leaf
+            // 0x40000003. Use it rather than keep a second, worse one.
+            if crate::virtualization::detect::detect_platform()
+                == crate::virtualization::detect::VirtPlatform::VirtualMachine
+            {
                 info.is_vm = true;
-                info.indicators
-                    .push("VIRTUAL_MACHINE env var set".to_string());
+                let named = crate::virtualization::detect::detect_hypervisor()
+                    .map(|h| format!("{:?}", h.hypervisor));
+                info.environment = named.clone();
+                info.indicators.push(match named {
+                    Some(name) => format!("{name} reported by CPUID"),
+                    None => "hypervisor reported by CPUID".to_string(),
+                });
             }
         }
 
@@ -433,15 +446,22 @@ impl SandboxDetector {
             }
         }
 
-        // Check for common debugger environment variables
-        let debugger_vars = ["_", "LLDB_DEBUGSERVER_PATH", "GDB", "PYTHONBREAKPOINT"];
-        for var in &debugger_vars {
-            if std::env::var(var).is_ok() {
-                info.is_debugged = true;
-                info.indicators
-                    .push(format!("Debugger env var {} detected", var));
-            }
-        }
+        // There is deliberately no environment-variable heuristic here.
+        //
+        // The list used to be `["_", "LLDB_DEBUGSERVER_PATH", "GDB",
+        // "PYTHONBREAKPOINT"]`, and `_` is not a debugger variable at all:
+        // every POSIX shell sets it to the last argument of the previous
+        // command, so every run launched from bash, zsh or sh reported
+        // "Sandboxed: Debugger Attached". On this desktop that made
+        // `is_sandboxed()` true, which made `has_consent` false for every
+        // scope, which made `simon privacy status` answer "DENIED" on the line
+        // after `simon privacy opt-in` said "enabled". The other three say
+        // nothing about *this* process either: gdb does not export `GDB`, and
+        // `PYTHONBREAKPOINT` configures a Python hook, in a Rust binary.
+        //
+        // The two checks above are the real ones. macOS has none, and the
+        // honest answer there is `false` with nothing claimed, rather than a
+        // guess that fires on a shell variable.
     }
 }
 
@@ -454,6 +474,39 @@ impl Default for SandboxDetector {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `$_` is set by every POSIX shell to the last argument of the previous
+    /// command. It was in this module's debugger-variable list, so any run
+    /// started from bash, zsh or sh reported a debugger and therefore a
+    /// sandbox — and `ConsentManager::has_consent` refuses every scope inside
+    /// a sandbox, so `simon privacy status` answered "DENIED" immediately
+    /// after `simon privacy opt-in` recorded consent.
+    ///
+    /// The test runner sets `_` under `cargo test` from a shell, so this
+    /// assertion exercised the defect directly: it failed before the list was
+    /// removed. A real debugger attached to the test process would also fail
+    /// it, which is the correct behaviour and not a flake.
+    #[test]
+    fn a_shell_variable_is_not_a_debugger() {
+        let info = SandboxDetector::new().detect();
+
+        assert!(
+            !info.is_debugged,
+            "reported a debugger with none attached; indicators: {:?}",
+            info.indicators
+        );
+
+        for indicator in &info.indicators {
+            assert!(
+                !indicator.contains("env var"),
+                concat!(
+                    "an environment variable is being used as evidence of a ",
+                    "sandbox: {}"
+                ),
+                indicator
+            );
+        }
+    }
 
     #[test]
     fn test_sandbox_detector_creation() {

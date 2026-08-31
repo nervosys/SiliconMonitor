@@ -329,11 +329,11 @@ fn every_interface_module_is_declared() {
     for (path, id) in INTERFACES {
         assert!(
             std::path::Path::new(path).exists(),
-            "{path} is listed as an interface and does not exist; either it was              removed and {id} should go too, or the path is wrong"
+            "{path} is listed as an interface and does not exist; either it was removed and {id} should go too, or the path is wrong"
         );
         assert!(
             declared.contains(*id),
-            "{path} ships and {id} is not in the capability catalogue. An agent              reading the catalogue would not know this way of talking to simon              exists."
+            "{path} ships and {id} is not in the capability catalogue. An agent reading the catalogue would not know this way of talking to simon exists."
         );
     }
 }
@@ -381,7 +381,7 @@ fn every_command_a_capability_names_exists() {
         let Some(command) = &c.command else { continue };
         assert!(
             paths.contains(command),
-            "{} names the command {command:?} and the binary does not accept it.              A capability that tells an agent how to invoke it must be right about              that, or the catalogue is worse than silent.",
+            "{} names the command {command:?} and the binary does not accept it.              A capability that tells an agent how to invoke it must be right about that, or the catalogue is worse than silent.",
             c.id
         );
     }
@@ -421,7 +421,7 @@ fn capabilities_with_no_command_are_named() {
     // gained a command — which is the change it should have welcomed.
     assert!(
         detection_stranded == 0 || detection_stranded == detection_total,
-        "some detection capabilities now name a command and others do not. Either          all of them are reachable or none are; a half-wired surface is the state          an agent cannot reason about."
+        "some detection capabilities now name a command and others do not. Either all of them are reachable or none are; a half-wired surface is the state an agent cannot reason about."
     );
 }
 
@@ -460,7 +460,7 @@ fn reported_features_match_the_commands_the_binary_accepts() {
         if features.contains(&feature) {
             assert!(
                 names.contains(command),
-                "the feature list reports {feature:?} and the binary has no                  {command:?} command. One of the two is describing a different                  build."
+                "the feature list reports {feature:?} and the binary has no                  {command:?} command. One of the two is describing a different build."
             );
         }
     }

@@ -16,11 +16,15 @@ struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
 
-    /// Disable all remote data collection for this session (no telemetry, analytics, or crash reports)
+    /// Deny every data-collection category for this session. simon collects and
+    /// transmits nothing today, so this records a denial rather than stopping
+    /// anything; see `simon privacy status`
     #[arg(long, global = true)]
     no_telemetry: bool,
 
-    /// Run completely offline - disable all network features including remote data collection
+    /// Keep this machine's details on it: refuse AI backends that would relay
+    /// the question to a vendor, and deny every data-collection category.
+    /// Backends served locally still work
     #[arg(long, global = true)]
     offline: bool,
 }
@@ -3239,6 +3243,44 @@ fn handle_record_command(action: &RecordSubcommand) -> Result<(), Box<dyn std::e
 
 /// Handle privacy subcommands for managing data collection consent
 #[cfg(feature = "cli")]
+/// Print the one fact every `simon privacy` screen needs to lead with.
+///
+/// The five consent categories, their descriptions and their itemised data
+/// points were written for a collector that was never built. `ConsentScope::
+/// is_collected` is `false` for all of them, `should_collect_data` has no
+/// callers outside its own module, and the crate has no telemetry endpoint —
+/// every outbound request in it goes to an LLM backend the user configured.
+///
+/// Displaying "DENIED" against a category that is not running tells the user
+/// they switched something off that was never on, and displaying "enabled"
+/// after `opt-in` is worse: it thanks them for data nobody receives.
+fn print_collects_nothing_notice() {
+    println!(
+        "{} {}",
+        "Note:".yellow().bold(),
+        "simon collects and transmits nothing.".white().bold()
+    );
+    println!(
+        "  {}",
+        concat!(
+            "There is no telemetry endpoint in this program and no code that ",
+            "gathers any of these categories. The settings here record a ",
+            "preference that a future collector would have to honour; they do ",
+            "not switch anything on or off today."
+        )
+        .dimmed()
+    );
+    println!(
+        "  {}",
+        concat!(
+            "The only network requests simon makes are to AI backends you ",
+            "configure and point at yourself."
+        )
+        .dimmed()
+    );
+    println!();
+}
+
 fn handle_privacy_command(action: &PrivacySubcommand) -> Result<(), Box<dyn std::error::Error>> {
     use simonlib::consent::{ConsentManager, ConsentScope};
 
@@ -3277,9 +3319,18 @@ fn handle_privacy_command(action: &PrivacySubcommand) -> Result<(), Box<dyn std:
                 println!();
             }
 
-            println!("{}", "Consent Status:".white().bold());
+            print_collects_nothing_notice();
+
+            println!("{}", "Recorded preferences:".white().bold());
             println!("─────────────────────────────────────────────────────────────────");
 
+            // Report what the user chose, not what `has_consent` returns.
+            // `has_consent` folds three unrelated causes into one bool — the
+            // session flags, sandbox detection, and the stored answer — so
+            // `simon privacy opt-in` could say "consented to" and `status`
+            // reply "not granted" on the next line, with no way to tell that
+            // a sandbox detection had overridden the choice.
+            let records = manager.get_all_consents();
             for scope in [
                 ConsentScope::BasicTelemetry,
                 ConsentScope::HardwareInfo,
@@ -3287,24 +3338,61 @@ fn handle_privacy_command(action: &PrivacySubcommand) -> Result<(), Box<dyn std:
                 ConsentScope::DetailedDiagnostics,
                 ConsentScope::Analytics,
             ] {
-                let status = if manager.has_consent(scope) {
-                    format!("{} GRANTED", "●".green())
-                } else {
-                    format!("{} DENIED", "○".red())
+                let status = match records.get(&scope).map(|r| r.granted) {
+                    Some(true) => format!("{} granted", "●".green()),
+                    Some(false) => format!("{} denied", "○".red()),
+                    None => format!("{} unanswered", "·".yellow()),
                 };
-                println!("  {:<30} {}", scope.name(), status);
+                // Printing only "granted" would imply the category is running.
+                // None of them is; the preference is recorded against a
+                // collector that does not exist yet.
+                println!(
+                    "  {:<30} {:<20}   {}",
+                    scope.name(),
+                    status,
+                    "(nothing implemented)".dimmed()
+                );
             }
 
             println!();
+
+            // Say plainly when something is overriding the recorded answers,
+            // and what it is.
+            let sandbox = simonlib::sandbox::SandboxDetector::new().detect();
+            if sandbox.is_sandboxed() {
+                println!(
+                    concat!(
+                        "{} every category is refused regardless of the answers ",
+                        "above, because this looks like a {}."
+                    ),
+                    "Override:".yellow().bold(),
+                    sandbox.summary().to_lowercase()
+                );
+                println!(
+                    "  {}",
+                    concat!(
+                        "Detection is a heuristic and can be wrong; nothing is ",
+                        "collected here either way."
+                    )
+                    .dimmed()
+                );
+                println!();
+            } else if no_telemetry || offline {
+                println!(
+                    "{} every category is refused for this session by the flag above.",
+                    "Override:".yellow().bold()
+                );
+                println!();
+            }
             println!("{}", "Commands:".white().bold());
-            println!("  simon privacy opt-out    # Disable all data collection");
-            println!("  simon privacy opt-in     # Enable all data collection");
+            println!("  simon privacy opt-out    # Record a denial for every category");
+            println!("  simon privacy opt-in     # Record consent for every category");
             println!("  simon privacy review     # Review settings interactively");
-            println!("  simon privacy info       # Show what data each category collects");
+            println!("  simon privacy info       # Show what each category would cover");
             println!();
             println!("{}", "Session Flags:".white().bold());
-            println!("  simon --no-telemetry     # Disable telemetry for one session");
-            println!("  simon --offline          # Run completely offline");
+            println!("  simon --no-telemetry     # Deny every category for one session");
+            println!("  simon --offline          # Also keep agent backends off the network");
         }
 
         PrivacySubcommand::OptOut => {
@@ -3317,18 +3405,17 @@ fn handle_privacy_command(action: &PrivacySubcommand) -> Result<(), Box<dyn std:
             );
             println!(
                 "{}",
-                "║           Data Collection Disabled                            ║".green()
+                "║        Preferences Recorded: Everything Denied                 ║".green()
             );
             println!(
                 "{}",
                 "╚════════════════════════════════════════════════════════════════╝".green()
             );
             println!();
-            println!(
-                "All data collection has been disabled. Your privacy choices have been saved."
-            );
+            println!("A denial has been recorded for every category and saved.");
             println!();
-            println!("You can re-enable data collection at any time with:");
+            print_collects_nothing_notice();
+            println!("You can change these preferences at any time with:");
             println!("  simon privacy opt-in");
             println!("  simon privacy review");
         }
@@ -3342,14 +3429,14 @@ fn handle_privacy_command(action: &PrivacySubcommand) -> Result<(), Box<dyn std:
             );
             println!(
                 "{}",
-                "║           Enable Data Collection                              ║".cyan()
+                "║        Preferences Recorded: Everything Consented              ║".cyan()
             );
             println!(
                 "{}",
                 "╚════════════════════════════════════════════════════════════════╝".cyan()
             );
             println!();
-            println!("Enabling all data collection categories...");
+            println!("Recording consent for every category...");
             println!();
 
             for scope in [
@@ -3360,16 +3447,16 @@ fn handle_privacy_command(action: &PrivacySubcommand) -> Result<(), Box<dyn std:
                 ConsentScope::Analytics,
             ] {
                 manager.record_consent(scope, true)?;
-                println!("  {} {} enabled", "✓".green(), scope.name());
+                println!("  {} {} consented to", "✓".green(), scope.name());
             }
 
             println!();
-            println!(
-                "{}",
-                "All data collection categories have been enabled.".green()
-            );
+            println!("{}", "Consent recorded for every category.".green());
             println!();
-            println!("You can review or change these settings at any time with:");
+            // Without this the user walks away believing they have just turned
+            // something on and are now sending data. They are not.
+            print_collects_nothing_notice();
+            println!("You can review or change these preferences at any time with:");
             println!("  simon privacy status");
             println!("  simon privacy review");
         }
@@ -3394,6 +3481,8 @@ fn handle_privacy_command(action: &PrivacySubcommand) -> Result<(), Box<dyn std:
             );
             println!();
 
+            print_collects_nothing_notice();
+
             for scope in [
                 ConsentScope::BasicTelemetry,
                 ConsentScope::HardwareInfo,
@@ -3406,7 +3495,7 @@ fn handle_privacy_command(action: &PrivacySubcommand) -> Result<(), Box<dyn std:
                 println!("{}", "Description:".white().bold());
                 println!("  {}", scope.description());
                 println!();
-                println!("{}", "Data collected:".white().bold());
+                println!("{}", "Would cover:".white().bold());
                 for point in scope.data_points() {
                     println!("  • {}", point);
                 }
@@ -3823,7 +3912,7 @@ fn handle_vault_models(format: &str) -> Result<(), Box<dyn std::error::Error>> {
             if !report.versionless.is_empty() {
                 println!(
                     "
-{} model(s) listed with no versions, so nothing about their                      size was read: {}",
+{} model(s) listed with no versions, so nothing about their size was read: {}",
                     report.versionless.len(),
                     report.versionless.join(", ")
                 );

@@ -225,9 +225,12 @@ pub fn decode_block(bytes: &[u8], source: String, locator: String) -> Option<Pro
                     refresh_hz
                 )),
             )
-            .with_description(
-                "First Detailed Timing Descriptor — manufacturer's recommended mode.                  An `i` marks an interlaced mode, whose line count the descriptor                  stores per field and which is doubled here to whole frames.",
-            )
+            .with_description(concat!(
+                "First Detailed Timing Descriptor — manufacturer's ",
+                "recommended mode. An `i` marks an interlaced mode, whose ",
+                "line count the descriptor stores per field and which is ",
+                "doubled here to whole frames."
+            ))
             .with_risk(SettingRisk::Safe),
         );
     }

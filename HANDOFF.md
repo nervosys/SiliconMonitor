@@ -46,9 +46,116 @@ Since the tag, on `master` and green on all three platforms:
 | `3a50c99` | `pstate_name` gated with its caller, after CI caught it |
 | `2360068` | Watching nothing is not the same as having no baseline |
 | `5931069` | The recorder stored an absent sensor as zero degrees |
+| `HEAD` | A shell variable read as a debugger, and a consent UI for nothing |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### A privacy screen is a reading too, and this one was wrong three ways
+
+`simon privacy` was the last unread surface. It has no hardware in it, which is
+why it went unexamined for so long, and it turned out to hold the most confident
+false statements in the crate.
+
+**There is no telemetry in simon.** No endpoint, no collector, no serialiser.
+`ConsentScope` is referenced only by the `privacy` subcommand that displays it;
+`should_collect_data` has no callers at all outside its own module; every
+outbound `.post` in the crate goes to an LLM backend the user configured. In
+front of that emptiness sat five categories, twenty itemised data points
+("Crash stack traces (anonymized)", "Frame time distributions"), an opt-in flow,
+and a persisted config with timestamps — and `simon privacy opt-in` answered
+"All data collection categories have been enabled."
+
+**The direction of a false claim does not decide how serious it is.** Every
+defect before this one overstated what simon knew; this one understated what it
+did, which reads as reassuring and is therefore harder to doubt. It is still a
+confident wrong answer about the program's own behaviour, in the one area a
+user cannot check for themselves, and it degrades: the disclosure is already
+written and already consented to on the day someone adds a collector.
+
+Three defects, not one:
+
+1. **The apparatus does not exist.** Fixed by saying so on every screen, and by
+   `ConsentScope::is_collected`, which returns `false` for all five and is the
+   single place to change. `should_collect_data` consults it, so consent to a
+   category nothing implements cannot report that it should collect.
+2. **`has_consent` defaulted to granted**, under a comment reading "opt-in by
+   default" and a module header listing "Opt-in by default" as a principle. A
+   default of granted is opt-out; the two cannot both be true. Nothing consumed
+   the answer, so it was inert — and it would have started collecting from
+   everyone who never answered on the day it stopped being inert. Now `false`.
+3. **The module claimed compliance with GDPR and CCPA.** A library is not in a
+   position to make that claim about a deployment, and default-granted consent
+   is the specific thing the first of those forbids. Removed rather than
+   softened.
+
+The global `--no-telemetry` and `--offline` help lines said simon did "telemetry,
+analytics, or crash reports" on **every subcommand's `--help`**, which is the
+widest-reach false statement the crate had. `--offline`'s one real effect is
+worth stating accurately: `agent::refuse_if_offline_and_offhost` declines a
+backend that would relay the question to a vendor. That check is good, and its
+doc comment records that the flag previously enforced nothing at all.
+
+### `$_` is not a debugger, and it cost the privacy screen its credibility
+
+Pulling the thread on why `opt-in` said "enabled" and `status` said "DENIED" on
+the next line landed on `sandbox.rs`:
+
+```rust
+let debugger_vars = ["_", "LLDB_DEBUGSERVER_PATH", "GDB", "PYTHONBREAKPOINT"];
+```
+
+`$_` is set by **every POSIX shell** to the last argument of the previous
+command. So every run started from bash, zsh or sh set `is_debugged`, therefore
+`is_sandboxed()`, therefore `has_consent() == false` for every scope — silently,
+because the display folded three unrelated causes into one word. `simon
+privacy status` was reporting a shell variable as the user's privacy choice.
+`cargo run --example sandbox_demo` printed **"Sandboxed: Debugger Attached"**,
+"Protection Status: ACTIVE" and "Network Transmission: BLOCKED" on a bare-metal
+desktop.
+
+The other three names in that list say nothing about *this* process either: gdb
+does not export `GDB`, and `PYTHONBREAKPOINT` configures a Python hook in a Rust
+binary. The two real checks — `TracerPid` on Linux, `IsDebuggerPresent` on
+Windows — were already there and already correct, sitting directly above. **The
+heuristic was pure downside: it could only add false positives to checks that
+did not need help.**
+
+Two more in the same file, both confirmed rather than reasoned:
+
+- The Windows Hyper-V check read `C:\Windows\System32\drivers\vmbus.sys` and
+  set `is_vm` if the contents were non-empty. The file **ships with every modern
+  Windows install**, host or guest, so its presence proves nothing — and it is a
+  binary driver, so `read_to_string` fails on invalid UTF-8 and the check
+  **never ran at all**. Both checked here: present, 210 KB, invalid UTF-8 at
+  byte 2. It now calls `virtualization::detect`, which 3.10.0 already built
+  correctly out of CPUID leaf 0x40000003 — *a second consumer that never
+  adopted the good reader, found four sessions after the pattern was named.*
+- Linux `sys_vendor` matched `"Microsoft Corporation"`, which is the sys_vendor
+  of every Surface. Bare metal reported as a VM.
+
+**The regression test was confirmed against the old code before being believed**,
+per the rule below, and failed with exactly the right message:
+`reported a debugger with none attached; indicators: ["Debugger env var _ detected"]`.
+
+### The recurring string mangling, finally diagnosed and now caught
+
+Three sessions have lost `\` line continuations inside Rust string literals,
+leaving runs of source indentation embedded in user-facing text, and the handoff
+has recorded it twice as unexplained. The mechanism is now clear enough to state:
+**a `\` at the end of a line does not survive being written through a shell
+heredoc**, so a literal authored that way arrives collapsed. It still compiles,
+still lints clean, and every assertion about it still passes, because all the
+words are present.
+
+`tests/source_hygiene.rs` now fails on the signature — six or more spaces
+between two lowercase letters, inside a line containing a quote, outside a
+comment. It found **twelve** instances on its first run, five of them already
+committed, including one shipped in `4846c3f` in an EDID setting description.
+
+The fix is always `concat!("first part ", "second part")`, which has no
+continuation to lose. That was already the crate's convention; this is why it
+has to be.
 
 ### The reader was honest; the consumer threw it away
 

@@ -215,7 +215,7 @@ fn swap_is_reported_without_exceeding_its_own_total() {
         ),
         (None, None) => {}
         (used, total) => panic!(
-            "swap reported one half and not the other: used={used:?} total={total:?},              which no reader should produce"
+            "swap reported one half and not the other: used={used:?} total={total:?}, which no reader should produce"
         ),
     }
 }

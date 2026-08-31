@@ -1,16 +1,37 @@
 //! User Consent Management
 //!
-//! This module provides explicit user consent mechanisms for any data collection,
-//! telemetry, or analytics features. It ensures ethical operation and compliance
-//! with privacy regulations (GDPR, CCPA, etc.).
+//! # simon collects nothing and transmits nothing
+//!
+//! Read this before anything else in the module, because the rest of it
+//! describes machinery that does not currently drive anything.
+//!
+//! No code in this crate collects, aggregates or transmits telemetry,
+//! analytics, hardware inventory or diagnostics. There is no endpoint. The
+//! only outbound HTTP in the crate goes to LLM backends the user configures
+//! and points at themselves. [`ConsentScope::is_collected`] returns `false`
+//! for every scope, and it is the single place that changes if that ever
+//! stops being true.
+//!
+//! What this module provides is the consent *record* — a persisted preference,
+//! with a timestamp, that a future collector would have to honour. Presenting
+//! it as a live privacy control would tell the user they had switched
+//! something off that was never on, which is the same defect as reporting a
+//! measurement that was never taken.
 //!
 //! # Principles
 //!
-//! - **Opt-in by default**: Data collection is enabled by default for better user experience
-//! - **Easy opt-out**: Users can disable all data collection with `simon privacy opt-out`
-//! - **Transparency**: Clear disclosure of what's collected and why
-//! - **Control**: Easy opt-out and data deletion via CLI flags or commands
-//! - **Auditability**: All consent decisions are logged and reviewable
+//! - **Denied until asked**: a scope with no consent record is not granted.
+//!   This module previously defaulted to granted while describing itself as
+//!   opt-in; the two cannot both be true, and the safe reading is the one that
+//!   does not assume permission nobody gave.
+//! - **Easy opt-out**: `simon privacy opt-out` records a denial for every scope
+//! - **Transparency**: the disclosure says what *would* be collected, and says
+//!   plainly that none of it is
+//! - **Auditability**: every consent decision is stored with the time it was made
+//!
+//! No claim is made here about compliance with any particular privacy
+//! regulation. That is a question about a deployment and its operator, not
+//! about a library, and this module is not in a position to answer it.
 //!
 //! # Example
 //!
@@ -129,7 +150,32 @@ impl ConsentScope {
         }
     }
 
-    /// Get list of data points collected under this scope
+    /// Whether any code in this crate actually collects or transmits data
+    /// under this scope.
+    ///
+    /// Every arm is `false`, and that is the point. The five scopes, their
+    /// descriptions and their itemised data points were written for a
+    /// collector that was never built, and `simon privacy` displayed them as
+    /// though the collection were happening and merely switched off.
+    ///
+    /// **If you add a collector, flip its scope here in the same change.**
+    /// [`ConsentManager::should_collect_data`] consults this, so a scope that
+    /// nothing implements cannot report that it should collect, however the
+    /// user answered. `granting_every_scope_still_collects_nothing` in this
+    /// module fails the moment an arm becomes `true`, which is the moment the
+    /// disclosure and the CLI text need revisiting.
+    pub fn is_collected(&self) -> bool {
+        match self {
+            Self::BasicTelemetry
+            | Self::HardwareInfo
+            | Self::PerformanceMetrics
+            | Self::DetailedDiagnostics
+            | Self::Analytics => false,
+        }
+    }
+
+    /// The data points that *would* be collected under this scope if it were
+    /// implemented. Nothing here is gathered today — see [`Self::is_collected`].
     pub fn data_points(&self) -> Vec<&'static str> {
         match self {
             Self::BasicTelemetry => vec![
@@ -181,7 +227,9 @@ pub struct ConsentRecord {
     /// Version of the consent prompt shown
     pub prompt_version: u32,
 
-    /// User's IP address at time of consent (for audit trail only)
+    /// Always `None`. No IP address is recorded, hashed or otherwise; the
+    /// field exists only because it was declared, and `record_consent` has
+    /// never populated it. Queued for removal, which is breaking.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ip_hash: Option<String>,
 }
@@ -311,19 +359,32 @@ impl ConsentManager {
             return false;
         }
 
-        // Default to true (opt-in by default) if no explicit consent record exists
+        // A scope with no record has not been consented to. This defaulted to
+        // `true` under a comment reading "opt-in by default", which is a
+        // contradiction: a default of granted is opt-out. Nothing consumed the
+        // answer, so the wrong default was inert, but it would have started
+        // granting consent nobody gave on the day a collector landed.
         self.config
             .records
             .get(&scope)
             .map(|r| r.granted)
-            .unwrap_or(true)
+            .unwrap_or(false)
     }
 
-    /// Check if consent should be granted (including sandbox check)
+    /// Whether data may be collected under `scope` right now.
     ///
-    /// This is a convenience method that combines consent checking with sandbox detection
-    /// and runtime opt-out flags.
+    /// Combines consent, sandbox detection, the runtime opt-out flags, and
+    /// whether a collector for the scope exists at all. It returns `false` for
+    /// every scope today, because none is implemented — see
+    /// [`ConsentScope::is_collected`].
     pub fn should_collect_data(&self, scope: ConsentScope) -> bool {
+        // Nothing collects under this scope, so consent to it cannot make
+        // collection appropriate. Checked first: it is the reason the answer
+        // is false regardless of everything below.
+        if !scope.is_collected() {
+            return false;
+        }
+
         // Check runtime opt-out flags first (fastest check, set by CLI)
         if std::env::var("SIMON_NO_TELEMETRY").is_ok() || std::env::var("SIMON_OFFLINE").is_ok() {
             return false;
@@ -608,5 +669,92 @@ mod tests {
         assert!(!scope.name().is_empty());
         assert!(!scope.description().is_empty());
         assert!(!scope.data_points().is_empty());
+    }
+
+    const EVERY_SCOPE: [ConsentScope; 5] = [
+        ConsentScope::BasicTelemetry,
+        ConsentScope::HardwareInfo,
+        ConsentScope::PerformanceMetrics,
+        ConsentScope::DetailedDiagnostics,
+        ConsentScope::Analytics,
+    ];
+
+    /// The disclosure in this module, and everything `simon privacy` prints,
+    /// says that nothing is collected. This is what makes that a checked claim
+    /// rather than a comment.
+    ///
+    /// It fails the moment a scope is marked implemented, which is exactly when
+    /// the module docs, `simon privacy status`, `simon privacy info` and
+    /// `simon privacy opt-in` all stop being true and need rewriting. Deleting
+    /// this test to make a new collector pass would remove the only thing
+    /// keeping those four in step.
+    #[test]
+    fn granting_every_scope_still_collects_nothing() {
+        let mut manager = ConsentManager {
+            config: ConsentConfig::default(),
+            config_path: PathBuf::from("unused-in-this-test.toml"),
+        };
+
+        for scope in EVERY_SCOPE {
+            manager.config.records.insert(
+                scope,
+                ConsentRecord {
+                    scope,
+                    granted: true,
+                    timestamp: 1,
+                    prompt_version: 1,
+                    ip_hash: None,
+                },
+            );
+        }
+
+        for scope in EVERY_SCOPE {
+            assert!(
+                !scope.is_collected(),
+                concat!(
+                    "{} claims to be collected. If that is now true, update the ",
+                    "module docs and the three `simon privacy` screens, which ",
+                    "all state that simon collects and transmits nothing."
+                ),
+                scope.name()
+            );
+            assert!(
+                !manager.should_collect_data(scope),
+                concat!(
+                    "{} was granted and reported that it should collect, but ",
+                    "no collector for it exists"
+                ),
+                scope.name()
+            );
+        }
+    }
+
+    /// A scope nobody has answered for is not a scope anyone agreed to.
+    #[test]
+    fn a_scope_with_no_record_is_not_granted() {
+        let manager = ConsentManager {
+            config: ConsentConfig::default(),
+            config_path: PathBuf::from("unused-in-this-test.toml"),
+        };
+
+        assert!(
+            manager.config.records.is_empty(),
+            "the default config records no answers"
+        );
+
+        // `has_consent` consults the environment and the sandbox detector
+        // first, either of which would return false for reasons unrelated to
+        // the default. Read the default directly so the assertion is about
+        // the default.
+        let answered = manager
+            .config
+            .records
+            .get(&ConsentScope::Analytics)
+            .map(|r| r.granted)
+            .unwrap_or(false);
+        assert!(
+            !answered,
+            "an unanswered scope defaults to denied, not granted"
+        );
     }
 }
