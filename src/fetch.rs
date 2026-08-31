@@ -630,10 +630,33 @@ mod tests {
     /// including a CI runner with no sensors at all.
     ///
     /// It fails if temperatures are ever sourced from one subsystem again.
+    /// One `Reading` per declared entity, with the declared unit and no value.
+    ///
+    /// The selection functions are predicates over readings, so they can be
+    /// exercised against the ontology's *declarations* — which exist on every
+    /// host — instead of against a resolved snapshot, which does not: a CI
+    /// runner with no GPU produces no `gpu.0.thermal.temperature` row at all.
+    /// Two tests here asserted against `resolve::snapshot()` and passed on this
+    /// desktop while failing on all three runners, which is the whole reason
+    /// the distinction is written down.
+    fn declared_readings() -> Vec<Reading> {
+        crate::ontology::Ontology::build()
+            .entities
+            .values()
+            .map(|e| Reading {
+                id: e.id.clone(),
+                value: None,
+                provenance: crate::ontology::Provenance::Unavailable,
+                unit: e.unit,
+                note: None,
+            })
+            .collect()
+    }
+
     #[test]
     fn temperature_selection_spans_every_subsystem_that_declares_one() {
-        let readings = crate::ontology::resolve::snapshot();
-        let temps = temperatures(&readings);
+        let declared = declared_readings();
+        let temps = temperatures(&declared);
 
         assert!(
             !temps.is_empty(),
@@ -668,8 +691,8 @@ mod tests {
     /// Power is not only hwmon rails, which is the whole of what Windows lacks.
     #[test]
     fn power_selection_reaches_past_hwmon_rails() {
-        let readings = crate::ontology::resolve::snapshot();
-        let power = power(&readings);
+        let declared = declared_readings();
+        let power = power(&declared);
 
         assert!(
             !power.is_empty(),

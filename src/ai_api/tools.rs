@@ -7,6 +7,19 @@ use super::{AiDataApi, ToolCategory, ToolDefinition};
 use crate::error::{Result, SimonError};
 use serde_json::json;
 
+/// `"WIDTHxHEIGHT"`, or `null` when the display's mode was not read.
+///
+/// This was `format!("{}x{}", d.width, d.height)` over two `u32`s that were
+/// zero when unreadable, so an agent asking about displays was told a monitor
+/// was `"0x0"` — a resolution no display has, indistinguishable from a measured
+/// one.
+fn resolution_text(d: &crate::display::DisplayInfo) -> Option<String> {
+    match (d.width, d.height) {
+        (Some(w), Some(h)) => Some(format!("{w}x{h}")),
+        _ => None,
+    }
+}
+
 /// Get all tool definitions
 pub fn get_all_tool_definitions() -> Vec<ToolDefinition> {
     let mut tools = Vec::new();
@@ -2412,7 +2425,28 @@ impl AiDataApi {
         use crate::display::DisplayMonitor;
         let monitor =
             DisplayMonitor::new().map_err(|e| SimonError::HardwareError(e.to_string()))?;
-        let displays: Vec<_> = monitor.displays().iter().map(|d| json!({"id": d.id, "name": d.name, "manufacturer": d.manufacturer, "connection": format!("{:?}", d.connection), "is_primary": d.is_primary, "resolution": format!("{}x{}", d.width, d.height), "aspect_ratio": d.aspect_ratio(), "refresh_rate": d.refresh_rate, "brightness": d.brightness, "hdr": format!("{:?}", d.hdr)})).collect();
+        // `"resolution": "0x0"` went out to agents for any display whose mode
+        // was not readable, and `refresh_rate: 0.0` for every display on Linux
+        // and macOS, where no reader parses a rate. Both are null now, which an
+        // agent can act on; a zero it cannot.
+        let displays: Vec<_> = monitor
+            .displays()
+            .iter()
+            .map(|d| {
+                json!({
+                    "id": d.id,
+                    "name": d.name,
+                    "manufacturer": d.manufacturer,
+                    "connection": format!("{:?}", d.connection),
+                    "is_primary": d.is_primary,
+                    "resolution": resolution_text(d),
+                    "aspect_ratio": d.aspect_ratio(),
+                    "refresh_rate": d.refresh_rate,
+                    "brightness": d.brightness,
+                    "hdr": format!("{:?}", d.hdr),
+                })
+            })
+            .collect();
         Ok(json!({"count": monitor.count(), "displays": displays}))
     }
     pub(crate) fn tool_get_display_details(
@@ -2433,9 +2467,20 @@ impl AiDataApi {
             .ok_or_else(|| {
                 SimonError::DeviceNotFound(format!("Display {} not found", display_id))
             })?;
-        Ok(
-            json!({"id": display.id, "name": display.name, "manufacturer": display.manufacturer, "connection": format!("{:?}", display.connection), "is_primary": display.is_primary, "width": display.width, "height": display.height, "resolution": format!("{}x{}", display.width, display.height), "aspect_ratio": display.aspect_ratio(), "refresh_rate": display.refresh_rate, "brightness": display.brightness, "hdr": format!("{:?}", display.hdr)}),
-        )
+        Ok(json!({
+            "id": display.id,
+            "name": display.name,
+            "manufacturer": display.manufacturer,
+            "connection": format!("{:?}", display.connection),
+            "is_primary": display.is_primary,
+            "width": display.width,
+            "height": display.height,
+            "resolution": resolution_text(display),
+            "aspect_ratio": display.aspect_ratio(),
+            "refresh_rate": display.refresh_rate,
+            "brightness": display.brightness,
+            "hdr": format!("{:?}", display.hdr),
+        }))
     }
     // ============== USB Tools ==============
     pub(crate) fn tool_get_usb_devices(

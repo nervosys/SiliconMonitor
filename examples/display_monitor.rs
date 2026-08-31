@@ -30,8 +30,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let name = display.name.as_deref().unwrap_or("Unknown Display");
         println!("{} {}{}", connection_icon, name, primary);
         println!("  ID: {}", display.id);
-        println!("  Resolution: {}x{}", display.width, display.height);
-        println!("  Refresh Rate: {} Hz", display.refresh_rate);
+        match (display.width, display.height) {
+            (Some(w), Some(h)) => println!("  Resolution: {w}x{h}"),
+            _ => println!("  Resolution: not readable"),
+        }
+        match display.refresh_rate {
+            Some(hz) => println!("  Refresh Rate: {hz} Hz"),
+            None => println!("  Refresh Rate: not read on this platform"),
+        }
 
         if let Some(scale) = display.scale_factor {
             println!("  Scale Factor: {:.0}%", scale * 100.0);
@@ -56,10 +62,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Summary info
     if !displays.is_empty() {
-        let total_pixels: u64 = displays
+        // Displays whose mode was not read contribute nothing rather than
+        // zero, and the count below says how many were skipped.
+        let measured: Vec<_> = displays
             .iter()
-            .map(|d| d.width as u64 * d.height as u64)
-            .sum();
+            .filter_map(|d| Some((d.width? as u64, d.height? as u64)))
+            .collect();
+        let total_pixels: u64 = measured.iter().map(|(w, h)| w * h).sum();
         let primary_count = displays.iter().filter(|d| d.is_primary).count();
 
         println!("Summary:");

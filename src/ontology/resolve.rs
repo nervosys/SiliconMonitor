@@ -2197,30 +2197,33 @@ fn resolve_displays(out: &mut Vec<Reading>) {
             format!("{base}.connection"),
             &format!("{:?}", d.connection).to_lowercase(),
         );
-        // A display is not zero pixels wide. The reader publishes zeros for a
-        // monitor whose current mode it could not read — observed on this
-        // machine, where an attached and named LG ultrawide reported 0x0 at
-        // 0 Hz — and passing those through as `measured` would be a
-        // measurement of an impossible display.
+        // A display is not zero pixels wide. This used to filter `> 0` because
+        // the reader wrote zeros for a monitor whose mode it could not read;
+        // the fields are `Option` now, so the absence arrives here intact
+        // instead of being reconstructed from a sentinel. The zero guard stays
+        // because a reader could still produce one, and it would mean the same
+        // thing.
         const NOT_A_MODE: &str = "the display is attached and its current mode was not readable; zero is not a resolution";
         push_opt(
             out,
             format!("{base}.width"),
-            (d.width > 0).then(|| serde_json::json!(d.width)),
+            d.width.filter(|w| *w > 0).map(|w| serde_json::json!(w)),
             Some(Unit::Count),
             NOT_A_MODE,
         );
         push_opt(
             out,
             format!("{base}.height"),
-            (d.height > 0).then(|| serde_json::json!(d.height)),
+            d.height.filter(|h| *h > 0).map(|h| serde_json::json!(h)),
             Some(Unit::Count),
             NOT_A_MODE,
         );
         push_opt(
             out,
             format!("{base}.refresh_rate"),
-            (d.refresh_rate > 0.0).then(|| serde_json::json!(d.refresh_rate)),
+            d.refresh_rate
+                .filter(|r| *r > 0.0)
+                .map(|r| serde_json::json!(r)),
             Some(Unit::Hertz),
             NOT_A_MODE,
         );

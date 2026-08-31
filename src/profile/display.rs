@@ -66,11 +66,15 @@ impl ProfileProvider for DisplayProfileProvider {
                     SettingValue::Text(connection),
                 ));
             }
-            g.push(Setting::info(
-                "resolution",
-                "Resolution",
-                SettingValue::Text(format!("{}x{}", d.width, d.height)),
-            ));
+            // "0x0" was published here as a resolution. A mode that was not
+            // read gets no row, the same as the aspect ratio below.
+            if let (Some(w), Some(h)) = (d.width, d.height) {
+                g.push(Setting::info(
+                    "resolution",
+                    "Resolution",
+                    SettingValue::Text(format!("{w}x{h}")),
+                ));
+            }
             if let Some(ratio) = d.aspect_ratio() {
                 g.push(Setting::info(
                     "aspect_ratio",
@@ -78,16 +82,20 @@ impl ProfileProvider for DisplayProfileProvider {
                     SettingValue::Text(ratio),
                 ));
             }
-            g.push(
-                Setting::info(
-                    "refresh_rate_hz",
-                    "Refresh Rate",
-                    SettingValue::Float(d.refresh_rate as f64),
-                )
-                .with_unit("Hz")
-                .with_risk(SettingRisk::Safe)
-                .with_source("DisplayMonitor"),
-            );
+            // The Linux and macOS readers do not parse a rate at all, so this
+            // row said "0 Hz" on both platforms for every display.
+            if let Some(hz) = d.refresh_rate {
+                g.push(
+                    Setting::info(
+                        "refresh_rate_hz",
+                        "Refresh Rate",
+                        SettingValue::Float(hz as f64),
+                    )
+                    .with_unit("Hz")
+                    .with_risk(SettingRisk::Safe)
+                    .with_source("DisplayMonitor"),
+                );
+            }
             g.push(
                 Setting::info(
                     "hdr_mode",

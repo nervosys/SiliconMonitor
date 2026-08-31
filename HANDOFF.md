@@ -50,9 +50,42 @@ Since the tag, on `master` and green on all three platforms:
 | `f9e7248` | `serve --help` named a Prometheus route that 404s |
 | `425ff4a` | 24 threads reported as 24 cores, one line under a 12-core name |
 | `1284391` | `cli temperature` found no sensors while snapshot read five |
+| `HEAD` | A display's mode had nowhere to be absent; five consumers printed 0x0 |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### A display's mode had nowhere to be absent
+
+`simon cli display` printed **`RX-A740 0x0 @ 0Hz Dvi`** — a Yamaha AV receiver
+on HDMI, attached and named, whose current mode Windows will not report. The
+ontology got this right and said so in a reason that reads, in as many words,
+*"zero is not a resolution"*. Five other consumers printed the zero anyway.
+
+`DisplayInfo` had `width: u32`, `height: u32`, `refresh_rate: f32` — the same
+shape as `SystemSnapshot`'s GPU columns two commits earlier, and the same
+consequence: **an absence with nowhere to go becomes a zero, and the resolver
+downstream has to reconstruct it from a sentinel.** The doc comment on
+`aspect_ratio` already named the diagnosis exactly — *"a return type with no way
+to say nothing"* — because the sibling defect was fixed there this session. That
+fix stopped at the method and left the fields.
+
+Fixing the fields found consumers a grep did not:
+
+- `ai_api/tools.rs` published `"resolution": "0x0"` to agents, twice.
+- `tui/app.rs`, which the grep missed entirely — the compiler found it.
+- `profile/display.rs` published a `0 Hz` refresh-rate row.
+- `examples/display_monitor.rs` summed `0 * 0` into a total-pixels figure.
+
+And it turned up a defect invisible on this machine: **the Linux and macOS
+readers write `refresh_rate: 0.0` unconditionally**, because neither parses a
+rate. Every display on both platforms reported 0 Hz as though measured.
+
+**The zero came from the data source, not from a missing key**, which the first
+attempt got wrong: `item.get("Width")` returns `Some(0)`, so making the field
+`Option` left `Some(0)` and the output unchanged. Normalising is now done once
+at the reader — a display is not zero pixels wide, so zero becomes `None` there
+rather than at each of the five consumers.
 
 ### The command named for the reading was the one not doing it
 
@@ -97,11 +130,23 @@ including the two that explain the original symptom truthfully, *"on Windows
 most board sensors require a signed kernel driver"*. The old code had that fact
 and threw it away.
 
-**The regression test is hardware-independent**, because every temperature
-entity is declared whether or not a host can read it: it asserts the selection
-spans more than one subsystem prefix. Narrowing it back to `thermal.*` fails
-with `every temperature came from one subsystem ({"thermal"})`, which is the
-defect verbatim.
+**The regression test asserts the selection spans more than one subsystem
+prefix.** Narrowing it back to `thermal.*` fails with
+`every temperature came from one subsystem ({"thermal"})`, which is the defect
+verbatim.
+
+**The first version of it was wrong, and CI said so on all three runners.** It
+resolved `resolve::snapshot()` and I described it as hardware-independent
+"because every temperature entity is declared whether or not a host can read
+it". The declarations are; a *snapshot* is not. Instanced entities produce no
+row at all when the instance is missing, so a runner with no GPU and no NVMe
+drive resolves nothing the test was looking for. It passed on this desktop for
+the same reason the defect it guards existed: the machine had the hardware.
+
+The fix is to build the readings from `Ontology::build().entities` — one
+`Reading` per declared entity, unit carried, value `None` — and run the
+predicate over that. The test now takes 0.00s instead of 37s, because it never
+touches hardware, and it means what I claimed the first version meant.
 
 ### CI caught a test I wrote, on prose I added after the gate
 

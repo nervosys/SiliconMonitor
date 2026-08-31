@@ -451,10 +451,15 @@ impl PeripheralCache {
                             .as_deref()
                             .map(|m| format!(" ({})", m))
                             .unwrap_or_default();
-                        format!(
-                            "{}{}: {}x{} @ {:.0}Hz | {}{}{}",
-                            name, mfr, d.width, d.height, d.refresh_rate, conn, primary, brightness
-                        )
+                        let mode = match (d.width, d.height) {
+                            (Some(w), Some(h)) => format!("{w}x{h}"),
+                            _ => "mode not read".to_string(),
+                        };
+                        let rate = match d.refresh_rate {
+                            Some(hz) => format!(" @ {hz:.0}Hz"),
+                            None => String::new(),
+                        };
+                        format!("{name}{mfr}: {mode}{rate} | {conn}{primary}{brightness}")
                     })
                     .collect();
                 info.join("\n")

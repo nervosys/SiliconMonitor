@@ -1214,13 +1214,30 @@ fn handle_cli_command(
                     println!("{}", "═══ Displays ═══".cyan().bold());
                     println!("  Count: {}", monitor.count());
                     for display in monitor.displays() {
+                        // "RX-A740 0x0 @ 0Hz Dvi" was this line. The ontology
+                        // already refused those zeros, in a reason that reads
+                        // "zero is not a resolution"; the fields carry the
+                        // absence now, so this can say the same thing.
+                        let mode = match (display.width, display.height) {
+                            (Some(w), Some(h)) => format!("{w}x{h}"),
+                            _ => "mode not readable".to_string(),
+                        };
+                        let rate = match display.refresh_rate {
+                            Some(hz) => format!(" @ {hz:.0}Hz"),
+                            None => String::new(),
+                        };
+                        let conn = match display.connection {
+                            simonlib::display::DisplayConnection::Unknown => {
+                                "connection unknown".to_string()
+                            }
+                            other => format!("{other:?}"),
+                        };
                         println!(
-                            "  {} {}x{} @ {:.0}Hz {:?}",
-                            display.name.as_deref().unwrap_or("Unknown"),
-                            display.width,
-                            display.height,
-                            display.refresh_rate,
-                            display.connection
+                            "  {} {}{} {}",
+                            display.name.as_deref().unwrap_or("unnamed"),
+                            mode,
+                            rate,
+                            conn
                         );
                     }
                 }

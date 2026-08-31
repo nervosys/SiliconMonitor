@@ -32,9 +32,18 @@ pub struct DisplayInfo {
     pub manufacturer: Option<String>,
     pub connection: DisplayConnection,
     pub is_primary: bool,
-    pub width: u32,
-    pub height: u32,
-    pub refresh_rate: f32,
+    /// Horizontal pixels of the current mode, or `None` when the display is
+    /// attached and its mode was not readable. Zero is not a resolution — the
+    /// ontology already refused to publish one and said so in as many words,
+    /// while `simon cli display` printed "RX-A740 0x0 @ 0Hz" and the agent tool
+    /// surface published `"resolution": "0x0"`.
+    pub width: Option<u32>,
+    /// Vertical pixels of the current mode. See [`Self::width`].
+    pub height: Option<u32>,
+    /// Refresh rate in hertz, or `None` where it was not read. The Linux and
+    /// macOS readers do not read it at all and used to write `0.0`, so every
+    /// display on those platforms reported 0 Hz as though measured.
+    pub refresh_rate: Option<f32>,
     pub brightness: Option<f32>,
     pub hdr: HdrMode,
     pub scale_factor: Option<f64>,
@@ -53,7 +62,8 @@ impl DisplayInfo {
     /// readings since the DMI "n/a" finding, arriving by a different road: a
     /// return type with no way to say nothing.
     pub fn aspect_ratio(&self) -> Option<String> {
-        if self.width == 0 || self.height == 0 {
+        let (width, height) = (self.width?, self.height?);
+        if width == 0 || height == 0 {
             return None;
         }
         fn gcd(a: u32, b: u32) -> u32 {
@@ -63,11 +73,11 @@ impl DisplayInfo {
                 gcd(b, a % b)
             }
         }
-        let g = gcd(self.width, self.height);
+        let g = gcd(width, height);
         if g == 0 {
             return None;
         }
-        Some(format!("{}:{}", self.width / g, self.height / g))
+        Some(format!("{}:{}", width / g, height / g))
     }
 }
 
@@ -225,12 +235,28 @@ impl DisplayMonitor {
                                 .get("IsPrimary")
                                 .and_then(|v| v.as_bool())
                                 .unwrap_or(false),
-                            width: item.get("Width").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
-                            height: item.get("Height").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
+                            // The key is present and the value is 0 for a
+                            // display whose current mode Windows will not
+                            // report — an AV receiver on HDMI does this. A
+                            // missing key and a zero mean the same thing here,
+                            // and neither is a resolution, so both become None
+                            // at the reader rather than at each of the five
+                            // consumers.
+                            width: item
+                                .get("Width")
+                                .and_then(|v| v.as_u64())
+                                .filter(|v| *v > 0)
+                                .map(|v| v as u32),
+                            height: item
+                                .get("Height")
+                                .and_then(|v| v.as_u64())
+                                .filter(|v| *v > 0)
+                                .map(|v| v as u32),
                             refresh_rate: item
                                 .get("RefreshRate")
                                 .and_then(|v| v.as_f64())
-                                .unwrap_or(0.0) as f32,
+                                .filter(|v| *v > 0.0)
+                                .map(|v| v as f32),
                             brightness,
                             hdr: HdrMode::Off,
                             scale_factor: None,
@@ -303,25 +329,20 @@ impl DisplayMonitor {
                             (None, None, None, None)
                         };
 
-                    // Try to get current mode from "modes" file
-                    let (width, height) = if let Ok(modes) = fs::read_to_string(path.join("modes"))
-                    {
-                        if let Some(first_mode) = modes.lines().next() {
-                            let parts: Vec<&str> = first_mode.split('x').collect();
-                            if parts.len() == 2 {
-                                (
-                                    parts[0].trim().parse::<u32>().unwrap_or(0),
-                                    parts[1].trim().parse::<u32>().unwrap_or(0),
-                                )
-                            } else {
-                                (0, 0)
-                            }
-                        } else {
-                            (0, 0)
-                        }
-                    } else {
-                        (0, 0)
-                    };
+                    // Try to get current mode from "modes" file. A connector
+                    // with no modes file, an empty one, or a line that does not
+                    // parse yields no mode — not a mode of zero by zero. Every
+                    // branch here used to produce `(0, 0)`.
+                    let (width, height) = fs::read_to_string(path.join("modes"))
+                        .ok()
+                        .and_then(|modes| {
+                            let first_mode = modes.lines().next()?;
+                            let (w, h) = first_mode.split_once('x')?;
+                            let w = w.trim().parse::<u32>().ok()?;
+                            let h = h.trim().parse::<u32>().ok()?;
+                            (w > 0 && h > 0).then_some((w, h))
+                        })
+                        .map_or((None, None), |(w, h)| (Some(w), Some(h)));
 
                     self.displays.push(DisplayInfo {
                         id: format!("display{}", idx),
@@ -331,7 +352,9 @@ impl DisplayMonitor {
                         is_primary: idx == 0,
                         width,
                         height,
-                        refresh_rate: 0.0, // DRM modes file doesn't always include rate
+                        // The DRM modes file does not always carry a rate, and this
+                        // reader never parsed one. None, not zero hertz.
+                        refresh_rate: None,
                         brightness: read_backlight_brightness(),
                         hdr: HdrMode::Off,
                         scale_factor: None,
@@ -378,15 +401,20 @@ impl DisplayMonitor {
                                     let res_part = mode.split('+').next()?;
                                     let dims: Vec<&str> = res_part.split('x').collect();
                                     if dims.len() == 2 {
-                                        Some((
-                                            dims[0].parse::<u32>().unwrap_or(0),
-                                            dims[1].parse::<u32>().unwrap_or(0),
-                                        ))
+                                        // A mode that does not parse is not a
+                                        // mode of zero by zero.
+                                        // A mode that does not parse is not a
+                                        // mode of zero by zero.
+                                        let (w, h) = (
+                                            dims[0].parse::<u32>().ok()?,
+                                            dims[1].parse::<u32>().ok()?,
+                                        );
+                                        (w > 0 && h > 0).then_some((w, h))
                                     } else {
                                         None
                                     }
                                 })
-                                .unwrap_or((0, 0));
+                                .map_or((None, None), |(w, h)| (Some(w), Some(h)));
 
                             // Parse physical dimensions from "520mm x 290mm"
                             let (phys_w, phys_h) = if let Some(mm_idx) = line.find("mm x ") {
@@ -412,7 +440,8 @@ impl DisplayMonitor {
                                 is_primary,
                                 width: w,
                                 height: h,
-                                refresh_rate: 0.0,
+                                // xrandr's rate is not parsed here.
+                                refresh_rate: None,
                                 brightness: read_backlight_brightness(),
                                 hdr: HdrMode::Off,
                                 scale_factor: None,
@@ -460,21 +489,26 @@ impl DisplayMonitor {
                                         .get("_spdisplays_resolution")
                                         .and_then(|v| v.as_str())
                                         .unwrap_or("");
-                                    let (w, h) = if let Some(x_idx) = res.find(" x ") {
-                                        let w = res[..x_idx]
-                                            .trim()
-                                            .replace(" ", "")
-                                            .parse::<u32>()
-                                            .unwrap_or(0);
-                                        let rest = &res[x_idx + 3..];
-                                        let h_str: String = rest
-                                            .chars()
-                                            .take_while(|c| c.is_ascii_digit())
-                                            .collect();
-                                        (w, h_str.parse::<u32>().unwrap_or(0))
-                                    } else {
-                                        (0, 0)
-                                    };
+                                    // `_spdisplays_resolution` is absent on
+                                    // some displays and formatted differently
+                                    // on others; neither case is a mode of zero
+                                    // by zero.
+                                    let (w, h) = res
+                                        .find(" x ")
+                                        .and_then(|x_idx| {
+                                            let w = res[..x_idx]
+                                                .trim()
+                                                .replace(" ", "")
+                                                .parse::<u32>()
+                                                .ok()?;
+                                            let h: String = res[x_idx + 3..]
+                                                .chars()
+                                                .take_while(|c| c.is_ascii_digit())
+                                                .collect();
+                                            let h = h.parse::<u32>().ok()?;
+                                            (w > 0 && h > 0).then_some((w, h))
+                                        })
+                                        .map_or((None, None), |(w, h)| (Some(w), Some(h)));
 
                                     let connection = if display
                                         .get("spdisplays_connection_type")
@@ -501,7 +535,8 @@ impl DisplayMonitor {
                                             == Some("spdisplays_yes"),
                                         width: w,
                                         height: h,
-                                        refresh_rate: 0.0,
+                                        // system_profiler's rate is not parsed here.
+                                        refresh_rate: None,
                                         brightness: None,
                                         hdr: HdrMode::Off,
                                         scale_factor: None,
@@ -663,9 +698,9 @@ mod tests {
             manufacturer: None,
             connection: DisplayConnection::Hdmi,
             is_primary: true,
-            width: 1920,
-            height: 1080,
-            refresh_rate: 60.0,
+            width: Some(1920),
+            height: Some(1080),
+            refresh_rate: Some(60.0),
             brightness: None,
             hdr: HdrMode::Off,
             scale_factor: Some(1.0),
@@ -684,9 +719,9 @@ mod tests {
             manufacturer: None,
             connection: DisplayConnection::DisplayPort,
             is_primary: false,
-            width: 3840,
-            height: 2160,
-            refresh_rate: 144.0,
+            width: Some(3840),
+            height: Some(2160),
+            refresh_rate: Some(144.0),
             brightness: Some(0.8),
             hdr: HdrMode::Hdr10,
             scale_factor: Some(1.5),
@@ -705,9 +740,9 @@ mod tests {
             manufacturer: Some("Acme".to_string()),
             connection: DisplayConnection::Hdmi,
             is_primary: true,
-            width: 1920,
-            height: 1080,
-            refresh_rate: 60.0,
+            width: Some(1920),
+            height: Some(1080),
+            refresh_rate: Some(60.0),
             brightness: Some(0.5),
             hdr: HdrMode::Off,
             scale_factor: Some(1.0),

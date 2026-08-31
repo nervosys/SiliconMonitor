@@ -421,9 +421,12 @@ fn absent_hardware_is_reported_as_absent_not_invented() {
         // even when modeless.
         let name = display.name.as_deref().unwrap_or_default();
         let generic_name = matches!(name, "Primary Display" | "Unknown Display" | "Display");
-        let no_measurements = display.width == 0
-            && display.height == 0
-            && display.refresh_rate == 0.0
+        // These were `== 0` when the fields were `u32`/`f32` and a zero was
+        // how an unreadable mode was spelled. They are `Option` now, so the
+        // signature is the absence itself.
+        let no_measurements = display.width.is_none_or(|w| w == 0)
+            && display.height.is_none_or(|h| h == 0)
+            && display.refresh_rate.is_none_or(|r| r == 0.0)
             && display.physical_width_mm.is_none();
 
         assert!(
