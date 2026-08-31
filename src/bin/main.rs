@@ -4939,18 +4939,40 @@ fn handle_profile_command(action: &ProfileSubcommand) -> Result<(), Box<dyn std:
         }
         ProfileSubcommand::Deviations { json } => {
             let snapshot = inspector.snapshot_all();
-            let devs = simonlib::profile::deviation::deviations_from_default(&snapshot);
+            let report = simonlib::profile::deviation::deviation_report(&snapshot);
+            let (devs, coverage) = (report.deviations, report.coverage);
             if *json {
-                println!("{}", serde_json::to_string_pretty(&devs)?);
-            } else if devs.is_empty() {
                 println!(
                     "{}",
-                    "No settings deviate from their declared defaults.".green()
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "deviations": devs,
+                        "coverage": coverage,
+                    }))?
                 );
+            } else if devs.is_empty() {
+                // "No settings deviate from their declared defaults" read as a
+                // statement about the machine. It was a statement about the two
+                // settings out of 23,541 that declare a default at all.
+                println!(
+                    "None of the {} setting(s) that declare a default differs from it.",
+                    coverage.comparable.to_string().bold()
+                );
+                if coverage.unchecked() > 0 {
+                    println!(
+                        "{}",
+                        format!(
+                            "  {} of {} settings declare no default, so this says nothing about them.",
+                            coverage.unchecked(),
+                            coverage.settings
+                        )
+                        .dimmed()
+                    );
+                }
             } else {
                 println!(
-                    "{} setting(s) deviate from declared defaults:\n",
-                    devs.len().to_string().bold()
+                    "{} of {} setting(s) that declare a default differ from it:\n",
+                    devs.len().to_string().bold(),
+                    coverage.comparable
                 );
                 for d in devs {
                     let risk = match d.risk {
@@ -4970,6 +4992,18 @@ fn handle_profile_command(action: &ProfileSubcommand) -> Result<(), Box<dyn std:
                         "      default: {}   current: {}",
                         d.default.to_string().dimmed(),
                         d.current.to_string().yellow()
+                    );
+                }
+                if coverage.unchecked() > 0 {
+                    println!();
+                    println!(
+                        "{}",
+                        format!(
+                            "  {} of {} settings declare no default and were not checked.",
+                            coverage.unchecked(),
+                            coverage.settings
+                        )
+                        .dimmed()
                     );
                 }
             }

@@ -58,9 +58,47 @@ Since the tag, on `master` and green on all three platforms:
 | `19a6a06` | Per-process GPU memory: NVML says N/A, simon said 0.0 MB |
 | `1a6718c` | Master volume 100% on every machine, and setters that changed nothing |
 | `308c770` | The invented-device rule generalised past displays |
+| `HEAD` | A clean bill of health drawn from 2 of 23,541 settings |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### A denominator of two, reported as a clean bill of health
+
+`simon profile deviations` printed:
+
+> No settings deviate from their declared defaults.
+
+It had compared **two settings**. `simon profile list` reports 23,541 across the
+five providers — the GPU one contributes 23,445 — and `deviations_from_default`
+skips anything with no declared `default`:
+
+```rust
+let Some(default) = s.default.clone() else { continue };
+```
+
+Two of 23,541 declare one. **0.0085%.** The sentence a user reads is a claim
+about their machine; the fact behind it was "the two settings that could be
+compared both matched, and nothing is known about the other 23,539".
+
+This is the crate's own defect in a place with no hardware in it: **an absence
+converted into a reassuring conclusion.** It is close kin to the nine readers
+that said "none" where they meant "cannot look", except the absence here is a
+missing *reference value* rather than a missing reading, and the conclusion is
+drawn by arithmetic rather than by a reader.
+
+`deviation_report` now carries a `DeviationCoverage` beside the list, so the
+denominator reaches the JSON caller too, and the command says:
+
+```
+None of the 2 setting(s) that declare a default differs from it.
+  23539 of 23541 settings declare no default, so this says nothing about them.
+```
+
+**The generalisable check: when a report filters its input, ask what fraction
+survived the filter, and whether the summary sentence says so.** An empty result
+after a 99.99% filter is not the same statement as an empty result over
+everything, and only one of the two is what the words claim.
 
 ### A control that reports success without acting
 
