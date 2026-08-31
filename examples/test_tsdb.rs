@@ -35,10 +35,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             memory_total: 16_000_000_000,
             swap_used: 500_000_000,
             swap_total: 8_000_000_000,
-            gpu_percent: vec![50.0 + (i as f32 * 2.0)],
-            gpu_memory_used: vec![4_000_000_000],
-            gpu_temperature: vec![65.0 + (i as f32)],
-            gpu_power_mw: vec![150_000 + (i as u32 * 1000)],
+            gpu_percent: vec![Some(50.0 + (i as f32 * 2.0))],
+            gpu_memory_used: vec![Some(4_000_000_000)],
+            // A second adapter with no sensor, so the round trip covers an
+            // absent column as well as a present one.
+            gpu_temperature: vec![Some(65.0 + (i as f32)), None],
+            gpu_power_mw: vec![Some(150_000 + (i as u32 * 1000)), None],
             net_rx_bps: 1_000_000 + (i as u64 * 100_000),
             net_tx_bps: 500_000 + (i as u64 * 50_000),
             processes: vec![ProcessSnapshot {
@@ -47,11 +49,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 cpu_percent: 10.0 + (i as f32),
                 memory_bytes: 500_000_000,
                 gpu_memory_bytes: 1_000_000_000,
-                gpu_percent: 25.0,
-                disk_read_bps: 10_000_000,
-                disk_write_bps: 5_000_000,
-                net_rx_bps: 100_000,
-                net_tx_bps: 50_000,
+                gpu_percent: Some(25.0),
+                disk_read_bps: Some(10_000_000),
+                disk_write_bps: Some(5_000_000),
+                net_rx_bps: Some(100_000),
+                net_tx_bps: Some(50_000),
             }],
         };
 
@@ -96,13 +98,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\nRead {} snapshots:", snapshots.len());
 
     for (i, s) in snapshots.iter().enumerate() {
+        let util = match s.gpu_percent.first().copied().flatten() {
+            Some(u) => format!("{:.1}%", u),
+            None => "not read".to_string(),
+        };
+        let temp = match s.gpu_temperature.first().copied().flatten() {
+            Some(t) => format!("{:.0}°C", t),
+            None => "no sensor".to_string(),
+        };
         println!(
-            "  [{}] CPU: {:.1}% | MEM: {:.1}% | GPU: {:.1}% | Temp: {:.0}°C | Net: {} rx/s {} tx/s",
+            "  [{}] CPU: {:.1}% | MEM: {:.1}% | GPU: {} | Temp: {} | Net: {} rx/s {} tx/s",
             i + 1,
             s.cpu_percent,
             (s.memory_used as f64 / s.memory_total as f64) * 100.0,
-            s.gpu_percent.first().unwrap_or(&0.0),
-            s.gpu_temperature.first().unwrap_or(&0.0),
+            util,
+            temp,
             format_size(s.net_rx_bps),
             format_size(s.net_tx_bps)
         );

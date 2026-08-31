@@ -19,7 +19,7 @@ const DEFAULT_MAX_SIZE: u64 = 100 * 1024 * 1024;
 const MAGIC_BYTES: &[u8; 8] = b"SIMONDB\0";
 
 /// Current database version
-const DB_VERSION: u32 = 1;
+const DB_VERSION: u32 = 2;
 
 /// Size of the database header
 const HEADER_SIZE: u64 = 128;
@@ -88,16 +88,20 @@ pub struct ProcessSnapshot {
     pub memory_bytes: u64,
     /// GPU memory usage in bytes (if applicable)
     pub gpu_memory_bytes: u64,
-    /// GPU utilization percentage (if applicable)
-    pub gpu_percent: f32,
-    /// Disk read bytes per second
-    pub disk_read_bps: u64,
-    /// Disk write bytes per second
-    pub disk_write_bps: u64,
-    /// Network receive bytes per second
-    pub net_rx_bps: u64,
-    /// Network transmit bytes per second
-    pub net_tx_bps: u64,
+    /// GPU utilization percentage, or `None` when no per-process GPU
+    /// accounting was available for this process.
+    pub gpu_percent: Option<f32>,
+    /// Disk read bytes per second, or `None` when the rate was not tracked.
+    pub disk_read_bps: Option<u64>,
+    /// Disk write bytes per second, or `None` when the rate was not tracked.
+    pub disk_write_bps: Option<u64>,
+    /// Network receive bytes per second, or `None` when the rate was not
+    /// tracked. No mainstream OS attributes network bytes to a process
+    /// without a packet filter, so this is `None` on every platform today.
+    pub net_rx_bps: Option<u64>,
+    /// Network transmit bytes per second, or `None` when the rate was not
+    /// tracked. See `net_rx_bps`.
+    pub net_tx_bps: Option<u64>,
 }
 
 /// System-wide resource snapshot
@@ -117,14 +121,17 @@ pub struct SystemSnapshot {
     pub swap_used: u64,
     /// Swap total bytes
     pub swap_total: u64,
-    /// GPU utilization (per GPU)
-    pub gpu_percent: Vec<f32>,
-    /// GPU memory used (per GPU)
-    pub gpu_memory_used: Vec<u64>,
-    /// GPU temperature (per GPU)
-    pub gpu_temperature: Vec<f32>,
-    /// GPU power draw (per GPU, milliwatts)
-    pub gpu_power_mw: Vec<u32>,
+    /// GPU utilization, one entry per GPU. `None` where the device could not
+    /// be queried on this tick, or exposes no utilization counter.
+    pub gpu_percent: Vec<Option<f32>>,
+    /// GPU memory used, one entry per GPU. `None` where unreadable.
+    pub gpu_memory_used: Vec<Option<u64>>,
+    /// GPU temperature, one entry per GPU. `None` where the adapter exposes no
+    /// temperature sensor — which is not the same as a reading of zero.
+    pub gpu_temperature: Vec<Option<f32>>,
+    /// GPU power draw in milliwatts, one entry per GPU. `None` where the
+    /// driver publishes no power telemetry.
+    pub gpu_power_mw: Vec<Option<u32>>,
     /// Network RX rate (bytes/sec)
     pub net_rx_bps: u64,
     /// Network TX rate (bytes/sec)
@@ -248,10 +255,26 @@ impl TimeSeriesDb {
             ));
         }
 
-        // Check version
+        // Check version. Both directions are fatal: version 1 stored the
+        // per-GPU columns as bare numbers, so a device that could not be read
+        // was indistinguishable from one reading zero. Those records cannot be
+        // read back into the current layout, and guessing which zeros were
+        // absences would invent the very thing the change removed.
         if header.version > DB_VERSION {
             return Err(SimonError::Configuration(format!(
                 "Database version {} is newer than supported version {}",
+                header.version, DB_VERSION
+            )));
+        }
+        if header.version < DB_VERSION {
+            return Err(SimonError::Configuration(format!(
+                concat!(
+                    "Database version {} predates version {}, which records an ",
+                    "unreadable GPU as absent rather than as zero. The layouts ",
+                    "differ and the old records cannot be converted, because a ",
+                    "stored zero does not say whether it was measured. Record ",
+                    "to a new file, or delete this one with `simon record clear`.",
+                ),
                 header.version, DB_VERSION
             )));
         }
@@ -662,5 +685,93 @@ mod tests {
         assert_eq!(format_size(1024), "1.00 KB");
         assert_eq!(format_size(1024 * 1024), "1.00 MB");
         assert_eq!(format_size(1024 * 1024 * 1024), "1.00 GB");
+    }
+
+    /// An adapter with no thermal sensor and one reading 0 degrees are
+    /// different facts, and the database has to survive the round trip still
+    /// telling them apart. Before this, both stored `0.0`.
+    #[test]
+    fn an_absent_sensor_survives_the_round_trip_as_absent() {
+        let dir = std::env::temp_dir().join(format!(
+            "simon-tsdb-absence-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("m.db");
+        let _ = std::fs::remove_file(&path);
+
+        let written = SystemSnapshot {
+            timestamp: TimeSeriesDb::now_millis(),
+            cpu_percent: 12.5,
+            cpu_per_core: vec![10.0, 15.0],
+            memory_used: 8_000_000_000,
+            memory_total: 16_000_000_000,
+            swap_used: 0,
+            swap_total: 0,
+            // Three adapters: one measured, one at a true zero, one with no
+            // sensor at all.
+            gpu_percent: vec![Some(44.0), Some(0.0), None],
+            gpu_memory_used: vec![Some(1024), Some(0), None],
+            gpu_temperature: vec![Some(61.0), Some(0.0), None],
+            gpu_power_mw: vec![Some(150_000), Some(0), None],
+            net_rx_bps: 1,
+            net_tx_bps: 2,
+            processes: vec![ProcessSnapshot {
+                pid: 1,
+                name: "p".to_string(),
+                cpu_percent: 1.0,
+                memory_bytes: 2,
+                gpu_memory_bytes: 3,
+                gpu_percent: None,
+                disk_read_bps: None,
+                disk_write_bps: None,
+                net_rx_bps: None,
+                net_tx_bps: None,
+            }],
+        };
+
+        {
+            let mut db = TimeSeriesDb::new(&path, 1024 * 1024).expect("open");
+            db.record_system(&written).expect("write");
+            db.close().expect("close");
+        }
+
+        let mut db = TimeSeriesDb::new(&path, 1024 * 1024).expect("reopen");
+        let read = db.read_all_system_snapshots().expect("read");
+        let _ = std::fs::remove_file(&path);
+
+        assert_eq!(read.len(), 1, "one record was written");
+        let s = &read[0];
+
+        assert_eq!(s.gpu_temperature[0], Some(61.0), "a measured temperature");
+        assert_eq!(
+            s.gpu_temperature[1],
+            Some(0.0),
+            "a genuine zero stays a zero"
+        );
+        assert_eq!(
+            s.gpu_temperature[2], None,
+            "an adapter with no sensor must not read back as zero degrees"
+        );
+        assert_ne!(
+            s.gpu_temperature[1], s.gpu_temperature[2],
+            "zero and unreadable are different facts"
+        );
+
+        assert_eq!(
+            s.gpu_power_mw[2], None,
+            "no power telemetry is not zero watts"
+        );
+        assert_eq!(
+            s.gpu_percent[2], None,
+            "an unqueried GPU is not an idle one"
+        );
+        assert_eq!(s.gpu_memory_used[2], None);
+
+        let p = &s.processes[0];
+        assert_eq!(p.net_rx_bps, None, "untracked per-process I/O is not zero");
+        assert_eq!(p.disk_read_bps, None);
+        assert_eq!(p.gpu_percent, None);
     }
 }

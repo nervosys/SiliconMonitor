@@ -2858,16 +2858,19 @@ fn handle_record_command(action: &RecordSubcommand) -> Result<(), Box<dyn std::e
                 for gpu in &state.gpu_dynamic {
                     match gpu {
                         Some(g) => {
-                            gpu_percent.push(g.utilization as f32);
-                            gpu_memory_used.push(g.memory.used);
-                            gpu_temperature.push(g.thermal.temperature.unwrap_or(0) as f32);
-                            gpu_power_mw.push(g.power.draw.unwrap_or(0));
+                            gpu_percent.push(Some(g.utilization as f32));
+                            gpu_memory_used.push(Some(g.memory.used));
+                            gpu_temperature.push(g.thermal.temperature.map(|t| t as f32));
+                            gpu_power_mw.push(g.power.draw);
                         }
+                        // The device could not be queried on this tick. It is
+                        // not idle, cold and drawing no power; nothing is known
+                        // about it, and the column says so.
                         None => {
-                            gpu_percent.push(0.0);
-                            gpu_memory_used.push(0);
-                            gpu_temperature.push(0.0);
-                            gpu_power_mw.push(0);
+                            gpu_percent.push(None);
+                            gpu_memory_used.push(None);
+                            gpu_temperature.push(None);
+                            gpu_power_mw.push(None);
                         }
                     }
                 }
@@ -2889,11 +2892,19 @@ fn handle_record_command(action: &RecordSubcommand) -> Result<(), Box<dyn std::e
                         cpu_percent: p.cpu_percent,
                         memory_bytes: p.memory_bytes,
                         gpu_memory_bytes: p.total_gpu_memory_bytes,
-                        gpu_percent: p.gpu_usage_percent.unwrap_or(0.0),
-                        disk_read_bps: 0, // Per-process I/O rates need delta tracking across snapshots
-                        disk_write_bps: 0, // Absolute I/O bytes available in ProcessMonitorInfo
-                        net_rx_bps: 0,    // Per-process network rates not tracked by OS
-                        net_tx_bps: 0,    // System-level net rates are in SystemSnapshot
+                        gpu_percent: p.gpu_usage_percent,
+                        // These four are not tracked. They were previously
+                        // written as zero, which reads back as an idle process
+                        // rather than as an unmeasured one. Per-process I/O
+                        // rates need delta tracking across snapshots (the
+                        // absolute byte counts are in ProcessMonitorInfo), and
+                        // no OS attributes network bytes per process without a
+                        // packet filter. System-wide net rates are on
+                        // SystemSnapshot and are real.
+                        disk_read_bps: None,
+                        disk_write_bps: None,
+                        net_rx_bps: None,
+                        net_tx_bps: None,
                     })
                     .collect();
 
@@ -3102,12 +3113,18 @@ fn handle_record_command(action: &RecordSubcommand) -> Result<(), Box<dyn std::e
                     );
                     if !snapshot.gpu_percent.is_empty() {
                         for (i, gpu) in snapshot.gpu_percent.iter().enumerate() {
-                            println!(
-                                "    GPU{}: {:.1}%  Temp: {:.0}°C",
-                                i,
-                                gpu,
-                                snapshot.gpu_temperature.get(i).unwrap_or(&0.0)
-                            );
+                            let util = match gpu {
+                                Some(u) => format!("{:.1}%", u),
+                                None => "not read".to_string(),
+                            };
+                            let temp = match snapshot.gpu_temperature.get(i).copied().flatten() {
+                                Some(t) => format!("{:.0}°C", t),
+                                // The adapter exposes no sensor, or was not
+                                // queried. Printing 0°C here made an integrated
+                                // GPU look like the coolest device present.
+                                None => "no sensor".to_string(),
+                            };
+                            println!("    GPU{}: {}  Temp: {}", i, util, temp);
                         }
                     }
                     println!();

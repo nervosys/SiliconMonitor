@@ -41,9 +41,52 @@ Since the tag, on `master` and green on all three platforms:
 | `7192187` | Four NVMe SMART fields read sixteen bytes early |
 | `4846c3f` | An interlaced mode reported field lines as a resolution |
 | `1e26d01` | The SATA temperature walk used the input struct's layout |
+| `4af44bc` | The three scans, in the order they pay |
+| `7c79f8b` | A DIMM at zero volts, and three absence words as values |
+| `3a50c99` | `pstate_name` gated with its caller, after CI caught it |
+| `2360068` | Watching nothing is not the same as having no baseline |
+| `87ec29a` | The recorder stored an absent sensor as zero degrees |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### The reader was honest; the consumer threw it away
+
+`gpu.2.thermal.temperature` resolves **"unavailable — no temperature sensor
+exposed for this adapter"** in `simon snapshot`, and the Prometheus exporter
+omits the series entirely, which is correct for Prometheus. The same
+`Option<u32>`, on the same tick, was written into the time-series database as
+`0.0` and printed by `simon record query` as `Temp: 0°C` — an integrated AMD
+adapter reading as the coolest device in a box holding two 3090 Tis at 44 and
+38 degrees.
+
+**Three consumers of one already-honest reader; two respected the `Option` and
+the third discarded it at the type boundary.** This is the "reader wired into
+one consumer" pattern further down, in its most treatable form: nothing needed
+to be measured differently, only carried. `SystemSnapshot`'s four per-GPU
+columns were `Vec<f32>`/`Vec<u64>`, so there was nowhere for an absence to go,
+and `unwrap_or(0)` was the only way to satisfy the type.
+
+**A `Vec<T>` whose elements come from `Option<T>` readings is the shape to look
+for.** The lossy conversion is forced by the declaration, so it never looks like
+a decision anyone made. Grepping `unwrap_or(0)` does find it, among 884 others;
+what singles this one out is that the value crosses into **storage**, where it
+is exported to JSON, averaged, and read back later by someone who cannot ask
+what the zero meant.
+
+Worse than the sensor: a device whose query *failed on that tick* was recorded
+as `0%` utilisation, `0` bytes, `0°C`, `0 mW` — a complete, plausible reading of
+an idle, cold, unpowered GPU. The comment directly above that code said
+"carries None for a device whose query failed this tick", and the next four
+lines turned it into zeros. Four per-process columns did the same, with comments
+admitting they were never tracked at all.
+
+The fix makes the columns `Vec<Option<_>>` and bumps `DB_VERSION` to 2.
+**Version 1 files are now rejected rather than migrated**, and the reason says
+why: a stored zero does not record whether it was measured, so any conversion
+would have to guess, reintroducing exactly what was removed. The rejection names
+`simon record clear` as the recovery, and that command was checked against a
+real version-1 file — it deletes without opening.
 
 ### Three scans, in the order they pay
 
