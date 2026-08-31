@@ -47,9 +47,47 @@ Since the tag, on `master` and green on all three platforms:
 | `2360068` | Watching nothing is not the same as having no baseline |
 | `5931069` | The recorder stored an absent sensor as zero degrees |
 | `1666a52` | A shell variable read as a debugger, and a consent UI for nothing |
+| `HEAD` | `serve --help` named a Prometheus route that 404s |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### A constant read without its prefix, documented as a route
+
+`simon serve --help` said: *"Prometheus metrics are at /metrics/prometheus (not
+/metrics — that route returns JSON)."* Both halves are false. `curl` returns 404
+for `/metrics/prometheus` and 404 for `/metrics`; the served path is
+`/api/v1/metrics/prometheus`, which the server's own startup banner and
+`grafana/README.md` both state correctly.
+
+The mechanism will recur, so it is worth naming: `routes::METRICS_PROMETHEUS` is
+the string `"/metrics/prometheus"`, and the dispatcher compares it only *after*
+stripping the `/api/v1` prefix. Reading the constant and documenting it verbatim
+yields a path that does not exist, and nothing about the constant warns you.
+
+**A help string is the one claim a user cannot check before acting on it.** They
+run what it names and get nothing back. `documented_http_paths_match_the_route_
+table` in `tests/documentation_links.rs` now composes the path from the route
+constants and fails on any mention that drops the prefix; it was confirmed
+against the old text first.
+
+Two things looked wrong here and are not, which is worth recording so the next
+reader does not spend the time twice:
+
+- `simon_gpu_{0,1}_fan_speed_percent 0` at 49 °C and 37 °C is a **true zero** —
+  `nvidia-smi --query-gpu=fan.speed` reports `0 %` for both. Zero-RPM idle on a
+  3090 Ti. Checked in a second tool rather than assumed, per the rule below.
+- The Prometheus exporter omits `simon_gpu_2_temperature_celsius` entirely
+  rather than publishing a zero, which is correct for Prometheus and is the
+  behaviour the recorder lacked.
+
+**Open, not fixed:** the OpenAPI document at `/api/v1/openapi.json` advertises
+three paths (`/health`, `/api/v1/context`, `/api/v1/gpus`) out of roughly twenty
+that the dispatcher serves. Everything it advertises works, so it states nothing
+false — but an agent handed that spec would conclude simon serves three
+endpoints. Four route constants (`METRICS`, `STREAM`, `EVENTS_SUBSCRIBE`,
+`PROCESS_BY_ID`) are declared and never dispatched; they are unreferenced dead
+constants rather than advertised lies, which is why they were left alone.
 
 ### A privacy screen is a reading too, and this one was wrong three ways
 

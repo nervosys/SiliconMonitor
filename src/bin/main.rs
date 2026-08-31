@@ -299,8 +299,9 @@ enum Commands {
     },
     /// Serve the REST API and Prometheus metrics over HTTP
     ///
-    /// Prometheus metrics are at /metrics/prometheus (not /metrics — that route
-    /// returns JSON). The bundled Grafana dashboards in grafana/ consume this.
+    /// Prometheus metrics are at /api/v1/metrics/prometheus. Prometheus's
+    /// default /metrics is not served at all, so scrape_configs must set
+    /// metrics_path explicitly; grafana/README.md has the stanza.
     Serve {
         /// Port to listen on
         #[arg(short, long, default_value_t = 9100)]

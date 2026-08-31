@@ -269,3 +269,60 @@ fn every_documented_command_exists() {
         broken.join("\n  ")
     );
 }
+
+/// An HTTP path named in documentation must be a path the server routes.
+///
+/// `simon serve --help` said "Prometheus metrics are at /metrics/prometheus
+/// (not /metrics — that route returns JSON)". Both halves were wrong:
+/// `/metrics/prometheus` is a 404, and so is `/metrics`. The real path is
+/// `/api/v1/metrics/prometheus`, which the server's own startup banner and
+/// `grafana/README.md` both got right.
+///
+/// The mechanism is worth knowing, because it will recur: `routes::
+/// METRICS_PROMETHEUS` is the string `"/metrics/prometheus"`, and the
+/// dispatcher only compares it after stripping the `/api/v1` prefix. Reading
+/// the constant and documenting it verbatim gives a path that does not exist,
+/// and nothing about the constant says so.
+///
+/// A help string is the one place a user has no way to check a claim before
+/// acting on it — they run the command it names and get nothing.
+#[test]
+fn documented_http_paths_match_the_route_table() {
+    use simonlib::observability::server::routes;
+
+    let prometheus = format!("{}{}", routes::API_V1, routes::METRICS_PROMETHEUS);
+
+    let mut sources: Vec<PathBuf> = vec![repo_root().join("src/bin/main.rs")];
+    if let Some(markdown) = tracked_markdown() {
+        sources.extend(markdown);
+    }
+
+    let mut wrong = Vec::new();
+    for path in &sources {
+        let Ok(text) = std::fs::read_to_string(path) else {
+            continue;
+        };
+        for (n, line) in text.lines().enumerate() {
+            // Every mention of the Prometheus endpoint must be the whole path.
+            // A bare "/metrics/prometheus" is the constant without its prefix,
+            // which is exactly the mistake being guarded against.
+            for (idx, _) in line.match_indices("/metrics/prometheus") {
+                let full = line[..idx].ends_with(routes::API_V1);
+                if !full {
+                    wrong.push(format!(
+                        "{}:{}: names /metrics/prometheus; the served path is {}",
+                        path.strip_prefix(repo_root()).unwrap_or(path).display(),
+                        n + 1,
+                        prometheus
+                    ));
+                }
+            }
+        }
+    }
+
+    assert!(
+        wrong.is_empty(),
+        "documentation names an HTTP path the server does not route:\n  {}",
+        wrong.join("\n  ")
+    );
+}
