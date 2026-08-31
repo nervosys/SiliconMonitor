@@ -57,7 +57,7 @@ Since the tag, on `master` and green on all three platforms:
 | `b16d4fb` | A terminal and a browser classified as GPU compute |
 | `19a6a06` | Per-process GPU memory: NVML says N/A, simon said 0.0 MB |
 | `1a6718c` | Master volume 100% on every machine, and setters that changed nothing |
-| `HEAD` | The invented-device rule generalised past displays |
+| `308c770` | The invented-device rule generalised past displays |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
