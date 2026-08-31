@@ -57,6 +57,7 @@ Since the tag, on `master` and green on all three platforms:
 | `b16d4fb` | A terminal and a browser classified as GPU compute |
 | `19a6a06` | Per-process GPU memory: NVML says N/A, simon said 0.0 MB |
 | `1a6718c` | Master volume 100% on every machine, and setters that changed nothing |
+| `HEAD` | The invented-device rule generalised past displays |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
@@ -104,11 +105,34 @@ device**, "Default Audio Output", active and unmuted at 100%, pushed when the
 enumeration found nothing. That is the Intel root hub from `cc7aac6` again, one
 module over. Both gone.
 
-**Worth generalising from three findings in two commits:** `simon cli usb` and
-`simon cli audio` both invented a device when enumeration failed, and both are
-outside what `tests/plausibility.rs` covers. That suite guards synthetic
-*displays* because that is where the pattern was first found. The right shape
-for it is a rule about readers, not about displays.
+**Generalised, in the commit after this one.** `simon cli usb` and `simon cli
+audio` both invented a device when enumeration failed, and both were outside
+what `tests/plausibility.rs` covered: that suite guarded synthetic *displays*
+because displays are where the pattern was first caught, and the rule was never
+widened. `readers_that_find_nothing_invent_nothing` now covers all three.
+
+It asserts the **signatures** rather than emptiness, because a real machine does
+have audio and USB devices; what it must never have is the Intel root hub at
+`8086:0001` or an endpoint called "Default Audio Output". Confirmed by putting
+the invented default-device volume back, which fails it with *"AMD High
+Definition Audio Device: no platform reads a device volume, so none may report
+one"*.
+
+**And a test can pin the defect as the contract.** Removing the invented audio
+device broke `test_audio_monitor_devices` on the Linux and Windows runners. That
+test asserted `!monitor.devices().is_empty()` under the comment *"Should have at
+least one device (placeholder on all platforms)"* — **it existed to assert that
+the placeholder was present**, and it passed here only because this desktop has
+real audio hardware. A headless runner genuinely has none.
+
+The honest assertion is about the shape of whatever is reported — every device
+has an id and a name — not about a count the hardware decides. Nothing else in
+the suite makes that mistake: every other `is_empty` assertion is per-item.
+
+**The lesson underneath is about the shape of a guard.** A test written for the
+module where a defect was found will not catch the same defect one module over,
+and this family has now appeared in three. When a suite exists for a *pattern*,
+name the pattern in it.
 
 ### A GPU context is not a GPU workload
 

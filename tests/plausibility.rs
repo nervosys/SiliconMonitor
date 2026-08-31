@@ -394,6 +394,71 @@ fn network_rates_are_non_negative() {
     }
 }
 
+/// The same rule as the display test below, for the two readers found doing it.
+///
+/// That test exists because *displays* were where the pattern was first caught,
+/// and it was never generalised. Two more readers were still inventing entries:
+///
+/// - `usb` pushed an Intel root hub — vendor `0x8086`, product `0x0001`, high
+///   speed — when the sysfs walk found nothing.
+/// - `audio` pushed a "Default Audio Output", active, enabled, unmuted, at 100%
+///   volume, once per platform, when enumeration found nothing.
+///
+/// In both cases a machine whose hardware could not be enumerated reported one
+/// working device, indistinguishable from a machine that has exactly one. An
+/// empty list is the honest answer and it is what both return now.
+///
+/// This asserts the *signatures* rather than emptiness, because a real machine
+/// legitimately has audio devices and USB devices; what it must never have is
+/// one of these.
+#[test]
+fn readers_that_find_nothing_invent_nothing() {
+    use simonlib::audio::AudioMonitor;
+    use simonlib::usb::UsbMonitor;
+
+    if let Ok(monitor) = UsbMonitor::new() {
+        for device in monitor.devices() {
+            let invented = device.vendor_id == Some(0x8086)
+                && device.product_id == Some(0x0001)
+                && device.product.as_deref() == Some("USB Root Hub");
+            assert!(
+                !invented,
+                concat!(
+                    "the synthetic Intel root hub is back: a USB walk that ",
+                    "finds nothing must report nothing"
+                )
+            );
+        }
+    }
+
+    if let Ok(monitor) = AudioMonitor::new() {
+        for device in monitor.devices() {
+            let invented = matches!(device.id.as_str(), "default_output" | "default")
+                && matches!(
+                    device.name.as_str(),
+                    "Default Audio Output" | "Default Audio Device"
+                );
+            assert!(
+                !invented,
+                concat!(
+                    "the synthetic audio endpoint is back ({}): enumeration ",
+                    "that finds nothing must report nothing"
+                ),
+                device.name
+            );
+
+            // The default endpoint used to be handed `Some(100)` while every
+            // other device got `None`, so the one device a user looks at was
+            // the one carrying an invented figure.
+            assert!(
+                device.volume.is_none(),
+                "{}: no platform reads a device volume, so none may report one",
+                device.name
+            );
+        }
+    }
+}
+
 /// Detection failures must report nothing, never a synthetic stand-in.
 ///
 /// Collectors used to invent a plausible-looking entry when their probe came back

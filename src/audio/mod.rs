@@ -537,11 +537,32 @@ mod tests {
         assert!(monitor.is_ok());
     }
 
+    /// Whatever is enumerated must be identifiable. How many there are is the
+    /// machine's business.
+    ///
+    /// This asserted `!devices().is_empty()`, under a comment reading
+    /// "Should have at least one device (placeholder on all platforms)" — it
+    /// existed to assert that the invented fallback device was present, and it
+    /// failed on the Linux and Windows CI runners the moment that device was
+    /// removed, because a headless runner genuinely has no audio endpoint.
+    ///
+    /// A test that pins a placeholder makes the placeholder the contract. The
+    /// honest assertion is about the shape of what is reported, not about a
+    /// count the hardware decides.
     #[test]
     fn test_audio_monitor_devices() {
         let monitor = AudioMonitor::new().unwrap();
-        // Should have at least one device (placeholder on all platforms)
-        assert!(!monitor.devices().is_empty());
+        for device in monitor.devices() {
+            assert!(
+                !device.id.is_empty(),
+                "an audio device was reported with no id"
+            );
+            assert!(
+                !device.name.is_empty(),
+                "audio device {} was reported with no name",
+                device.id
+            );
+        }
     }
 
     #[test]
