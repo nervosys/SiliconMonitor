@@ -62,7 +62,8 @@
 //!     println!("{} (PID {}): {} MB GPU memory",
 //!         proc.name,
 //!         proc.pid,
-//!         proc.total_gpu_memory_bytes / 1024 / 1024
+//!         proc.gpu_memory_mb()
+//!             .map_or_else(|| "n/a".to_string(), |mb| format!("{mb:.0}"))
 //!     );
 //! }
 //! # Ok(())

@@ -16,23 +16,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("--- Audio Control ---");
     let mut audio = AudioMonitor::new()?;
 
-    // Show current state
+    // Show current state. Both read `None`: nothing in simon reads the system
+    // mixer on any platform yet.
     println!("Initial master volume: {:?}", audio.master_volume());
-    println!("Initial mute state: {}", audio.is_muted());
+    println!("Initial mute state: {:?}", audio.is_muted());
 
-    // Set master volume
-    println!("\nSetting master volume to 75%...");
-    audio.set_master_volume(75)?;
-    println!("New master volume: {:?}", audio.master_volume());
+    // These used to assign a field and return Ok(()), so this example printed
+    // "New master volume: Some(75)" while the machine's volume did not move.
+    // They report the truth now, and this shows it rather than dying on `?`.
+    println!(
+        "
+Setting master volume to 75%..."
+    );
+    match audio.set_master_volume(75) {
+        Ok(()) => println!("New master volume: {:?}", audio.master_volume()),
+        Err(e) => println!("  declined: {e}"),
+    }
 
-    // Mute/unmute
-    println!("\nMuting audio...");
-    audio.set_mute(true)?;
-    println!("Muted: {}", audio.is_muted());
-
-    println!("\nUnmuting audio...");
-    audio.set_mute(false)?;
-    println!("Muted: {}", audio.is_muted());
+    println!(
+        "
+Muting audio..."
+    );
+    match audio.set_mute(true) {
+        Ok(()) => println!("Muted: {:?}", audio.is_muted()),
+        Err(e) => println!("  declined: {e}"),
+    }
 
     // Device-specific volume (if devices exist)
     let device_id = audio.devices().first().map(|d| d.id.clone());

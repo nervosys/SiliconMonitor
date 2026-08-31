@@ -47,7 +47,8 @@
 //!     println!("  {} (PID {}): {} MB on {} GPUs",
 //!         proc.name,
 //!         proc.pid,
-//!         proc.total_gpu_memory_bytes / 1024 / 1024,
+//!         proc.gpu_memory_mb()
+//!             .map_or_else(|| "n/a".to_string(), |mb| format!("{mb:.0}")),
 //!         proc.gpu_indices.len()
 //!     );
 //! }
@@ -92,7 +93,10 @@
 //!     println!("Process: {}", proc.name);
 //!     println!("CPU: {:.1}%", proc.cpu_percent);
 //!     println!("Memory: {} MB", proc.memory_bytes / 1024 / 1024);
-//!     println!("GPU Memory: {} MB", proc.total_gpu_memory_bytes / 1024 / 1024);
+//!     match proc.gpu_memory_mb() {
+//!         Some(mb) => println!("GPU Memory: {mb:.0} MB"),
+//!         None => println!("GPU Memory: not reported by the driver"),
+//!     }
 //!     println!("Using GPUs: {:?}", proc.gpu_indices);
 //! }
 //! # Ok(())

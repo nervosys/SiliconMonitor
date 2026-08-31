@@ -372,10 +372,16 @@ impl PeripheralCache {
             } else {
                 let mut lines: Vec<String> = Vec::new();
                 lines.push(format!(
-                    "{} audio device(s) | Volume: {}% | Muted: {}",
+                    "{} audio device(s) | Volume: {} | Muted: {}",
                     devices.len(),
-                    monitor.master_volume().unwrap_or(100),
-                    if monitor.is_muted() { "Yes" } else { "No" }
+                    monitor
+                        .master_volume()
+                        .map_or_else(|| "not read".to_string(), |v| format!("{v}%")),
+                    match monitor.is_muted() {
+                        Some(true) => "Yes",
+                        Some(false) => "No",
+                        None => "not read",
+                    }
                 ));
                 for dev in devices.iter().take(4) {
                     let icon = if dev.is_output { "♪" } else { "⚬" };

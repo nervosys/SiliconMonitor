@@ -1278,10 +1278,11 @@ impl Ontology {
             K::Identity,
             None,
             P::Measured,
-            false,
+            true,
             "Whether the endpoint is muted. Independent of volume - a muted \
              endpoint at 80% is not the same as an unmuted one at zero, and \
-             only one of the two is fixed by turning it up.",
+             only one of the two is fixed by turning it up. Null wherever the \
+             mixer is not read, which is every platform today.",
         ));
         add(Entity::new(
             "board.camera.<none>",

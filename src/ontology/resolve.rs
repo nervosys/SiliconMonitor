@@ -2658,18 +2658,26 @@ fn resolve_audio(out: &mut Vec<Reading>) {
             serde_json::json!(d.is_default),
             None,
         ));
+        // Neither of these is read on any platform yet. The volume row already
+        // said so; the mute row published a constant `false` as `measured`,
+        // and the conformance suite caught it the moment the field could
+        // express an absence.
+        const NO_MIXER: &str =
+            "simon has no mixer binding on this platform, so no level is read from this endpoint";
         push_opt(
             out,
             format!("{base}.volume"),
             d.volume.map(|v| serde_json::json!(v)),
             Some(Unit::Percent),
-            "this endpoint exposes no volume level",
+            NO_MIXER,
         );
-        out.push(Reading::measured(
+        push_opt(
+            out,
             format!("{base}.muted"),
-            serde_json::json!(d.muted),
+            d.muted.map(|m| serde_json::json!(m)),
             None,
-        ));
+            NO_MIXER,
+        );
     }
 }
 

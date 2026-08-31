@@ -36,22 +36,39 @@ pub struct AudioDevice {
     pub is_default: bool,
     pub is_output: bool,
     pub is_enabled: bool,
+    /// Device volume, if it has been read. Nothing reads it: the default
+    /// device was given `Some(100)` and every other device `None`, so the one
+    /// device a user looks at was the one carrying an invented figure.
     pub volume: Option<u8>,
-    pub muted: bool,
+    /// Device mute state, if it has been read. Nothing reads it either.
+    pub muted: Option<bool>,
 }
 
 pub struct AudioMonitor {
     devices: Vec<AudioDevice>,
+    /// System master volume, if it has been read.
+    ///
+    /// It never has been. This was initialised to `Some(100)` in the
+    /// constructor and no `refresh_*` path on any platform assigns it, so
+    /// `simon cli audio` reported "Master Volume: 100%" on every machine, the
+    /// TUI printed the same, and the agent tool surface published
+    /// `"master_volume": 100`. None of those was a reading.
     master_volume: Option<u8>,
-    master_muted: bool,
+    /// System mute state, if it has been read — see [`Self::master_volume`].
+    /// It was a constant `false`, reported as "Muted: No".
+    master_muted: Option<bool>,
 }
 
 impl AudioMonitor {
     pub fn new() -> Result<Self, SimonError> {
         let mut monitor = Self {
             devices: Vec::new(),
-            master_volume: Some(100),
-            master_muted: false,
+            // Nothing reads these yet. Reading the system mixer needs
+            // IAudioEndpointVolume on Windows, PulseAudio or ALSA on Linux and
+            // CoreAudio on macOS; until one of those is wired up the honest
+            // value is "not read", not "100%".
+            master_volume: None,
+            master_muted: None,
         };
         monitor.refresh()?;
         Ok(monitor)
@@ -74,7 +91,8 @@ impl AudioMonitor {
     pub fn master_volume(&self) -> Option<u8> {
         self.master_volume
     }
-    pub fn is_muted(&self) -> bool {
+    /// Whether the system is muted, or `None` because nothing reads it.
+    pub fn is_muted(&self) -> Option<bool> {
         self.master_muted
     }
     pub fn default_output(&self) -> Option<&AudioDevice> {
@@ -87,21 +105,41 @@ impl AudioMonitor {
     // ==================== Hardware Control APIs ====================
 
     /// Set the master volume level (0-100).
+    ///
+    /// # Not implemented
+    ///
+    /// This assigned the field and returned `Ok(())`, touching no audio API on
+    /// any platform. A caller set the volume to 20, was told it had worked, and
+    /// the machine did not change — while `master_volume()` then returned the
+    /// 20 it had just stored, so even reading it back appeared to confirm it.
+    ///
+    /// It returns an error until a real mixer call is behind it. A control that
+    /// reports success without acting is worse than one that is absent.
     pub fn set_master_volume(&mut self, volume: u8) -> Result<(), crate::error::SimonError> {
         if volume > 100 {
             return Err(crate::error::SimonError::InvalidInput(format!(
-                "Volume must be 0-100, got {}",
-                volume
+                "Volume must be 0-100, got {volume}"
             )));
         }
-        self.master_volume = Some(volume);
-        Ok(())
+        Err(crate::error::SimonError::NotImplemented(
+            concat!(
+                "setting the master volume: simon has no mixer binding on this ",
+                "platform, and this call previously changed only its own copy of ",
+                "the value"
+            )
+            .to_string(),
+        ))
     }
 
     /// Set the master mute state.
-    pub fn set_mute(&mut self, muted: bool) -> Result<(), crate::error::SimonError> {
-        self.master_muted = muted;
-        Ok(())
+    ///
+    /// # Not implemented
+    ///
+    /// See [`Self::set_master_volume`]. This changed only the field.
+    pub fn set_mute(&mut self, _muted: bool) -> Result<(), crate::error::SimonError> {
+        Err(crate::error::SimonError::NotImplemented(
+            "setting the mute state: simon has no mixer binding on this platform".to_string(),
+        ))
     }
 
     /// Set volume for a specific device by ID.
@@ -128,14 +166,23 @@ impl AudioMonitor {
     }
 
     /// Set mute state for a specific device by ID.
+    ///
+    /// # Not implemented
+    ///
+    /// See [`Self::set_master_volume`]. This changed only the field.
     pub fn set_device_mute(
         &mut self,
         device_id: &str,
-        muted: bool,
+        _muted: bool,
     ) -> Result<(), crate::error::SimonError> {
-        if let Some(device) = self.devices.iter_mut().find(|d| d.id == device_id) {
-            device.muted = muted;
-            Ok(())
+        if self.devices.iter().any(|d| d.id == device_id) {
+            Err(crate::error::SimonError::NotImplemented(
+                concat!(
+                    "setting a device's mute state: simon has no mixer binding ",
+                    "on this platform"
+                )
+                .to_string(),
+            ))
         } else {
             Err(crate::error::SimonError::NotFound(format!(
                 "Audio device '{}' not found",
@@ -243,8 +290,10 @@ impl AudioMonitor {
                                 is_default,
                                 is_output,
                                 is_enabled: status == "OK",
-                                volume: if is_default { Some(100) } else { None },
-                                muted: false,
+                                // Not read. `Some(100)` for the default
+                                // device was a guess wearing a measurement.
+                                volume: None,
+                                muted: None,
                             });
                         }
                     }
@@ -252,20 +301,13 @@ impl AudioMonitor {
             }
         }
 
-        // Fallback if nothing found
-        if self.devices.is_empty() {
-            self.devices.push(AudioDevice {
-                id: "default_output".to_string(),
-                name: "Default Audio Output".to_string(),
-                device_type: AudioDeviceType::Output,
-                state: AudioState::Active,
-                is_default: true,
-                is_output: true,
-                is_enabled: true,
-                volume: Some(100),
-                muted: false,
-            });
-        }
+        // There is deliberately no fallback device here.
+        //
+        // This invented one when the enumeration found nothing: "Default Audio
+        // Output", active, enabled, unmuted, at 100% volume — none of it read
+        // from anything. A machine with no enumerable audio reported one
+        // working output, indistinguishable from a machine that has one. The
+        // same shape as the Intel root hub the USB reader used to invent.
     }
 
     #[cfg(target_os = "linux")]
@@ -319,7 +361,7 @@ impl AudioMonitor {
                             is_output,
                             is_enabled: true,
                             volume: None,
-                            muted: false,
+                            muted: None,
                         });
                     }
                 }
@@ -347,19 +389,8 @@ impl AudioMonitor {
             }
         }
 
-        if self.devices.is_empty() {
-            self.devices.push(AudioDevice {
-                id: "default".to_string(),
-                name: "Default Audio Device".to_string(),
-                device_type: AudioDeviceType::Duplex,
-                state: AudioState::Active,
-                is_default: true,
-                is_output: true,
-                is_enabled: true,
-                volume: None,
-                muted: false,
-            });
-        }
+        // No fallback device. An empty list means the ALSA cards file told us
+        // nothing, which is not the same as one working duplex device.
     }
 
     #[cfg(target_os = "macos")]
@@ -418,7 +449,7 @@ impl AudioMonitor {
                                 is_output: has_output || (!has_input),
                                 is_enabled: true,
                                 volume: None,
-                                muted: false,
+                                muted: None,
                             });
                             idx += 1;
                         }
@@ -427,19 +458,8 @@ impl AudioMonitor {
             }
         }
 
-        if self.devices.is_empty() {
-            self.devices.push(AudioDevice {
-                id: "default_output".to_string(),
-                name: "Default Audio Output".to_string(),
-                device_type: AudioDeviceType::Output,
-                state: AudioState::Active,
-                is_default: true,
-                is_output: true,
-                is_enabled: true,
-                volume: Some(100),
-                muted: false,
-            });
-        }
+        // No fallback device, and no invented 100% volume with it. See the
+        // Windows path above.
     }
 }
 
@@ -447,8 +467,8 @@ impl Default for AudioMonitor {
     fn default() -> Self {
         Self::new().unwrap_or(Self {
             devices: Vec::new(),
-            master_volume: Some(100),
-            master_muted: false,
+            master_volume: None,
+            master_muted: None,
         })
     }
 }
@@ -456,6 +476,60 @@ impl Default for AudioMonitor {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Nothing in simon reads the system mixer, so nothing may report one.
+    ///
+    /// `master_volume` was initialised to `Some(100)` in the constructor and
+    /// assigned by no `refresh_*` path on any platform, so `simon cli audio`
+    /// printed "Master Volume: 100%" on every machine, the TUI printed the
+    /// same, and the agent tool surface published `"master_volume": 100`. This
+    /// fails the moment a real reader lands, which is when the wording on
+    /// those three surfaces needs revisiting.
+    #[test]
+    fn an_unread_mixer_reports_nothing_rather_than_full_volume() {
+        let monitor = AudioMonitor::new().expect("monitor");
+
+        assert_eq!(
+            monitor.master_volume(),
+            None,
+            "no platform reads the master volume; 100% was a constructor default"
+        );
+        assert_eq!(monitor.is_muted(), None, "no platform reads the mute state");
+
+        for device in monitor.devices() {
+            assert_eq!(
+                device.volume, None,
+                "{}: device volume is not read on any platform",
+                device.name
+            );
+            assert_eq!(
+                device.muted, None,
+                "{}: mute state is not read",
+                device.name
+            );
+        }
+    }
+
+    /// A control that reports success without acting is worse than one that is
+    /// absent, because the caller has no way to find out.
+    #[test]
+    fn the_mixer_setters_decline_rather_than_pretend() {
+        let mut monitor = AudioMonitor::new().expect("monitor");
+
+        assert!(
+            monitor.set_master_volume(75).is_err(),
+            "setting the volume touches no audio API and must not return Ok"
+        );
+        assert!(monitor.set_mute(true).is_err());
+
+        // Still unread: the failed call must not have left its argument behind
+        // as though it were a reading.
+        assert_eq!(monitor.master_volume(), None);
+        assert_eq!(monitor.is_muted(), None);
+
+        // Argument validation still comes first.
+        assert!(monitor.set_master_volume(101).is_err());
+    }
 
     #[test]
     fn test_audio_monitor_creation() {
@@ -489,7 +563,7 @@ mod tests {
             is_output: true,
             is_enabled: true,
             volume: Some(50),
-            muted: false,
+            muted: Some(false),
         };
         let json = serde_json::to_string(&device).unwrap();
         let deserialized: AudioDevice = serde_json::from_str(&json).unwrap();

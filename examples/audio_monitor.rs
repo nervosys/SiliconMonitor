@@ -19,7 +19,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Check mute status
-    println!("Muted: {}", if monitor.is_muted() { "Yes" } else { "No" });
+    match monitor.is_muted() {
+        Some(m) => println!("Muted: {}", if m { "Yes" } else { "No" }),
+        None => println!("Muted: Not available"),
+    }
 
     println!();
 

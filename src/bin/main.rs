@@ -1140,11 +1140,20 @@ fn handle_cli_command(
                     println!("{}", serde_json::to_string_pretty(monitor.devices())?);
                 } else {
                     println!("{}", "═══ Audio Devices ═══".cyan().bold());
-                    println!(
-                        "  Master Volume: {}%",
-                        monitor.master_volume().unwrap_or(100)
-                    );
-                    println!("  Muted: {}", if monitor.is_muted() { "Yes" } else { "No" });
+                    // Both of these were constructor defaults that no reader
+                    // ever assigns, printed as "100%" and "No" on every
+                    // machine. `unwrap_or(100)` made the absence unreachable
+                    // even once the field could express it.
+                    match monitor.master_volume() {
+                        Some(v) => println!("  Master Volume: {v}%"),
+                        None => println!(
+                            "  Master Volume: not read — simon has no mixer binding on this platform"
+                        ),
+                    }
+                    match monitor.is_muted() {
+                        Some(m) => println!("  Muted: {}", if m { "Yes" } else { "No" }),
+                        None => println!("  Muted: not read"),
+                    }
                     for device in monitor.devices() {
                         println!(
                             "  {} ({:?}) - {:?}",

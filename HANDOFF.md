@@ -56,9 +56,59 @@ Since the tag, on `master` and green on all three platforms:
 | `cc7aac6` | Root hubs given the identifier 0000:0000, and an invented Intel hub |
 | `b16d4fb` | A terminal and a browser classified as GPU compute |
 | `19a6a06` | Per-process GPU memory: NVML says N/A, simon said 0.0 MB |
+| `HEAD` | Master volume 100% on every machine, and setters that changed nothing |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### A control that reports success without acting
+
+`simon cli audio` printed **"Master Volume: 100%"** and **"Muted: No"**. Both
+are constructor defaults. No `refresh_*` path on any platform assigns either
+field — the only writes were the setters — so those two lines said the same
+thing on every machine simon has ever run on, and the agent tool surface
+published `"master_volume": 100, "is_muted": false` alongside them.
+
+`src/audio/mod.rs` was checked in an earlier sweep and recorded here as clean,
+on the grounds that its one "placeholder" comment was in a test. **That check
+looked at comments and did not run the command.** The constant is in the
+constructor, where nothing marks it.
+
+Then the setters, which are worse:
+
+```rust
+pub fn set_master_volume(&mut self, volume: u8) -> Result<(), SimonError> {
+    ...
+    self.master_volume = Some(volume);
+    Ok(())
+}
+```
+
+All four of them — master volume, master mute, per-device volume, per-device
+mute — assigned a field and returned `Ok(())`, touching no audio API on any
+platform. **A caller set the volume to 20, was told it worked, and the machine
+did not change** — and `master_volume()` then returned the 20 it had just
+stored, so reading it back *confirmed* the lie. `examples/hardware_control.rs`
+demonstrates exactly this, and printed "New master volume: Some(75)".
+
+They return `NotImplemented` now. **A control that reports success without
+acting is worse than one that is absent**, because nothing downstream can tell.
+This is the `--offline` defect from `agent/mod.rs` in a second place: a flag or
+a setter that "enforced nothing", where the only evidence was that no caller
+existed for the thing it should have driven.
+
+Two more of the familiar shapes in the same file: the default audio device was
+given `volume: Some(100)` while every other device got `None` — so the one
+device a user looks at carried the invented figure — and a **fallback invented
+device**, "Default Audio Output", active and unmuted at 100%, pushed when the
+enumeration found nothing. That is the Intel root hub from `cc7aac6` again, one
+module over. Both gone.
+
+**Worth generalising from three findings in two commits:** `simon cli usb` and
+`simon cli audio` both invented a device when enumeration failed, and both are
+outside what `tests/plausibility.rs` covers. That suite guards synthetic
+*displays* because that is where the pattern was first found. The right shape
+for it is a rule about readers, not about displays.
 
 ### A GPU context is not a GPU workload
 
@@ -687,6 +737,26 @@ same shape appeared in the ontology the same day, where `system.boot.secure_boot
 was bound to a reader needing Administrator while the value sat in the registry,
 unelevated. When two sources disagree, check which one is *read* and which is
 *inferred* before tuning weights.
+
+### And the gate must include doc-tests
+
+`1c88d93` failed CI on all three runners, on three doc examples in `lib.rs` and
+`process_monitor.rs` that did arithmetic on a field which had become `Option`.
+
+`cargo test --lib --tests` — the command this file recommends, for the good
+reason that it is faster — **excludes doc-tests**. CI runs plain
+`cargo test --all-features`, which includes them. Any change to a public
+field's type can break a doc example, and nothing else in the local gate
+compiles them.
+
+```bash
+cargo test --quiet --all-features --doc     # 74 of them, ~9 seconds
+```
+
+Nine seconds, and it is the third distinct hole in the local gate found this
+session, after the feature-gated and target-gated ones. All three share a shape:
+**CI runs a command the local gate does not, and the difference is invisible
+until it fails.**
 
 ### Nor a target-gated one, for a different reason
 
