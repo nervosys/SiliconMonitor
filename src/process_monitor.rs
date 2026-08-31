@@ -141,7 +141,10 @@ pub enum ProcessCategory {
     Network,
     /// Database servers
     Database,
-    /// GPU compute and graphics
+    /// Holds a GPU context, and nothing else identifies it.
+    ///
+    /// Not a claim that the process is computing on the GPU: on Windows every
+    /// windowed application holds one, and NVML reports `C+G` for all of them.
     GpuCompute,
     /// Shell and terminal processes
     Shell,
@@ -157,7 +160,19 @@ impl ProcessCategory {
     pub fn classify(name: &str, user: Option<&str>, is_gpu_process: bool) -> Self {
         let name_lower = name.to_lowercase();
 
-        // GPU processes get special handling
+        // A process holding a GPU context is not thereby a GPU workload.
+        //
+        // This branch used to run first and end with `return Self::GpuCompute`
+        // for anything not matching an AI/ML or game name, so every windowed
+        // application on Windows landed there: `simon cli processes` reported
+        // 24 processes under "GPU Compute", the top five being
+        // WindowsTerminal.exe, brave.exe, Code.exe and a Logitech settings
+        // agent. `nvidia-smi` labels all of them `C+G` with `[N/A]` memory —
+        // they are drawing windows.
+        //
+        // The AI/ML and game checks stay here, because a GPU context plus one
+        // of those names is real evidence. Everything else falls through to be
+        // classified by what it is, so a browser is a browser.
         if is_gpu_process {
             // AI/ML specific
             if Self::matches_any(
@@ -194,7 +209,7 @@ impl ProcessCategory {
             ) {
                 return Self::Gaming;
             }
-            return Self::GpuCompute;
+            // No `return Self::GpuCompute` here. Fall through.
         }
 
         // System processes (PID 1, kernel threads, etc.)
@@ -669,6 +684,13 @@ impl ProcessCategory {
             }
         }
 
+        // A GPU-holding process that matches nothing by name is still worth
+        // separating from the general Unknown pile — but only after every
+        // name-based category has had its turn, so a browser is a browser.
+        if is_gpu_process {
+            return Self::GpuCompute;
+        }
+
         Self::Unknown
     }
 
@@ -693,7 +715,7 @@ impl ProcessCategory {
             Self::Container => "Containers",
             Self::Network => "Network",
             Self::Database => "Database",
-            Self::GpuCompute => "GPU Compute",
+            Self::GpuCompute => "Using GPU",
             Self::Shell => "Shell",
             Self::Application => "Applications",
             Self::Unknown => "Other",
@@ -2496,11 +2518,49 @@ mod tests {
         );
     }
 
+    /// A name nothing recognises, holding a GPU context, is still separated
+    /// out — but only after the name categories have had their turn.
     #[test]
     fn test_classify_gpu_generic() {
         assert_eq!(
             ProcessCategory::classify("someapp", None, true),
             ProcessCategory::GpuCompute
+        );
+    }
+
+    /// A browser holding a GPU context is a browser.
+    ///
+    /// Every windowed application on Windows holds one, so this branch used to
+    /// report 24 processes as "GPU Compute" — WindowsTerminal.exe, brave.exe
+    /// and Code.exe among them, all of which `nvidia-smi` labels `C+G` with
+    /// `[N/A]` memory. A GPU context is not evidence of a GPU workload.
+    #[test]
+    fn a_gpu_context_does_not_override_what_a_process_is() {
+        for (name, want) in [
+            ("brave.exe", ProcessCategory::Browser),
+            ("Code.exe", ProcessCategory::Development),
+        ] {
+            assert_eq!(
+                ProcessCategory::classify(name, None, true),
+                want,
+                "{name} holds a GPU context and is still a {want:?}"
+            );
+            assert_eq!(
+                ProcessCategory::classify(name, None, false),
+                want,
+                "{name} classifies the same either way"
+            );
+        }
+
+        // The evidence-backed branches are untouched: a GPU context plus one of
+        // these names is a real signal.
+        assert_eq!(
+            ProcessCategory::classify("python", None, true),
+            ProcessCategory::AiMl
+        );
+        assert_eq!(
+            ProcessCategory::classify("steam", None, true),
+            ProcessCategory::Gaming
         );
     }
 
@@ -2612,7 +2672,7 @@ mod tests {
         assert_eq!(ProcessCategory::System.display_name(), "System");
         assert_eq!(ProcessCategory::Browser.display_name(), "Browsers");
         assert_eq!(ProcessCategory::AiMl.display_name(), "AI/ML");
-        assert_eq!(ProcessCategory::GpuCompute.display_name(), "GPU Compute");
+        assert_eq!(ProcessCategory::GpuCompute.display_name(), "Using GPU");
     }
 
     #[test]

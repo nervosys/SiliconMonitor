@@ -54,9 +54,63 @@ Since the tag, on `master` and green on all three platforms:
 | `c14e8c6` | A gamepad counted as a Bluetooth radio, GATT services as devices |
 | `9ef5ba0` | The PnP classifier gated with the only target that calls it |
 | `cc7aac6` | Root hubs given the identifier 0000:0000, and an invented Intel hub |
+| `HEAD` | A terminal and a browser classified as GPU compute |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### A GPU context is not a GPU workload
+
+`simon cli processes` reported **24 processes under "GPU Compute"**. The top
+five were `WindowsTerminal.exe`, `brave.exe`, `Code.exe` and a Logitech settings
+agent. `nvidia-smi` labels every one of them `C+G` with `[N/A]` memory: they are
+drawing windows.
+
+`ProcessCategory::classify` took `is_gpu_process: bool`, which is
+`!gpu_indices.is_empty()` — *has any GPU association at all* — and that branch
+ran **first**, ending in `return Self::GpuCompute` for anything not matching an
+AI/ML or game name. On Windows every windowed application holds a GPU context,
+so the branch swallowed the entire desktop before the name-based categories
+could see it.
+
+This is the `ai_workload` PyTorch defect again — an **identity** inferred from a
+GPU association — and the same remedy applies: keep the branches backed by
+evidence (a GPU context *plus* a python or steam name is a real signal) and let
+everything else be classified by what it is. A browser is now a browser.
+
+`GpuCompute` survives, for a GPU-holding process that matches nothing by name,
+but only after every other category has had its turn, and its label is now
+**"Using GPU"** rather than "GPU Compute". On this desktop it holds fourteen:
+`iwx.exe`, `RadeonSoftware.exe`, two NVIDIA overlays, the Logitech agent. That
+is a true statement about all of them; "GPU Compute" was not.
+
+**`GpuProcess` already carries `process_type`**, and the NVIDIA reader sets
+`Graphics` or `Compute` correctly. The categoriser never looked at it — it took
+a bool derived from the index list instead. Worth knowing before relying on it,
+though: under WDDM, NVML's compute list includes plain graphics apps
+(`nvidia-smi --query-compute-apps` here returns `explorer.exe`), so on Windows
+that field cannot settle compute-versus-graphics either. The fix does not lean
+on it.
+
+**Still wrong, and the next thing to do here:** `GPU(MB)` prints `0.0` for every
+GPU-attributed process on this machine, and `nvidia-smi` reports `[N/A]` for all
+of them — WDDM does not expose per-process GPU memory to NVML. The sentinel is
+made at `process_monitor.rs`'s attribution loop:
+
+```rust
+let gpu_mem = gpu_proc.memory_usage.unwrap_or(0);   // Option<u64> -> 0
+proc_info.total_gpu_memory_bytes += gpu_mem;
+```
+
+`GpuProcess::memory_usage` is already `Option<u64>` and honest;
+`ProcessMonitorInfo::total_gpu_memory_bytes` is `u64` and has nowhere to put the
+absence — the same shape as `SystemSnapshot`'s GPU columns and `DisplayInfo`'s
+mode. **`observability/api.rs` already compensates** with
+`if total_gpu_memory_bytes > 0 { Some(..) } else { None }`, which is the fourth
+consumer this sweep found guarding a sentinel its source should not have made.
+The field wants to be `Option<u64>`; it has 45 references across the GUI, TUI,
+agent surface and examples, which is why it is written down here rather than
+done in the same commit as the classifier.
 
 ### An identifier is a bad place for a sentinel
 
