@@ -31,8 +31,14 @@ pub enum UsbDeviceClass {
 pub struct UsbDevice {
     pub bus_number: u8,
     pub port_number: u8,
-    pub vendor_id: u16,
-    pub product_id: u16,
+    /// USB vendor id, or `None` for an entry that has none — a root hub's
+    /// PnP id is `USB\ROOT_HUB30\...` with no `VID_` at all. This was `u16`
+    /// and a missing id parsed to zero, so `simon cli usb` printed
+    /// `[0000:0000]` and the agent surface published `"vendor_id": "0000"`,
+    /// neither distinguishable from a device that reports those ids.
+    pub vendor_id: Option<u16>,
+    /// USB product id. See [`Self::vendor_id`].
+    pub product_id: Option<u16>,
     pub manufacturer: Option<String>,
     pub product: Option<String>,
     pub description: Option<String>,
@@ -132,8 +138,8 @@ impl UsbMonitor {
                         self.devices.push(UsbDevice {
                             bus_number,
                             port_number,
-                            vendor_id: vendor_id as u16,
-                            product_id: product_id as u16,
+                            vendor_id: Some(vendor_id as u16),
+                            product_id: Some(product_id as u16),
                             manufacturer,
                             product,
                             description: None,
@@ -145,21 +151,15 @@ impl UsbMonitor {
                 }
             }
         }
-        // Fallback
-        if self.devices.is_empty() {
-            self.devices.push(UsbDevice {
-                bus_number: 1,
-                port_number: 0,
-                vendor_id: 0x8086,
-                product_id: 0x0001,
-                manufacturer: None,
-                product: Some("USB Root Hub".to_string()),
-                description: None,
-                serial_number: None,
-                class: UsbDeviceClass::Hub,
-                speed: UsbSpeed::High,
-            });
-        }
+        // There is deliberately no fallback device here.
+        //
+        // This used to invent one when the sysfs walk found nothing: an Intel
+        // root hub, vendor 0x8086, product 0x0001, running at high speed. None
+        // of that was read from anything. A machine whose USB tree simon cannot
+        // enumerate reported one device that does not exist, and a caller had
+        // no way to tell it from a machine with exactly one hub.
+        //
+        // An empty list is the honest answer, and the callers say so.
     }
 
     #[cfg(target_os = "macos")]
@@ -177,8 +177,8 @@ impl UsbMonitor {
 
         let stdout = String::from_utf8_lossy(&output.stdout);
         let mut current_name: Option<String> = None;
-        let mut current_vendor_id: u16 = 0;
-        let mut current_product_id: u16 = 0;
+        let mut current_vendor_id: Option<u16> = None;
+        let mut current_product_id: Option<u16> = None;
         let mut current_manufacturer: Option<String> = None;
         let mut current_serial: Option<String> = None;
         let mut current_speed: UsbSpeed = UsbSpeed::Full;
@@ -206,8 +206,8 @@ impl UsbMonitor {
                         class: UsbDeviceClass::Unknown,
                         speed: current_speed,
                     });
-                    current_vendor_id = 0;
-                    current_product_id = 0;
+                    current_vendor_id = None;
+                    current_product_id = None;
                     current_speed = UsbSpeed::Full;
                 }
                 current_name = Some(trimmed.trim_end_matches(':').to_string());
@@ -221,7 +221,7 @@ impl UsbMonitor {
                             .strip_prefix("0x")
                             .and_then(|s| s.split_whitespace().next())
                         {
-                            current_vendor_id = u16::from_str_radix(hex, 16).unwrap_or(0);
+                            current_vendor_id = u16::from_str_radix(hex, 16).ok();
                         }
                     }
                     "Product ID" => {
@@ -229,7 +229,7 @@ impl UsbMonitor {
                             .strip_prefix("0x")
                             .and_then(|s| s.split_whitespace().next())
                         {
-                            current_product_id = u16::from_str_radix(hex, 16).unwrap_or(0);
+                            current_product_id = u16::from_str_radix(hex, 16).ok();
                         }
                     }
                     "Manufacturer" => {
@@ -405,7 +405,7 @@ impl UsbMonitor {
                 for (idx, item) in items.iter().enumerate() {
                     let dep = item.get("Dependent").and_then(|v| v.as_str()).unwrap_or("");
                     let (vid, pid) = parse_vid_pid(dep);
-                    if vid != 0 || pid != 0 {
+                    if vid.is_some() || pid.is_some() {
                         devices.push(UsbDevice {
                             bus_number: 0,
                             port_number: idx as u8,
@@ -433,16 +433,20 @@ impl UsbMonitor {
 }
 
 #[cfg(target_os = "windows")]
-fn parse_vid_pid(pnp_id: &str) -> (u16, u16) {
+/// The vendor and product ids in a PnP id, each `None` when absent.
+///
+/// This returned `(0, 0)` for an id with no `VID_`, which is every root hub and
+/// every virtual device. One of the two callers already guarded on
+/// `vid != 0 || pid != 0`, so the sentinel was known to be meaningless there;
+/// the other did not, which is how `[0000:0000]` reached the screen.
+fn parse_vid_pid(pnp_id: &str) -> (Option<u16>, Option<u16>) {
     let upper = pnp_id.to_uppercase();
     let vid = upper
         .find("VID_")
-        .and_then(|i| u16::from_str_radix(&upper[i + 4..][..4.min(upper.len() - i - 4)], 16).ok())
-        .unwrap_or(0);
+        .and_then(|i| u16::from_str_radix(&upper[i + 4..][..4.min(upper.len() - i - 4)], 16).ok());
     let pid = upper
         .find("PID_")
-        .and_then(|i| u16::from_str_radix(&upper[i + 4..][..4.min(upper.len() - i - 4)], 16).ok())
-        .unwrap_or(0);
+        .and_then(|i| u16::from_str_radix(&upper[i + 4..][..4.min(upper.len() - i - 4)], 16).ok());
     (vid, pid)
 }
 
@@ -556,13 +560,41 @@ mod tests {
         let _devices = monitor.devices();
     }
 
+    /// A root hub has no VID or PID, and must not be given one.
+    ///
+    /// `simon cli usb` printed `[0000:0000]` for every root hub and virtual
+    /// device on this desktop — four of forty-one entries — an identifier no
+    /// caller could tell from a device that genuinely reports those ids. The
+    /// ids below are verbatim from `Get-PnpDevice -Class USB`.
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn an_entry_with_no_ids_is_not_given_zeros() {
+        assert_eq!(
+            parse_vid_pid(r"USB\ROOT_HUB30\9&EBA7CE&0&0"),
+            (None, None),
+            "a root hub carries no VID_ or PID_ at all"
+        );
+        assert_eq!(
+            parse_vid_pid(r"USB\VID_046D&PID_C548\5&2E6429FC&0&3"),
+            (Some(0x046d), Some(0xc548)),
+            "a real device's ids are read"
+        );
+        // A device reporting 0000:0000 is a different fact from one reporting
+        // nothing, and the two must not collapse.
+        assert_eq!(
+            parse_vid_pid(r"USB\VID_0000&PID_0000\6&1"),
+            (Some(0), Some(0)),
+            "an id of literally 0000 is a value, not an absence"
+        );
+    }
+
     #[test]
     fn test_usb_device_serialization() {
         let device = UsbDevice {
             bus_number: 1,
             port_number: 2,
-            vendor_id: 0x1234,
-            product_id: 0x5678,
+            vendor_id: Some(0x1234),
+            product_id: Some(0x5678),
             manufacturer: Some("Test Manufacturer".to_string()),
             product: Some("Test Product".to_string()),
             description: None,

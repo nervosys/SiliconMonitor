@@ -2493,7 +2493,7 @@ impl AiDataApi {
             .and_then(|v| v.as_str())
             .unwrap_or("all");
         let monitor = UsbMonitor::new().map_err(|e| SimonError::HardwareError(e.to_string()))?;
-        let devices: Vec<_> = monitor.devices().iter().filter(|d| class_filter == "all" || matches!((&d.class, class_filter), (UsbDeviceClass::Audio, "audio") | (UsbDeviceClass::Hid, "hid") | (UsbDeviceClass::MassStorage, "storage") | (UsbDeviceClass::Hub, "hub") | (UsbDeviceClass::Video, "video"))).map(|d| json!({"bus": d.bus_number, "port": d.port_number, "vendor_id": format!("{:04x}", d.vendor_id), "product_id": format!("{:04x}", d.product_id), "vendor_name": d.manufacturer, "product_name": d.product, "class": format!("{:?}", d.class), "speed": format!("{:?}", d.speed)})).collect();
+        let devices: Vec<_> = monitor.devices().iter().filter(|d| class_filter == "all" || matches!((&d.class, class_filter), (UsbDeviceClass::Audio, "audio") | (UsbDeviceClass::Hid, "hid") | (UsbDeviceClass::MassStorage, "storage") | (UsbDeviceClass::Hub, "hub") | (UsbDeviceClass::Video, "video"))).map(|d| json!({"bus": d.bus_number, "port": d.port_number, "vendor_id": d.vendor_id.map(|v| format!("{v:04x}")), "product_id": d.product_id.map(|p| format!("{p:04x}")), "vendor_name": d.manufacturer, "product_name": d.product, "class": format!("{:?}", d.class), "speed": format!("{:?}", d.speed)})).collect();
         Ok(json!(devices))
     }
     pub(crate) fn tool_get_usb_device_details(
@@ -2523,7 +2523,7 @@ impl AiDataApi {
                 ))
             })?;
         Ok(
-            json!({"bus": device.bus_number, "port": device.port_number, "vendor_id": format!("{:04x}", device.vendor_id), "product_id": format!("{:04x}", device.product_id), "vendor_name": device.manufacturer, "product_name": device.product, "class": format!("{:?}", device.class), "speed": format!("{:?}", device.speed)}),
+            json!({"bus": device.bus_number, "port": device.port_number, "vendor_id": device.vendor_id.map(|v| format!("{v:04x}")), "product_id": device.product_id.map(|p| format!("{p:04x}")), "vendor_name": device.manufacturer, "product_name": device.product, "class": format!("{:?}", device.class), "speed": format!("{:?}", device.speed)}),
         )
     }
 

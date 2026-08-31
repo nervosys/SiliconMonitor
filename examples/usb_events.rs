@@ -8,6 +8,19 @@ use simonlib::usb::{UsbEvent, UsbMonitor};
 use std::thread;
 use std::time::Duration;
 
+/// `vvvv:pppp`, or `no usb ids` for an entry that carries none — a root hub's
+/// PnP id has no `VID_` at all.
+fn ids(device: &simonlib::usb::UsbDevice) -> String {
+    match (device.vendor_id, device.product_id) {
+        (None, None) => "no usb ids".to_string(),
+        (v, p) => format!(
+            "{}:{}",
+            v.map_or("----".to_string(), |v| format!("{v:04x}")),
+            p.map_or("----".to_string(), |p| format!("{p:04x}"))
+        ),
+    }
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("USB Device Event Monitor");
     println!("========================");
@@ -21,9 +34,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Currently connected devices:");
     for device in monitor.devices() {
         println!(
-            "  {:04x}:{:04x} - {} ({:?})",
-            device.vendor_id,
-            device.product_id,
+            "  {} - {} ({:?})",
+            ids(device),
             device.product.as_deref().unwrap_or("Unknown"),
             device.speed
         );
@@ -40,18 +52,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             match event {
                 UsbEvent::Connected(device) => {
                     println!(
-                        "[+] CONNECTED: {:04x}:{:04x} - {} ({:?})",
-                        device.vendor_id,
-                        device.product_id,
+                        "[+] CONNECTED: {} - {} ({:?})",
+                        ids(&device),
                         device.product.as_deref().unwrap_or("Unknown"),
                         device.speed
                     );
                 }
                 UsbEvent::Disconnected(device) => {
                     println!(
-                        "[-] DISCONNECTED: {:04x}:{:04x} - {} ({:?})",
-                        device.vendor_id,
-                        device.product_id,
+                        "[-] DISCONNECTED: {} - {} ({:?})",
+                        ids(&device),
                         device.product.as_deref().unwrap_or("Unknown"),
                         device.speed
                     );

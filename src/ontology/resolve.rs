@@ -1054,15 +1054,23 @@ fn resolve_usb(out: &mut Vec<Reading>) {
             Some(Unit::Text),
             "the device publishes no manufacturer string",
         );
-        push_id(
+        // A root hub's PnP id carries no VID_ or PID_ at all, so these were
+        // published as the identifier "0000" — a value indistinguishable from a
+        // device that reports it.
+        push_opt(
             out,
             format!("{base}.vendor_id"),
-            &format!("{:04x}", dev.vendor_id),
+            dev.vendor_id.map(|v| serde_json::json!(format!("{v:04x}"))),
+            Some(Unit::Identifier),
+            "this entry carries no USB vendor id; root hubs and virtual devices have none",
         );
-        push_id(
+        push_opt(
             out,
             format!("{base}.product_id"),
-            &format!("{:04x}", dev.product_id),
+            dev.product_id
+                .map(|p| serde_json::json!(format!("{p:04x}"))),
+            Some(Unit::Identifier),
+            "this entry carries no USB product id; root hubs and virtual devices have none",
         );
         // `Unknown` on either of these is the descriptor not having been read, not
         // a device that identifies itself as unknown. Third occurrence of this

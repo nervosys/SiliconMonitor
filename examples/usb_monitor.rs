@@ -6,6 +6,19 @@
 
 use simonlib::usb::{UsbDeviceClass, UsbMonitor, UsbSpeed};
 
+/// `vvvv:pppp`, or `no usb ids` for an entry that carries none — a root hub's
+/// PnP id has no `VID_` at all.
+fn ids(device: &simonlib::usb::UsbDevice) -> String {
+    match (device.vendor_id, device.product_id) {
+        (None, None) => "no usb ids".to_string(),
+        (v, p) => format!(
+            "{}:{}",
+            v.map_or("----".to_string(), |v| format!("{v:04x}")),
+            p.map_or("----".to_string(), |p| format!("{p:04x}"))
+        ),
+    }
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== USB Monitor Example ===\n");
 
@@ -46,10 +59,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .unwrap_or("Unknown Device");
 
         println!("{} {}", class_emoji, name);
-        println!(
-            "  VID:PID: {:04x}:{:04x}",
-            device.vendor_id, device.product_id
-        );
+        println!("  VID:PID: {}", ids(device));
 
         if let Some(manufacturer) = &device.manufacturer {
             println!("  Manufacturer: {}", manufacturer);

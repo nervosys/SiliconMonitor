@@ -1261,11 +1261,18 @@ fn handle_cli_command(
                     println!("{}", "═══ USB Devices ═══".cyan().bold());
                     println!("  Count: {}", monitor.devices().len());
                     for device in monitor.devices() {
-                        let name = device.product.as_deref().unwrap_or("Unknown");
-                        println!(
-                            "  [{:04x}:{:04x}] {} ({:?})",
-                            device.vendor_id, device.product_id, name, device.speed
-                        );
+                        let name = device.product.as_deref().unwrap_or("unnamed");
+                        // A root hub's PnP id has no VID_ or PID_ at all, and
+                        // this printed [0000:0000] for each of them.
+                        let ids = match (device.vendor_id, device.product_id) {
+                            (None, None) => "[no usb ids]".to_string(),
+                            (v, p) => format!(
+                                "[{}:{}]",
+                                v.map_or("----".to_string(), |v| format!("{v:04x}")),
+                                p.map_or("----".to_string(), |p| format!("{p:04x}"))
+                            ),
+                        };
+                        println!("  {} {} ({:?})", ids, name, device.speed);
                     }
                 }
                 Ok(())

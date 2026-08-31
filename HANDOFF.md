@@ -52,9 +52,54 @@ Since the tag, on `master` and green on all three platforms:
 | `1284391` | `cli temperature` found no sensors while snapshot read five |
 | `dcbd50b` | A display's mode had nowhere to be absent; five consumers printed 0x0 |
 | `c14e8c6` | A gamepad counted as a Bluetooth radio, GATT services as devices |
+| `9ef5ba0` | The PnP classifier gated with the only target that calls it |
+| `HEAD` | Root hubs given the identifier 0000:0000, and an invented Intel hub |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### An identifier is a bad place for a sentinel
+
+`simon cli usb` printed **`[0000:0000]`** for four of forty-one entries — every
+root hub and a "USB4 Virtual power coordination device". `Get-PnpDevice -Class
+USB` shows why: a root hub's id is `USB\ROOT_HUB30\9&EBA7CE&0&0`, with no
+`VID_` or `PID_` in it at all. `parse_vid_pid` returned `(0, 0)` for that, and
+`0000:0000` is a value a device could legitimately report, so nothing downstream
+could tell the two apart.
+
+**One of the two callers already guarded `if vid != 0 || pid != 0`**, and the
+TUI pane guarded it again before printing. So the sentinel was known to be
+meaningless in two places out of four, and the CLI and the agent surface — which
+published `"vendor_id": "0000"` — did not. Third time this sweep that one
+consumer knew and another did not.
+
+The zero also had to be *re-guessed* by the ontology resolver, which published
+the identifier `"0000"` as `measured`. It now says
+*"this entry carries no USB vendor id; root hubs and virtual devices have none"*.
+
+The regression test keeps the distinction explicit, including the case that
+makes it matter: `VID_0000&PID_0000` parses to `Some(0)`, not `None`. **A device
+reporting zero and a device reporting nothing are different facts**, and a
+sentinel in an identifier field is precisely the shape that cannot express both.
+
+**And a second defect in the same file, worse than the first.** When the Linux
+sysfs walk found nothing, the reader invented a device:
+
+```rust
+// Fallback
+if self.devices.is_empty() {
+    self.devices.push(UsbDevice {
+        vendor_id: 0x8086, product_id: 0x0001,
+        product: Some("USB Root Hub".to_string()),
+        speed: UsbSpeed::High, ...
+```
+
+An Intel root hub, at high speed, read from nothing. A machine whose USB tree
+could not be enumerated reported one device that does not exist, and no caller
+could distinguish that from a machine with exactly one hub. Deleted; an empty
+list is the honest answer. This is the same shape as the synthetic placeholder
+displays `tests/plausibility.rs` already guards against — worth knowing that
+family has another member, in a module that suite does not cover.
 
 ### A gamepad counted as a radio, because its name contains "Controller"
 
@@ -578,6 +623,33 @@ same shape appeared in the ontology the same day, where `system.boot.secure_boot
 was bound to a reader needing Administrator while the value sat in the registry,
 unelevated. When two sources disagree, check which one is *read* and which is
 *inferred* before tuning weights.
+
+### Nor a target-gated one, for a different reason
+
+`c14e8c6` failed CI's Clippy job on Linux and macOS: `classify_pnp_entry` and
+its helpers are called only from `refresh_windows`, so they are dead code
+everywhere else.
+
+**The two `cargo check --target` commands below cannot catch this, and it is
+worth knowing why.** `check` reports dead code as a warning; it does not deny
+it. CI runs `clippy -- -D warnings` separately on each OS. So the same code
+passes every local command and fails on two of three runners.
+
+The cheap catch is to run clippy for the target rather than check:
+
+```bash
+cargo clippy --quiet --target x86_64-unknown-linux-gnu --all-targets   --no-default-features --features cpu,npu,io,network,amd,nvidia,intel -- -D warnings
+```
+
+It cannot use `--all-features` — `ring` needs a C cross-compiler — so it reports
+two pre-existing dead items that the narrower feature set excludes
+(`agent::backend::body_has_array`, `tuning::CLASSIFY_SYSTEM_PROMPT`). Those are
+not CI failures; only *new* names in that output are.
+
+**Anything added beside `#[cfg(target_os = ...)]` code needs this check**, which
+is the same rule as the feature one above, one axis over: `src/bluetooth/`,
+`src/display/`, `src/usb/` and `src/platform/` all hold per-OS readers next to
+shared helpers.
 
 ### The local gate cannot see a feature-gated break
 

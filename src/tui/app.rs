@@ -482,10 +482,15 @@ impl PeripheralCache {
                         .as_deref()
                         .or(dev.description.as_deref())
                         .unwrap_or("USB Device");
-                    let vid_pid = if dev.vendor_id != 0 || dev.product_id != 0 {
-                        format!(" [{:04X}:{:04X}]", dev.vendor_id, dev.product_id)
-                    } else {
-                        String::new()
+                    // This pane already withheld the ids when both were zero,
+                    // which is why it never showed [0000:0000]; the CLI did not.
+                    let vid_pid = match (dev.vendor_id, dev.product_id) {
+                        (None, None) => String::new(),
+                        (v, p) => format!(
+                            " [{}:{}]",
+                            v.map_or("----".to_string(), |v| format!("{v:04X}")),
+                            p.map_or("----".to_string(), |p| format!("{p:04X}"))
+                        ),
                     };
                     let speed = format!("{:?}", dev.speed);
                     lines.push(format!("  {}{} ({})", name, vid_pid, speed));
