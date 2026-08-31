@@ -58,7 +58,7 @@ Since the tag, on `master` and green on all three platforms:
 | `19a6a06` | Per-process GPU memory: NVML says N/A, simon said 0.0 MB |
 | `1a6718c` | Master volume 100% on every machine, and setters that changed nothing |
 | `308c770` | The invented-device rule generalised past displays |
-| `HEAD` | A clean bill of health drawn from 2 of 23,541 settings |
+| `0121d86` | A clean bill of health drawn from 2 of 23,541 settings |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
