@@ -48,7 +48,7 @@ Since the tag, on `master` and green on all three platforms:
 | `5931069` | The recorder stored an absent sensor as zero degrees |
 | `1666a52` | A shell variable read as a debugger, and a consent UI for nothing |
 | `f9e7248` | `serve --help` named a Prometheus route that 404s |
-| `HEAD` | 24 threads reported as 24 cores, one line under a 12-core name |
+| `425ff4a` | 24 threads reported as 24 cores, one line under a 12-core name |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
