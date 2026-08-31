@@ -299,6 +299,18 @@ fn documented_http_paths_match_the_route_table() {
 
     let mut wrong = Vec::new();
     for path in &sources {
+        // HANDOFF.md is a record of defects, so it quotes wrong values on
+        // purpose — including this one, three times, while explaining that it
+        // is wrong. It is excluded from the published crate and instructs
+        // nobody, so a mention there is a citation rather than a claim.
+        //
+        // This exemption exists because the test failed CI on exactly that:
+        // the writeup was added after the last local run, which is its own
+        // lesson. HANDOFF.md is an input to the suite now, and editing it
+        // after the gate invalidates the gate.
+        if path.file_name().is_some_and(|n| n == "HANDOFF.md") {
+            continue;
+        }
         let Ok(text) = std::fs::read_to_string(path) else {
             continue;
         };

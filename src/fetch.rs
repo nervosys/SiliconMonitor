@@ -212,9 +212,16 @@ fn as_text(v: &serde_json::Value) -> String {
         .unwrap_or_else(|| v.to_string())
 }
 
+/// Binary prefixes, because the divisor is 1024.
+///
+/// This divided by 1024 and labelled the result GB, so 100,547,727,360 bytes of
+/// installed memory printed as "93.6 GB". 93.6 is the right number and GB is
+/// the wrong name for it: that quantity is 93.6 GiB, or 100.5 GB. A crate that
+/// carries QUDT units through its ontology should not lose them in the one line
+/// most people read.
 fn as_bytes(v: &serde_json::Value) -> String {
     let b = v.as_f64().unwrap_or(0.0);
-    const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
+    const UNITS: [&str; 5] = ["B", "KiB", "MiB", "GiB", "TiB"];
     let mut n = b;
     let mut i = 0;
     while n >= 1024.0 && i + 1 < UNITS.len() {
@@ -243,7 +250,11 @@ pub fn summary(readings: &[Reading]) -> Vec<Line> {
             format!("{}h {}m", secs / 3600, (secs % 3600) / 60)
         }),
         line(readings, "CPU", "cpu.model", as_text),
-        line(readings, "Cores", "cpu.cores.logical", as_text),
+        // The logical count under a "Cores" label put "Cores 24" directly
+        // beneath "AMD Ryzen 9 9900X 12-Core Processor", contradicting the line
+        // above it. Both counts are measured entities; name each one.
+        line(readings, "Cores", "cpu.cores.physical", as_text),
+        line(readings, "Threads", "cpu.cores.logical", as_text),
         line(readings, "CPU usage", "cpu.total.utilization", as_percent),
         line(readings, "Memory", "memory.total", as_bytes),
         line(readings, "Mem used", "memory.utilization", as_percent),
@@ -545,8 +556,11 @@ mod tests {
 
     #[test]
     fn bytes_render_at_a_readable_scale() {
-        assert_eq!(as_bytes(&serde_json::json!(1024)), "1.0 KB");
-        assert_eq!(as_bytes(&serde_json::json!(1_073_741_824u64)), "1.0 GB");
+        assert_eq!(as_bytes(&serde_json::json!(1024)), "1.0 KiB");
+        assert_eq!(as_bytes(&serde_json::json!(1_073_741_824u64)), "1.0 GiB");
+        // 100,547,727,360 bytes is this desktop's installed memory. It is
+        // 93.6 GiB and 100.5 GB; the label has to say which.
+        assert_eq!(as_bytes(&serde_json::json!(100_547_727_360u64)), "93.6 GiB");
     }
 
     #[test]

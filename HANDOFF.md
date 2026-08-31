@@ -48,9 +48,71 @@ Since the tag, on `master` and green on all three platforms:
 | `5931069` | The recorder stored an absent sensor as zero degrees |
 | `1666a52` | A shell variable read as a debugger, and a consent UI for nothing |
 | `f9e7248` | `serve --help` named a Prometheus route that 404s |
+| `HEAD` | 24 threads reported as 24 cores, one line under a 12-core name |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### CI caught a test I wrote, on prose I added after the gate
+
+`documented_http_paths_match_the_route_table` failed on all three runners at
+`708ae50`, on **HANDOFF.md** — this file, which quotes the wrong Prometheus path
+three times while explaining that it is wrong. The test cannot tell a
+counter-example from a recommendation.
+
+The exemption is easy (this file is excluded from the published crate and
+instructs nobody, so a mention here is a citation). **The process failure is the
+part worth keeping.** The order was: fix, add test, confirm it fails on the old
+text, restore, run the gate green, *then write the handoff entry*, then push.
+The entry introduced the failure and was never tested, because the gate had
+already been run.
+
+**This file is an input to the test suite now** — `documentation_links` and
+`source_hygiene` both read it. Editing it after the gate invalidates the gate,
+in exactly the way that editing any source file would. Run the tests last, not
+the prose.
+
+That is the second time this pattern has appeared in three commits: at `7c79f8b`
+a local gate that could not see feature-gated code, and here a local gate run
+before the last edit. Both times the gate was correct and the sequencing was
+not.
+
+### The contradiction was on screen, two lines apart
+
+`simon status` printed:
+
+```
+CPU        AMD Ryzen 9 9900X 12-Core Processor
+Cores      24
+```
+
+`fetch::summary` labelled `cpu.cores.logical` as "Cores". The reading was right
+and the label was wrong — `Win32_Processor` confirms 12 cores, 24 logical
+processors — and **both counts are already measured entities**, so the fix was
+to name each one rather than to read anything new. It now prints `Cores 12` and
+`Threads 24`.
+
+**This is the cheapest defect in the whole file to have found, and it survived
+six major versions.** Nothing about it needed hardware knowledge or a second
+tool: the name of the part and the wrong count were two lines apart, in the
+output of the command most likely to be run first. It is the strongest argument
+for scan #1 there is — grep cannot see it, types cannot see it, and no test that
+asserts a summary *is produced* can see it.
+
+Alongside it, `as_bytes` divided by 1024 and labelled the result GB, so 100.5 GB
+of installed memory printed as "93.6 GB". 93.6 is the correct number and GB is
+the wrong name for it — that quantity is 93.6 GiB. A crate that carries QUDT
+units through its ontology should not lose them in the line most people read.
+Now GiB.
+
+**Deliberately not fixed, and worth stating plainly rather than leaving
+implied:** the same 1024-with-decimal-labels convention runs through five other
+byte formatters (`bin/main.rs::format_bytes_short`, `gui/app.rs::format_bytes`,
+`memory_management::{format_bytes,format_size}`, `tsdb::format_size`) and a long
+tail of internal constants and test fixtures. Only `fetch::as_bytes` reaches
+`simon status`, which is the surface that was read; the rest is a crate-wide
+cosmetic sweep touching the GUI, which this handoff has repeatedly deprioritised.
+It is a real inconsistency and it is still there.
 
 ### A constant read without its prefix, documented as a route
 
