@@ -53,7 +53,7 @@ Since the tag, on `master` and green on all three platforms:
 | `dcbd50b` | A display's mode had nowhere to be absent; five consumers printed 0x0 |
 | `c14e8c6` | A gamepad counted as a Bluetooth radio, GATT services as devices |
 | `9ef5ba0` | The PnP classifier gated with the only target that calls it |
-| `HEAD` | Root hubs given the identifier 0000:0000, and an invented Intel hub |
+| `cc7aac6` | Root hubs given the identifier 0000:0000, and an invented Intel hub |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
