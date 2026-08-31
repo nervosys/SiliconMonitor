@@ -45,7 +45,7 @@ Since the tag, on `master` and green on all three platforms:
 | `7c79f8b` | A DIMM at zero volts, and three absence words as values |
 | `3a50c99` | `pstate_name` gated with its caller, after CI caught it |
 | `2360068` | Watching nothing is not the same as having no baseline |
-| `87ec29a` | The recorder stored an absent sensor as zero degrees |
+| `5931069` | The recorder stored an absent sensor as zero degrees |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
