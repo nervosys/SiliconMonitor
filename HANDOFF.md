@@ -60,7 +60,7 @@ Since the tag, on `master` and green on all three platforms:
 | `308c770` | The invented-device rule generalised past displays |
 | `0121d86` | A clean bill of health drawn from 2 of 23,541 settings |
 | `f34f72c` | "No engines detected" on a platform with no engine reader |
-| `HEAD` | A sentinel introduced by an earlier fix in this same session |
+| `916bf08` | A sentinel introduced by an earlier fix in this same session |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
