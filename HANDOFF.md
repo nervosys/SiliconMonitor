@@ -50,7 +50,7 @@ Since the tag, on `master` and green on all three platforms:
 | `f9e7248` | `serve --help` named a Prometheus route that 404s |
 | `425ff4a` | 24 threads reported as 24 cores, one line under a 12-core name |
 | `1284391` | `cli temperature` found no sensors while snapshot read five |
-| `HEAD` | A display's mode had nowhere to be absent; five consumers printed 0x0 |
+| `dcbd50b` | A display's mode had nowhere to be absent; five consumers printed 0x0 |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
