@@ -88,7 +88,7 @@ Since the tag, on `master` and green on all three platforms:
 | `599e8ff` | An idle webcam reporting that it was streaming |
 | `7fde63e` | A green gate that could not see the defect it shipped |
 | `0106d6c` | The same field, right on two platforms and invented on the third |
-| `HEAD` | Sockets counted as NUMA nodes, memory divided evenly between them |
+| `bde8726` | Sockets counted as NUMA nodes, memory divided evenly between them |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
