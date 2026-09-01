@@ -85,7 +85,7 @@ Since the tag, on `master` and green on all three platforms:
 | `a053f16` | Measured boot reported off, on a host where it is on |
 | `e913250` | SIP read as Secure Boot, and advice from an unread flag |
 | `f1470d5` | Fifteen codecs, one frame rate: a constant with a derivation |
-| `HEAD` | An idle webcam reporting that it was streaming |
+| `599e8ff` | An idle webcam reporting that it was streaming |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
