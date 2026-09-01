@@ -156,11 +156,38 @@ after:  6 controllers, the 3 NVMe ones labelled NVMe
 ```
 
 **Worth keeping: counting is a cheap detector and nobody had done it.** Three
-enumeration defects in three days of the same session, and all three announce
-themselves in a single number. The check is one query against a live snapshot,
-it needs no knowledge of the reader, and the question it asks — *does this
-machine really have that many?* — is one a person can answer by looking at the
-machine.
+enumeration defects in one session, and all three announce themselves in a
+single number. The check is one query against a live snapshot, it needs no
+knowledge of the reader, and the question it asks — *does this machine really
+have that many?* — is one a person can answer by looking at the machine.
+
+**Its actual hit rate, recorded honestly, because the paragraph above reads
+better than the evidence supports.** Five counts looked wrong. One was:
+`disk.controller`. Two were **right and nearly "fixed"**:
+
+* `gpu 3` reported `NVIDIA GeForce RTX 3090 Ti` twice, which is exactly the
+  duplicate-row shape that had just been found in three other readers. This
+  machine has two of them — `nvidia-smi` lists bus `01:00.0` and `03:00.0`. The
+  audio enumeration had even hinted at it, in the `2- ` prefix Windows adds to a
+  second instance of an adapter, which two entries below is cited as a *nuisance*
+  for joining. It was evidence.
+* `cpu.cache 3` looked short for a CPU with split L1. The sizes check out for a
+  12-core Zen 5 — 960 KB of L1 is 12 × (48 KB data + 32 KB instruction), 12 MB of
+  L2 is 12 × 1 MB, 64 MB of L3 — and `Win32_CacheMemory` aggregates per level by
+  design.
+
+Two more, `network 20` against 18 adapters and `usb 41` against 38 PnP devices,
+are small discrepancies that plausibly come from counting loopback and root hubs,
+and were left alone rather than guessed at.
+
+**So the detector fires about as often on correct code as on broken code, and
+the difference is only visible by checking the machine.** That is not an
+argument against running it — one of the five was a real double-count nobody had
+noticed. It is an argument against acting on it directly: *a suspicious count is
+a question, and the answer comes from the hardware, not from the pattern.* Had
+the `gpu` family been "fixed" by deduplicating on name, this file would now
+contain a confident entry about a defect that never existed, and the crate would
+report one GPU on a two-GPU machine.
 
 ### Twelve audio endpoints where four exist, two facing backwards
 
