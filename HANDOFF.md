@@ -102,7 +102,7 @@ Since the tag, on `master` and green on all three platforms:
 | `c3391f0` | The health reader's own enumeration could not report a failure |
 | `4ed9145` | Boot mode asserted because it is usually right |
 | `15a60ab` | 97 GB of swap in use, on a machine using 3.4 GB of it |
-| `HEAD` | The last six enumerators, and what the list was really for |
+| `5bd14aa` | The last six enumerators, and what the list was really for |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
