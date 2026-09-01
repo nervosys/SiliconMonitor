@@ -73,7 +73,7 @@ Since the tag, on `master` and green on all three platforms:
 | `3935301` | `is_turbo` closed, and the guess above its known defect |
 | `dd2f56a` | Secure Boot read from a file's existence, not its value |
 | `05468fb` | An unread thermal zone reported 0 C and "not throttling" |
-| `HEAD` | A failed health check reporting no critical issues |
+| `0e67be4` | A failed health check reporting no critical issues |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
