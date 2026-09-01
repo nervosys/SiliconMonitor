@@ -63,7 +63,7 @@ Since the tag, on `master` and green on all three platforms:
 | `916bf08` | A sentinel introduced by an earlier fix in this same session |
 | `49e40ef` | The same nominal-clock lie, in a second reader of the same API |
 | `eaf7e3f` | A fifth AdapterRAM reader, on the public API, still capped at 4GB |
-| `HEAD` | NPU core counts guessed from a vendor guessed from a name |
+| `9bc2524` | NPU core counts guessed from a vendor guessed from a name |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
