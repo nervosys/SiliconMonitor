@@ -2831,7 +2831,7 @@ feature stayed broken through eight published versions.
 
 ## Open work
 
-1. **Seven enumerators still swallow their failures.** `camera`, `sensors`,
+1. **Eight enumerators still swallow their failures.** `camera`, `sensors`,
    `usb`, `input`, `tpm`, `storage_controller`, `numa` and `printer` are
    converted; `codec` was examined and does not have the defect. Left: `audio`,
    `bluetooth`, `cpu_cache`, `display`, `firmware`, `os_info`, `power_profile`,
@@ -2843,7 +2843,56 @@ feature stayed broken through eight published versions.
    said. Check each for the `codec` case before converting: a source that is
    optional by design, and already labelled as inferred, is not this defect.
 
-2. **`hardware_ai` was audited on one machine, and only one.** Every conclusion
+2. **The Windows display reader enumerates graphics adapters and calls them
+   displays.** Found by reading a snapshot of `board.display.*` on this host and
+   noticing the names:
+
+   ```
+   board.display.0.name = "LG ULTRAWIDE"
+   board.display.1.name = "AMD Radeon(TM) Graphics"
+   board.display.2.name = "NVIDIA GeForce RTX 3090 Ti"
+   ```
+
+   Two of the three "displays" are GPUs. This machine has **one** monitor —
+   `WmiMonitorID` returns exactly one row, `GSM LG ULTRAWIDE`, `Active=True` —
+   and `Win32_VideoController` returns three rows, which is what the reader
+   loops over:
+
+   ```powershell
+   foreach ($ctrl in $controllers) {          # ← video controllers
+       $mon = [PSCustomObject]@{ Name = $ctrl.Name; ... }
+       if ($monitorDetails -and $idx -lt @($monitorDetails).Count) {
+           $mdet = @($monitorDetails)[$idx]   # ← monitors matched by ARRAY INDEX
+   ```
+
+   So the display *count* is the adapter count, and monitor name, brightness and
+   connection type are pasted onto adapters **by array position**. Display 0
+   getting the right name is a coincidence of ordering, not a join. Three
+   distinct properties are attributed to the wrong entity by the same mistake.
+
+   The join exists and needs no elevation. `WmiMonitorID`,
+   `WmiMonitorConnectionParams` and `WmiMonitorBasicDisplayParams` all carry
+   `InstanceName`, and on this host all three agree on
+   `DISPLAY\GSM76F6\5&2a745970&0&UID4352_0` — giving the name, HDMI
+   (`VideoOutputTechnology = 5`) and an 80 cm × 34 cm panel for the one real
+   monitor. That fixes identity, connection and physical size.
+
+   The **mode** (width, height, refresh) is the part that still needs work:
+   it lives on the controller, and associating a controller with a monitor
+   properly means `EnumDisplayDevices` + `EnumDisplaySettings`, which enumerate
+   adapters, the monitors attached to each, and that adapter's current mode.
+   Both are in the `windows` crate behind the **`Win32_Graphics_Gdi`** feature,
+   which this crate does not currently enable — that is the one dependency
+   change the fix needs. Note that `Win32_VideoController` here reports the
+   3090 Ti twice, at 3440x1440@59 and 1920x1080@60, so "pick the one controller
+   with a mode" is not a sound shortcut even on a single-monitor machine.
+
+   Whoever does this can verify the single-monitor case against this host — the
+   answer is one display, `LG ULTRAWIDE`, HDMI, 3440x1440@59 — but **the
+   multi-monitor path will be unverified**, which is the situation that produced
+   the index-matching bug in the first place.
+
+3. **`hardware_ai` was audited on one machine, and only one.** Every conclusion
    corrected in `a584dd0` and `7607401` was verifiably wrong on this desktop, and
    each fix was checked against a second source. That is not the same as being
    right in general. Two things specifically want a second machine before they
@@ -2867,7 +2916,7 @@ feature stayed broken through eight published versions.
    Ti dates to 2020 because it matches the RTX 30 series rule, and the Ti shipped
    in 2022. `infer_gpu_year` and the TDP tables were not audited.
 
-3. **Per-core CPU frequency is unreported on Windows, and could be reported.**
+4. **Per-core CPU frequency is unreported on Windows, and could be reported.**
    `CallNtPowerInformation` returns `CurrentMhz == MaxMhz` whatever the cores are
    doing, so `cpu.core.{n}.frequency` now declines rather than publishing the
    nominal clock as a measurement. The real figure is
@@ -2882,7 +2931,7 @@ feature stayed broken through eight published versions.
    single-value PDH pattern to copy. The provenance would be `Derived` from the
    counter and the nominal clock, not `Measured`.
 
-4. **The Windows ATA SMART path has never met a SATA drive.** 3.3.0 reads the
+5. **The Windows ATA SMART path has never met a SATA drive.** 3.3.0 reads the
    attribute table unelevated through `IOCTL_STORAGE_PREDICT_FAILURE`, and the
    parse in `src/disk/ata_smart.rs` is tested only against buffers this project
    built. This machine has three NVMe drives and a USB gadget; on all four the
@@ -2913,7 +2962,7 @@ feature stayed broken through eight published versions.
    property of its `CTL_CODE`, and is worth reading off the definition before
    planning around it.
 
-5. **macOS GPU, power and temperature are still unimplemented.** CPU (per-core,
+6. **macOS GPU, power and temperature are still unimplemented.** CPU (per-core,
    with nice time), memory, swap, uptime and board info work — `Simon::cpu()`,
    `memory()`, `uptime()`. `Simon::snapshot()` still fails, because it requires
    every reader. Power and temperature need `powermetrics`, which requires root,
@@ -2938,7 +2987,7 @@ feature stayed broken through eight published versions.
    the `vm_stat` used/free split is a judgement about which pages count as in
    use, which a conformance test cannot check.
 
-6. **The Linux SMART/NVMe paths have executed exactly once**, in CI on
+7. **The Linux SMART/NVMe paths have executed exactly once**, in CI on
    `33ee241` — 733 tests, 0 failures. No one has run them against real Linux
    hardware. The sysfs paths (`/sys/class/nvme/<ctrl>/{model,serial,firmware_rev,cntlid}`)
    are documented kernel ABI, but tests are not a substitute for a drive.
@@ -2951,7 +3000,7 @@ feature stayed broken through eight published versions.
    what remains to benefit is USB storage — and every Linux machine, where a
    sweep spawns `smartctl` once per drive and the old shape was quadratic.
 
-7. **The ontology names ~232 entities; the library has ~88 subsystem modules.**
+8. **The ontology names ~232 entities; the library has ~88 subsystem modules.**
    The running list of which clusters exist, which readers answer on which
    machine, and what is left is under **plan item F** below — it is kept in one
    place rather than two, because the last time it lived in both they disagreed.
@@ -3006,7 +3055,7 @@ feature stayed broken through eight published versions.
    sizes, AER capability, ARI and ATS support, SR-IOV — are readable by the same
    two calls with a different pid, if anyone wants them.
 
-8. **`simon tune`'s policy table covers five settings, and its game detection is
+9. **`simon tune`'s policy table covers five settings, and its game detection is
    a name table.** Both are deliberate first cuts, and both are where the feature
    grows.
 
@@ -3027,7 +3076,7 @@ feature stayed broken through eight published versions.
    from a model. `tuning::tests::a_recommendation_never_proposes_a_value_the_driver_did_not_offer`
    is the test that keeps it true. A model may classify; it may not pick numbers.
 
-9. **The Dewey port was tried across 4.0.0–4.0.4 and withdrawn in 5.0.0.**
+10. **The Dewey port was tried across 4.0.0–4.0.4 and withdrawn in 5.0.0.**
    `src/gui/` is the egui application again — `app.rs`, `widgets.rs`, `theme.rs`,
    `profile_tab.rs`, `headless.rs`, `mod.rs`, restored from `927ffaa^`. The
    `deweygui` dependency, the `dewey-gui` feature and `simonlib::gui_dewey` are
@@ -3072,7 +3121,7 @@ feature stayed broken through eight published versions.
    name is the whole defect — every call site was written by someone who
    reasonably believed `new()` constructs a thing from the system.
 
-10. **Verify with `--lib --tests` when the disk is tight.** `cargo test
+11. **Verify with `--lib --tests` when the disk is tight.** `cargo test
    --all-features` links every example. That is affordable again now the duplicate
    egui is gone, but if it ever fails with `link.exe` 1318, the split is
    `cargo test --all-features --lib --tests` for execution plus
@@ -3080,7 +3129,7 @@ feature stayed broken through eight published versions.
    Note `--lib --tests` skips doc-tests; run those before a release.
 
 
-11. **Two Dewey bugs found during the port, recorded because they are real
+12. **Two Dewey bugs found during the port, recorded because they are real
    and unfixed — but no longer reachable from this crate.** Neither affects simon
    now that `deweygui` is gone. Both are for whoever works on Dewey itself, or
    for anyone who reconsiders open work 9.
@@ -3104,7 +3153,7 @@ feature stayed broken through eight published versions.
    three `eprintln!` calls in `resize`, the surface-acquire error arm and the
    frame-area computation in `render`, driven by `ShowWindow(hwnd, 3)`.
 
-12. **Applied settings are reversible; the tuning loop is not yet closed.**
+13. **Applied settings are reversible; the tuning loop is not yet closed.**
    `ApplyHandler::read_current()` reads a setting before it is written,
    `ApplyOutcome.previous` carries what was overwritten, `revert_setting()` puts
    it back through the same confirmed and audit-logged path, and
