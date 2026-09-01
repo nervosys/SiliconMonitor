@@ -349,7 +349,9 @@ impl Ontology {
             K::Identity,
             Some(U::Text),
             P::Measured,
-            false,
+            // Nullable: an empty model string is a failed read, not a CPU
+            // without a name, and the resolver reports it as absent.
+            true,
             "Processor model string as the CPU reports it.",
         ));
         add(Entity::new(
@@ -358,7 +360,10 @@ impl Ontology {
             K::Identity,
             Some(U::Count),
             P::Measured,
-            false,
+            // Nullable: the resolver reports it absent both when the
+            // reader errors and when the platform gives no physical count
+            // distinct from the logical one.
+            true,
             "Physical core count, excluding SMT siblings.",
         ));
         add(Entity::new(
@@ -376,7 +381,9 @@ impl Ontology {
             K::Measurement,
             Some(U::Percent),
             P::Measured,
-            false,
+            // Nullable: the resolver reports it absent when the CPU stats
+            // reader errors.
+            true,
             "System-wide CPU busy percentage over the last sampling interval.",
         )
         .derived(&["cpu.total.idle"]));
@@ -575,7 +582,9 @@ impl Ontology {
             K::Measurement,
             Some(U::Percent),
             P::Measured,
-            false,
+            // Nullable: with total memory reported as zero the percentage
+            // has no denominator, and the resolver says so.
+            true,
             "Used RAM as a percentage of total.",
         )
         .derived(&["memory.used", "memory.total"]));
@@ -1249,9 +1258,14 @@ impl Ontology {
             K::Identity,
             Some(U::Identifier),
             P::Measured,
-            false,
-            "Endpoint state as the platform reports it - active, disabled, \
-             unplugged, not present.",
+            // Nullable since 6.0.0: Linux and macOS do not read it at all,
+            // and Windows reads a status whose unhandled values now resolve
+            // absent rather than falling through to "active".
+            true,
+            concat!(
+                "Endpoint state as the platform reports it: active, ",
+                "disabled, unplugged, not present."
+            ),
         ));
         add(Entity::new(
             "board.audio.{n}.default",
@@ -2805,7 +2819,9 @@ impl Ontology {
             K::Measurement,
             Some(U::Seconds),
             P::Measured,
-            false,
+            // Nullable: the resolver reports it absent when the uptime
+            // reader errors.
+            true,
             "Seconds since boot.",
         ));
         add(Entity::new(
@@ -2890,7 +2906,11 @@ impl Ontology {
             K::Identity,
             None,
             P::Measured,
-            false,
+            // Nullable since 6.0.0. `TpmMonitor::refresh` can report a
+            // failure now, and the resolver already said what to do with
+            // one: "not knowing whether a TPM exists is different from
+            // knowing there is none".
+            true,
             "Whether a TPM was enumerated at all. False is a reading: the absence \
              of a TPM is a fact about the machine, distinct from being unable to \
              look.",

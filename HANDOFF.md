@@ -86,9 +86,60 @@ Since the tag, on `master` and green on all three platforms:
 | `e913250` | SIP read as Secure Boot, and advice from an unread flag |
 | `f1470d5` | Fifteen codecs, one frame rate: a constant with a derivation |
 | `599e8ff` | An idle webcam reporting that it was streaming |
+| `HEAD` | A green gate that could not see the defect it shipped |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### A green gate that could not see the defect it shipped
+
+`f1470d5` passed the full local gate — fmt, clippy, both cross-target checks,
+864 lib tests, 73 doc-tests, all fifteen suites — and failed on the macOS runner:
+
+```
+board.audio.0.state is declared non-nullable but resolved unavailable
+```
+
+Making the audio state absent-capable needed the entity's `nullable` flag
+flipped, and I flipped it for `board.camera.{n}.active` in the same session and
+not for this one. **Windows is the only platform that produces a value for
+`board.audio.{n}.state`, so the machine running the gate could not take the path
+that breaks.** The cross-target `cargo check` compiles the macOS branch; it
+never runs it. A local gate on one operating system is structurally blind to
+this whole class, and no amount of running it again would have helped.
+
+Chasing that, a scan of every literal id passed to `Reading::unavailable` or
+`push_opt` against the entity's `nullable` flag found **five more**, none of
+them mine:
+
+```
+cpu.model               cpu.cores.physical      cpu.total.utilization
+memory.utilization      system.uptime
+```
+
+Each has a deliberate absence path with a written reason — *"an empty model
+string is a failed read, not a CPU without a name"*, *"total memory reported as
+zero, so a percentage has no denominator"* — sitting under an entity declaring
+it is never null. They have been latent for as long as those readers have
+existed, waiting for a machine that takes the branch. **A conformance test that
+inspects the readings can only ever check the paths this machine happened to
+take;** every branch not taken is a claim nobody has tested.
+
+So the new test reads the resolver's *source* rather than its output:
+`entities_with_an_absence_path_are_declared_nullable`. Every id that appears as
+a literal beside `Reading::unavailable` or `push_opt` must belong to an entity
+that admits being absent. It is platform-independent by construction, it fails
+on a machine that would never take the path, and it was checked against a
+deliberately reverted `cpu.model` before being trusted. It cannot see ids built
+with `format!`, which is most of the per-instance ones, so it is a floor and not
+a ceiling.
+
+**Worth keeping, and it generalises past this crate.** Two tests, same
+invariant: one samples behaviour and one reads structure. The behavioural one is
+more faithful — it checks what actually happened — and it can only report on the
+subset of the program that ran. **When a property must hold on every platform
+and the gate runs on one, the check has to be static, or it is not a check of
+the property but of the platform.**
 
 ### An idle webcam reporting that it was streaming
 

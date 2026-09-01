@@ -613,3 +613,81 @@ fn descriptions_and_reasons_contain_no_stray_whitespace() {
          — join the literal with `concat!` or a single line instead:\n{bad:#?}"
     );
 }
+
+/// An entity whose resolver has an absence path must be declared nullable.
+///
+/// `non_nullable_entities_are_never_null` already checks this — but only for the
+/// paths *this* machine happens to take. A reader that reports an absence on a
+/// platform the runner is not, or in a failure the runner did not hit, is
+/// invisible to it. That is not hypothetical: `board.audio.{n}.state` was
+/// declared non-nullable and went green on Windows for a whole gate, because
+/// Windows is the one platform that produces a value for it, and failed on the
+/// macOS runner minutes later. Five more entities were already in the same
+/// state, each with a deliberate absence path and a written reason, waiting for
+/// a machine that would take it.
+///
+/// So this reads the resolver's source instead of its output: every id passed
+/// as a literal to `Reading::unavailable` or `push_opt` must belong to an
+/// entity that admits being absent. It cannot see ids built with `format!`,
+/// which is most of the per-instance ones, so it is a floor rather than a
+/// ceiling.
+#[test]
+fn entities_with_an_absence_path_are_declared_nullable() {
+    let src = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/ontology/resolve.rs"),
+    )
+    .expect("the resolver source is part of this crate");
+
+    // `Reading::unavailable("id", ..)` and `push_opt(out, "id".to_string(), ..)`.
+    let mut ids: Vec<String> = Vec::new();
+    for (i, line) in src.lines().enumerate() {
+        let opens_absence = line.contains("Reading::unavailable(") || line.contains("push_opt(");
+        let candidates = if opens_absence {
+            // The id is on this line or one of the next two.
+            src.lines().skip(i).take(3).collect::<Vec<_>>()
+        } else {
+            continue;
+        };
+        for c in candidates {
+            let Some(start) = c.find('"') else { continue };
+            let rest = &c[start + 1..];
+            let Some(end) = rest.find('"') else { continue };
+            let id = &rest[..end];
+            // Only ids, not reason strings: an entity id is dotted, lowercase,
+            // and has no spaces.
+            if id.contains('.')
+                && !id.contains(' ')
+                && id
+                    .chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || ".-_<>{}".contains(c))
+            {
+                ids.push(id.to_string());
+                break;
+            }
+        }
+    }
+
+    assert!(
+        ids.len() > 20,
+        "the scan found only {} ids, so its pattern has drifted from the source",
+        ids.len()
+    );
+
+    let ont = ontology();
+    let mut bad: Vec<String> = Vec::new();
+    for id in &ids {
+        let Some(entity) = ont.template_for(id).or_else(|| ont.get(id)) else {
+            continue;
+        };
+        if !entity.nullable {
+            bad.push(format!(
+                "{} is declared non-nullable, but the resolver has a path that reports it absent",
+                entity.id
+            ));
+        }
+    }
+    bad.sort();
+    bad.dedup();
+
+    assert!(bad.is_empty(), "{bad:#?}");
+}
