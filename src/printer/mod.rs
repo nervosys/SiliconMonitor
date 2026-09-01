@@ -198,10 +198,34 @@ impl PrinterMonitor {
             .and_then(|s| s.split(':').nth(1).map(|n| n.trim().to_string()))
             .unwrap_or_default();
 
-        // List printers with lpstat -p -l. `lpstat` exits non-zero when the
-        // scheduler is not running, which is a different answer from a machine
-        // with no printers -- and `Err(_) => return` reported them the same.
-        let output = crate::core::command::capture("lpstat", &["-p", "-l"])?;
+        // List printers with lpstat -p -l.
+        //
+        // Three outcomes, and the previous `Err(_) => return` collapsed all of
+        // them into "no printers":
+        //
+        // * `lpstat` is not installed. CUPS is absent, so there are no CUPS
+        //   printers -- a reading, and `Ok` with an empty list.
+        // * `lpstat` runs and exits non-zero, which is what it does when the
+        //   scheduler is not answering. That is not a machine without
+        //   printers, and it is what CI runners do.
+        // * It runs and prints a list.
+        let raw = match std::process::Command::new("lpstat")
+            .args(["-p", "-l"])
+            .output()
+        {
+            Ok(o) => o,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(e) => return Err(SimonError::CommandFailed(format!("lpstat: {e}"))),
+        };
+        if !raw.status.success() {
+            return Err(SimonError::CommandFailed(format!(
+                "lpstat exited {}: {}",
+                raw.status,
+                String::from_utf8_lossy(&raw.stderr).trim()
+            )));
+        }
+        let output = String::from_utf8(raw.stdout)
+            .map_err(|e| SimonError::Parse(format!("lpstat output is not UTF-8: {e}")))?;
 
         // Parse devices
         let device_output = std::process::Command::new("lpstat")
@@ -504,10 +528,25 @@ impl std::fmt::Display for PrinterConnection {
 mod tests {
     use super::*;
 
+    /// Constructing the monitor either enumerates printers or says why it
+    /// could not. Both are correct answers, and before 6.0.0 only the first
+    /// existed: a CI runner with no print scheduler reported zero printers as
+    /// a fact about the machine. What must never happen is a silent empty
+    /// list, so the failure is required to carry a reason.
     #[test]
     fn test_printer_monitor_creation() {
-        let monitor = PrinterMonitor::new();
-        assert!(monitor.is_ok());
+        match PrinterMonitor::new() {
+            Ok(monitor) => {
+                let _ = monitor.printers();
+            }
+            Err(e) => {
+                let why = e.to_string();
+                assert!(
+                    why.len() > 10,
+                    "enumeration failed without saying why: {why:?}"
+                );
+            }
+        }
     }
 
     #[test]

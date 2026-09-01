@@ -92,9 +92,64 @@ Since the tag, on `master` and green on all three platforms:
 | `3606758` | A field derived from the one thing it exists not to be derived from |
 | `e037198` | The same inequality again, this time against a string |
 | `ca71102` | "On battery" concluded from nobody having asked |
+| `HEAD` | Nine tests asserting a contract the readers no longer make |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### Nine tests asserting a contract the readers no longer make
+
+`3606758` failed CI on **both** Linux and macOS:
+
+```
+printer::tests::test_printer_monitor_creation ... FAILED
+    assert!(monitor.is_ok())
+```
+
+Working as designed. CI runners have no print scheduler, `lpstat` exits
+non-zero, and the reader now says so instead of reporting zero printers. But the
+test asserted the old contract, and **eight more tests assert it in the eight
+other modules converted this session** — one `assert!(monitor.is_ok())` each,
+every one a CI failure waiting for a runner that takes the failing path. Rather
+than meet them one push at a time, they are all rewritten here.
+
+The old assertion was true *by construction*: `refresh` could not fail, so
+`is_ok()` was a tautology dressed as a test. The new contract is weaker and
+worth something:
+
+```rust
+match PrinterMonitor::new() {
+    Ok(_monitor) => {}
+    Err(e) => assert!(e.to_string().len() > 10, "failed without saying why: {e:?}"),
+}
+```
+
+**Whatever happens, the caller can tell which happened** — and a failure has to
+carry a reason, because a reason is the whole difference between "this machine
+has none" and "nobody looked".
+
+The `lpstat` call also gained the distinction that `input` and
+`storage_controller` already had, and it is the right one here:
+
+* `lpstat` is **not installed** — CUPS is absent, so there are no CUPS printers.
+  A reading. `Ok` with an empty list.
+* `lpstat` **runs and exits non-zero** — the scheduler is not answering. Not a
+  machine without printers.
+* It runs and prints a list.
+
+**Worth keeping.** Making a reader honest changes its contract, and every test
+that encoded the dishonest contract will fail — on the platform that exercises
+it, which is not necessarily the one in front of you. After converting a reader,
+grep its module for `is_ok()`, `unwrap()` and `expect()` before pushing:
+
+```bash
+grep -n "is_ok()\|\.unwrap()\|expect(" src/<module>/mod.rs | grep -i "new()\|monitor"
+```
+
+That is the same lesson as the nullable-flag entry two below — a green local gate
+is a statement about this machine — arriving through a different door. **Twice in
+one session the thing that broke was not the code but a test that had been
+asserting the absence of a capability the code just gained.**
 
 ### "On battery" concluded from nobody having asked
 

@@ -792,10 +792,25 @@ impl std::fmt::Display for RaidLevel {
 mod tests {
     use super::*;
 
+    /// Constructing the monitor either enumerates or says why it could not.
+    ///
+    /// This asserted `is_ok()`, which was true by construction until 6.0.0
+    /// because `refresh` could not fail. Now that it can, the contract is
+    /// weaker and more useful: **whatever happens, the caller can tell which
+    /// happened.** A failure has to carry a reason, because a reason is the
+    /// whole difference between "this machine has none" and "nobody looked".
     #[test]
     fn test_storage_controller_creation() {
-        let monitor = StorageControllerMonitor::new();
-        assert!(monitor.is_ok());
+        match StorageControllerMonitor::new() {
+            Ok(_monitor) => {}
+            Err(e) => {
+                let why = e.to_string();
+                assert!(
+                    why.len() > 10,
+                    "enumeration failed without saying why: {why:?}"
+                );
+            }
+        }
     }
 
     #[test]
