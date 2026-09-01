@@ -78,7 +78,7 @@ Since the tag, on `master` and green on all three platforms:
 | `f5a54ee` | An `Option` field filled with a sentinel wrapped in `Some` |
 | `cd15e37` | Cache and block geometry assumed rather than read |
 | `ae625ab` | A rate published as a total, for the wrong drive |
-| `HEAD` | A failed enumeration reported as an empty machine |
+| `89b6cd9` | A failed enumeration reported as an empty machine |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
