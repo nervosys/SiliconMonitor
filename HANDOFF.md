@@ -908,11 +908,32 @@ the code was inventing numbers.
 Verified on stable 1.98.0: `cargo fmt --all -- --check`,
 `cargo clippy --all-features --all-targets -- -D warnings`, and
 `cargo test --all-features --lib --tests --no-fail-fast` — green on every
-target, 826 in the lib, `ontology_conformance` 21, `honesty` 7.
+target, **849 in the lib**, `ontology_conformance` 22, `plausibility` 12,
+`agentic_contract` 16, `honesty` 7.
 
-Also run and green: `cargo test --all-features --doc` (73 passed),
+Also run and green: `cargo test --all-features --doc` (**73 passed**),
 `cargo run --example probe_readers --all-features`, and
 `simon snapshot --format text`.
+
+**The full gate, in the order it should be run** — the three per-run holes found
+this session are the last three lines, and each was found by CI after a local
+run came back clean:
+
+```bash
+cargo fmt --all -- --check
+cargo clippy --all-features --all-targets -- -D warnings
+cargo test --all-features --lib --tests --no-fail-fast -- --test-threads=4
+cargo test --all-features --doc                     # excluded by --lib --tests
+cargo check --quiet --no-default-features --all-targets                # (none)
+cargo check --quiet --no-default-features --all-targets --features cpu
+cargo check --quiet --no-default-features --all-targets --features cli
+cargo check  --target x86_64-unknown-linux-gnu  ... # per-OS compile
+cargo clippy --target x86_64-unknown-linux-gnu ... -- -D warnings  # per-OS dead code
+```
+
+**Run the tests last, after every edit including this file.** `HANDOFF.md` is an
+input to `documentation_links` and `source_hygiene`; editing it after the gate
+invalidates the gate, which broke CI once here.
 
 That last one is the check the handoff keeps insisting on, and it paid again:
 **the camera fix is now confirmed against hardware rather than against a
