@@ -29,10 +29,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     println!(
         "   🛡️  Secure Boot: {}",
-        if monitor.is_secure_boot() {
-            "✅ Enabled"
-        } else {
-            "❌ Disabled"
+        match monitor.is_secure_boot() {
+            Some(true) => "✅ Enabled",
+            Some(false) => "❌ Disabled",
+            None => "— not read",
         }
     );
 
@@ -204,11 +204,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n💡 Recommendations");
     println!("────────────────────────────────────────────────────────────");
 
-    if !monitor.is_secure_boot() {
-        println!("   ⚠️  Secure Boot is disabled");
-        println!("      Consider enabling for better security");
-    } else {
-        println!("   ✅ Secure Boot is enabled - good!");
+    // No recommendation without a reading. Advising someone to enable Secure
+    // Boot because the flag could not be read is the whole defect in one line.
+    match monitor.is_secure_boot() {
+        Some(false) => {
+            println!("   ⚠️  Secure Boot is disabled");
+            println!("      Consider enabling for better security");
+        }
+        Some(true) => println!("   ✅ Secure Boot is enabled - good!"),
+        None => println!("   ·  Secure Boot state was not read, so no advice here"),
     }
 
     if enabled > 50 {
@@ -229,7 +233,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("   Boot Type:       {}", summary.boot_type);
     println!(
         "   Secure Boot:     {}",
-        if summary.secure_boot { "Yes" } else { "No" }
+        match summary.secure_boot {
+            Some(true) => "Yes",
+            Some(false) => "No",
+            None => "not read",
+        }
     );
     if summary.boot_time_secs > 0.0 {
         println!("   Boot Time:       {:.1}s", summary.boot_time_secs);

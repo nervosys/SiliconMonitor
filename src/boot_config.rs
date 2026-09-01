@@ -160,8 +160,12 @@ pub struct KernelParams {
 pub struct BootInfo {
     /// Boot type (Legacy/UEFI/SecureBoot)
     pub boot_type: BootType,
-    /// Secure boot enabled
-    pub secure_boot: bool,
+    /// Whether Secure Boot is enforcing.
+    ///
+    /// `None` when it could not be established, which is not `false`. A
+    /// firmware whose Secure Boot state cannot be read and one that reports it
+    /// off are different findings, and only the second is a reason to act.
+    pub secure_boot: Option<bool>,
     /// Current boot device
     pub boot_device: Option<String>,
     /// Boot partition
@@ -202,7 +206,7 @@ impl BootMonitor {
             },
             boot_info: BootInfo {
                 boot_type: BootType::Unknown,
-                secure_boot: false,
+                secure_boot: None,
                 boot_device: None,
                 boot_partition: None,
                 efi_partition: None,
@@ -276,8 +280,8 @@ impl BootMonitor {
         )
     }
 
-    /// Check if Secure Boot is enabled
-    pub fn is_secure_boot(&self) -> bool {
+    /// Check if Secure Boot is enabled, or `None` if that was not established.
+    pub fn is_secure_boot(&self) -> Option<bool> {
         self.boot_info.secure_boot
     }
 
@@ -296,15 +300,22 @@ impl BootMonitor {
                 "/sys/firmware/efi/efivars/SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c";
             if Path::new(sb_path).exists() {
                 if let Ok(data) = fs::read(sb_path) {
-                    // Secure Boot variable: last byte indicates state
-                    self.boot_info.secure_boot = data.last().copied().unwrap_or(0) == 1;
+                    // Secure Boot variable: last byte indicates state. An
+                    // efivar that reads back empty says nothing, and
+                    // `unwrap_or(0)` used to turn that into "Secure Boot off".
+                    self.boot_info.secure_boot = match data.last() {
+                        Some(1) => Some(true),
+                        Some(0) => Some(false),
+                        _ => None,
+                    };
                 }
             }
 
-            self.boot_info.boot_type = if self.boot_info.secure_boot {
-                BootType::SecureBoot
-            } else {
-                BootType::Uefi
+            // UEFI is what was established; SecureBoot is an upgrade only the
+            // variable can justify, and an unread variable justifies neither.
+            self.boot_info.boot_type = match self.boot_info.secure_boot {
+                Some(true) => BootType::SecureBoot,
+                _ => BootType::Uefi,
             };
         } else {
             self.boot_info.boot_type = BootType::Legacy;
@@ -516,11 +527,18 @@ impl BootMonitor {
         // alongside `secure_boot: false` on the same struct.
         //
         // This host is UEFI with `UEFISecureBootEnabled = 0`, and now reports that.
-        self.boot_info.secure_boot =
-            crate::platform::windows::secure_boot_enabled().unwrap_or(false);
+        //
+        // The `.unwrap_or(false)` that used to close this line put the defect
+        // back one line under the paragraph describing it: `secure_boot_enabled`
+        // returns `Option<bool>` precisely because the registry value can be
+        // missing, and collapsing that to `false` says Secure Boot is off on a
+        // machine nobody managed to ask.
+        self.boot_info.secure_boot = crate::platform::windows::secure_boot_enabled();
 
         self.boot_info.boot_type = match crate::platform::windows::firmware_type() {
-            Some(BootType::Uefi) if self.boot_info.secure_boot => BootType::SecureBoot,
+            Some(BootType::Uefi) if self.boot_info.secure_boot == Some(true) => {
+                BootType::SecureBoot
+            }
             Some(kind) => kind,
             // `GetFirmwareType` can fail without telling us which firmware this is;
             // claiming Legacy on a failed query is how the old code got it wrong.
@@ -740,17 +758,17 @@ impl BootMonitor {
         // All modern Macs boot via EFI
         self.boot_info.boot_type = BootType::Uefi;
 
-        // Check for Secure Boot on Apple Silicon
-        let output = Command::new("csrutil").arg("status").output();
-
-        if let Ok(output) = output {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            self.boot_info.secure_boot = stdout.contains("enabled");
-
-            if self.boot_info.secure_boot {
-                self.boot_info.boot_type = BootType::SecureBoot;
-            }
-        }
+        // Secure Boot is not read on macOS.
+        //
+        // This ran `csrutil status` and set `secure_boot` from whether the
+        // output contained "enabled". `csrutil status` reports **System
+        // Integrity Protection**, which is a runtime kernel protection and a
+        // different thing from the boot policy: an Apple silicon Mac can have
+        // SIP on and its boot policy set to Reduced or Permissive, and it would
+        // still have been reported here as Secure Boot. The boot policy is read
+        // with `bputil -d` (which needs authentication) or from the
+        // `boot-policy` NVRAM variables; until one of those is called this
+        // stays `None`.
 
         self.boot_info.bootloader = Some("iBoot".to_string());
 
@@ -896,7 +914,7 @@ impl Default for BootMonitor {
             },
             boot_info: BootInfo {
                 boot_type: BootType::Unknown,
-                secure_boot: false,
+                secure_boot: None,
                 boot_device: None,
                 boot_partition: None,
                 efi_partition: None,
@@ -957,8 +975,8 @@ fn parse_time_string(s: &str) -> std::result::Result<f64, std::num::ParseFloatEr
 pub struct BootSummary {
     /// Boot type
     pub boot_type: BootType,
-    /// Secure boot enabled
-    pub secure_boot: bool,
+    /// Whether Secure Boot is enforcing; `None` if not established.
+    pub secure_boot: Option<bool>,
     /// Total boot time
     pub boot_time_secs: f64,
     /// System uptime

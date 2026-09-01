@@ -622,8 +622,8 @@ fn secure_boot_claim_matches_the_firmware_flag() {
 
     assert_eq!(
         info.boot_type == BootType::SecureBoot,
-        info.secure_boot,
-        "boot_type {:?} and secure_boot {} disagree; one of them was derived from \
+        info.secure_boot == Some(true),
+        "boot_type {:?} and secure_boot {:?} disagree; one of them was derived from \
          something other than UEFISecureBootEnabled",
         info.boot_type,
         info.secure_boot
@@ -631,10 +631,22 @@ fn secure_boot_claim_matches_the_firmware_flag() {
 
     // Legacy BIOS cannot have Secure Boot at all.
     assert!(
-        !(info.boot_type == BootType::Legacy && info.secure_boot),
+        !(info.boot_type == BootType::Legacy && info.secure_boot == Some(true)),
         "reported a legacy BIOS boot with Secure Boot enabled, which is not a state \
          that exists"
     );
+
+    // And an unread flag is not a disabled one. `secure_boot` is `Option<bool>`
+    // precisely so that `UEFISecureBootEnabled` being unreadable cannot be
+    // published as Secure Boot being off, which is the finding a posture check
+    // would act on.
+    if info.secure_boot.is_none() {
+        assert_ne!(
+            info.boot_type,
+            BootType::SecureBoot,
+            "claimed a Secure Boot type while the flag itself was never read"
+        );
+    }
 }
 
 /// The Windows OS reader must produce a real build, not the empty defaults it fell

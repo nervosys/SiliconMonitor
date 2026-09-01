@@ -83,9 +83,71 @@ Since the tag, on `master` and green on all three platforms:
 | `57c7eb9` | Two enumerations, both failing, reported as one empty |
 | `3485fbb` | "This machine has no TPM", published as a measurement |
 | `a053f16` | Measured boot reported off, on a host where it is on |
+| `HEAD` | SIP read as Secure Boot, and advice from an unread flag |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### SIP read as Secure Boot, and advice from an unread flag
+
+Taking the rule from the entry below — for a security property, `Some(false)` is
+a far stronger claim than `None` — and applying it as a sweep. Three sites, on
+three platforms, in one field.
+
+**Windows.** `boot_config` reads Secure Boot from
+`SYSTEM\CurrentControlSet\Control\SecureBoot\State`, and the line above it is a
+paragraph this file already recorded: an earlier fix that stopped reporting
+every UEFI machine as Secure Boot. Directly underneath it:
+
+```rust
+self.boot_info.secure_boot =
+    crate::platform::windows::secure_boot_enabled().unwrap_or(false);
+```
+
+`secure_boot_enabled` returns `Option<bool>` *precisely because* the registry
+value can be missing. **The defect was put back one line under the paragraph
+describing it.**
+
+**Linux.** `data.last().copied().unwrap_or(0) == 1` in `boot_config`, and
+`if data.last() == Some(&1) { Enabled } else { Disabled }` in `firmware`. The
+efivar's last byte is 1 or 0; an empty read is neither, and both readers called
+it off. `firmware` even has a `SecureBootStatus::Unknown` variant sitting unused
+on that branch — *where an enum has an `Unknown` variant, look for the sibling
+branches that don't use it.*
+
+**macOS, which was measuring a different thing entirely.**
+
+```rust
+let output = Command::new("csrutil").arg("status").output();
+self.boot_info.secure_boot = stdout.contains("enabled");
+```
+
+`csrutil status` reports **System Integrity Protection**. SIP is a runtime
+kernel protection; Secure Boot is a boot policy. An Apple silicon Mac can run
+SIP with its boot policy set to Reduced or Permissive — which is exactly the
+configuration someone auditing Secure Boot is looking for — and this reported it
+as Secure Boot enabled. **Not a sentinel, not a default: the right answer to the
+wrong question.** No amount of `Option` fixes that; the field is now `None` with
+`bputil -d` and the `boot-policy` NVRAM variables named as what would have to be
+read.
+
+And the consequence, from the module's own example:
+
+```rust
+if !monitor.is_secure_boot() {
+    println!("   ⚠️  Secure Boot is disabled");
+    println!("      Consider enabling for better security");
+}
+```
+
+**A machine whose Secure Boot flag was never read was told to turn Secure Boot
+on.** That is the whole session in four lines: the absence had nowhere to go, it
+became `false`, `false` reads as a finding, and the finding became advice. The
+example now says nothing when it knows nothing.
+
+This host is UEFI with `UEFISecureBootEnabled = 0`, so it still reports Secure
+Boot disabled — the reading was right here, and right for the reason the value
+happens to be readable, which is not the same as the code being right.
 
 ### Measured boot reported off, on a host where it is on
 

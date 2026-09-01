@@ -349,11 +349,13 @@ impl FirmwareInventory {
             let sb_path =
                 "/sys/firmware/efi/efivars/SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c";
             if let Ok(data) = std::fs::read(sb_path) {
-                // Last byte: 1 = enabled, 0 = disabled
-                self.secure_boot = if data.last() == Some(&1) {
-                    SecureBootStatus::Enabled
-                } else {
-                    SecureBootStatus::Disabled
+                // Last byte: 1 = enabled, 0 = disabled. An efivar that reads
+                // back empty is neither, and the `else` used to call it
+                // disabled -- `SecureBootStatus::Unknown` exists for this.
+                self.secure_boot = match data.last() {
+                    Some(1) => SecureBootStatus::Enabled,
+                    Some(0) => SecureBootStatus::Disabled,
+                    _ => SecureBootStatus::Unknown,
                 };
             }
         } else {
