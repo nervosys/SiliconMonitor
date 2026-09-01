@@ -82,9 +82,81 @@ Since the tag, on `master` and green on all three platforms:
 | `acf4e69` | The same swallow in sixteen more enumerators |
 | `57c7eb9` | Two enumerations, both failing, reported as one empty |
 | `3485fbb` | "This machine has no TPM", published as a measurement |
+| `HEAD` | Measured boot reported off, on a host where it is on |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### Measured boot reported off, on a host where it is on
+
+The follow-up the entry below set aside. `TpmInfo` carried three detail fields
+and every platform fabricated all three.
+
+```rust
+// windows, privileged path
+let mut algorithms = vec!["SHA-1".into(), "SHA-256".into()];
+if version == TpmVersion::V2_0 { algorithms.extend(["RSA".into(), "ECC".into()]); }
+...
+pcr_banks: 24,
+measured_boot: true, // Windows with TPM implies measured boot
+// windows, registry fallback
+algorithms: Vec::new(), pcr_banks: 0, measured_boot: false,
+// macos
+algorithms: vec!["AES-256".into(), "SHA-256".into(), "ECC-P256".into()],
+pcr_banks: 0, measured_boot: true,
+```
+
+**The algorithm lists are specifications talking, not devices.** Every one of
+them is what a TPM of that version, or a Secure Enclave, is *documented* to
+support — correct as a statement about the standard and unverified as a
+statement about this chip. Linux was the one platform that really read them,
+from the driver's `pcr-*` directories, and then replaced an empty result with
+the standard TPM 2.0 list under a comment saying "Default for TPM 2.0". **A
+reader that falls back to the specification when the device says nothing has
+stopped being a reader.**
+
+`pcr_banks: 24` is the constant that appears in every TPM 2.0 tutorial. The
+other two paths answer `0`, which is not a bank count a TPM can have — so the
+field's three possible values were an invented number, a number no device
+reports, and on Linux a real count that collapsed to `0` when the directory
+would not open.
+
+**And `measured_boot` was wrong on this machine, in the direction that matters.**
+The unelevated path is the registry fallback — the privileged WMI query is
+denied without elevation — so this host published:
+
+```
+board.tpm.measured_boot = false   [Measured]
+```
+
+Measured boot is **on** here. A security check reading that field would have
+concluded platform integrity measurement was disabled on a machine where it is
+running. The `true` on the other branch is no better: it is an inference from
+"a TPM exists", and a machine can have a TPM with measured boot switched off.
+
+There is a real signal, and it took one look to find: the boot loader writes the
+TCG log to `C:\Windows\Logs\MeasuredBoot`, and this host has four current
+files there. So the reader now evidences the positive and **refuses to evidence
+the negative** — `Some(true)` or `None`, never `Some(false)`, because a cleared
+directory and a policy that discards logs both look like an absence. The same
+asymmetry applies on Linux, where `/sys/kernel/security/ima` existing is
+evidence and its absence is not.
+
+After, on this machine:
+
+```
+tpm: Unknown/Unknown algorithms=None pcr_banks=None measured_boot=Some(true)
+  board.tpm.measured_boot = Some(Bool(true)) [Measured]
+  board.tpm.present       = Some(Bool(true)) [Measured]
+  board.tpm.status        = None [Unavailable] "a TPM is present but whether it is enabled ..."
+```
+
+**Worth keeping.** For a security property, `Some(false)` is a much stronger
+claim than `None` and is almost never the one a reader is entitled to make.
+"Measurements are not active", "Secure Boot is off", "no unmitigated
+vulnerabilities", "no TPM" — each of those needs a source that can distinguish
+absence from silence, and where no such source exists the honest field is
+three-valued.
 
 ### "This machine has no TPM", published as a measurement
 
@@ -2201,20 +2273,7 @@ feature stayed broken through eight published versions.
    said. Check each for the `codec` case before converting: a source that is
    optional by design, and already labelled as inferred, is not this defect.
 
-2. **The Windows TPM readers fabricate every detail field.** Found while
-   converting `tpm` in the entry above and deliberately left for its own commit,
-   because it is a different defect from the swallow. The privileged path sets
-   `pcr_banks: 24` — a constant, not a read — and
-   `measured_boot: true, // Windows with TPM implies measured boot`, which is an
-   inference presented as a reading and is not even sound: measured boot is a
-   boot-configuration state Windows reports separately, and a machine can have a
-   TPM with it off. `algorithms` is derived from the version rather than
-   enumerated. The registry-fallback path answers the same fields with
-   `pcr_banks: 0` and `measured_boot: false`, so a machine detected the second
-   way is published as having zero PCR banks. All of these want `Option`, and
-   `measured_boot` wants a real source.
-
-3. **`hardware_ai` was audited on one machine, and only one.** Every conclusion
+2. **`hardware_ai` was audited on one machine, and only one.** Every conclusion
    corrected in `a584dd0` and `7607401` was verifiably wrong on this desktop, and
    each fix was checked against a second source. That is not the same as being
    right in general. Two things specifically want a second machine before they
@@ -2238,7 +2297,7 @@ feature stayed broken through eight published versions.
    Ti dates to 2020 because it matches the RTX 30 series rule, and the Ti shipped
    in 2022. `infer_gpu_year` and the TDP tables were not audited.
 
-4. **Per-core CPU frequency is unreported on Windows, and could be reported.**
+3. **Per-core CPU frequency is unreported on Windows, and could be reported.**
    `CallNtPowerInformation` returns `CurrentMhz == MaxMhz` whatever the cores are
    doing, so `cpu.core.{n}.frequency` now declines rather than publishing the
    nominal clock as a measurement. The real figure is
@@ -2253,7 +2312,7 @@ feature stayed broken through eight published versions.
    single-value PDH pattern to copy. The provenance would be `Derived` from the
    counter and the nominal clock, not `Measured`.
 
-5. **The Windows ATA SMART path has never met a SATA drive.** 3.3.0 reads the
+4. **The Windows ATA SMART path has never met a SATA drive.** 3.3.0 reads the
    attribute table unelevated through `IOCTL_STORAGE_PREDICT_FAILURE`, and the
    parse in `src/disk/ata_smart.rs` is tested only against buffers this project
    built. This machine has three NVMe drives and a USB gadget; on all four the
@@ -2284,7 +2343,7 @@ feature stayed broken through eight published versions.
    property of its `CTL_CODE`, and is worth reading off the definition before
    planning around it.
 
-6. **macOS GPU, power and temperature are still unimplemented.** CPU (per-core,
+5. **macOS GPU, power and temperature are still unimplemented.** CPU (per-core,
    with nice time), memory, swap, uptime and board info work — `Simon::cpu()`,
    `memory()`, `uptime()`. `Simon::snapshot()` still fails, because it requires
    every reader. Power and temperature need `powermetrics`, which requires root,
@@ -2309,7 +2368,7 @@ feature stayed broken through eight published versions.
    the `vm_stat` used/free split is a judgement about which pages count as in
    use, which a conformance test cannot check.
 
-7. **The Linux SMART/NVMe paths have executed exactly once**, in CI on
+6. **The Linux SMART/NVMe paths have executed exactly once**, in CI on
    `33ee241` — 733 tests, 0 failures. No one has run them against real Linux
    hardware. The sysfs paths (`/sys/class/nvme/<ctrl>/{model,serial,firmware_rev,cntlid}`)
    are documented kernel ABI, but tests are not a substitute for a drive.
@@ -2322,7 +2381,7 @@ feature stayed broken through eight published versions.
    what remains to benefit is USB storage — and every Linux machine, where a
    sweep spawns `smartctl` once per drive and the old shape was quadratic.
 
-8. **The ontology names ~232 entities; the library has ~88 subsystem modules.**
+7. **The ontology names ~232 entities; the library has ~88 subsystem modules.**
    The running list of which clusters exist, which readers answer on which
    machine, and what is left is under **plan item F** below — it is kept in one
    place rather than two, because the last time it lived in both they disagreed.
@@ -2377,7 +2436,7 @@ feature stayed broken through eight published versions.
    sizes, AER capability, ARI and ATS support, SR-IOV — are readable by the same
    two calls with a different pid, if anyone wants them.
 
-9. **`simon tune`'s policy table covers five settings, and its game detection is
+8. **`simon tune`'s policy table covers five settings, and its game detection is
    a name table.** Both are deliberate first cuts, and both are where the feature
    grows.
 
@@ -2398,7 +2457,7 @@ feature stayed broken through eight published versions.
    from a model. `tuning::tests::a_recommendation_never_proposes_a_value_the_driver_did_not_offer`
    is the test that keeps it true. A model may classify; it may not pick numbers.
 
-10. **The Dewey port was tried across 4.0.0–4.0.4 and withdrawn in 5.0.0.**
+9. **The Dewey port was tried across 4.0.0–4.0.4 and withdrawn in 5.0.0.**
    `src/gui/` is the egui application again — `app.rs`, `widgets.rs`, `theme.rs`,
    `profile_tab.rs`, `headless.rs`, `mod.rs`, restored from `927ffaa^`. The
    `deweygui` dependency, the `dewey-gui` feature and `simonlib::gui_dewey` are
@@ -2443,7 +2502,7 @@ feature stayed broken through eight published versions.
    name is the whole defect — every call site was written by someone who
    reasonably believed `new()` constructs a thing from the system.
 
-11. **Verify with `--lib --tests` when the disk is tight.** `cargo test
+10. **Verify with `--lib --tests` when the disk is tight.** `cargo test
    --all-features` links every example. That is affordable again now the duplicate
    egui is gone, but if it ever fails with `link.exe` 1318, the split is
    `cargo test --all-features --lib --tests` for execution plus
@@ -2451,7 +2510,7 @@ feature stayed broken through eight published versions.
    Note `--lib --tests` skips doc-tests; run those before a release.
 
 
-12. **Two Dewey bugs found during the port, recorded because they are real
+11. **Two Dewey bugs found during the port, recorded because they are real
    and unfixed — but no longer reachable from this crate.** Neither affects simon
    now that `deweygui` is gone. Both are for whoever works on Dewey itself, or
    for anyone who reconsiders open work 9.
@@ -2475,7 +2534,7 @@ feature stayed broken through eight published versions.
    three `eprintln!` calls in `resize`, the surface-acquire error arm and the
    frame-area computation in `render`, driven by `ShowWindow(hwnd, 3)`.
 
-13. **Applied settings are reversible; the tuning loop is not yet closed.**
+12. **Applied settings are reversible; the tuning loop is not yet closed.**
    `ApplyHandler::read_current()` reads a setting before it is written,
    `ApplyOutcome.previous` carries what was overwritten, `revert_setting()` puts
    it back through the same confirmed and audit-logged path, and

@@ -724,11 +724,20 @@ fn resolve_tpm(out: &mut Vec<Reading>) {
         )),
         s => push_id(out, "board.tpm.status", &format!("{s:?}").to_lowercase()),
     }
-    out.push(Reading::measured(
-        "board.tpm.measured_boot",
-        serde_json::json!(tpm.measured_boot),
+    // `None` here is not `false`. On Windows the positive comes from a Measured
+    // Boot log and the negative cannot be evidenced at all; on macOS nothing is
+    // consulted. Publishing a measured `false` would tell a security check that
+    // integrity measurement is off, which is a claim this crate cannot make.
+    push_opt(
+        out,
+        "board.tpm.measured_boot".to_string(),
+        tpm.measured_boot.map(|b| serde_json::json!(b)),
         None,
-    ));
+        concat!(
+            "a TPM is present but whether platform integrity measurements ",
+            "are active could not be established"
+        ),
+    );
 }
 
 fn resolve_virtualization(out: &mut Vec<Reading>) {

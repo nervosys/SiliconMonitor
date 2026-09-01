@@ -66,12 +66,27 @@ pub struct TpmInfo {
     pub device_path: String,
     /// Whether the TPM is the system's primary/active TPM
     pub is_primary: bool,
-    /// Supported algorithms (SHA-1, SHA-256, RSA, ECC, etc.)
-    pub algorithms: Vec<String>,
-    /// PCR bank count
-    pub pcr_banks: u32,
-    /// Whether platform integrity measurements are active
-    pub measured_boot: bool,
+    /// Supported algorithms (SHA-1, SHA-256, RSA, ECC, etc.).
+    ///
+    /// `None` when the platform was not asked or did not say. An empty `Vec` is
+    /// a different answer: enumerated, and none were reported. Until 6.0.0 a
+    /// Linux TPM whose `pcr-*` directories were unreadable was given the
+    /// standard TPM 2.0 list under a comment reading "Default for TPM 2.0",
+    /// Windows derived the list from the specification version, and macOS
+    /// asserted `AES-256`, `SHA-256` and `ECC-P256` for every Secure Enclave.
+    pub algorithms: Option<Vec<String>>,
+    /// PCR bank count. `None` when it was not read -- never 24, which was the
+    /// Windows constant, and never 0, which was both "no banks" and "did not
+    /// look" on three platforms.
+    pub pcr_banks: Option<u32>,
+    /// Whether platform integrity measurements are active.
+    ///
+    /// `None` when it could not be established. `Some(true)` on Windows means a
+    /// Measured Boot log was found, not that a TPM exists: the previous value
+    /// was a literal `true` under the comment "Windows with TPM implies
+    /// measured boot", which is an inference, and an unsound one -- a machine
+    /// can have a TPM with measured boot switched off.
+    pub measured_boot: Option<bool>,
 }
 
 /// Monitor for TPM devices
@@ -189,37 +204,33 @@ impl TpmMonitor {
                         .to_string();
                 }
 
-                // PCR banks
+                // PCR banks. A directory that is absent and one that will not
+                // open are different answers, and both used to be zero.
                 let pcr_path = base.join("pcr-sha256");
                 let pcr_banks = if pcr_path.exists() {
-                    std::fs::read_dir(&pcr_path)
-                        .map(|d| d.count() as u32)
-                        .unwrap_or(0)
+                    std::fs::read_dir(&pcr_path).ok().map(|d| d.count() as u32)
                 } else {
-                    0
+                    None
                 };
 
-                // Algorithms
+                // Algorithms, from the `pcr-*` directories the driver exposes.
+                // An empty result is left empty: it used to be replaced with
+                // the standard TPM 2.0 list, which is a specification talking,
+                // not this device.
                 let mut algorithms = Vec::new();
                 for algo in &["sha1", "sha256", "sha384", "sha512", "sm3-256"] {
                     if base.join(format!("pcr-{}", algo)).exists() {
                         algorithms.push(algo.to_uppercase());
                     }
                 }
-                if algorithms.is_empty() {
-                    // Default for TPM 2.0
-                    if version == TpmVersion::V2_0 {
-                        algorithms =
-                            vec!["SHA-1".into(), "SHA-256".into(), "RSA".into(), "ECC".into()];
-                    } else {
-                        algorithms = vec!["SHA-1".into(), "RSA".into()];
-                    }
-                }
 
-                // Measured boot check (IMA or tpm_bios)
-                let measured_boot = std::path::Path::new("/sys/kernel/security/ima").exists()
+                // Measured boot check (IMA or tpm_bios). Both paths existing is
+                // evidence that measurements are active; neither existing is
+                // not evidence that they are not, so the negative is `None`.
+                let measured_boot = (std::path::Path::new("/sys/kernel/security/ima").exists()
                     || std::path::Path::new("/sys/kernel/security/tpm0/binary_bios_measurements")
-                        .exists();
+                        .exists())
+                .then_some(true);
 
                 self.tpm_info = Some(TpmInfo {
                     device: name,
@@ -229,7 +240,7 @@ impl TpmMonitor {
                     firmware_version,
                     device_path: format!("/dev/{}", entry.file_name().to_string_lossy()),
                     is_primary: true,
-                    algorithms,
+                    algorithms: Some(algorithms),
                     pcr_banks,
                     measured_boot,
                 });
@@ -277,11 +288,6 @@ impl TpmMonitor {
                 .unwrap_or("")
                 .to_string();
 
-            let mut algorithms = vec!["SHA-1".into(), "SHA-256".into()];
-            if version == TpmVersion::V2_0 {
-                algorithms.extend(["RSA".to_string(), "ECC".to_string()]);
-            }
-
             self.tpm_info = Some(TpmInfo {
                 device: "tpm0".into(),
                 version,
@@ -290,9 +296,13 @@ impl TpmMonitor {
                 firmware_version,
                 device_path: r"\\.\TPM".into(),
                 is_primary: true,
-                algorithms,
-                pcr_banks: 24,
-                measured_boot: true, // Windows with TPM implies measured boot
+                // Win32_Tpm publishes neither. The algorithm list here was
+                // derived from `SpecVersion` -- what a TPM of that version is
+                // required to support, not what this one reports -- and
+                // `pcr_banks` was the constant 24.
+                algorithms: None,
+                pcr_banks: None,
+                measured_boot: Self::measured_boot_windows(),
             });
             return Ok(());
         }
@@ -327,13 +337,32 @@ impl TpmMonitor {
                 firmware_version: String::new(),
                 device_path: r"\\.\TPM".into(),
                 is_primary: true,
-                algorithms: Vec::new(),
-                pcr_banks: 0,
-                measured_boot: false,
+                // This path learned only that the TPM service is registered.
+                algorithms: None,
+                pcr_banks: None,
+                measured_boot: Self::measured_boot_windows(),
             });
         }
 
         Ok(())
+    }
+
+    /// Whether Windows measured this boot, from the Measured Boot log.
+    ///
+    /// The boot loader writes the TCG log to `C:\Windows\Logs\MeasuredBoot`
+    /// when measurements are active, so a `.log` there is evidence that they
+    /// are. Its absence is not evidence that they are not -- the directory can
+    /// be cleared, and policy can discard the logs -- so this answers
+    /// `Some(true)` or `None` and never `Some(false)`.
+    #[cfg(target_os = "windows")]
+    fn measured_boot_windows() -> Option<bool> {
+        let dir = std::path::Path::new(r"C:\Windows\Logs\MeasuredBoot");
+        let logged = std::fs::read_dir(dir).ok()?.flatten().any(|e| {
+            e.path()
+                .extension()
+                .is_some_and(|x| x.eq_ignore_ascii_case("log"))
+        });
+        logged.then_some(true)
     }
 
     #[cfg(target_os = "macos")]
@@ -355,9 +384,15 @@ impl TpmMonitor {
                         firmware_version: String::new(),
                         device_path: String::new(),
                         is_primary: true,
-                        algorithms: vec!["AES-256".into(), "SHA-256".into(), "ECC-P256".into()],
-                        pcr_banks: 0,
-                        measured_boot: true,
+                        // `system_profiler` reports a chip name and nothing
+                        // about the Secure Enclave's capabilities. The list
+                        // here was what an SEP is documented to support.
+                        algorithms: None,
+                        // The SEP has no PCRs, which is why 0 was never a bank
+                        // count. Secure boot on Apple silicon is a separate
+                        // property this reader does not consult.
+                        pcr_banks: None,
+                        measured_boot: None,
                     });
                 }
             }
@@ -417,9 +452,9 @@ mod tests {
             firmware_version: "7.85".into(),
             device_path: "/dev/tpm0".into(),
             is_primary: true,
-            algorithms: vec!["SHA-256".into(), "RSA".into()],
-            pcr_banks: 24,
-            measured_boot: true,
+            algorithms: Some(vec!["SHA-256".into(), "RSA".into()]),
+            pcr_banks: Some(24),
+            measured_boot: Some(true),
         };
         let json = serde_json::to_string(&info).unwrap();
         assert!(json.contains("tpm0"));
