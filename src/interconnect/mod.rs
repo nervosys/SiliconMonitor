@@ -120,7 +120,14 @@ pub struct ChipletTopology {
     /// Number of I/O dies per package.
     pub io_dies: u32,
     /// Cores per compute die.
-    pub cores_per_die: u32,
+    /// Cores per compute die, where the physical core count is readable.
+    ///
+    /// Derived as `physical_cores / compute_dies`, not taken from a table. The
+    /// table held the *maximum* CCD size for the generation — 8 for Zen 4 and
+    /// Zen 5 — so a Ryzen 9 9900X, which is two partially-enabled CCDs of six,
+    /// was reported as 2 x 8. Every partially-enabled part in the range had the
+    /// same problem.
+    pub cores_per_die: Option<u32>,
     /// On-package interconnect type.
     pub on_package_interconnect: InterconnectType,
     /// On-package bandwidth per link in GB/s.
@@ -156,7 +163,8 @@ impl InterconnectMonitor {
     pub fn new() -> Result<Self, SimonError> {
         let cpu_model = Self::get_cpu_model()?;
         let sockets = Self::detect_sockets()?;
-        let topology = Self::infer_topology(&cpu_model, sockets);
+        let physical_cores = Self::detect_physical_cores();
+        let topology = Self::infer_topology(&cpu_model, sockets, physical_cores);
         Ok(Self { topology })
     }
 
@@ -171,25 +179,46 @@ impl InterconnectMonitor {
     }
 
     /// Infer full topology from CPU model and socket count.
-    fn infer_topology(cpu_model: &str, sockets: u32) -> InterconnectTopology {
+    fn infer_topology(
+        cpu_model: &str,
+        sockets: u32,
+        physical_cores: Option<u32>,
+    ) -> InterconnectTopology {
         let upper = cpu_model.to_uppercase();
 
-        // Determine vendor and product family
-        let is_intel = upper.contains("INTEL") || upper.contains("CORE") || upper.contains("XEON");
+        // Determine vendor and product family.
+        //
+        // `is_intel` tested `contains("CORE")` and was checked first. AMD
+        // writes the core count into the model string — "AMD Ryzen 9 9900X
+        // **12-Core** Processor" — so every Ryzen, EPYC and Threadripper
+        // matched it and was given Intel's ring-bus topology with MESIF
+        // coherence. On this desktop the module described a Zen 5 chiplet part
+        // as a ring bus and never reached `infer_amd` at all.
+        //
+        // "CORE" was meant to catch "Core i7" and "Core Ultra"; both are still
+        // caught, by tokens that a core count cannot produce. AMD is tested
+        // first regardless, because its own name is unambiguous.
         let is_amd = upper.contains("AMD")
             || upper.contains("RYZEN")
             || upper.contains("EPYC")
             || upper.contains("THREADRIPPER");
+        let is_intel = !is_amd
+            && (upper.contains("INTEL")
+                || upper.contains("XEON")
+                || upper.contains("CORE I")
+                || upper.contains("CORE ULTRA")
+                || upper.contains("CELERON")
+                || upper.contains("PENTIUM"));
         let is_apple = upper.contains("APPLE")
             || upper.contains("M1")
             || upper.contains("M2")
             || upper.contains("M3")
             || upper.contains("M4");
 
-        if is_intel {
+        if is_amd {
+            Self::infer_amd(&upper, sockets, physical_cores)
+        } else if is_intel {
             Self::infer_intel(&upper, sockets)
-        } else if is_amd {
-            Self::infer_amd(&upper, sockets)
         } else if is_apple {
             Self::infer_apple(&upper)
         } else {
@@ -333,9 +362,9 @@ impl InterconnectMonitor {
         }
     }
 
-    fn infer_amd(name: &str, sockets: u32) -> InterconnectTopology {
+    fn infer_amd(name: &str, sockets: u32, physical_cores: Option<u32>) -> InterconnectTopology {
         // AMD Infinity Fabric inference
-        let (if_speed_gts, compute_dies, io_dies, cores_per_die, gen, on_pkg_bw) = if name
+        let (if_speed_gts, compute_dies, io_dies, _max_cores_per_die, gen, on_pkg_bw) = if name
             .contains("9950")
             || name.contains("9900")
             || name.contains("9700")
@@ -408,7 +437,12 @@ impl InterconnectMonitor {
             Some(ChipletTopology {
                 compute_dies,
                 io_dies,
-                cores_per_die,
+                // The real division, where the core count is readable. The
+                // table's figure is the generation's maximum CCD size, not this
+                // part's.
+                cores_per_die: physical_cores
+                    .filter(|_| compute_dies > 0)
+                    .map(|c| c / compute_dies),
                 on_package_interconnect: InterconnectType::InfinityFabricOnPackage,
                 on_package_bandwidth_gbs: on_pkg_bw,
             })
@@ -463,7 +497,9 @@ impl InterconnectMonitor {
                 Some(ChipletTopology {
                     compute_dies: 2,
                     io_dies: 0,
-                    cores_per_die: if name.contains("M4") { 16 } else { 12 },
+                    // Apple's core counts vary by bin within a generation
+                    // (an M4 Pro is 12 or 14), so this is not read either.
+                    cores_per_die: None,
                     on_package_interconnect: InterconnectType::AppleUMA,
                     on_package_bandwidth_gbs: bw,
                 })
@@ -564,6 +600,82 @@ impl InterconnectMonitor {
     fn detect_sockets() -> Result<u32, SimonError> {
         Ok(1)
     }
+
+    /// Physical cores in the package, or `None` where they are not readable.
+    ///
+    /// Used to divide by the compute-die count rather than take a table's
+    /// maximum CCD size. Returns `None` rather than a guess, so
+    /// `cores_per_die` is absent instead of wrong.
+    #[cfg(target_os = "windows")]
+    fn detect_physical_cores() -> Option<u32> {
+        let output = std::process::Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-Command",
+                concat!(
+                    "(Get-CimInstance Win32_Processor | ",
+                    "Measure-Object -Property NumberOfCores -Sum).Sum"
+                ),
+            ])
+            .output()
+            .ok()?;
+        String::from_utf8_lossy(&output.stdout)
+            .trim()
+            .parse::<u32>()
+            .ok()
+            .filter(|c| *c > 0)
+    }
+
+    /// See the Windows variant.
+    #[cfg(target_os = "linux")]
+    fn detect_physical_cores() -> Option<u32> {
+        // Unique (physical id, core id) pairs in /proc/cpuinfo. Counting
+        // "cpu cores" alone multiplies by the socket count.
+        let text = std::fs::read_to_string("/proc/cpuinfo").ok()?;
+        let mut seen = std::collections::HashSet::new();
+        let (mut pkg, mut core) = (None, None);
+        for line in text.lines() {
+            if let Some(v) = line.strip_prefix("physical id") {
+                pkg = v
+                    .split(':')
+                    .nth(1)
+                    .and_then(|s| s.trim().parse::<u32>().ok());
+            } else if let Some(v) = line.strip_prefix("core id") {
+                core = v
+                    .split(':')
+                    .nth(1)
+                    .and_then(|s| s.trim().parse::<u32>().ok());
+            } else if line.trim().is_empty() {
+                if let (Some(p), Some(c)) = (pkg.take(), core.take()) {
+                    seen.insert((p, c));
+                }
+            }
+        }
+        if let (Some(p), Some(c)) = (pkg, core) {
+            seen.insert((p, c));
+        }
+        (!seen.is_empty()).then_some(seen.len() as u32)
+    }
+
+    /// See the Windows variant.
+    #[cfg(target_os = "macos")]
+    fn detect_physical_cores() -> Option<u32> {
+        let output = std::process::Command::new("sysctl")
+            .args(["-n", "hw.physicalcpu"])
+            .output()
+            .ok()?;
+        String::from_utf8_lossy(&output.stdout)
+            .trim()
+            .parse::<u32>()
+            .ok()
+            .filter(|c| *c > 0)
+    }
+
+    /// See the Windows variant.
+    #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
+    fn detect_physical_cores() -> Option<u32> {
+        None
+    }
 }
 
 impl Default for InterconnectMonitor {
@@ -601,11 +713,75 @@ mod tests {
 
     #[test]
     fn test_amd_chiplet_inference() {
-        let topo = InterconnectMonitor::infer_amd("AMD RYZEN 9 7950X", 1);
+        // 16 physical cores over 2 CCDs is a 7950X: 8 per die.
+        let topo = InterconnectMonitor::infer_amd("AMD RYZEN 9 7950X", 1, Some(16));
         assert!(topo.chiplet_topology.is_some());
         let chiplet = topo.chiplet_topology.unwrap();
         assert_eq!(chiplet.compute_dies, 2);
+        assert_eq!(chiplet.cores_per_die, Some(8));
         assert!(chiplet.on_package_bandwidth_gbs > 0.0);
+    }
+
+    /// A partially-enabled part is not the generation's maximum CCD size.
+    ///
+    /// The table held 8 cores per die for all of Zen 4 and Zen 5, so a Ryzen 9
+    /// 9900X — two CCDs of six — was reported as 2 x 8, and every
+    /// partially-enabled part in the range with it. The division uses the
+    /// physical core count now.
+    #[test]
+    fn a_partially_enabled_ccd_is_not_the_generations_maximum() {
+        let topo = InterconnectMonitor::infer_amd("AMD RYZEN 9 9900X", 1, Some(12));
+        let chiplet = topo.chiplet_topology.expect("a 9900X has chiplets");
+        assert_eq!(chiplet.compute_dies, 2);
+        assert_eq!(
+            chiplet.cores_per_die,
+            Some(6),
+            "12 cores over 2 CCDs is 6 per die, not the table's 8"
+        );
+    }
+
+    /// With no core count there is nothing to divide, so nothing is claimed.
+    #[test]
+    fn an_unreadable_core_count_yields_no_cores_per_die() {
+        let topo = InterconnectMonitor::infer_amd("AMD RYZEN 9 9900X", 1, None);
+        let chiplet = topo.chiplet_topology.expect("a 9900X has chiplets");
+        assert_eq!(chiplet.cores_per_die, None);
+    }
+
+    /// AMD writes the core count into the model string, and the Intel test
+    /// matched the word "Core" in it.
+    ///
+    /// "AMD Ryzen 9 9900X 12-Core Processor" uppercases to contain "CORE", so
+    /// every Ryzen, EPYC and Threadripper was classified Intel and given a
+    /// ring bus with MESIF coherence. This desktop reported exactly that.
+    #[test]
+    fn an_amd_core_count_does_not_make_it_an_intel_cpu() {
+        for model in [
+            "AMD Ryzen 9 9900X 12-Core Processor",
+            "AMD Ryzen Threadripper PRO 7995WX 96-Cores",
+            "AMD EPYC 9654 96-Core Processor",
+        ] {
+            let topo = InterconnectMonitor::infer_topology(model, 1, Some(12));
+            assert_eq!(
+                topo.coherence_protocol,
+                CoherenceProtocol::MOESI,
+                "{model} was classified as Intel"
+            );
+        }
+
+        // The tokens that were meant to catch Intel still do.
+        for model in [
+            "Intel(R) Core(TM) i9-14900K",
+            "Intel(R) Core(TM) Ultra 9 285K",
+            "Intel(R) Xeon(R) Gold 6348",
+        ] {
+            let topo = InterconnectMonitor::infer_topology(model, 1, Some(8));
+            assert_ne!(
+                topo.coherence_protocol,
+                CoherenceProtocol::MOESI,
+                "{model} should not resolve as AMD"
+            );
+        }
     }
 
     #[test]

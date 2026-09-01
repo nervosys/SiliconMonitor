@@ -68,9 +68,49 @@ Since the tag, on `master` and green on all three platforms:
 | `8f8680a` | One system-wide number, copied into 24 cores as though each were measured |
 | `b16feec` | A link's capacity published as the traffic on it |
 | `1c018b8` | A typical NVLink count reported as this board's |
+| `HEAD` | Every AMD CPU classified as Intel, by the word in "12-Core" |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### Every AMD CPU classified as Intel, by the word in "12-Core"
+
+Second module off the callerless list, and the clearest single wrong answer of
+the session. `interconnect::infer_topology`:
+
+```rust
+let is_intel = upper.contains("INTEL") || upper.contains("CORE") || upper.contains("XEON");
+let is_amd   = upper.contains("AMD") || upper.contains("RYZEN") || ...;
+if is_intel { infer_intel(...) } else if is_amd { infer_amd(...) }
+```
+
+**AMD writes the core count into the model string.** "AMD Ryzen 9 9900X
+**12-Core** Processor" uppercases to contain `CORE`, `is_intel` is tested first,
+and every Ryzen, EPYC and Threadripper took the Intel branch. This desktop
+reported its Zen 5 chiplet CPU as a **ring bus** with **MESIF** coherence —
+Intel's topology and Intel's protocol — with every bandwidth zero and
+`generation: "Unknown"`. `infer_amd` was never reached on any AMD machine.
+
+`CORE` was there to catch "Core i7" and "Core Ultra"; both still are, by tokens
+a core count cannot produce. AMD is tested first regardless, since its own name
+is unambiguous. After the fix the same machine reports Infinity Fabric, two
+CCD→IOD links, MOESI and "IF 4.0" — all correct.
+
+**Then the thing the fix exposed.** With the vendor right, `cores_per_die` read
+**8** on a CPU with 12 cores over 2 CCDs. The table held the generation's
+*maximum* CCD size, so every partially-enabled part in the range was wrong: a
+9900X is 2x6, a 9600X is one CCD of 6 and was reported as 2x8. It is derived
+now — `physical_cores / compute_dies`, from `Win32_Processor.NumberOfCores`,
+`/proc/cpuinfo` pairs, or `hw.physicalcpu` — and `None` where the count cannot
+be read. The same machine now reports `Some(6)`.
+
+**A note on verifying the test, because it nearly fooled me.** Reintroducing the
+`contains("CORE")` token alone did *not* fail the new test — the reordering
+fix is independently sufficient, so the test passed against half the old code.
+Only reverting **both** halves failed it, with
+*"AMD Ryzen 9 9900X 12-Core Processor was classified as Intel"*. A regression
+test confirmed against a partially-reverted fix proves less than it appears to:
+revert the whole change, not the part you were thinking about.
 
 ### The callerless-module sweep, and what it found
 
