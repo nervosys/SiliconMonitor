@@ -125,7 +125,12 @@ pub struct AcceleratorInfo {
     /// Type of accelerator
     pub accel_type: AcceleratorType,
     /// Compute/core utilization (0-100%)
-    pub utilization: f32,
+    /// Utilization percentage, or `None` where the device exposes none.
+    ///
+    /// An NPU's utilization needs a vendor-specific API on Windows and Linux,
+    /// and `NpuInfo` says `None` there. Rendering that as `0.0` would put an
+    /// idle-looking gauge next to a device nothing can measure.
+    pub utilization: Option<f32>,
     /// Temperature in Celsius
     pub temperature: Option<f32>,
     /// Power consumption in Watts
@@ -748,7 +753,7 @@ impl From<&GpuInfo> for AcceleratorInfo {
             name: gpu.name.clone(),
             vendor: gpu.vendor.clone(),
             accel_type: AcceleratorType::Gpu,
-            utilization: gpu.utilization,
+            utilization: Some(gpu.utilization),
             temperature: gpu.temperature,
             power: gpu.power,
             power_limit: gpu.power_limit,
@@ -779,7 +784,7 @@ impl From<&NpuInfo> for AcceleratorInfo {
             name: npu.name.clone(),
             vendor: npu.vendor.clone(),
             accel_type: AcceleratorType::Npu,
-            utilization: npu.utilization as f32,
+            utilization: npu.utilization.map(f32::from),
             temperature: None,
             power: npu.power_watts,
             power_limit: None,
@@ -1524,7 +1529,10 @@ impl App {
         }
 
         for (i, accel) in self.accelerators.iter().enumerate() {
-            self.accelerator_histories[i].push_back(accel.utilization as u64);
+            // Nothing to plot for a device that reports no utilization.
+            if let Some(u) = accel.utilization {
+                self.accelerator_histories[i].push_back(u as u64);
+            }
             if self.accelerator_histories[i].len() > MAX_HISTORY {
                 self.accelerator_histories[i].pop_front();
             }
@@ -2646,7 +2654,10 @@ mod tests {
         let info = AcceleratorInfo::default();
         assert_eq!(info.accel_type, AcceleratorType::Gpu);
         assert!(info.name.is_empty());
-        assert_eq!(info.utilization, 0.0);
+        assert_eq!(
+            info.utilization, None,
+            "a default accelerator has no utilization reading, not one of zero"
+        );
         assert_eq!(info.memory_total, 0);
         assert_eq!(info.memory_used, 0);
         assert!(info.temperature.is_none());

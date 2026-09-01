@@ -86,10 +86,22 @@ pub struct NpuInfo {
     pub name: String,
     /// Vendor
     pub vendor: String,
-    /// Core count (if applicable)
+    /// Core count, where it was read.
+    ///
+    /// Never inferred from the vendor. This carried `Some(16)` for any Intel
+    /// NPU, `Some(8)` for Qualcomm, `Some(16)` for every Apple Neural Engine
+    /// and `Some(128)` for a TPU, under comments reading "~16 compute units",
+    /// "Most Apple Silicon has" and "Typical TPU core count" — three
+    /// admissions of a guess beside a published value. The vendor those
+    /// numbers keyed off was itself a substring match on the device name.
     pub cores: Option<u32>,
-    /// Utilization percentage (0-100)
-    pub utilization: u8,
+    /// Utilization percentage (0-100), or `None` where it was not read.
+    ///
+    /// This was `u8` and every implementation wrote `0`, each beside a comment
+    /// saying the figure needs a vendor-specific API — Windows, Linux TPU and
+    /// the generic Linux path alike. An NPU at 0% and an NPU nothing can
+    /// measure are different facts.
+    pub utilization: Option<u8>,
     /// Power consumption in watts (if available)
     pub power_watts: Option<f32>,
     /// Frequency in MHz (if available)

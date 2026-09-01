@@ -489,7 +489,7 @@ fn draw_accelerators_tab(f: &mut Frame, app: &App, area: Rect) {
                     let sparkline = Sparkline::default()
                         .block(Block::default().borders(Borders::ALL).title(title))
                         .data(&data)
-                        .style(Style::default().fg(accel_color(accel.utilization)));
+                        .style(Style::default().fg(accel_color(accel.utilization.unwrap_or(0.0))));
                     f.render_widget(sparkline, spark_chunks[idx]);
                 }
             }
@@ -843,9 +843,12 @@ fn draw_single_accelerator(
 
     // Compact: All key metrics with Glances-style formatting
     let accel_util_label = format!(
-        "{}: {:.0}% @ {} MHz │ MEM: {}/{} ({:.0}%) @ {} MHz │ {:.0}°C │ {:.0}/{:.0}W{}{}",
+        "{}: {} @ {} MHz │ MEM: {}/{} ({:.0}%) @ {} MHz │ {:.0}°C │ {:.0}/{:.0}W{}{}",
         type_str,
-        accel.utilization,
+        // A device with no utilization counter shows a dash, not 0%.
+        accel
+            .utilization
+            .map_or_else(|| "-".to_string(), |u| format!("{u:.0}%")),
         accel.clock_core.unwrap_or(0),
         auto_unit(accel.memory_used),
         auto_unit(accel.memory_total),
@@ -858,11 +861,11 @@ fn draw_single_accelerator(
         enc_dec_str
     );
 
-    let accel_clr = accel_color(accel.utilization);
+    let accel_clr = accel_color(accel.utilization.unwrap_or(0.0));
 
     let accel_gauge = Gauge::default()
         .gauge_style(Style::default().fg(accel_clr).add_modifier(Modifier::BOLD))
-        .percent(safe_percent(accel.utilization))
+        .percent(safe_percent(accel.utilization.unwrap_or(0.0)))
         .label(accel_util_label);
     f.render_widget(accel_gauge, inner);
 }

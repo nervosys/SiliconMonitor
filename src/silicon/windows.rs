@@ -461,20 +461,18 @@ impl SiliconMonitor for WindowsSiliconMonitor {
                                         "Unknown".to_string()
                                     }
                                 });
-                                let cores = if vendor == "Intel" {
-                                    Some(16)
-                                }
-                                // Intel NPU ~16 compute units
-                                else if vendor == "Qualcomm" {
-                                    Some(8)
-                                } else {
-                                    None
-                                };
+                                // No core count is read here. It used to be
+                                // guessed from `vendor`, which is itself a
+                                // substring match on the device name when the
+                                // manufacturer string is absent — a guess keyed
+                                // off a guess.
+                                let cores = None;
                                 npus.push(NpuInfo {
                                     name,
                                     vendor,
                                     cores,
-                                    utilization: 0, // NPU utilization requires vendor-specific APIs
+                                    // Needs a vendor-specific API; 0 was not a reading.
+                                    utilization: None,
                                     power_watts: None,
                                     frequency_mhz: None,
                                 });

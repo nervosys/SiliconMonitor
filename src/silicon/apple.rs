@@ -372,8 +372,11 @@ impl SiliconMonitor for AppleSiliconMonitor {
         Ok(vec![NpuInfo {
             name: "Apple Neural Engine".to_string(),
             vendor: "Apple".to_string(),
-            cores: Some(16), // Most Apple Silicon has 16-core ANE
-            utilization: ane_util,
+            // "Most" is not this machine. The ANE core count is not read.
+            cores: None,
+            // Derived from power draw, not measured directly — the comment
+            // above says so, and the figure is real.
+            utilization: Some(ane_util),
             power_watts: Some(data.ane_power_mw as f32 / 1000.0),
             frequency_mhz: None,
         }])

@@ -321,7 +321,14 @@ impl LinuxSiliconMonitor {
     ///
     /// The kernel exposes cumulative `runtime_active_time` and `runtime_suspended_time`
     /// in milliseconds.  By comparing two readings we can derive a duty-cycle percentage.
-    fn read_npu_utilization(accel_path: &Path) -> u8 {
+    /// NPU utilization from runtime-PM time deltas, or `None`.
+    ///
+    /// Two paths used to return `0`. The sysfs files being unreadable is not
+    /// an idle NPU; and the **first** call has no previous sample to difference
+    /// against, so it cannot know the utilization at all — it returned 0% for
+    /// every NPU on the first tick after startup, which is the same defect as
+    /// an intrusion baseline reporting "clean" on its first run.
+    fn read_npu_utilization(accel_path: &Path) -> Option<u8> {
         use std::collections::HashMap;
         use std::sync::Mutex;
 
@@ -351,16 +358,19 @@ impl LinuxSiliconMonitor {
                     map.insert(key, (active_ms, suspended_ms));
 
                     if let Some(pct) = (delta_active * 100).checked_div(delta_total) {
-                        return pct.min(100) as u8;
+                        return Some(pct.min(100) as u8);
                     }
+                    // `delta_total` was zero: no time passed between samples,
+                    // so there is no ratio to report yet.
                 } else {
-                    // First reading — store baseline, return 0
+                    // First reading — store the baseline. There is nothing to
+                    // difference against, so nothing is known yet.
                     map.insert(key, (active_ms, suspended_ms));
                 }
             }
         }
 
-        0
+        None
     }
 }
 
@@ -555,8 +565,11 @@ impl SiliconMonitor for LinuxSiliconMonitor {
                         npus.push(NpuInfo {
                             name: format!("Google TPU v{}", i),
                             vendor: "Google".to_string(),
-                            cores: Some(128), // Typical TPU core count
-                            utilization: 0,   // Would need TPU API
+                            // "Typical" is not this device's count, and the
+                            // utilization needs a TPU API neither of which is
+                            // read here.
+                            cores: None,
+                            utilization: None,
                             power_watts: None,
                             frequency_mhz: None,
                         });
@@ -571,7 +584,7 @@ impl SiliconMonitor for LinuxSiliconMonitor {
                 name: "Qualcomm Hexagon DSP".to_string(),
                 vendor: "Qualcomm".to_string(),
                 cores: None,
-                utilization: 0,
+                utilization: None,
                 power_watts: None,
                 frequency_mhz: None,
             });

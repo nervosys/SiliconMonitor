@@ -63,9 +63,46 @@ Since the tag, on `master` and green on all three platforms:
 | `916bf08` | A sentinel introduced by an earlier fix in this same session |
 | `49e40ef` | The same nominal-clock lie, in a second reader of the same API |
 | `eaf7e3f` | A fifth AdapterRAM reader, on the public API, still capped at 4GB |
+| `HEAD` | NPU core counts guessed from a vendor guessed from a name |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### Guesses admitted in comments, published as readings
+
+The `Win32_PnPEntity` row of the map above led to `silicon`'s NPU support, where
+every field that was not read carried a number anyway — and **each one had a
+comment admitting it**:
+
+```rust
+let cores = if vendor == "Intel" { Some(16) }   // Intel NPU ~16 compute units
+            else if vendor == "Qualcomm" { Some(8) } else { None };
+utilization: 0,                    // NPU utilization requires vendor-specific APIs
+cores: Some(16),                   // Most Apple Silicon has 16-core ANE
+cores: Some(128),                  // Typical TPU core count
+utilization: 0,                    // Would need TPU API
+```
+
+"~", "Most", "Typical", and two "would need an API we do not call". This is the
+handoff's own grep — *a comment admitting the code cannot determine something,
+sitting beside a returned value* — with five hits in one module.
+
+The core counts are worse than they look: they key off `vendor`, and `vendor` is
+itself a **substring match on the device name** when the manufacturer string is
+absent. A guess keyed off a guess. All are `None` now, and
+`NpuInfo::utilization` is `Option<u8>`.
+
+`read_npu_utilization` on Linux had two zero paths, and the second is the more
+interesting: unreadable sysfs returned `0`, and so did the **first** call, under
+`// First reading — store baseline, return 0`. It is a delta reader with no
+previous sample — it cannot know the utilization yet, and reported 0% for every
+NPU on the first tick after startup. **The same defect as an intrusion baseline
+reporting "clean" on its first run**, which was `2360068`, the commit this
+session opened with.
+
+`AcceleratorInfo::utilization` in the TUI went to `Option<f32>` with it, so the
+absence survives to the screen: a device with no utilization counter shows a
+dash rather than an idle-looking 0% gauge.
 
 ### The API map, and the fifth reader it found
 
