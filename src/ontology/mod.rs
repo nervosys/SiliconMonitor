@@ -1347,7 +1347,9 @@ impl Ontology {
             K::Measurement,
             None,
             P::Measured,
-            false,
+            // Nullable since 6.0.0. It is live on Linux only; Windows can rule
+            // streaming out but not attribute it, and macOS does not look.
+            true,
             "Whether the camera is streaming right now. The one genuinely live \
              field in this cluster, and the reason it is a measurement rather \
              than an identity.",

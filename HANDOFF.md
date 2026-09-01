@@ -85,9 +85,79 @@ Since the tag, on `master` and green on all three platforms:
 | `a053f16` | Measured boot reported off, on a host where it is on |
 | `e913250` | SIP read as Secure Boot, and advice from an unread flag |
 | `f1470d5` | Fifteen codecs, one frame rate: a constant with a derivation |
+| `HEAD` | An idle webcam reporting that it was streaming |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### An idle webcam reporting that it was streaming
+
+The second unrun technique from this file: **two snapshots six seconds apart,
+listing every `Measurement`-kind reading that did not move.** Most of what it
+returned is legitimately still on an idle host — SMART counters, power-on hours,
+two idle GPUs. One row was not:
+
+```
+board.camera.0.active = true
+board.camera.1.active = true
+```
+
+The entity, written before this session:
+
+> Whether the camera is streaming right now. **The one genuinely live field in
+> this cluster**, and the reason it is a measurement rather than an identity.
+
+It is live on exactly one of three platforms. Linux probes the device node.
+macOS sets the literal `true`. Windows used:
+
+```rust
+is_active: item["Status"].as_str() == Some("OK"),
+```
+
+`Win32_PnPEntity.Status` is Device-Manager health — **`"OK"` is what a working
+camera that is switched off reports**. So both webcams on this machine were
+published as streaming, continuously, and would have been on any Windows host
+with a functioning camera. For a privacy signal that is the wrong way round: the
+field exists to answer "is something watching me", and its answer was yes.
+
+**Windows does publish a real signal**, and it is readable without elevation:
+`CapabilityAccessManager\ConsentStore\webcam` records `LastUsedTimeStart` and
+`LastUsedTimeStop` per application, and a `LastUsedTimeStop` of zero means that
+application still has the device open.
+
+It is per-application, not per-device — so it is used **in one direction only**:
+
+```rust
+match (saw_a_key, any_open) {
+    (true, false) => Some(false),  // nothing has a camera open, so this one is not streaming
+    (true, true)  => None,         // something is, but not which device
+    (false, _)    => None,
+}
+```
+
+**The negative generalises to every device and the positive generalises to
+none.** That asymmetry is worth naming on its own: an aggregate signal can be
+sound evidence for one of its two answers and no evidence at all for the other,
+and a reader that publishes both is right half the time by construction. The
+same shape appeared in the measured-boot entry below — a log that evidences
+`Some(true)` and cannot evidence `Some(false)` — pointing the opposite way.
+
+This machine now reports what is true of it:
+
+```
+Lenovo 510 IR Camera  active=Some(false)
+Lenovo 510 RGB Camera active=Some(false)
+```
+
+**Not yet verified: the positive path.** Confirming `LastUsedTimeStop == 0`
+while an application streams means opening the user's webcam, which is not
+something to do unasked. The negative path is verified here; whoever next has a
+camera app open should check that `active` becomes `None` rather than `false`.
+
+Also worth noting what the technique cost: the two-snapshot diff produced about
+sixty rows and fifty-nine of them were fine. **A detector with a low hit rate is
+still worth running when the misses are cheap to dismiss and the hit is a webcam
+that says it is watching you.**
 
 ### Fifteen codecs, one frame rate: a constant with a derivation
 

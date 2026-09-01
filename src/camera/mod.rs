@@ -14,7 +14,8 @@
 //! let monitor = CameraMonitor::new().unwrap();
 //! for cam in monitor.cameras() {
 //!     println!("{} ({:?}) - {}",
-//!         cam.name, cam.connection, if cam.is_active { "active" } else { "idle" });
+//!         cam.name, cam.connection, match cam.is_active {
+//!             Some(true) => "streaming", Some(false) => "idle", None => "unknown" });
 //! }
 //! ```
 
@@ -84,7 +85,17 @@ pub struct CameraInfo {
     /// Device capabilities
     pub capabilities: Vec<CameraCapability>,
     /// Whether the camera is currently in use / streaming
-    pub is_active: bool,
+    /// Whether the camera is streaming right now.
+    ///
+    /// `None` where that could not be established, which is most of the time
+    /// and was not previously expressible. The ontology entity calls this "the
+    /// one genuinely live field in this cluster", and it was live on exactly
+    /// one of three platforms: Linux really does probe the device node, macOS
+    /// set the literal `true`, and Windows used
+    /// `Win32_PnPEntity.Status == "OK"` -- which is true of every working
+    /// camera that is switched off. An idle laptop reported its webcam as
+    /// streaming, which is the wrong way round for a privacy signal.
+    pub is_active: Option<bool>,
     /// Device index (e.g., 0 for /dev/video0)
     pub index: u32,
 }
@@ -238,7 +249,7 @@ impl CameraMonitor {
                 max_height: 0,
                 formats,
                 capabilities,
-                is_active: Self::is_device_busy(&format!("/dev/{}", dev_name)),
+                is_active: Some(Self::is_device_busy(&format!("/dev/{}", dev_name))),
                 index,
             });
         }
@@ -286,8 +297,73 @@ impl CameraMonitor {
         }
     }
 
+    /// Whether any application is holding a camera open, from the capability
+    /// access manager's consent store.
+    ///
+    /// Windows records a `LastUsedTimeStart` and `LastUsedTimeStop` per
+    /// application under `CapabilityAccessManager\ConsentStore\webcam`, and a
+    /// `LastUsedTimeStop` of zero means that application still has the device
+    /// open. It is readable without elevation.
+    ///
+    /// The signal is per-application, not per-device, so it is used in one
+    /// direction only: **if nothing at all is using a camera then no particular
+    /// camera is streaming**, which is sound for every device. The converse is
+    /// not -- one application streaming says nothing about which of several
+    /// cameras it opened -- so a positive resolves to `None` rather than being
+    /// spread across every camera on the machine.
+    #[cfg(target_os = "windows")]
+    fn camera_in_use_windows() -> Option<bool> {
+        use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
+        use winreg::RegKey;
+
+        const STORE: &str = concat!(
+            r"SOFTWARE\Microsoft\Windows\CurrentVersion",
+            r"\CapabilityAccessManager\ConsentStore\webcam"
+        );
+
+        let mut saw_a_key = false;
+        let mut any_open = false;
+
+        for root in [HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE] {
+            let Ok(store) = RegKey::predef(root).open_subkey(STORE) else {
+                continue;
+            };
+            // Packaged apps sit directly under the store; desktop programs sit
+            // one level down under `NonPackaged`.
+            let mut groups = vec![store];
+            if let Ok(np) = groups[0].open_subkey("NonPackaged") {
+                groups.push(np);
+            }
+            for group in &groups {
+                for name in group.enum_keys().flatten() {
+                    let Ok(app) = group.open_subkey(&name) else {
+                        continue;
+                    };
+                    let Ok(stop) = app.get_value::<u64, _>("LastUsedTimeStop") else {
+                        continue;
+                    };
+                    saw_a_key = true;
+                    if stop == 0 {
+                        any_open = true;
+                    }
+                }
+            }
+        }
+
+        match (saw_a_key, any_open) {
+            // Nothing has the device open, so nothing is streaming.
+            (true, false) => Some(false),
+            // Something is, but the store does not say which camera.
+            (true, true) => None,
+            // No consent store, or nothing has ever used a camera: no reading.
+            (false, _) => None,
+        }
+    }
+
     #[cfg(target_os = "windows")]
     fn refresh_windows(&mut self) -> Result<(), SimonError> {
+        let in_use = Self::camera_in_use_windows();
+
         let json = crate::core::command::capture_json(
             "powershell",
             &["-NoProfile", "-Command",
@@ -334,7 +410,9 @@ impl CameraMonitor {
                 max_height: 0,
                 formats: Vec::new(),
                 capabilities: vec![CameraCapability::VideoCapture],
-                is_active: item["Status"].as_str() == Some("OK"),
+                // See `camera_in_use_windows`: the negative is attributable
+                // to every camera, the positive is not attributable to any.
+                is_active: in_use,
                 index: i as u32,
             });
         }
@@ -377,7 +455,7 @@ impl CameraMonitor {
                             CameraCapability::VideoCapture,
                             CameraCapability::Autofocus,
                         ],
-                        is_active: true,
+                        is_active: None,
                         index,
                     });
                     index += 1;
@@ -403,7 +481,7 @@ impl CameraMonitor {
                 max_height: 0,
                 formats: Vec::new(),
                 capabilities: vec![CameraCapability::VideoCapture],
-                is_active: true,
+                is_active: None,
                 index,
             });
         }
@@ -460,7 +538,7 @@ mod tests {
             max_height: 1080,
             formats: Vec::new(),
             capabilities: Vec::new(),
-            is_active: false,
+            is_active: Some(false),
             index: 0,
         };
         assert_eq!(cam.resolution(), "1920x1080");
@@ -479,7 +557,7 @@ mod tests {
             max_height: 1080,
             formats: vec!["YUYV".into(), "MJPG".into()],
             capabilities: vec![CameraCapability::VideoCapture],
-            is_active: false,
+            is_active: Some(false),
             index: 0,
         };
         let json = serde_json::to_string(&cam).unwrap();

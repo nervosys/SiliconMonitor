@@ -2760,11 +2760,17 @@ fn resolve_cameras(out: &mut Vec<Reading>) {
             Some(Unit::Count),
             "this camera reports no supported mode list",
         );
-        out.push(Reading::measured(
+        push_opt(
+            out,
             format!("{base}.active"),
-            serde_json::json!(c.is_active),
+            c.is_active.map(|a| serde_json::json!(a)),
             None,
-        ));
+            concat!(
+                "whether this camera is streaming was not established: only ",
+                "Linux probes the device node, and the Windows consent store ",
+                "attributes use to an application rather than to a device"
+            ),
+        );
     }
 }
 
