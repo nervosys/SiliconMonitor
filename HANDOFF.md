@@ -89,7 +89,7 @@ Since the tag, on `master` and green on all three platforms:
 | `7fde63e` | A green gate that could not see the defect it shipped |
 | `0106d6c` | The same field, right on two platforms and invented on the third |
 | `bde8726` | Sockets counted as NUMA nodes, memory divided evenly between them |
-| `HEAD` | A field derived from the one thing it exists not to be derived from |
+| `3606758` | A field derived from the one thing it exists not to be derived from |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
