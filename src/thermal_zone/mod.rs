@@ -79,16 +79,16 @@ pub struct TripPoint {
     pub index: u32,
     /// Trip type.
     pub trip_type: TripPointType,
-    /// Temperature in millidegrees Celsius.
-    pub temp_mc: i64,
-    /// Hysteresis in millidegrees Celsius.
-    pub hysteresis_mc: i64,
+    /// Trip temperature in millidegrees Celsius, where it was read.
+    pub temp_mc: Option<i64>,
+    /// Hysteresis in millidegrees Celsius, where it was read.
+    pub hysteresis_mc: Option<i64>,
 }
 
 impl TripPoint {
-    /// Temperature in degrees Celsius.
-    pub fn temp_c(&self) -> f64 {
-        self.temp_mc as f64 / 1000.0
+    /// Temperature in degrees Celsius, where it was read.
+    pub fn temp_c(&self) -> Option<f64> {
+        self.temp_mc.map(|mc| mc as f64 / 1000.0)
     }
 }
 
@@ -125,8 +125,14 @@ pub struct ThermalZoneInfo {
     pub zone_type: ThermalZoneType,
     /// Raw type string.
     pub type_string: String,
-    /// Current temperature in millidegrees Celsius.
-    pub temp_mc: i64,
+    /// Current temperature in millidegrees Celsius, or `None` where the
+    /// zone's `temp` file could not be read.
+    ///
+    /// This was `i64` with `unwrap_or(0)`, so an unreadable zone reported
+    /// **0 °C** — and `is_throttling` then compared `0 >= passive_trip` and
+    /// answered `false`. An unread thermal zone said it was cold and not
+    /// throttling, which is the reassuring direction.
+    pub temp_mc: Option<i64>,
     /// Thermal policy/governor (e.g. "step_wise", "user_space").
     pub policy: String,
     /// Available policies.
@@ -140,26 +146,36 @@ pub struct ThermalZoneInfo {
 }
 
 impl ThermalZoneInfo {
-    /// Temperature in degrees Celsius.
-    pub fn temp_c(&self) -> f64 {
-        self.temp_mc as f64 / 1000.0
+    /// Temperature in degrees Celsius, where it was read.
+    pub fn temp_c(&self) -> Option<f64> {
+        self.temp_mc.map(|mc| mc as f64 / 1000.0)
     }
 
-    /// Distance to critical trip point in degrees.
+    /// Distance to the critical trip point in degrees, where both are known.
     pub fn headroom_to_critical_c(&self) -> Option<f64> {
+        let here = self.temp_c()?;
         self.trip_points
             .iter()
             .filter(|tp| tp.trip_type == TripPointType::Critical)
-            .map(|tp| tp.temp_c() - self.temp_c())
-            .next()
+            .find_map(|tp| tp.temp_c())
+            .map(|critical| critical - here)
     }
 
-    /// Is temperature above passive trip?
-    pub fn is_throttling(&self) -> bool {
-        self.trip_points
+    /// Whether the temperature is above a passive trip point, or `None` when
+    /// the zone's temperature is not known.
+    ///
+    /// This returned `bool`, and an unread zone (`temp_mc` defaulting to 0)
+    /// compared `0 >= passive_trip` and answered "not throttling".
+    pub fn is_throttling(&self) -> Option<bool> {
+        let here = self.temp_mc?;
+        let passive: Vec<i64> = self
+            .trip_points
             .iter()
             .filter(|tp| tp.trip_type == TripPointType::Passive)
-            .any(|tp| self.temp_mc >= tp.temp_mc)
+            .filter_map(|tp| tp.temp_mc)
+            .collect();
+        // No passive trip point read is not the same as being below one.
+        (!passive.is_empty()).then(|| passive.iter().any(|t| here >= *t))
     }
 }
 
@@ -172,10 +188,13 @@ pub struct ThermalZoneOverview {
     pub cooling_devices: Vec<CoolingDeviceInfo>,
     /// Total zone count.
     pub zone_count: u32,
-    /// Hottest zone name.
+    /// Hottest zone name, empty when no zone reported a temperature.
     pub hottest_zone: String,
-    /// Hottest temperature in C.
-    pub hottest_temp_c: f64,
+    /// Hottest temperature in C, or `None` when no zone reported one.
+    ///
+    /// `unwrap_or_default()` made this 0.0 with no zones readable, which reads
+    /// as a machine at freezing rather than one nothing was read from.
+    pub hottest_temp_c: Option<f64>,
     /// Number of zones in passive/throttle state.
     pub throttling_count: u32,
     /// Recommendations.
@@ -215,9 +234,17 @@ impl ThermalZoneMonitor {
         &self.overview.cooling_devices
     }
 
-    /// Get hottest zone.
+    /// Get the hottest zone among those with a temperature reading.
+    ///
+    /// `max_by_key` over `Option` ranks `None` below every `Some`, which is
+    /// harmless for a maximum but would silently return an unread zone when
+    /// none has a reading. Filtered explicitly instead.
     pub fn hottest(&self) -> Option<&ThermalZoneInfo> {
-        self.overview.zones.iter().max_by_key(|z| z.temp_mc)
+        self.overview
+            .zones
+            .iter()
+            .filter(|z| z.temp_mc.is_some())
+            .max_by_key(|z| z.temp_mc)
     }
 
     /// Get zones that are throttling.
@@ -225,7 +252,7 @@ impl ThermalZoneMonitor {
         self.overview
             .zones
             .iter()
-            .filter(|z| z.is_throttling())
+            .filter(|z| z.is_throttling() == Some(true))
             .collect()
     }
 
@@ -261,13 +288,19 @@ impl ThermalZoneMonitor {
         cooling.sort_by(|a, b| a.name.cmp(&b.name));
 
         let zone_count = zones.len() as u32;
-        let throttling = zones.iter().filter(|z| z.is_throttling()).count() as u32;
+        // Only zones known to be throttling. A zone whose temperature was not
+        // read is not counted either way.
+        let throttling = zones
+            .iter()
+            .filter(|z| z.is_throttling() == Some(true))
+            .count() as u32;
 
         let (hottest_zone, hottest_temp) = zones
             .iter()
+            .filter(|z| z.temp_mc.is_some())
             .max_by_key(|z| z.temp_mc)
             .map(|z| (z.name.clone(), z.temp_c()))
-            .unwrap_or_default();
+            .unwrap_or((String::new(), None));
 
         let mut recs = Vec::new();
         if throttling > 0 {
@@ -318,7 +351,9 @@ impl ThermalZoneMonitor {
             _ => ThermalZoneType::Other("unknown".to_string()),
         };
 
-        let temp_mc = Self::read_sysfs_i64(&path.join("temp")).unwrap_or(0);
+        // A zone whose `temp` file cannot be read has no temperature, not a
+        // temperature of zero.
+        let temp_mc = Self::read_sysfs_i64(&path.join("temp"));
 
         let policy = Self::read_sysfs(&path.join("policy")).unwrap_or_default();
         let available_policies = Self::read_sysfs(&path.join("available_policies"))
@@ -338,7 +373,7 @@ impl ThermalZoneMonitor {
                 break;
             }
 
-            let tp_temp = Self::read_sysfs_i64(&tp_temp_path).unwrap_or(0);
+            let tp_temp = Self::read_sysfs_i64(&tp_temp_path);
             let tp_type_str = Self::read_sysfs(&tp_type_path).unwrap_or_default();
             let tp_type = match tp_type_str.as_str() {
                 "active" => TripPointType::Active,
@@ -348,8 +383,7 @@ impl ThermalZoneMonitor {
                 _ => continue,
             };
 
-            let hyst =
-                Self::read_sysfs_i64(&path.join(format!("trip_point_{}_hyst", i))).unwrap_or(0);
+            let hyst = Self::read_sysfs_i64(&path.join(format!("trip_point_{}_hyst", i)));
 
             trip_points.push(TripPoint {
                 index: i,
@@ -430,7 +464,7 @@ impl ThermalZoneMonitor {
             cooling_devices: Vec::new(),
             zone_count: 0,
             hottest_zone: String::new(),
-            hottest_temp_c: 0.0,
+            hottest_temp_c: None,
             throttling_count: 0,
             recommendations: Vec::new(),
         }
@@ -461,10 +495,19 @@ mod tests {
         let tp = TripPoint {
             index: 0,
             trip_type: TripPointType::Critical,
-            temp_mc: 105000,
-            hysteresis_mc: 0,
+            temp_mc: Some(105_000),
+            hysteresis_mc: Some(0),
         };
-        assert!((tp.temp_c() - 105.0).abs() < 0.01);
+        assert!((tp.temp_c().expect("a read trip point") - 105.0).abs() < 0.01);
+
+        // A trip point whose file could not be read has no temperature.
+        let unread = TripPoint {
+            index: 1,
+            trip_type: TripPointType::Critical,
+            temp_mc: None,
+            hysteresis_mc: None,
+        };
+        assert_eq!(unread.temp_c(), None);
     }
 
     #[test]
@@ -473,28 +516,69 @@ mod tests {
             name: "thermal_zone0".into(),
             zone_type: ThermalZoneType::X86Pkg,
             type_string: "x86_pkg_temp".into(),
-            temp_mc: 95000,
+            temp_mc: Some(95_000),
             policy: "step_wise".into(),
             available_policies: vec!["step_wise".into()],
             trip_points: vec![
                 TripPoint {
                     index: 0,
                     trip_type: TripPointType::Passive,
-                    temp_mc: 90000,
-                    hysteresis_mc: 2000,
+                    temp_mc: Some(90_000),
+                    hysteresis_mc: Some(2_000),
                 },
                 TripPoint {
                     index: 1,
                     trip_type: TripPointType::Critical,
-                    temp_mc: 105000,
-                    hysteresis_mc: 0,
+                    temp_mc: Some(105_000),
+                    hysteresis_mc: Some(0),
                 },
             ],
             enabled: true,
             passive_active: true,
         };
-        assert!(zone.is_throttling());
+        assert_eq!(zone.is_throttling(), Some(true));
         assert!((zone.headroom_to_critical_c().unwrap() - 10.0).abs() < 0.01);
+    }
+
+    /// A zone whose temperature was not read is not a zone that is cool.
+    ///
+    /// `temp_mc` was `i64` with `unwrap_or(0)`, so an unreadable zone held 0
+    /// and `is_throttling` compared `0 >= passive_trip` — answering "not
+    /// throttling" about a zone nothing had measured, which is the reassuring
+    /// direction.
+    #[test]
+    fn an_unread_zone_does_not_report_that_it_is_not_throttling() {
+        let zone = ThermalZoneInfo {
+            name: "thermal_zone0".into(),
+            zone_type: ThermalZoneType::X86Pkg,
+            type_string: "x86_pkg_temp".into(),
+            temp_mc: None,
+            policy: "step_wise".into(),
+            available_policies: vec!["step_wise".into()],
+            trip_points: vec![TripPoint {
+                index: 0,
+                trip_type: TripPointType::Passive,
+                temp_mc: Some(90_000),
+                hysteresis_mc: Some(2_000),
+            }],
+            enabled: true,
+            passive_active: false,
+        };
+
+        assert_eq!(
+            zone.is_throttling(),
+            None,
+            concat!(
+                "with no temperature there is no answer, and `false` is ",
+                "the answer that gets acted on"
+            )
+        );
+        assert_eq!(zone.temp_c(), None);
+        assert_eq!(
+            zone.headroom_to_critical_c(),
+            None,
+            "headroom from an unknown temperature is unknown"
+        );
     }
 
     #[test]
@@ -520,7 +604,7 @@ mod tests {
             name: "thermal_zone0".into(),
             zone_type: ThermalZoneType::Acpi,
             type_string: "acpitz".into(),
-            temp_mc: 45000,
+            temp_mc: Some(45_000),
             policy: "step_wise".into(),
             available_policies: Vec::new(),
             trip_points: Vec::new(),

@@ -72,9 +72,44 @@ Since the tag, on `master` and green on all three platforms:
 | `ad8dfff` | A CPUID family of 0, and a name still carrying its WMI padding |
 | `3935301` | `is_turbo` closed, and the guess above its known defect |
 | `dd2f56a` | Secure Boot read from a file's existence, not its value |
+| `HEAD` | An unread thermal zone reported 0 C and "not throttling" |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### An unread thermal zone is not a cool one
+
+Fifth module off the callerless list, and the same shape as the security one:
+the reassuring answer is the one a zero produces.
+
+`ThermalZoneInfo::temp_mc` was `i64`, filled with
+`read_sysfs_i64(zone/temp).unwrap_or(0)` — so a zone whose `temp` file could not
+be read held **0 millidegrees**. Then:
+
+```rust
+pub fn is_throttling(&self) -> bool {
+    self.trip_points.iter()
+        .filter(|tp| tp.trip_type == TripPointType::Passive)
+        .any(|tp| self.temp_mc >= tp.temp_mc)
+}
+```
+
+`0 >= passive_trip` is false, so **an unmeasured zone reported that it was not
+throttling**. The trip points had the same defect from the other direction:
+their temperatures also defaulted to 0, and a trip point at 0 makes every zone
+look tripped.
+
+`temp_mc` is `Option<i64>` and `is_throttling` is `Option<bool>` — with no
+temperature there is no answer, and `false` is the answer that gets acted on.
+`hottest_temp_c` is `Option<f64>` too: `unwrap_or_default()` reported a machine
+with no readable zones as sitting at 0 °C rather than as unmeasured.
+
+**Three modules in a row now where the fabricated value was the comforting
+one** — no unmitigated vulnerabilities, Secure Boot enabled, nothing throttling.
+That is not a coincidence about this crate: a sentinel is usually zero or
+`false`, and for a *risk* reading, zero and false both mean "fine". Anywhere
+`unwrap_or(0)` feeds a comparison against a threshold, the default silently
+answers "under the threshold".
 
 ### Secure Boot from a file's existence, and hardening nobody checked
 
