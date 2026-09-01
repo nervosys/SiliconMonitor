@@ -110,23 +110,33 @@ impl NumaMonitor {
         Ok(monitor)
     }
 
+    /// Re-read the NUMA topology.
+    ///
+    /// Returns `Err` when the read failed. It used to end with
+    ///
+    /// ```ignore
+    /// if self.nodes.is_empty() { self.create_uma_fallback(); }
+    /// ```
+    ///
+    /// which pushed a node 0 with zeroed memory and a distance matrix of
+    /// `[10]` -- the SLIT convention for "local" -- whenever nothing had been
+    /// read. A machine whose topology could not be determined was therefore
+    /// published as a single-node UMA machine with a fabricated distance
+    /// matrix, and `memory.numa.is_numa` said `false` as a measurement. Each
+    /// platform now builds its own single-node case where that is a reading,
+    /// and reports a failure where it is not.
     pub fn refresh(&mut self) -> Result<(), SimonError> {
         self.nodes.clear();
         self.distance_matrix = None;
 
         #[cfg(target_os = "linux")]
-        self.refresh_linux();
+        self.refresh_linux()?;
 
         #[cfg(target_os = "windows")]
-        self.refresh_windows();
+        self.refresh_windows()?;
 
         #[cfg(target_os = "macos")]
-        self.refresh_macos();
-
-        // If no nodes detected, create a single UMA node
-        if self.nodes.is_empty() {
-            self.create_uma_fallback();
-        }
+        self.refresh_macos()?;
 
         Ok(())
     }
@@ -214,10 +224,13 @@ impl NumaMonitor {
     }
 
     #[cfg(target_os = "linux")]
-    fn refresh_linux(&mut self) {
+    fn refresh_linux(&mut self) -> Result<(), SimonError> {
         let node_base = std::path::Path::new("/sys/devices/system/node");
         if !node_base.exists() {
-            return;
+            // A kernel built without NUMA exposes no node directory, and that
+            // is a reading: one node, all of it local.
+            self.single_node_fallback();
+            return Ok(());
         }
 
         let mut node_ids: Vec<u32> = Vec::new();
@@ -313,6 +326,7 @@ impl NumaMonitor {
                 }
             }
         }
+        Ok(())
     }
 
     #[cfg(target_os = "linux")]
@@ -354,58 +368,75 @@ impl NumaMonitor {
     }
 
     #[cfg(target_os = "windows")]
-    fn refresh_windows(&mut self) {
-        // Query processor NUMA info via PowerShell
-        if let Ok(output) = std::process::Command::new("powershell")
-            .args(["-NoProfile", "-Command",
-                "[string]::Join('|', (Get-CimInstance Win32_Processor | ForEach-Object { $_.NumberOfLogicalProcessors }))"])
-            .output()
-        {
-            let text = String::from_utf8(output.stdout).unwrap_or_default();
-            // Create one node per physical processor (socket)
-            let mut cpu_offset = 0u32;
-            for (i, count_str) in text.trim().split('|').enumerate() {
-                if let Ok(count) = count_str.trim().parse::<u32>() {
-                    let cpus: Vec<u32> = (cpu_offset..cpu_offset + count).collect();
-                    cpu_offset += count;
+    fn refresh_windows(&mut self) -> Result<(), SimonError> {
+        use windows::Win32::System::Threading::{
+            GetNumaAvailableMemoryNodeEx, GetNumaHighestNodeNumber,
+        };
 
-                    self.nodes.push(NumaNode {
-                        id: i as u32,
-                        cpus,
-                        memory_total_bytes: 0,
-                        memory_free_bytes: 0,
-                        memory_used_bytes: 0,
-                        hugepages_total: 0,
-                        hugepages_free: 0,
-                        pci_devices: Vec::new(),
-                    });
-                }
-            }
-        }
+        // The node count used to be inferred from `Win32_Processor`: one node
+        // per socket. Sockets are not nodes -- a single AMD socket presents one
+        // to four depending on the firmware's NPS setting -- and the kernel
+        // answers the actual question directly.
+        let mut highest: u32 = 0;
+        unsafe { GetNumaHighestNodeNumber(&mut highest) }
+            .map_err(|e| SimonError::System(format!("GetNumaHighestNodeNumber failed: {e}")))?;
+        let node_count = highest as u64 + 1;
 
-        // Get memory per node (approximation: divide total evenly)
-        if !self.nodes.is_empty() {
-            if let Ok(output) = std::process::Command::new("powershell")
-                .args([
-                    "-NoProfile",
-                    "-Command",
-                    "(Get-CimInstance Win32_OperatingSystem).TotalVisibleMemorySize",
-                ])
-                .output()
+        // Total physical memory, for the one case where attributing it to a
+        // node is sound.
+        // `MemoryStats::ram.total` is in KB; this field is bytes.
+        let total_bytes = crate::platform::windows::read_memory_stats()
+            .ok()
+            .map(|m| m.ram.total.saturating_mul(1024));
+
+        // Logical processors, likewise.
+        let logical = std::thread::available_parallelism()
+            .map(|p| p.get() as u32)
+            .unwrap_or(0);
+
+        for id in 0..=highest {
+            // `GetNumaAvailableMemoryNodeEx` reports *available* bytes, which is
+            // a real per-node reading on every machine. There is no matching
+            // call for a node's installed total, and dividing the system total
+            // by the node count -- which is what this reader used to do, under
+            // a comment reading "approximation: divide total evenly" -- is an
+            // invention on any machine with more than one node. On a machine
+            // with exactly one node it is not an approximation at all: all the
+            // memory is attached to the only node there is.
+            let mut available: u64 = 0;
+            let free = if unsafe { GetNumaAvailableMemoryNodeEx(id as u16, &mut available) }.is_ok()
             {
-                let text = String::from_utf8(output.stdout).unwrap_or_default();
-                if let Ok(total_kb) = text.trim().parse::<u64>() {
-                    let per_node = (total_kb * 1024) / self.nodes.len() as u64;
-                    for node in &mut self.nodes {
-                        node.memory_total_bytes = per_node;
-                    }
-                }
-            }
+                available
+            } else {
+                0
+            };
+
+            let (memory_total_bytes, cpus) = if node_count == 1 {
+                (total_bytes.unwrap_or(0), (0..logical).collect::<Vec<u32>>())
+            } else {
+                // Which processors belong to which node needs
+                // `GetLogicalProcessorInformationEx(RelationNumaNode)`, which
+                // this reader does not call yet.
+                (0, Vec::new())
+            };
+
+            self.nodes.push(NumaNode {
+                id,
+                cpus,
+                memory_total_bytes,
+                memory_free_bytes: free,
+                memory_used_bytes: memory_total_bytes.saturating_sub(free),
+                hugepages_total: 0,
+                hugepages_free: 0,
+                pci_devices: Vec::new(),
+            });
         }
+
+        Ok(())
     }
 
     #[cfg(target_os = "macos")]
-    fn refresh_macos(&mut self) {
+    fn refresh_macos(&mut self) -> Result<(), SimonError> {
         // macOS is UMA, create a single node
         let mut total_mem = 0u64;
         let mut total_cpus = 0u32;
@@ -440,15 +471,26 @@ impl NumaMonitor {
             id: 0,
             cpus: (0..total_cpus).collect(),
             memory_total_bytes: total_mem,
+            // Neither is read. `memory_used_bytes` was `total_mem`, which says
+            // every byte on the machine is in use.
             memory_free_bytes: 0,
-            memory_used_bytes: total_mem,
+            memory_used_bytes: 0,
             hugepages_total: 0,
             hugepages_free: 0,
             pci_devices: Vec::new(),
         });
+        Ok(())
     }
 
-    fn create_uma_fallback(&mut self) {
+    /// The one-node case, for a platform that has established there is one.
+    ///
+    /// This was `create_uma_fallback` and ran after *any* platform reader that
+    /// produced nothing, including one that failed. It is now called only from
+    /// the branch that has actually determined the machine has no NUMA
+    /// partitioning, so the distance matrix of `[10]` below describes a
+    /// topology someone looked at.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    fn single_node_fallback(&mut self) {
         // Try to get basic CPU/memory info
         self.nodes.push(NumaNode {
             id: 0,

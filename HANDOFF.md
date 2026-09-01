@@ -88,9 +88,72 @@ Since the tag, on `master` and green on all three platforms:
 | `599e8ff` | An idle webcam reporting that it was streaming |
 | `7fde63e` | A green gate that could not see the defect it shipped |
 | `0106d6c` | The same field, right on two platforms and invented on the third |
+| `HEAD` | Sockets counted as NUMA nodes, memory divided evenly between them |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### Sockets counted as NUMA nodes, memory divided evenly between them
+
+`numa` was next on the swallow list and turned out to have three separate
+inventions stacked in it.
+
+**Sockets are not nodes.** The Windows reader built one node per entry in
+`Win32_Processor` — one per socket. A single AMD socket presents one to four
+NUMA nodes depending on the firmware's NPS setting, and a two-socket Xeon with
+sub-NUMA clustering presents four. The kernel answers the actual question in one
+call, `GetNumaHighestNodeNumber`, which needs no elevation and no subprocess.
+
+**Memory divided evenly.** Under a comment reading `// Get memory per node
+(approximation: divide total evenly)`, each node got `TotalVisibleMemorySize /
+node_count` stored in `memory_total_bytes` and published as
+`memory.numa.{n}.memory`, declared **`Measured`** and described as "memory
+attached to this NUMA node". Which memory is attached to which node is the whole
+point of the field — an even split is not an approximation of it, it is the
+assumption the field exists to refute.
+
+But the division is sound in exactly one case, and it is worth stating why:
+**if there is one node, all the memory is attached to it.** Not an
+approximation — an identity. So the reader now fills `memory_total_bytes` when
+`node_count == 1` and leaves it unknown otherwise. This is the third time this
+session that an aggregate has been sound evidence for one case and none for the
+rest; the webcam entry below is the same shape.
+
+`GetNumaAvailableMemoryNodeEx` *does* give a real per-node figure, and it is
+free memory rather than installed. The reader now reports it — **a reading that
+did not exist before**, on every machine, however many nodes.
+
+**And the fallback.** `refresh()` ended with:
+
+```rust
+if self.nodes.is_empty() { self.create_uma_fallback(); }
+```
+
+pushing a node 0 with zeroed memory and a distance matrix of `[10]` — the SLIT
+convention for "local". A machine whose topology could not be read was published
+as single-node UMA with a fabricated distance matrix, and `memory.numa.is_numa`
+answered `false` as a **measurement**. It now runs only from the Linux branch
+that has established there is no node directory, where one node really is the
+answer; every other failure propagates.
+
+macOS was asserting `memory_used_bytes: total_mem` — every byte on the machine
+in use.
+
+After, on this host:
+
+```
+nodes=1 is_numa=false
+  node 0 cpus=24 total=100547727360 free=60627513344 used=39920214016
+```
+
+**One thing worth keeping about the process.** The first run of that printed
+`total=98191140` — 98 MB on a 93 GB machine. `MemoryStats::ram.total` is in KB
+and I had read it as bytes. Nothing in the type system objected, both are `u64`,
+and the value would have been published as `memory.numa.0.memory` in bytes with
+`Measured` provenance. **It was caught by looking at the number**, which is the
+same check this whole session has been applying to other people's code and is
+worth applying to one's own within the same hour. A plausibility test would not
+have caught it either: 98 MB is a perfectly plausible quantity of memory.
 
 ### The same field, right on two platforms and invented on the third
 
@@ -2571,11 +2634,11 @@ feature stayed broken through eight published versions.
 
 ## Open work
 
-1. **Nine enumerators still swallow their failures.** `camera`, `sensors`,
-   `usb`, `input`, `tpm` and `storage_controller` are converted; `codec` was
-   examined and does not have the defect. Left: `audio`, `bluetooth`,
-   `cpu_cache`, `display`, `firmware`, `numa`, `os_info`, `power_profile`,
-   `printer`, `smart`. Each has a `refresh_<os>` returning `()` into a `refresh()` returning
+1. **Eight enumerators still swallow their failures.** `camera`, `sensors`,
+   `usb`, `input`, `tpm`, `storage_controller` and `numa` are converted; `codec`
+   was examined and does not have the defect. Left: `audio`, `bluetooth`,
+   `cpu_cache`, `display`, `firmware`, `os_info`, `power_profile`, `printer`,
+   `smart`. Each has a `refresh_<os>` returning `()` into a `refresh()` returning
    `Result`, so each can report a machine as empty when the reader merely
    failed. Convert with `capture_json` / `capture`, one or two modules per
    commit, and run the module against this host afterwards — `sensors` only gave
