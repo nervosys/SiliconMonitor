@@ -68,7 +68,7 @@ Since the tag, on `master` and green on all three platforms:
 | `8f8680a` | One system-wide number, copied into 24 cores as though each were measured |
 | `b16feec` | A link's capacity published as the traffic on it |
 | `1c018b8` | A typical NVLink count reported as this board's |
-| `HEAD` | Every AMD CPU classified as Intel, by the word in "12-Core" |
+| `a015d58` | Every AMD CPU classified as Intel, by the word in "12-Core" |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
