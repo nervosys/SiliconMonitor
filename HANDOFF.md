@@ -84,7 +84,7 @@ Since the tag, on `master` and green on all three platforms:
 | `3485fbb` | "This machine has no TPM", published as a measurement |
 | `a053f16` | Measured boot reported off, on a host where it is on |
 | `e913250` | SIP read as Secure Boot, and advice from an unread flag |
-| `HEAD` | Fifteen codecs, one frame rate: a constant with a derivation |
+| `f1470d5` | Fifteen codecs, one frame rate: a constant with a derivation |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
