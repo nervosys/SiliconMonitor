@@ -429,7 +429,8 @@ impl DiskDevice for WindowsDisk {
                 return Ok(SmartInfo {
                     // The critical warning field is the drive's own verdict: any
                     // bit set means it is reporting a condition against itself.
-                    passed: health.critical_warning == 0,
+                    // The NVMe log page is the controller grading itself.
+                    passed: Some(health.critical_warning == 0),
                     attributes: Vec::new(),
                     temperature: health.temperature_celsius(),
                     power_on_hours: Some(health.power_on_hours.min(u64::MAX as u128) as u64),
@@ -454,7 +455,8 @@ impl DiskDevice for WindowsDisk {
                 return Ok(SmartInfo {
                     // The drive's own prediction, not a verdict computed from the
                     // attributes below.
-                    passed: !ata.predict_failure,
+                    // The ATA failure prediction is the drive grading itself.
+                    passed: Some(!ata.predict_failure),
                     attributes: smart
                         .attributes
                         .iter()
@@ -494,10 +496,13 @@ impl DiskDevice for WindowsDisk {
         // `passed` reflects the platform's own health verdict, which *is*
         // available without elevation.
         Ok(SmartInfo {
-            passed: !matches!(
-                disk.health,
-                crate::smart::DiskHealth::Critical | crate::smart::DiskHealth::Failed
-            ),
+            // Not read on this path. Neither the NVMe log page nor the ATA
+            // prediction was reachable, and what is left is Windows'
+            // `HealthStatus` -- the storage stack's opinion, not the drive's
+            // verdict, and `smart::DiskHealth` is partly a score computed here
+            // from the counters. `disk.{n}.health` publishes that verdict
+            // separately and honestly; this field is for the drive's own.
+            passed: None,
             attributes: disk
                 .attributes
                 .iter()

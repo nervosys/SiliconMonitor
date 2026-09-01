@@ -146,8 +146,23 @@ impl DiskIoStats {
 /// SMART Information
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SmartInfo {
-    /// Overall SMART health status
-    pub passed: bool,
+    /// The drive's own pass/fail verdict on itself.
+    ///
+    /// `None` where the drive was not asked or did not answer. This was a
+    /// `bool` computed as `!matches!(health, Critical | Failed)`, and
+    /// `DiskHealth::Unknown` — documented "health could not be determined" —
+    /// is neither of those, so **a drive that reported nothing passed**. On
+    /// this machine a USB mass-storage gadget, which has no SMART at all and
+    /// whose every SMART counter resolves absent, published
+    /// `disk.0.smart.passed = true` as a measurement.
+    ///
+    /// Worse, `smart::DiskHealth` is partly a score this crate computes from
+    /// the counters, and the entity for this field says in as many words:
+    /// "the drive's own pass/fail verdict on itself — NVMe critical warning
+    /// bits, or the ATA failure prediction. **Not a judgement computed from
+    /// the counters below.**" So the value was the one thing it documents
+    /// itself not to be.
+    pub passed: Option<bool>,
     /// Individual SMART attributes
     pub attributes: Vec<SmartAttribute>,
     /// Temperature from SMART (Celsius)

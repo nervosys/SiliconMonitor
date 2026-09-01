@@ -238,10 +238,12 @@ impl DiskDevice for LinuxDisk {
         };
 
         Ok(SmartInfo {
-            passed: !matches!(
-                disk.health,
-                crate::smart::DiskHealth::Critical | crate::smart::DiskHealth::Failed
-            ),
+            // Not read. `smartctl -H` prints the drive's own "SMART
+            // overall-health self-assessment test result", and the NVMe log
+            // page has the critical warning byte, but `SmartDiskInfo` captures
+            // neither -- its `health` is partly a score computed from the
+            // counters, which is what this field documents itself not to be.
+            passed: None,
             attributes: disk
                 .attributes
                 .iter()

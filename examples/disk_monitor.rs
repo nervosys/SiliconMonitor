@@ -154,7 +154,13 @@ fn print_disk_info(disk: &dyn disk::DiskDevice) -> Result<(), Box<dyn std::error
     // SMART Info
     if let Ok(smart) = disk.smart_info() {
         println!("[SCAN] SMART Information:");
-        println!("  Health Passed:  {}", smart.passed);
+        // The drive's own verdict, or nothing. "false" would read as a
+        // failing drive, which is not what an unobtainable verdict means.
+        match smart.passed {
+            Some(true) => println!("  Health Passed:  yes"),
+            Some(false) => println!("  Health Passed:  NO"),
+            None => println!("  Health Passed:  the drive did not give a verdict"),
+        }
         if let Some(temp) = smart.temperature {
             println!("  Temperature:    {:.1}°C", temp);
         }

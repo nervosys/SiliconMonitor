@@ -97,9 +97,75 @@ Since the tag, on `master` and green on all three platforms:
 | `6f289bd` | Three displays where one exists, two of them graphics cards |
 | `4b004c7` | Twelve audio endpoints where four exist, two facing backwards |
 | `4410ea6` | Every NVMe device counted twice, once as its own controller |
+| `HEAD` | A USB stick with no SMART, passing its SMART check |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### A USB stick with no SMART, passing its SMART check
+
+Looked at because `disk.{n}.smart.passed` was a uniform family — four disks, all
+`true` — and four healthy disks passing is the ordinary case. It was not that.
+
+```
+disk.0.model                       = "Linux File-Stor Gadget USB Device"
+disk.0.smart.passed                = true      [Measured]
+disk.0.smart.power_on_hours        = absent
+disk.0.smart.power_cycles          = absent
+disk.0.smart.reallocated_sectors   = absent
+disk.0.smart.pending_sectors       = absent
+disk.0.smart.uncorrectable_sectors = absent
+```
+
+**Every SMART counter absent, and the SMART verdict present and positive.** A
+USB mass-storage gadget has no SMART at all. The row is self-refuting and it
+took no hardware knowledge to see: *a verdict with no evidence under it.*
+
+The entity is unusually precise about what the field is:
+
+> The drive's own pass/fail verdict on itself — NVMe critical warning bits, or
+> the ATA failure prediction. **Not a judgement computed from the counters
+> below.**
+
+The reader:
+
+```rust
+passed: !matches!(disk.health, DiskHealth::Critical | DiskHealth::Failed)
+```
+
+Two things wrong at once. `DiskHealth::Unknown` is documented "health could not
+be determined", and it is neither `Critical` nor `Failed`, so **a drive that
+reported nothing passed** — the third time this session that `!=` against the
+bad value turned silence into the affirmative. And `smart::DiskHealth` is partly
+a **score this crate computes from the counters**:
+
+```rust
+disk.health = if score >= 80.0 { Good } else if score >= 50.0 { Warning } ...
+```
+
+which is the one derivation the entity rules out by name. The field was the
+thing it documents itself not to be, on both platforms.
+
+`Some` now comes only from the two sources the entity names — the NVMe log
+page's critical warning bits, and the ATA failure prediction — and the Windows
+WMI fallback and the whole Linux path answer `None`, because neither
+`smartctl -H`'s self-assessment nor the NVMe warning byte is captured there at
+all.
+
+```
+before: PhysicalDrive3 (Usb)  Health Passed: true
+after:  PhysicalDrive3 (Usb)  Health Passed: the drive did not give a verdict
+        PhysicalDrive1 (Nvme) Health Passed: yes      ← from its own warning bits
+```
+
+**Worth keeping: the crate already had this argument with itself and won it
+once.** `disk.{n}.health` — the platform's verdict, a different field — maps
+`Unknown` to an absence, under a comment reading *"`Unknown` is the absence of a
+verdict, not a verdict of 'unknown'"*, and there is a test named
+`a_drive_with_no_readable_counters_is_not_graded_healthy`. The reasoning was
+written down, the guard was built, and the field one line over was left with the
+opposite behaviour. **A principle applied in one place is not applied; the
+sibling that shares its data is where to look next.**
 
 ### Every NVMe device counted twice, once as its own controller
 

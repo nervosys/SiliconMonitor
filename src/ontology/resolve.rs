@@ -1876,11 +1876,18 @@ fn resolve_disk_health(out: &mut Vec<Reading>, base: &str, disk: &dyn crate::dis
                 Some(Unit::Celsius),
                 "this device exposes no thermal sensor",
             );
-            out.push(Reading::measured(
+            push_opt(
+                out,
                 format!("{base}.smart.passed"),
-                serde_json::json!(s.passed),
+                s.passed.map(|v| serde_json::json!(v)),
                 None,
-            ));
+                concat!(
+                    "the drive's own verdict was not obtained: neither the NVMe ",
+                    "critical warning bits nor the ATA failure prediction was ",
+                    "readable, and this field is not a judgement computed from ",
+                    "the counters"
+                ),
+            );
             push_opt(
                 out,
                 format!("{base}.smart.power_on_hours"),
