@@ -93,7 +93,7 @@ Since the tag, on `master` and green on all three platforms:
 | `e037198` | The same inequality again, this time against a string |
 | `ca71102` | "On battery" concluded from nobody having asked |
 | `c79d4c5` | Nine tests asserting a contract the readers no longer make |
-| `HEAD` | A device's name read as the speed it negotiated |
+| `6fbf520` | A device's name read as the speed it negotiated |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
