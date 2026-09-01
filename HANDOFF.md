@@ -103,7 +103,7 @@ Since the tag, on `master` and green on all three platforms:
 | `4ed9145` | Boot mode asserted because it is usually right |
 | `15a60ab` | 97 GB of swap in use, on a machine using 3.4 GB of it |
 | `5bd14aa` | The last six enumerators, and what the list was really for |
-| `HEAD` | The last swallow, a real USB key, and a swap series that changed meaning |
+| `7fcddde` | The last swallow, a real USB key, and a swap series that changed meaning |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
