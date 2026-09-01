@@ -61,7 +61,7 @@ Since the tag, on `master` and green on all three platforms:
 | `0121d86` | A clean bill of health drawn from 2 of 23,541 settings |
 | `f34f72c` | "No engines detected" on a platform with no engine reader |
 | `916bf08` | A sentinel introduced by an earlier fix in this same session |
-| `HEAD` | The same nominal-clock lie, in a second reader of the same API |
+| `49e40ef` | The same nominal-clock lie, in a second reader of the same API |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
