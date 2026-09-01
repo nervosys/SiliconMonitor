@@ -310,11 +310,14 @@ impl DiskDevice for WindowsDisk {
             serial: self.serial.clone(),
             firmware: None,
             capacity: self.size,
-            block_size: 512, // Most common
+            block_size: None,
             disk_type: self.disk_type,
             interface_type: self.interface_type.clone(),
-            physical_sector_size: Some(512),
-            logical_sector_size: Some(512),
+            // Not read. `IOCTL_STORAGE_QUERY_PROPERTY` with
+            // `StorageAccessAlignmentProperty` reports both; until that is
+            // called, 512 was the common value standing in for this drive's.
+            physical_sector_size: None,
+            logical_sector_size: None,
             rotation_rate: if matches!(self.disk_type, DiskType::NvmeSsd | DiskType::SataSsd) {
                 Some(0)
             } else {

@@ -77,14 +77,28 @@ pub struct DiskInfo {
     /// Total capacity in bytes
     pub capacity: u64,
     /// Block size in bytes
-    pub block_size: u32,
+    /// Block size in bytes, where it was read.
+    ///
+    /// A third field carrying the logical sector size, and it had the same
+    /// `512, // Most common` default on Windows and macOS.
+    pub block_size: Option<u32>,
     /// Disk type
     pub disk_type: DiskType,
     /// Interface type (e.g., "NVMe", "SATA", "USB", "SCSI", "PCIe")
     pub interface_type: Option<String>,
     /// Physical sector size in bytes
+    /// Physical sector size in bytes, where it was read.
+    ///
+    /// The `Option` was already here and every reader filled it with a
+    /// sentinel wrapped in `Some`: Linux `unwrap_or(512)` then `Some(..)`,
+    /// Windows a flat `Some(512)`, macOS `Some(4096)`. 512 is the common value
+    /// and not this drive's — a 4Kn drive reports 4096 for both, and an
+    /// Advanced Format drive 512 logical over 4096 physical, which is exactly
+    /// the distinction these two fields exist to carry.
     pub physical_sector_size: Option<u32>,
     /// Logical sector size in bytes
+    /// Logical sector size in bytes, where it was read. See
+    /// [`Self::physical_sector_size`].
     pub logical_sector_size: Option<u32>,
     /// Rotation speed (RPM) for HDDs
     pub rotation_rate: Option<u32>,

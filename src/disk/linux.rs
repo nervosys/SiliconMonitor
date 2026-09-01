@@ -117,12 +117,15 @@ impl DiskDevice for LinuxDisk {
         let capacity = sectors * 512;
 
         // Read queue info
+        // sysfs carries both; defaulting to 512 asserted a non-4Kn drive.
         let logical_block_size = self
             .read_sysfs_u64("queue/logical_block_size")
-            .unwrap_or(512) as u32;
+            .ok()
+            .map(|v| v as u32);
         let physical_block_size = self
             .read_sysfs_u64("queue/physical_block_size")
-            .unwrap_or(512) as u32;
+            .ok()
+            .map(|v| v as u32);
 
         // Read rotation rate (0 = SSD, >0 = HDD RPM)
         let rotation_rate = self.read_sysfs_u64("queue/rotational").ok().and_then(|r| {
@@ -149,8 +152,8 @@ impl DiskDevice for LinuxDisk {
                 DiskType::Virtual => "Virtual".to_string(),
                 DiskType::Unknown => "Unknown".to_string(),
             }),
-            physical_sector_size: Some(physical_block_size),
-            logical_sector_size: Some(logical_block_size),
+            physical_sector_size: physical_block_size,
+            logical_sector_size: logical_block_size,
             rotation_rate,
             vendor,
         })

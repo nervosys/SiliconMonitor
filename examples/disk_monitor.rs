@@ -56,7 +56,10 @@ fn print_disk_info(disk: &dyn disk::DiskDevice) -> Result<(), Box<dyn std::error
                 info.capacity as f64 / 1_000_000_000.0,
                 info.capacity
             );
-            println!("  Block Size:     {} bytes", info.block_size);
+            match info.block_size {
+                Some(b) => println!("  Block Size:     {b} bytes"),
+                None => println!("  Block Size:     not read"),
+            }
             if let Some(phys) = info.physical_sector_size {
                 println!("  Physical Sector: {} bytes", phys);
             }

@@ -75,9 +75,52 @@ Since the tag, on `master` and green on all three platforms:
 | `05468fb` | An unread thermal zone reported 0 C and "not throttling" |
 | `0e67be4` | A failed health check reporting no critical issues |
 | `aed27cd` | A `> 0` guard defeated by a sentinel of 64 |
+| `HEAD` | An `Option` field filled with a sentinel wrapped in `Some` |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### An `Option` filled with a sentinel wrapped in `Some`
+
+Sweeping for **non-zero** defaults — the ones the entry below shows a `> 0`
+guard cannot catch — found a variant worth its own name.
+
+`DiskInfo::physical_sector_size` and `logical_sector_size` were already
+`Option<u32>`. The type was right. Every reader on every platform filled it with
+an invented value and wrapped that in `Some`:
+
+```rust
+// linux
+.read_sysfs_u64("queue/physical_block_size").unwrap_or(512) as u32
+...
+physical_sector_size: Some(physical_block_size),
+// windows
+physical_sector_size: Some(512),
+logical_sector_size:  Some(512),
+// macos
+physical_sector_size: Some(4096),
+logical_sector_size:  Some(512),
+```
+
+512 is the common value and not this drive's: a 4Kn drive reports 4096 for
+both, and an Advanced Format drive 512 logical over 4096 physical — **which is
+exactly the distinction the two fields exist to carry**. macOS asserted the
+Advanced Format layout for every disk on every Mac. A third field,
+`block_size: u32`, carried the same number under `// Most common`.
+
+**The absence had somewhere to go and the reader filled it anyway.** Every other
+finding this session was a type that could not express "unknown"; this is the
+opposite failure, and no amount of making types honest prevents it. `Some(512)`
+reads as a measurement to every consumer and to every guard, including one
+checking `> 0`.
+
+**So the `Option` migrations that make up most of this session's work are
+necessary and not sufficient.** Worth grepping for after any of them:
+
+```bash
+grep -rnE "Some\([0-9]" src/ --include=*.rs        # literal wrapped in Some
+grep -rnE "unwrap_or\([0-9]" src/ --include=*.rs   # then re-wrapped
+```
 
 ### A guard that named the danger, defeated by a sentinel of 64
 

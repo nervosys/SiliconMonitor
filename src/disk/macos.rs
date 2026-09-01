@@ -55,7 +55,7 @@ impl DiskDevice for MacDisk {
             serial: self.serial.clone(),
             firmware: None,
             capacity: self.size_bytes.unwrap_or(0),
-            block_size: 512,
+            block_size: None,
             disk_type: self.disk_type,
             interface_type: Some(match self.disk_type {
                 DiskType::NvmeSsd => "NVMe (PCIe)".to_string(),
@@ -65,8 +65,10 @@ impl DiskDevice for MacDisk {
                 DiskType::Virtual => "Virtual".to_string(),
                 DiskType::Unknown => "Unknown".to_string(),
             }),
-            physical_sector_size: Some(4096),
-            logical_sector_size: Some(512),
+            // Not read. These asserted an Advanced Format layout — 512
+            // logical over 4096 physical — for every disk on every Mac.
+            physical_sector_size: None,
+            logical_sector_size: None,
             rotation_rate: if self.disk_type == DiskType::SataSsd
                 || self.disk_type == DiskType::NvmeSsd
             {
