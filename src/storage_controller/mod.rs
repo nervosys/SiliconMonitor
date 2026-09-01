@@ -164,22 +164,27 @@ impl StorageControllerMonitor {
     }
 
     /// Refresh storage controller detection.
+    /// Re-enumerate storage controllers and RAID arrays.
+    ///
+    /// Returns `Err` when the enumeration failed, and `Ok` with an empty list
+    /// only when it succeeded and found nothing -- which the resolver publishes
+    /// as `disk.controller.<none>`. See [`crate::core::command`].
     pub fn refresh(&mut self) -> Result<(), SimonError> {
         self.controllers.clear();
         self.raid_arrays.clear();
 
         #[cfg(target_os = "linux")]
         {
-            self.refresh_nvme_linux();
-            self.refresh_scsi_linux();
-            self.refresh_mdstat_linux();
+            self.refresh_nvme_linux()?;
+            self.refresh_scsi_linux()?;
+            self.refresh_mdstat_linux()?;
         }
 
         #[cfg(target_os = "windows")]
-        self.refresh_windows();
+        self.refresh_windows()?;
 
         #[cfg(target_os = "macos")]
-        self.refresh_macos();
+        self.refresh_macos()?;
 
         Ok(())
     }
@@ -220,13 +225,16 @@ impl StorageControllerMonitor {
     // ── Linux implementations ──
 
     #[cfg(target_os = "linux")]
-    fn refresh_nvme_linux(&mut self) {
+    fn refresh_nvme_linux(&mut self) -> Result<(), SimonError> {
         let nvme_base = std::path::Path::new("/sys/class/nvme");
         if !nvme_base.exists() {
-            return;
+            // A real answer: this kernel exposes no such class.
+            return Ok(());
         }
 
-        if let Ok(entries) = std::fs::read_dir(nvme_base) {
+        let entries = std::fs::read_dir(nvme_base)
+            .map_err(|e| SimonError::System(format!("cannot read /sys/class/nvme: {e}")))?;
+        {
             for entry in entries.flatten() {
                 let name = entry.file_name().to_string_lossy().to_string();
                 if !name.starts_with("nvme") {
@@ -282,16 +290,20 @@ impl StorageControllerMonitor {
                 });
             }
         }
+        Ok(())
     }
 
     #[cfg(target_os = "linux")]
-    fn refresh_scsi_linux(&mut self) {
+    fn refresh_scsi_linux(&mut self) -> Result<(), SimonError> {
         let scsi_base = std::path::Path::new("/sys/class/scsi_host");
         if !scsi_base.exists() {
-            return;
+            // A real answer: this kernel exposes no such class.
+            return Ok(());
         }
 
-        if let Ok(entries) = std::fs::read_dir(scsi_base) {
+        let entries = std::fs::read_dir(scsi_base)
+            .map_err(|e| SimonError::System(format!("cannot read /sys/class/scsi_host: {e}")))?;
+        {
             for entry in entries.flatten() {
                 let name = entry.file_name().to_string_lossy().to_string();
                 let base = entry.path();
@@ -325,13 +337,17 @@ impl StorageControllerMonitor {
                 });
             }
         }
+        Ok(())
     }
 
     #[cfg(target_os = "linux")]
-    fn refresh_mdstat_linux(&mut self) {
+    fn refresh_mdstat_linux(&mut self) -> Result<(), SimonError> {
+        // A kernel with no md subsystem has no /proc/mdstat, which is a real
+        // answer; a file that will not open is not.
         let content = match std::fs::read_to_string("/proc/mdstat") {
             Ok(c) => c,
-            Err(_) => return,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(e) => return Err(SimonError::System(format!("cannot read /proc/mdstat: {e}"))),
         };
 
         let mut current: Option<RaidArrayInfo> = None;
@@ -429,6 +445,7 @@ impl StorageControllerMonitor {
         if let Some(array) = current {
             self.raid_arrays.push(array);
         }
+        Ok(())
     }
 
     #[cfg(target_os = "linux")]
@@ -460,15 +477,26 @@ impl StorageControllerMonitor {
     ///
     /// `wmi` is already a dependency and is used this way elsewhere in the crate.
     #[cfg(target_os = "windows")]
-    fn query_wmi_json(namespace: &str, query: &str) -> Option<String> {
+    /// One WMI query, re-serialized to the JSON shape the parsers expect.
+    ///
+    /// This returned `Option<String>` and reached it through three `.ok()?` --
+    /// COM initialization, the namespace connection and the query itself all
+    /// collapsed into `None`, which the caller read as "this namespace has no
+    /// rows". Each now says which step failed.
+    fn query_wmi_json(namespace: &str, query: &str) -> Result<String, SimonError> {
         use std::collections::HashMap;
         use wmi::{COMLibrary, Variant, WMIConnection};
 
         // COM may already be initialized on this thread (the collector thread holds a
         // guard); `COMLibrary::new` handles that case.
-        let com = COMLibrary::new().ok()?;
-        let conn = WMIConnection::with_namespace_path(namespace, com).ok()?;
-        let rows: Vec<HashMap<String, Variant>> = conn.raw_query(query).ok()?;
+        let com = COMLibrary::new()
+            .map_err(|e| SimonError::System(format!("COM initialization failed: {e}")))?;
+        let conn = WMIConnection::with_namespace_path(namespace, com).map_err(|e| {
+            SimonError::System(format!("cannot connect to WMI namespace {namespace}: {e}"))
+        })?;
+        let rows: Vec<HashMap<String, Variant>> = conn
+            .raw_query(query)
+            .map_err(|e| SimonError::System(format!("WMI query failed in {namespace}: {e}")))?;
 
         // Re-serialize to the JSON shape the existing parsers expect, so the parsing
         // logic below is unchanged.
@@ -493,41 +521,59 @@ impl StorageControllerMonitor {
             })
             .collect();
 
-        serde_json::to_string(&json_rows).ok()
+        serde_json::to_string(&json_rows)
+            .map_err(|e| SimonError::Parse(format!("cannot re-serialize WMI rows: {e}")))
     }
 
     #[cfg(target_os = "windows")]
-    fn refresh_windows(&mut self) {
+    fn refresh_windows(&mut self) -> Result<(), SimonError> {
+        // Three independent queries. A machine with no SCSI controller and a
+        // machine whose WMI is unreachable both used to arrive here with an
+        // empty list, so the rule is the one in `usb::refresh_windows`: any
+        // source succeeding is enough to trust an empty result, and every
+        // source failing is not an empty machine.
+        let mut failures: Vec<String> = Vec::new();
+        let mut any_ok = false;
+
         // SCSI controllers
-        if let Some(text) = Self::query_wmi_json(
+        match Self::query_wmi_json(
             "root\\CIMV2",
             "SELECT Name, Manufacturer, DriverName, DeviceID, Status FROM Win32_SCSIController",
         ) {
-            self.parse_windows_controllers(&text, StorageInterface::SCSI);
+            Ok(text) => {
+                any_ok = true;
+                self.parse_windows_controllers(&text, StorageInterface::SCSI);
+            }
+            Err(e) => failures.push(format!("Win32_SCSIController: {e}")),
         }
 
         // IDE controllers
-        if let Some(text) = Self::query_wmi_json(
+        match Self::query_wmi_json(
             "root\\CIMV2",
             "SELECT Name, Manufacturer, DriverName, DeviceID, Status FROM Win32_IDEController",
         ) {
-            self.parse_windows_controllers(&text, StorageInterface::AHCI);
+            Ok(text) => {
+                any_ok = true;
+                self.parse_windows_controllers(&text, StorageInterface::AHCI);
+            }
+            Err(e) => failures.push(format!("Win32_IDEController: {e}")),
         }
 
         // NVMe detection. MSFT_PhysicalDisk is what Get-PhysicalDisk wraps; BusType 17
         // is NVMe.
-        if let Some(text) = Self::query_wmi_json(
+        let nvme = Self::query_wmi_json(
             "root\\Microsoft\\Windows\\Storage",
             "SELECT FriendlyName, Manufacturer, Model, SerialNumber, FirmwareVersion \
              FROM MSFT_PhysicalDisk WHERE BusType = 17",
-        ) {
+        );
+        match &nvme {
+            Ok(_) => any_ok = true,
+            Err(e) => failures.push(format!("MSFT_PhysicalDisk: {e}")),
+        }
+        if let Ok(text) = &nvme {
             {
-                if let Ok(val) = serde_json::from_str::<serde_json::Value>(&text) {
-                    let items = match &val {
-                        serde_json::Value::Array(arr) => arr.clone(),
-                        obj @ serde_json::Value::Object(_) => vec![obj.clone()],
-                        _ => vec![],
-                    };
+                if let Ok(val) = serde_json::from_str::<serde_json::Value>(text) {
+                    let items = crate::core::command::json_items(&val);
                     for (i, item) in items.iter().enumerate() {
                         let model = item["Model"].as_str().unwrap_or("").trim().to_string();
                         let serial = item["SerialNumber"]
@@ -578,6 +624,15 @@ impl StorageControllerMonitor {
                 }
             }
         }
+
+        if any_ok {
+            Ok(())
+        } else {
+            Err(SimonError::System(format!(
+                "no storage controller enumeration succeeded: {}",
+                failures.join("; ")
+            )))
+        }
     }
 
     #[cfg(target_os = "windows")]
@@ -620,87 +675,73 @@ impl StorageControllerMonitor {
     // ── macOS implementation ──
 
     #[cfg(target_os = "macos")]
-    fn refresh_macos(&mut self) {
+    fn refresh_macos(&mut self) -> Result<(), SimonError> {
         // NVMe controllers
-        if let Ok(output) = std::process::Command::new("system_profiler")
-            .args(["SPNVMeDataType", "-json"])
-            .output()
-        {
-            if let Ok(text) = String::from_utf8(output.stdout) {
-                if let Ok(val) = serde_json::from_str::<serde_json::Value>(&text) {
-                    if let Some(items) = val["SPNVMeDataType"].as_array() {
-                        for (i, item) in items.iter().enumerate() {
-                            let name = item["_name"].as_str().unwrap_or("NVMe").to_string();
-                            let model = item["device_model"].as_str().unwrap_or("").to_string();
-                            let serial = item["device_serial"].as_str().unwrap_or("").to_string();
-                            let firmware =
-                                item["device_revision"].as_str().unwrap_or("").to_string();
+        let nvme =
+            crate::core::command::capture_json("system_profiler", &["SPNVMeDataType", "-json"])?;
+        if let Some(val) = nvme {
+            if let Some(items) = val["SPNVMeDataType"].as_array() {
+                for (i, item) in items.iter().enumerate() {
+                    let name = item["_name"].as_str().unwrap_or("NVMe").to_string();
+                    let model = item["device_model"].as_str().unwrap_or("").to_string();
+                    let serial = item["device_serial"].as_str().unwrap_or("").to_string();
+                    let firmware = item["device_revision"].as_str().unwrap_or("").to_string();
 
-                            let nvme_info = NvmeControllerInfo {
-                                name: format!("nvme{}", i),
-                                model: model.clone(),
-                                serial,
-                                firmware,
-                                pcie_speed: item["spnvme_linkspeed"]
-                                    .as_str()
-                                    .unwrap_or("")
-                                    .to_string(),
-                                pcie_width: item["spnvme_linkwidth"]
-                                    .as_str()
-                                    .unwrap_or("")
-                                    .to_string(),
-                                namespace_count: 1,
-                                transport: "pcie".to_string(),
-                            };
+                    let nvme_info = NvmeControllerInfo {
+                        name: format!("nvme{}", i),
+                        model: model.clone(),
+                        serial,
+                        firmware,
+                        pcie_speed: item["spnvme_linkspeed"].as_str().unwrap_or("").to_string(),
+                        pcie_width: item["spnvme_linkwidth"].as_str().unwrap_or("").to_string(),
+                        namespace_count: 1,
+                        transport: "pcie".to_string(),
+                    };
 
-                            self.controllers.push(StorageControllerInfo {
-                                name,
-                                vendor: String::new(),
-                                model,
-                                driver: "nvme".to_string(),
-                                interface: StorageInterface::NVMe,
-                                pci_address: String::new(),
-                                // Not read here either; see above.
-                                ports: 0,
-                                nvme_info: Some(nvme_info),
-                            });
-                        }
-                    }
+                    self.controllers.push(StorageControllerInfo {
+                        name,
+                        vendor: String::new(),
+                        model,
+                        driver: "nvme".to_string(),
+                        interface: StorageInterface::NVMe,
+                        pci_address: String::new(),
+                        // Not read here either; see above.
+                        ports: 0,
+                        nvme_info: Some(nvme_info),
+                    });
                 }
             }
         }
 
         // SATA controllers
-        if let Ok(output) = std::process::Command::new("system_profiler")
-            .args(["SPSerialATADataType", "-json"])
-            .output()
-        {
-            if let Ok(text) = String::from_utf8(output.stdout) {
-                if let Ok(val) = serde_json::from_str::<serde_json::Value>(&text) {
-                    if let Some(items) = val["SPSerialATADataType"].as_array() {
-                        for item in items {
-                            let name = item["_name"].as_str().unwrap_or("SATA").to_string();
-                            let vendor = item["spsata_vendor"].as_str().unwrap_or("").to_string();
-                            let port_count = item["_items"]
-                                .as_array()
-                                .map(|a| a.len() as u32)
-                                .unwrap_or(0);
+        let sata = crate::core::command::capture_json(
+            "system_profiler",
+            &["SPSerialATADataType", "-json"],
+        )?;
+        if let Some(val) = sata {
+            if let Some(items) = val["SPSerialATADataType"].as_array() {
+                for item in items {
+                    let name = item["_name"].as_str().unwrap_or("SATA").to_string();
+                    let vendor = item["spsata_vendor"].as_str().unwrap_or("").to_string();
+                    let port_count = item["_items"]
+                        .as_array()
+                        .map(|a| a.len() as u32)
+                        .unwrap_or(0);
 
-                            self.controllers.push(StorageControllerInfo {
-                                name,
-                                vendor,
-                                model: String::new(),
-                                driver: "ahci".to_string(),
-                                interface: StorageInterface::AHCI,
-                                pci_address: String::new(),
-                                ports: port_count,
-                                nvme_info: None,
-                            });
-                        }
-                    }
+                    self.controllers.push(StorageControllerInfo {
+                        name,
+                        vendor,
+                        model: String::new(),
+                        driver: "ahci".to_string(),
+                        interface: StorageInterface::AHCI,
+                        pci_address: String::new(),
+                        ports: port_count,
+                        nvme_info: None,
+                    });
                 }
             }
         }
+        Ok(())
     }
 }
 

@@ -88,17 +88,26 @@ impl TpmMonitor {
     }
 
     /// Refresh TPM detection.
+    ///
+    /// Returns `Err` when the detection failed, and `Ok` -- with or without a
+    /// TPM -- only when it ran. The difference is not cosmetic here: the
+    /// resolver publishes `board.tpm.present` as a **measured** `false` when
+    /// this returns `Ok` and finds nothing, under a comment reading "a
+    /// successful enumeration that found nothing is a reading: this machine has
+    /// no TPM". That premise was false, because until 6.0.0 this could not
+    /// report a failure at all, and "the query did not run" was published as
+    /// "this machine has no TPM".
     pub fn refresh(&mut self) -> Result<(), SimonError> {
         self.tpm_info = None;
 
         #[cfg(target_os = "linux")]
-        self.refresh_linux();
+        self.refresh_linux()?;
 
         #[cfg(target_os = "windows")]
-        self.refresh_windows();
+        self.refresh_windows()?;
 
         #[cfg(target_os = "macos")]
-        self.refresh_macos();
+        self.refresh_macos()?;
 
         Ok(())
     }
@@ -122,13 +131,16 @@ impl TpmMonitor {
     }
 
     #[cfg(target_os = "linux")]
-    fn refresh_linux(&mut self) {
+    fn refresh_linux(&mut self) -> Result<(), SimonError> {
         let tpm_class = std::path::Path::new("/sys/class/tpm");
         if !tpm_class.exists() {
-            return;
+            // A real answer: this kernel exposes no TPM class at all.
+            return Ok(());
         }
 
-        if let Ok(entries) = std::fs::read_dir(tpm_class) {
+        let entries = std::fs::read_dir(tpm_class)
+            .map_err(|e| SimonError::System(format!("cannot read /sys/class/tpm: {e}")))?;
+        {
             for entry in entries.flatten() {
                 let name = entry.file_name().to_string_lossy().to_string();
                 if !name.starts_with("tpm") {
@@ -224,102 +236,113 @@ impl TpmMonitor {
                 break; // Usually only one TPM
             }
         }
+        Ok(())
     }
 
     #[cfg(target_os = "windows")]
-    fn refresh_windows(&mut self) {
-        // Try WMI Win32_Tpm (requires admin, but attempt anyway)
-        if let Ok(output) = std::process::Command::new("powershell")
-            .args(["-NoProfile", "-Command",
-                "Get-CimInstance -Namespace 'root/cimv2/Security/MicrosoftTpm' -ClassName Win32_Tpm -ErrorAction SilentlyContinue | Select-Object IsActivated_InitialValue, IsEnabled_InitialValue, IsOwned_InitialValue, ManufacturerIdTxt, ManufacturerVersion, SpecVersion, PhysicalPresenceVersionInfo | ConvertTo-Json -Compress"])
-            .output()
-        {
-            if let Ok(text) = String::from_utf8(output.stdout) {
-                if let Ok(val) = serde_json::from_str::<serde_json::Value>(&text) {
-                    let spec = val["SpecVersion"].as_str().unwrap_or("");
-                    let version = if spec.starts_with("2.0") || spec.contains("2.0") {
-                        TpmVersion::V2_0
-                    } else if spec.starts_with("1.2") || spec.contains("1.2") {
-                        TpmVersion::V1_2
-                    } else {
-                        TpmVersion::Unknown
-                    };
+    fn refresh_windows(&mut self) -> Result<(), SimonError> {
+        // Two sources, and the first is expected to fail on an ordinary
+        // account: `root/cimv2/Security/MicrosoftTpm` answers "Access denied"
+        // without elevation. So its failure is carried, not raised -- the
+        // registry check below is what decides -- and only both failing is an
+        // error. This is the same rule as `usb::refresh_windows`.
+        const WMI_TPM: &str = "Get-CimInstance -Namespace 'root/cimv2/Security/MicrosoftTpm' -ClassName Win32_Tpm -ErrorAction SilentlyContinue | Select-Object IsActivated_InitialValue, IsEnabled_InitialValue, IsOwned_InitialValue, ManufacturerIdTxt, ManufacturerVersion, SpecVersion, PhysicalPresenceVersionInfo | ConvertTo-Json -Compress";
+        const TPM_SERVICE: &str = r#"if (Test-Path 'HKLM:\\SYSTEM\\CurrentControlSet\\Services\\TPM') { 'present' } else { 'absent' }"#;
 
-                    let enabled = val["IsEnabled_InitialValue"].as_bool().unwrap_or(false);
-                    let activated = val["IsActivated_InitialValue"].as_bool().unwrap_or(false);
-                    let status = if enabled && activated {
-                        TpmStatus::Enabled
-                    } else if enabled {
-                        TpmStatus::Locked
-                    } else {
-                        TpmStatus::Disabled
-                    };
+        let wmi =
+            crate::core::command::capture_json("powershell", &["-NoProfile", "-Command", WMI_TPM]);
+        if let Ok(Some(val)) = &wmi {
+            let spec = val["SpecVersion"].as_str().unwrap_or("");
+            let version = if spec.starts_with("2.0") || spec.contains("2.0") {
+                TpmVersion::V2_0
+            } else if spec.starts_with("1.2") || spec.contains("1.2") {
+                TpmVersion::V1_2
+            } else {
+                TpmVersion::Unknown
+            };
 
-                    let manufacturer = val["ManufacturerIdTxt"]
-                        .as_str()
-                        .unwrap_or("")
-                        .to_string();
-                    let firmware_version = val["ManufacturerVersion"]
-                        .as_str()
-                        .unwrap_or("")
-                        .to_string();
+            let enabled = val["IsEnabled_InitialValue"].as_bool().unwrap_or(false);
+            let activated = val["IsActivated_InitialValue"].as_bool().unwrap_or(false);
+            let status = if enabled && activated {
+                TpmStatus::Enabled
+            } else if enabled {
+                TpmStatus::Locked
+            } else {
+                TpmStatus::Disabled
+            };
 
-                    let mut algorithms = vec!["SHA-1".into(), "SHA-256".into()];
-                    if version == TpmVersion::V2_0 {
-                        algorithms.extend(["RSA".to_string(), "ECC".to_string()]);
-                    }
+            let manufacturer = val["ManufacturerIdTxt"].as_str().unwrap_or("").to_string();
+            let firmware_version = val["ManufacturerVersion"]
+                .as_str()
+                .unwrap_or("")
+                .to_string();
 
-                    self.tpm_info = Some(TpmInfo {
-                        device: "tpm0".into(),
-                        version,
-                        status,
-                        manufacturer,
-                        firmware_version,
-                        device_path: r"\\.\TPM".into(),
-                        is_primary: true,
-                        algorithms,
-                        pcr_banks: 24,
-                        measured_boot: true, // Windows with TPM implies measured boot
-                    });
-                    return;
-                }
+            let mut algorithms = vec!["SHA-1".into(), "SHA-256".into()];
+            if version == TpmVersion::V2_0 {
+                algorithms.extend(["RSA".to_string(), "ECC".to_string()]);
             }
+
+            self.tpm_info = Some(TpmInfo {
+                device: "tpm0".into(),
+                version,
+                status,
+                manufacturer,
+                firmware_version,
+                device_path: r"\\.\TPM".into(),
+                is_primary: true,
+                algorithms,
+                pcr_banks: 24,
+                measured_boot: true, // Windows with TPM implies measured boot
+            });
+            return Ok(());
         }
 
         // Fallback: check registry for TPM existence
-        if let Ok(output) = std::process::Command::new("powershell")
-            .args(["-NoProfile", "-Command",
-                "if (Test-Path 'HKLM:\\SYSTEM\\CurrentControlSet\\Services\\TPM') { 'present' } else { 'absent' }"])
-            .output()
-        {
-            if let Ok(text) = String::from_utf8(output.stdout) {
-                if text.trim() == "present" {
-                    self.tpm_info = Some(TpmInfo {
-                        device: "tpm0".into(),
-                        version: TpmVersion::Unknown,
-                        status: TpmStatus::Unknown,
-                        manufacturer: String::new(),
-                        firmware_version: String::new(),
-                        device_path: r"\\.\TPM".into(),
-                        is_primary: true,
-                        algorithms: Vec::new(),
-                        pcr_banks: 0,
-                        measured_boot: false,
-                    });
-                }
+        let registry =
+            crate::core::command::capture("powershell", &["-NoProfile", "-Command", TPM_SERVICE]);
+        let present = match (&registry, wmi) {
+            (Ok(text), _) => text.trim() == "present",
+            (Err(registry_err), Err(wmi_err)) => {
+                return Err(SimonError::System(format!(
+                    "no TPM detection succeeded: the WMI class said {wmi_err}; the registry check \
+                     said {registry_err}"
+                )))
             }
+            (Err(registry_err), Ok(_)) => {
+                // The privileged query ran and reported no TPM object; the
+                // registry check is what would have confirmed it, and it did
+                // not run. Neither answer is available.
+                return Err(SimonError::System(format!(
+                    "the TPM service registry check could not be made: {registry_err}"
+                )));
+            }
+        };
+
+        if present {
+            self.tpm_info = Some(TpmInfo {
+                device: "tpm0".into(),
+                version: TpmVersion::Unknown,
+                status: TpmStatus::Unknown,
+                manufacturer: String::new(),
+                firmware_version: String::new(),
+                device_path: r"\\.\TPM".into(),
+                is_primary: true,
+                algorithms: Vec::new(),
+                pcr_banks: 0,
+                measured_boot: false,
+            });
         }
+
+        Ok(())
     }
 
     #[cfg(target_os = "macos")]
-    fn refresh_macos(&mut self) {
+    fn refresh_macos(&mut self) -> Result<(), SimonError> {
         // macOS uses Secure Enclave instead of discrete TPM
         // T1 chip (2016 MBP), T2 chip (2018+), Apple Silicon (M1+) all have SE
-        if let Ok(output) = std::process::Command::new("system_profiler")
-            .args(["SPHardwareDataType"])
-            .output()
+        let text = crate::core::command::capture("system_profiler", &["SPHardwareDataType"])?;
         {
-            if let Ok(text) = String::from_utf8(output.stdout) {
+            {
                 let has_se = text.contains("Apple M")
                     || text.contains("Apple T2")
                     || text.contains("Apple T1");
@@ -339,6 +362,7 @@ impl TpmMonitor {
                 }
             }
         }
+        Ok(())
     }
 }
 

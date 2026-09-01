@@ -81,9 +81,74 @@ Since the tag, on `master` and green on all three platforms:
 | `89b6cd9` | A failed enumeration reported as an empty machine |
 | `acf4e69` | The same swallow in sixteen more enumerators |
 | `57c7eb9` | Two enumerations, both failing, reported as one empty |
+| `HEAD` | "This machine has no TPM", published as a measurement |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### "This machine has no TPM", published as a measurement
+
+`tpm` and `storage_controller`, the next two off the list.
+
+The TPM resolver was already written for the distinction, and said so:
+
+```rust
+// Not knowing whether a TPM exists is different from knowing there is
+// none, so `present` goes unavailable here rather than false.
+Err(e) => { out.push(Reading::unavailable("board.tpm.present", ..)) }
+...
+// A successful enumeration that found nothing is a reading: this machine
+// has no TPM. That is exactly the case `present` exists to state.
+out.push(Reading::measured("board.tpm.present", json!(monitor.has_tpm()), None));
+```
+
+Both comments are right. **The premise underneath them was false**:
+`TpmMonitor::refresh` returned `Ok(())` unconditionally, so the `Err` arm could
+not be reached by anything except a constructor failure, and every detection
+failure arrived at the second branch and was published as
+`board.tpm.present = false`, **`Measured`**. A security posture check reading
+that field learns "this host has no TPM" from a query that never ran.
+
+That is the fabrication this whole session keeps meeting, at its worst so far:
+the value is a `bool`, so there is no room for an absence; the sentinel is
+`false`, which is the comforting-looking answer; and the field is one a
+compliance report would act on.
+
+**The fix had to preserve a failure that is correct.** Unelevated on this
+machine:
+
+```
+Get-CimInstance -Namespace 'root/cimv2/Security/MicrosoftTpm' -ClassName Win32_Tpm
+  Access denied     (exit 1)
+Test-Path 'HKLM:\SYSTEM\CurrentControlSet\Services\TPM'
+  True
+```
+
+The privileged query is *expected* to fail for an ordinary account — the code's
+own comment says "requires admin, but attempt anyway" — and the registry check
+is what answers. So a blanket `?` on the first query would have turned a working
+detection into an error on every non-elevated run. The rule is the one from
+`usb`: **carry the first failure, let the second source decide, and raise only
+when every source failed.** After the change this machine still reports
+`present=true`.
+
+`storage_controller`'s `query_wmi_json` reached `Option<String>` through three
+`.ok()?` — COM initialization, the namespace connection, and the query — so a
+machine whose WMI was unreachable and a machine with no SCSI controller were the
+same value. Its three Windows queries now follow the same any-source-succeeded
+rule, and this machine reports what it has:
+
+```
+controllers: 9 -> [.., "Samsung SSD 990 PRO 4TB [NVMe]", "Samsung SSD 970 EVO Plus 2TB [NVMe]", ..]
+```
+
+**Worth keeping.** Three times now the code contained a correct, explicit
+statement of the distinction — `sensors`' probe, the TPM resolver's two
+comments, `DiskInfo`'s `Option<u32>` sector sizes — and was wrong anyway,
+because the statement lived one layer away from the code that decided. *Prose
+and types both describe intent; only the branch that runs decides.* When a
+comment names a distinction, the thing to check is not whether the comment is
+right but whether any code path can actually produce both of its outcomes.
 
 ### Two enumerations, both failing, reported as one empty
 
@@ -2124,11 +2189,11 @@ feature stayed broken through eight published versions.
 
 ## Open work
 
-1. **Eleven enumerators still swallow their failures.** `camera`, `sensors`,
-   `usb` and `input` are converted; `codec` was examined and does not have the
-   defect. Left: `audio`, `bluetooth`, `cpu_cache`, `display`, `firmware`,
-   `numa`, `os_info`, `power_profile`, `printer`, `smart`, `storage_controller`,
-   `tpm`. Each has a `refresh_<os>` returning `()` into a `refresh()` returning
+1. **Nine enumerators still swallow their failures.** `camera`, `sensors`,
+   `usb`, `input`, `tpm` and `storage_controller` are converted; `codec` was
+   examined and does not have the defect. Left: `audio`, `bluetooth`,
+   `cpu_cache`, `display`, `firmware`, `numa`, `os_info`, `power_profile`,
+   `printer`, `smart`. Each has a `refresh_<os>` returning `()` into a `refresh()` returning
    `Result`, so each can report a machine as empty when the reader merely
    failed. Convert with `capture_json` / `capture`, one or two modules per
    commit, and run the module against this host afterwards — `sensors` only gave
@@ -2136,7 +2201,20 @@ feature stayed broken through eight published versions.
    said. Check each for the `codec` case before converting: a source that is
    optional by design, and already labelled as inferred, is not this defect.
 
-2. **`hardware_ai` was audited on one machine, and only one.** Every conclusion
+2. **The Windows TPM readers fabricate every detail field.** Found while
+   converting `tpm` in the entry above and deliberately left for its own commit,
+   because it is a different defect from the swallow. The privileged path sets
+   `pcr_banks: 24` — a constant, not a read — and
+   `measured_boot: true, // Windows with TPM implies measured boot`, which is an
+   inference presented as a reading and is not even sound: measured boot is a
+   boot-configuration state Windows reports separately, and a machine can have a
+   TPM with it off. `algorithms` is derived from the version rather than
+   enumerated. The registry-fallback path answers the same fields with
+   `pcr_banks: 0` and `measured_boot: false`, so a machine detected the second
+   way is published as having zero PCR banks. All of these want `Option`, and
+   `measured_boot` wants a real source.
+
+3. **`hardware_ai` was audited on one machine, and only one.** Every conclusion
    corrected in `a584dd0` and `7607401` was verifiably wrong on this desktop, and
    each fix was checked against a second source. That is not the same as being
    right in general. Two things specifically want a second machine before they
@@ -2160,7 +2238,7 @@ feature stayed broken through eight published versions.
    Ti dates to 2020 because it matches the RTX 30 series rule, and the Ti shipped
    in 2022. `infer_gpu_year` and the TDP tables were not audited.
 
-3. **Per-core CPU frequency is unreported on Windows, and could be reported.**
+4. **Per-core CPU frequency is unreported on Windows, and could be reported.**
    `CallNtPowerInformation` returns `CurrentMhz == MaxMhz` whatever the cores are
    doing, so `cpu.core.{n}.frequency` now declines rather than publishing the
    nominal clock as a measurement. The real figure is
@@ -2175,7 +2253,7 @@ feature stayed broken through eight published versions.
    single-value PDH pattern to copy. The provenance would be `Derived` from the
    counter and the nominal clock, not `Measured`.
 
-4. **The Windows ATA SMART path has never met a SATA drive.** 3.3.0 reads the
+5. **The Windows ATA SMART path has never met a SATA drive.** 3.3.0 reads the
    attribute table unelevated through `IOCTL_STORAGE_PREDICT_FAILURE`, and the
    parse in `src/disk/ata_smart.rs` is tested only against buffers this project
    built. This machine has three NVMe drives and a USB gadget; on all four the
@@ -2206,7 +2284,7 @@ feature stayed broken through eight published versions.
    property of its `CTL_CODE`, and is worth reading off the definition before
    planning around it.
 
-5. **macOS GPU, power and temperature are still unimplemented.** CPU (per-core,
+6. **macOS GPU, power and temperature are still unimplemented.** CPU (per-core,
    with nice time), memory, swap, uptime and board info work — `Simon::cpu()`,
    `memory()`, `uptime()`. `Simon::snapshot()` still fails, because it requires
    every reader. Power and temperature need `powermetrics`, which requires root,
@@ -2231,7 +2309,7 @@ feature stayed broken through eight published versions.
    the `vm_stat` used/free split is a judgement about which pages count as in
    use, which a conformance test cannot check.
 
-6. **The Linux SMART/NVMe paths have executed exactly once**, in CI on
+7. **The Linux SMART/NVMe paths have executed exactly once**, in CI on
    `33ee241` — 733 tests, 0 failures. No one has run them against real Linux
    hardware. The sysfs paths (`/sys/class/nvme/<ctrl>/{model,serial,firmware_rev,cntlid}`)
    are documented kernel ABI, but tests are not a substitute for a drive.
@@ -2244,7 +2322,7 @@ feature stayed broken through eight published versions.
    what remains to benefit is USB storage — and every Linux machine, where a
    sweep spawns `smartctl` once per drive and the old shape was quadratic.
 
-7. **The ontology names ~232 entities; the library has ~88 subsystem modules.**
+8. **The ontology names ~232 entities; the library has ~88 subsystem modules.**
    The running list of which clusters exist, which readers answer on which
    machine, and what is left is under **plan item F** below — it is kept in one
    place rather than two, because the last time it lived in both they disagreed.
@@ -2299,7 +2377,7 @@ feature stayed broken through eight published versions.
    sizes, AER capability, ARI and ATS support, SR-IOV — are readable by the same
    two calls with a different pid, if anyone wants them.
 
-8. **`simon tune`'s policy table covers five settings, and its game detection is
+9. **`simon tune`'s policy table covers five settings, and its game detection is
    a name table.** Both are deliberate first cuts, and both are where the feature
    grows.
 
@@ -2320,7 +2398,7 @@ feature stayed broken through eight published versions.
    from a model. `tuning::tests::a_recommendation_never_proposes_a_value_the_driver_did_not_offer`
    is the test that keeps it true. A model may classify; it may not pick numbers.
 
-9. **The Dewey port was tried across 4.0.0–4.0.4 and withdrawn in 5.0.0.**
+10. **The Dewey port was tried across 4.0.0–4.0.4 and withdrawn in 5.0.0.**
    `src/gui/` is the egui application again — `app.rs`, `widgets.rs`, `theme.rs`,
    `profile_tab.rs`, `headless.rs`, `mod.rs`, restored from `927ffaa^`. The
    `deweygui` dependency, the `dewey-gui` feature and `simonlib::gui_dewey` are
@@ -2365,7 +2443,7 @@ feature stayed broken through eight published versions.
    name is the whole defect — every call site was written by someone who
    reasonably believed `new()` constructs a thing from the system.
 
-10. **Verify with `--lib --tests` when the disk is tight.** `cargo test
+11. **Verify with `--lib --tests` when the disk is tight.** `cargo test
    --all-features` links every example. That is affordable again now the duplicate
    egui is gone, but if it ever fails with `link.exe` 1318, the split is
    `cargo test --all-features --lib --tests` for execution plus
@@ -2373,7 +2451,7 @@ feature stayed broken through eight published versions.
    Note `--lib --tests` skips doc-tests; run those before a release.
 
 
-11. **Two Dewey bugs found during the port, recorded because they are real
+12. **Two Dewey bugs found during the port, recorded because they are real
    and unfixed — but no longer reachable from this crate.** Neither affects simon
    now that `deweygui` is gone. Both are for whoever works on Dewey itself, or
    for anyone who reconsiders open work 9.
@@ -2397,7 +2475,7 @@ feature stayed broken through eight published versions.
    three `eprintln!` calls in `resize`, the surface-acquire error arm and the
    frame-area computation in `render`, driven by `ShowWindow(hwnd, 3)`.
 
-12. **Applied settings are reversible; the tuning loop is not yet closed.**
+13. **Applied settings are reversible; the tuning loop is not yet closed.**
    `ApplyHandler::read_current()` reads a setting before it is written,
    `ApplyOutcome.previous` carries what was overwritten, `revert_setting()` puts
    it back through the same confirmed and audit-logged path, and
