@@ -157,13 +157,13 @@ impl PowerProfileMonitor {
         self.power_plans.clear();
 
         #[cfg(target_os = "linux")]
-        self.refresh_linux();
+        self.refresh_linux()?;
 
         #[cfg(target_os = "windows")]
-        self.refresh_windows();
+        self.refresh_windows()?;
 
         #[cfg(target_os = "macos")]
-        self.refresh_macos();
+        self.refresh_macos()?;
 
         // Run inference
         self.inferred = Some(self.infer_behavior());
@@ -323,7 +323,11 @@ impl PowerProfileMonitor {
     }
 
     #[cfg(target_os = "linux")]
-    fn refresh_linux(&mut self) {
+    fn refresh_linux(&mut self) -> Result<(), SimonError> {
+        // Every source here is optional -- a kernel without cpufreq has no
+        // governor, a desktop has no battery -- so nothing in this reader is
+        // an enumeration whose failure means "no power profiles". The
+        // signature is `Result` for consistency with the other two.
         // CPU frequency governor
         let gov = std::fs::read_to_string("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor")
             .unwrap_or_default()
@@ -474,16 +478,17 @@ impl PowerProfileMonitor {
                 }
             }
         }
+        Ok(())
     }
 
     #[cfg(target_os = "windows")]
-    fn refresh_windows(&mut self) {
-        // Get all power plans
-        if let Ok(output) = std::process::Command::new("powercfg")
-            .args(["/list"])
-            .output()
+    fn refresh_windows(&mut self) -> Result<(), SimonError> {
+        // `powercfg /list` is the enumeration. It ships with Windows, so a
+        // failure to run it is a failure -- and an empty plan list is what the
+        // resolver publishes as `power.profile.<none>`, a claim that this
+        // machine has no power plans.
         {
-            let text = String::from_utf8(output.stdout).unwrap_or_default();
+            let text = crate::core::command::capture("powercfg", &["/list"])?;
             for line in text.lines() {
                 // "Power Scheme GUID: 381b4222-f694-41f0-9685-ff5bb260df2e  (Balanced) *"
                 if line.contains("GUID:") {
@@ -552,15 +557,14 @@ impl PowerProfileMonitor {
                 self.display_brightness = Some(b);
             }
         }
+        Ok(())
     }
 
     #[cfg(target_os = "macos")]
-    fn refresh_macos(&mut self) {
-        if let Ok(output) = std::process::Command::new("pmset")
-            .args(["-g", "custom"])
-            .output()
+    fn refresh_macos(&mut self) -> Result<(), SimonError> {
+        // `pmset` ships with macOS, so a failure to run it is a failure.
         {
-            let text = String::from_utf8(output.stdout).unwrap_or_default();
+            let text = crate::core::command::capture("pmset", &["-g", "custom"])?;
             let mut sleep = None;
             let mut disk_sleep = None;
             let mut in_battery_section = false;
@@ -616,6 +620,7 @@ impl PowerProfileMonitor {
             let text = String::from_utf8(output.stdout).unwrap_or_default();
             self.on_ac_power = Some(text.contains("AC Power"));
         }
+        Ok(())
     }
 }
 

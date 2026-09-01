@@ -140,13 +140,13 @@ impl OsInfoMonitor {
         self.info.loaded_modules.clear();
 
         #[cfg(target_os = "linux")]
-        self.refresh_linux();
+        self.refresh_linux()?;
 
         #[cfg(target_os = "windows")]
-        self.refresh_windows();
+        self.refresh_windows()?;
 
         #[cfg(target_os = "macos")]
-        self.refresh_macos();
+        self.refresh_macos()?;
 
         // Common: hostname from std
         if self.info.hostname.is_empty() {
@@ -184,11 +184,22 @@ impl OsInfoMonitor {
     // ── Linux ──
 
     #[cfg(target_os = "linux")]
-    fn refresh_linux(&mut self) {
+    fn refresh_linux(&mut self) -> Result<(), SimonError> {
         self.info.os_family = OsFamily::Linux;
 
-        // /etc/os-release
-        if let Ok(content) = std::fs::read_to_string("/etc/os-release") {
+        // /etc/os-release. A distribution without one is unusual but legal, so
+        // its absence leaves the name empty rather than failing; a file that
+        // will not open is a failure.
+        let os_release = match std::fs::read_to_string("/etc/os-release") {
+            Ok(c) => Some(c),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+            Err(e) => {
+                return Err(SimonError::System(format!(
+                    "cannot read /etc/os-release: {e}"
+                )))
+            }
+        };
+        if let Some(content) = os_release {
             for line in content.lines() {
                 if let Some(val) = line.strip_prefix("PRETTY_NAME=") {
                     self.info.os_name = val.trim_matches('"').to_string();
@@ -325,12 +336,13 @@ impl OsInfoMonitor {
         if let Ok(val) = std::env::var("LANG") {
             self.info.locale = val;
         }
+        Ok(())
     }
 
     // ── Windows ──
 
     #[cfg(target_os = "windows")]
-    fn refresh_windows(&mut self) {
+    fn refresh_windows(&mut self) -> Result<(), SimonError> {
         use crate::platform::windows as plat;
 
         self.info.os_family = OsFamily::Windows;
@@ -426,17 +438,19 @@ impl OsInfoMonitor {
         // `Win32_OperatingSystem.NumberOfUsers`, and counting sessions properly needs
         // a WTS enumeration this monitor does not otherwise do. Reporting a fabricated
         // 0 would be worse than leaving the field at its default.
+        Ok(())
     }
 
     // ── macOS ──
 
     #[cfg(target_os = "macos")]
-    fn refresh_macos(&mut self) {
+    fn refresh_macos(&mut self) -> Result<(), SimonError> {
         self.info.os_family = OsFamily::MacOS;
 
-        // sw_vers for OS info
-        if let Ok(output) = std::process::Command::new("sw_vers").output() {
-            let text = String::from_utf8(output.stdout).unwrap_or_default();
+        // `sw_vers` ships with macOS and is how the OS names itself, so a
+        // failure to run it is a failure rather than an absent optional tool.
+        {
+            let text = crate::core::command::capture("sw_vers", &[])?;
             for line in text.lines() {
                 if let Some(val) = line.strip_prefix("ProductName:") {
                     self.info.os_name = val.trim().to_string();
@@ -548,6 +562,7 @@ impl OsInfoMonitor {
                 }
             }
         }
+        Ok(())
     }
 }
 
@@ -741,10 +756,24 @@ fn windows_running_drivers() -> Vec<KernelModule> {
 mod tests {
     use super::*;
 
+    /// Constructing the monitor either enumerates or says why it could not.
+    ///
+    /// See the identically-shaped tests in `camera`, `usb` and the rest: this
+    /// asserted `is_ok()`, which was true by construction while `refresh` could
+    /// not fail. A failure must carry a reason, because a reason is the whole
+    /// difference between "this machine has none" and "nobody looked".
     #[test]
     fn test_os_info_creation() {
-        let monitor = OsInfoMonitor::new();
-        assert!(monitor.is_ok());
+        match OsInfoMonitor::new() {
+            Ok(_monitor) => {}
+            Err(e) => {
+                let why = e.to_string();
+                assert!(
+                    why.len() > 10,
+                    "enumeration failed without saying why: {why:?}"
+                );
+            }
+        }
     }
 
     #[test]

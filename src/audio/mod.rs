@@ -104,11 +104,11 @@ impl AudioMonitor {
     pub fn refresh(&mut self) -> Result<(), SimonError> {
         self.devices.clear();
         #[cfg(target_os = "windows")]
-        self.refresh_windows();
+        self.refresh_windows()?;
         #[cfg(target_os = "linux")]
-        self.refresh_linux();
+        self.refresh_linux()?;
         #[cfg(target_os = "macos")]
-        self.refresh_macos();
+        self.refresh_macos()?;
         Ok(())
     }
 
@@ -263,7 +263,7 @@ impl AudioMonitor {
     /// reliably, because Windows disambiguates a second instance of an adapter
     /// by prefixing `2- `.
     #[cfg(target_os = "windows")]
-    fn refresh_windows(&mut self) {
+    fn refresh_windows(&mut self) -> Result<(), SimonError> {
         const QUERY: &str = concat!(
             "Get-CimInstance Win32_PnPEntity | Where-Object { $_.PNPClass -eq 'AudioEndpoint' } ",
             "| Select-Object Name, PNPDeviceID | ConvertTo-Json -Compress"
@@ -271,10 +271,10 @@ impl AudioMonitor {
 
         let endpoints = Self::windows_endpoint_registry();
 
-        let Ok(Some(value)) =
-            crate::core::command::capture_json("powershell", &["-NoProfile", "-Command", QUERY])
+        let Some(value) =
+            crate::core::command::capture_json("powershell", &["-NoProfile", "-Command", QUERY])?
         else {
-            return;
+            return Ok(());
         };
 
         for (idx, item) in crate::core::command::json_items(&value).iter().enumerate() {
@@ -321,6 +321,7 @@ impl AudioMonitor {
                 muted: None,
             });
         }
+        Ok(())
     }
 
     /// Every audio endpoint the Windows audio service knows about, by GUID.
@@ -369,12 +370,23 @@ impl AudioMonitor {
         out
     }
     #[cfg(target_os = "linux")]
-    fn refresh_linux(&mut self) {
+    fn refresh_linux(&mut self) -> Result<(), SimonError> {
         use std::fs;
 
-        // Read from /proc/asound for ALSA card enumeration
+        // Read from /proc/asound for ALSA card enumeration. A kernel with no
+        // ALSA has no /proc/asound, which is a reading; a file that will not
+        // open is not, and both used to leave the list silently empty.
         let cards_path = std::path::Path::new("/proc/asound/cards");
-        if let Ok(cards_content) = fs::read_to_string(cards_path) {
+        let cards = match fs::read_to_string(cards_path) {
+            Ok(c) => Some(c),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+            Err(e) => {
+                return Err(SimonError::System(format!(
+                    "cannot read /proc/asound/cards: {e}"
+                )))
+            }
+        };
+        if let Some(cards_content) = cards {
             for line in cards_content.lines() {
                 let trimmed = line.trim();
                 // Lines like " 0 [PCH            ]: HDA-Intel - HDA Intel PCH"
@@ -449,20 +461,19 @@ impl AudioMonitor {
 
         // No fallback device. An empty list means the ALSA cards file told us
         // nothing, which is not the same as one working duplex device.
+        Ok(())
     }
 
     #[cfg(target_os = "macos")]
-    fn refresh_macos(&mut self) {
-        use std::process::Command;
-
-        // Use system_profiler for audio device info
-        if let Ok(output) = Command::new("system_profiler")
-            .args(["SPAudioDataType", "-json"])
-            .output()
+    fn refresh_macos(&mut self) -> Result<(), SimonError> {
+        // Use system_profiler for audio device info. It ships with macOS, so a
+        // failure to run it is a failure rather than an absent optional tool.
+        let stdout =
+            crate::core::command::capture("system_profiler", &["SPAudioDataType", "-json"])?;
         {
-            if output.status.success() {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&stdout) {
+            {
+                let stdout = stdout.as_str();
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(stdout) {
                     if let Some(audio_data) = json.get("SPAudioDataType").and_then(|v| v.as_array())
                     {
                         let mut idx = 0u32;
@@ -518,6 +529,7 @@ impl AudioMonitor {
 
         // No fallback device, and no invented 100% volume with it. See the
         // Windows path above.
+        Ok(())
     }
 }
 
@@ -589,10 +601,24 @@ mod tests {
         assert!(monitor.set_master_volume(101).is_err());
     }
 
+    /// Constructing the monitor either enumerates or says why it could not.
+    ///
+    /// See the identically-shaped tests in `camera`, `usb` and the rest: this
+    /// asserted `is_ok()`, which was true by construction while `refresh` could
+    /// not fail. A failure must carry a reason, because a reason is the whole
+    /// difference between "this machine has none" and "nobody looked".
     #[test]
     fn test_audio_monitor_creation() {
-        let monitor = AudioMonitor::new();
-        assert!(monitor.is_ok());
+        match AudioMonitor::new() {
+            Ok(_monitor) => {}
+            Err(e) => {
+                let why = e.to_string();
+                assert!(
+                    why.len() > 10,
+                    "enumeration failed without saying why: {why:?}"
+                );
+            }
+        }
     }
 
     /// Whatever is enumerated must be identifiable. How many there are is the

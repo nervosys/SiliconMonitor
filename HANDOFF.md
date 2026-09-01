@@ -102,9 +102,47 @@ Since the tag, on `master` and green on all three platforms:
 | `c3391f0` | The health reader's own enumeration could not report a failure |
 | `4ed9145` | Boot mode asserted because it is usually right |
 | `15a60ab` | 97 GB of swap in use, on a machine using 3.4 GB of it |
+| `HEAD` | The last six enumerators, and what the list was really for |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### The last six enumerators, and what the list was really for
+
+`audio`, `bluetooth`, `cpu_cache`, `display`, `os_info`, `power_profile`. The
+list opened in `acf4e69` with sixteen modules and closes here, except for
+`firmware`, which is recorded separately because its Windows reader needs
+untangling first.
+
+Nothing surprising in the six — which is the point, and is why the list took so
+long to finish. **Each one still needed the same twenty-line judgement**: is
+this subprocess the enumeration, or an addition to it? The answers differed
+every time.
+
+* `powercfg /list`, `pmset`, `sw_vers`, `system_profiler`, `sysctl` **ship with
+  their operating systems**, so failing to run one is a failure.
+* `/proc/asound/cards`, `/sys/class/bluetooth`, `/sys/class/drm`,
+  `/etc/os-release` and `cpu0/cache` are **absent on kernels that lack the
+  subsystem**, which is a reading, and unreadable-for-another-reason, which is
+  not. `ErrorKind::NotFound` splits them.
+* `power_profile`'s Linux reader has **no enumeration at all** — a governor, a
+  battery, a brightness, each optional — so its `Result` is for consistency and
+  nothing in it fails the read.
+* `cpu_cache`'s macOS reader asks `sysctl` for five keys, and `hw.l3cachesize`
+  is genuinely absent on parts with no L3, so **one key exiting non-zero must
+  not fail the whole read** while `sysctl` being unrunnable must.
+
+Five creation tests were rewritten with the others, and `cpu_cache`'s Windows
+reader was replaced whole rather than spliced, after three failed attempts at
+surgical brace edits on the same function. **When an edit to a function has
+gone wrong twice, write the function out.**
+
+**On the delay.** This list sat open across roughly a dozen commits while newer
+findings — a webcam claiming to be streaming, a disk rate published as a total,
+97 GB of imaginary swap — kept arriving and kept looking more urgent. They were
+more urgent, one at a time. The list was the thing that stopped them recurring,
+and deferring it a dozen times was the wrong call each time in a way that was
+only obvious in aggregate.
 
 ### 97 GB of swap in use, on a machine using 3.4 GB of it
 
@@ -3405,25 +3443,13 @@ feature stayed broken through eight published versions.
 
 ## Open work
 
-1. **Seven enumerators still swallow their failures.** `camera`, `sensors`,
-   `usb`, `input`, `tpm`, `storage_controller`, `numa` and `printer` are
-   converted; `codec` was examined and does not have the defect. Left: `audio`,
-   `bluetooth`, `cpu_cache`, `display`, `firmware`, `os_info`,
-   `power_profile`. `firmware` is the awkward one: its Windows reader
-   interleaves four PowerShell queries, two that add entries and two that
-   only decorate them, and a mechanical conversion of it was attempted and
-   reverted. Separate the four before converting. (`display` and `audio` had
-   their Windows readers rewritten
-   for a different defect since; their `refresh_<os>` signatures are untouched.
-   `smart` is converted, and `linux` there is deliberately left swallowing —
-   its subprocesses enrich a sysfs enumeration rather than being it.)
-   Each has a `refresh_<os>` returning `()` into a `refresh()` returning
-   `Result`, so each can report a machine as empty when the reader merely
-   failed. Convert with `capture_json` / `capture`, one or two modules per
-   commit, and run the module against this host afterwards — `sensors` only gave
-   up its dead `MSFT_Sensor` query because someone looked at what the new error
-   said. Check each for the `codec` case before converting: a source that is
-   optional by design, and already labelled as inferred, is not this defect.
+1. **`firmware` is the last reader that swallows its failures.** The other
+   fifteen are converted or exempt. Its Windows reader interleaves four
+   PowerShell queries -- two that add entries and two that only decorate them --
+   and a mechanical conversion was attempted and reverted when the brace
+   bookkeeping went wrong. Separate the four queries, then apply the same rule
+   as `usb::refresh_windows`: any source succeeding is enough to trust an empty
+   result, and every source failing is an error.
 
 2. **USB device ids are enumeration order on Windows and collide on Linux.**
    The entity for `usb.{addr}.*` says the segment is bus and port, "which

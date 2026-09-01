@@ -171,18 +171,16 @@ impl BluetoothMonitor {
         self.adapters.clear();
         self.devices.clear();
         #[cfg(target_os = "windows")]
-        self.refresh_windows();
+        self.refresh_windows()?;
         #[cfg(target_os = "linux")]
-        self.refresh_linux();
+        self.refresh_linux()?;
         #[cfg(target_os = "macos")]
-        self.refresh_macos();
+        self.refresh_macos()?;
         Ok(())
     }
 
     #[cfg(target_os = "windows")]
-    fn refresh_windows(&mut self) {
-        use std::process::Command;
-
+    fn refresh_windows(&mut self) -> Result<(), crate::error::SimonError> {
         // Ask for every Bluetooth-class PnP entry and classify them here.
         //
         // The classification used to live in this PowerShell string and matched
@@ -194,35 +192,26 @@ impl BluetoothMonitor {
         //
         // In Rust it can be tested against real device ids; in a shell string
         // it could not be tested at all.
-        let output = Command::new("powershell")
-            .args([
-                "-NoProfile",
-                "-Command",
-                concat!(
-                    "Get-CimInstance -ClassName Win32_PnPEntity | ",
-                    "Where-Object { $_.PNPClass -eq 'Bluetooth' } | ",
-                    "Select-Object @{N='Id';E={$_.PNPDeviceID}}, Name, Manufacturer, Status | ",
-                    "ConvertTo-Json -Depth 3 -Compress"
-                ),
-            ])
-            .output();
+        const QUERY: &str = concat!(
+            "Get-CimInstance -ClassName Win32_PnPEntity | ",
+            "Where-Object { $_.PNPClass -eq 'Bluetooth' } | ",
+            "Select-Object @{N='Id';E={$_.PNPDeviceID}}, Name, Manufacturer, Status | ",
+            "ConvertTo-Json -Depth 3 -Compress"
+        );
 
-        let Ok(output) = output else { return };
-        if !output.status.success() {
-            return;
-        }
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let Ok(json) = serde_json::from_str::<serde_json::Value>(stdout.trim()) else {
-            return;
+        // Three `return`s used to sit here -- a spawn failure, a non-zero exit
+        // and unparseable output -- and all three left the adapter and device
+        // lists empty, which reads as a machine with no Bluetooth hardware.
+        let Some(json) =
+            crate::core::command::capture_json("powershell", &["-NoProfile", "-Command", QUERY])?
+        else {
+            return Ok(());
         };
         // A single match is serialised as an object rather than a one-element
         // array.
-        let entries: Vec<&serde_json::Value> = match json.as_array() {
-            Some(a) => a.iter().collect(),
-            None => vec![&json],
-        };
+        let entries = crate::core::command::json_items(&json);
 
-        for entry in entries {
+        for entry in &entries {
             let id = entry.get("Id").and_then(|v| v.as_str()).unwrap_or("");
             let name = entry.get("Name").and_then(|v| v.as_str()).unwrap_or("");
             let powered = entry.get("Status").and_then(|v| v.as_str()) == Some("OK");
@@ -257,17 +246,25 @@ impl BluetoothMonitor {
                 BtEntry::Service | BtEntry::Stack => {}
             }
         }
+        Ok(())
     }
 
     #[cfg(target_os = "linux")]
-    fn refresh_linux(&mut self) {
+    fn refresh_linux(&mut self) -> Result<(), crate::error::SimonError> {
         use std::fs;
         use std::path::Path;
 
-        // Read Bluetooth adapters from /sys/class/bluetooth
+        // Read Bluetooth adapters from /sys/class/bluetooth. No such directory
+        // is a reading -- this kernel has no Bluetooth stack -- and a directory
+        // that will not open is not.
         let bt_path = Path::new("/sys/class/bluetooth");
         if bt_path.exists() {
-            if let Ok(entries) = fs::read_dir(bt_path) {
+            {
+                let entries = fs::read_dir(bt_path).map_err(|e| {
+                    crate::error::SimonError::System(format!(
+                        "cannot read /sys/class/bluetooth: {e}"
+                    ))
+                })?;
                 for entry in entries.flatten() {
                     let name = entry.file_name().to_string_lossy().to_string();
                     if !name.starts_with("hci") {
@@ -335,19 +332,19 @@ impl BluetoothMonitor {
                 }
             }
         }
+        Ok(())
     }
 
     #[cfg(target_os = "macos")]
-    fn refresh_macos(&mut self) {
-        use std::process::Command;
-
-        if let Ok(output) = Command::new("system_profiler")
-            .args(["SPBluetoothDataType", "-json"])
-            .output()
+    fn refresh_macos(&mut self) -> Result<(), crate::error::SimonError> {
+        // `system_profiler` ships with macOS, so a failure to run it is a
+        // failure rather than an absent optional tool.
+        let stdout =
+            crate::core::command::capture("system_profiler", &["SPBluetoothDataType", "-json"])?;
         {
-            if output.status.success() {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&stdout) {
+            {
+                let stdout = stdout.as_str();
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(stdout) {
                     if let Some(bt_data) =
                         json.get("SPBluetoothDataType").and_then(|v| v.as_array())
                     {
@@ -407,6 +404,7 @@ impl BluetoothMonitor {
                 }
             }
         }
+        Ok(())
     }
     pub fn adapters(&self) -> &[BluetoothAdapter] {
         &self.adapters
@@ -593,10 +591,24 @@ impl BluetoothMonitor {
 mod tests {
     use super::*;
 
+    /// Constructing the monitor either enumerates or says why it could not.
+    ///
+    /// See the identically-shaped tests in `camera`, `usb` and the rest: this
+    /// asserted `is_ok()`, which was true by construction while `refresh` could
+    /// not fail. A failure must carry a reason, because a reason is the whole
+    /// difference between "this machine has none" and "nobody looked".
     #[test]
     fn test_bluetooth_monitor_creation() {
-        let monitor = BluetoothMonitor::new();
-        assert!(monitor.is_ok());
+        match BluetoothMonitor::new() {
+            Ok(_monitor) => {}
+            Err(e) => {
+                let why = e.to_string();
+                assert!(
+                    why.len() > 10,
+                    "enumeration failed without saying why: {why:?}"
+                );
+            }
+        }
     }
 
     #[test]

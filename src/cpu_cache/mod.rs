@@ -115,13 +115,13 @@ impl CpuCacheMonitor {
         self.topology.caches.clear();
 
         #[cfg(target_os = "linux")]
-        self.refresh_linux();
+        self.refresh_linux()?;
 
         #[cfg(target_os = "windows")]
-        self.refresh_windows();
+        self.refresh_windows()?;
 
         #[cfg(target_os = "macos")]
-        self.refresh_macos();
+        self.refresh_macos()?;
 
         self.compute_totals();
         Ok(())
@@ -190,14 +190,17 @@ impl CpuCacheMonitor {
     }
 
     #[cfg(target_os = "linux")]
-    fn refresh_linux(&mut self) {
+    fn refresh_linux(&mut self) -> Result<(), SimonError> {
         // Read from cpu0's cache hierarchy (representative)
         let cpu_base = std::path::Path::new("/sys/devices/system/cpu/cpu0/cache");
         if !cpu_base.exists() {
-            return;
+            // A real answer: this kernel publishes no cache topology.
+            return Ok(());
         }
 
-        if let Ok(entries) = std::fs::read_dir(cpu_base) {
+        {
+            let entries = std::fs::read_dir(cpu_base)
+                .map_err(|e| SimonError::System(format!("cannot read {cpu_base:?}: {e}")))?;
             for entry in entries.flatten() {
                 let name = entry.file_name().to_string_lossy().to_string();
                 if !name.starts_with("index") {
@@ -266,6 +269,7 @@ impl CpuCacheMonitor {
         }
 
         self.topology.caches.sort_by_key(|c| (c.level, c.index));
+        Ok(())
     }
 
     #[cfg(target_os = "linux")]
@@ -289,78 +293,83 @@ impl CpuCacheMonitor {
     }
 
     #[cfg(target_os = "windows")]
-    fn refresh_windows(&mut self) {
-        if let Ok(output) = std::process::Command::new("powershell")
-            .args(["-NoProfile", "-Command",
-                "Get-CimInstance Win32_CacheMemory | Select-Object Purpose, InstalledSize, CacheSpeed, Level, Associativity, LineSize, NumberOfBlocks, Status | ConvertTo-Json -Compress"])
-            .output()
-        {
-            if let Ok(text) = String::from_utf8(output.stdout) {
-                if let Ok(val) = serde_json::from_str::<serde_json::Value>(&text) {
-                    let items = match &val {
-                        serde_json::Value::Array(arr) => arr.clone(),
-                        obj @ serde_json::Value::Object(_) => vec![obj.clone()],
-                        _ => vec![],
-                    };
-                    for (i, item) in items.iter().enumerate() {
-                        let purpose = item["Purpose"].as_str().unwrap_or("");
-                        let wmi_level = item["Level"].as_u64().unwrap_or(0);
-                        // WMI Level: 3=L1, 4=L2, 5=L3 (CIM enumeration)
-                        let level = match wmi_level {
-                            3 => CacheLevel::L1,
-                            4 => CacheLevel::L2,
-                            5 => CacheLevel::L3,
-                            _ => {
-                                // Infer from purpose string
-                                let p = purpose.to_lowercase();
-                                if p.contains("l1") { CacheLevel::L1 }
-                                else if p.contains("l2") { CacheLevel::L2 }
-                                else if p.contains("l3") { CacheLevel::L3 }
-                                else { CacheLevel::L2 }
-                            }
-                        };
+    fn refresh_windows(&mut self) -> Result<(), SimonError> {
+        const QUERY: &str = concat!(
+            "Get-CimInstance Win32_CacheMemory | Select-Object Purpose, ",
+            "InstalledSize, CacheSpeed, Level, Associativity, LineSize, ",
+            "NumberOfBlocks, Status | ConvertTo-Json -Compress"
+        );
 
-                        let cache_type = {
-                            let p = purpose.to_lowercase();
-                            if p.contains("data") {
-                                CacheType::Data
-                            } else if p.contains("instruction") || p.contains("code") {
-                                CacheType::Instruction
-                            } else {
-                                CacheType::Unified
-                            }
-                        };
+        let Some(val) =
+            crate::core::command::capture_json("powershell", &["-NoProfile", "-Command", QUERY])?
+        else {
+            return Ok(());
+        };
 
-                        let size_kb = item["InstalledSize"].as_u64().unwrap_or(0);
-                        let line_size = item["LineSize"].as_u64().map(|v| v as u32);
-                        let assoc = item["Associativity"].as_u64().map(|v| v as u32);
-
-                        self.topology.caches.push(CpuCacheInfo {
-                            level,
-                            cache_type,
-                            size_kb,
-                            line_size,
-                            associativity: assoc,
-                            // Win32_CacheMemory carries neither field.
-                            sets: None,
-                            partitions: None,
-                            shared_cpu_list: String::new(),
-                            index: i as u32,
-                        });
+        for (i, item) in crate::core::command::json_items(&val).iter().enumerate() {
+            let purpose = item["Purpose"].as_str().unwrap_or("");
+            let wmi_level = item["Level"].as_u64().unwrap_or(0);
+            // WMI Level: 3=L1, 4=L2, 5=L3 (CIM enumeration)
+            let level = match wmi_level {
+                3 => CacheLevel::L1,
+                4 => CacheLevel::L2,
+                5 => CacheLevel::L3,
+                _ => {
+                    // Infer from purpose string
+                    let p = purpose.to_lowercase();
+                    if p.contains("l1") {
+                        CacheLevel::L1
+                    } else if p.contains("l2") {
+                        CacheLevel::L2
+                    } else if p.contains("l3") {
+                        CacheLevel::L3
+                    } else {
+                        CacheLevel::L2
                     }
                 }
-            }
+            };
+
+            let cache_type = {
+                let p = purpose.to_lowercase();
+                if p.contains("data") {
+                    CacheType::Data
+                } else if p.contains("instruction") || p.contains("code") {
+                    CacheType::Instruction
+                } else {
+                    CacheType::Unified
+                }
+            };
+
+            let size_kb = item["InstalledSize"].as_u64().unwrap_or(0);
+            let line_size = item["LineSize"].as_u64().map(|v| v as u32);
+            let assoc = item["Associativity"].as_u64().map(|v| v as u32);
+
+            self.topology.caches.push(CpuCacheInfo {
+                level,
+                cache_type,
+                size_kb,
+                line_size,
+                associativity: assoc,
+                // Win32_CacheMemory carries neither field.
+                sets: None,
+                partitions: None,
+                shared_cpu_list: String::new(),
+                index: i as u32,
+            });
         }
+
+        Ok(())
     }
 
     #[cfg(target_os = "macos")]
-    fn refresh_macos(&mut self) {
+    fn refresh_macos(&mut self) -> Result<(), SimonError> {
+        // `sysctl` ships with macOS, so failing to run it is a failure. A key
+        // it does not know is a different matter -- `hw.l3cachesize` is absent
+        // on parts with no L3 -- so one key exiting non-zero stays `None`
+        // rather than failing the whole read.
         let read_sysctl = |name: &str| -> Option<u64> {
-            std::process::Command::new("sysctl")
-                .args(["-n", name])
-                .output()
+            crate::core::command::capture("sysctl", &["-n", name])
                 .ok()
-                .and_then(|o| String::from_utf8(o.stdout).ok())
                 .and_then(|s| s.trim().parse().ok())
         };
         let line_size = read_sysctl("hw.cachelinesize").map(|v| v as u32);
@@ -428,6 +437,7 @@ impl CpuCacheMonitor {
                 index: 3,
             });
         }
+        Ok(())
     }
 }
 
@@ -471,10 +481,24 @@ impl std::fmt::Display for CacheType {
 mod tests {
     use super::*;
 
+    /// Constructing the monitor either enumerates or says why it could not.
+    ///
+    /// See the identically-shaped tests in `camera`, `usb` and the rest: this
+    /// asserted `is_ok()`, which was true by construction while `refresh` could
+    /// not fail. A failure must carry a reason, because a reason is the whole
+    /// difference between "this machine has none" and "nobody looked".
     #[test]
     fn test_cache_monitor_creation() {
-        let monitor = CpuCacheMonitor::new();
-        assert!(monitor.is_ok());
+        match CpuCacheMonitor::new() {
+            Ok(_monitor) => {}
+            Err(e) => {
+                let why = e.to_string();
+                assert!(
+                    why.len() > 10,
+                    "enumeration failed without saying why: {why:?}"
+                );
+            }
+        }
     }
 
     #[test]

@@ -107,11 +107,11 @@ impl DisplayMonitor {
     pub fn refresh(&mut self) -> Result<(), crate::error::SimonError> {
         self.displays.clear();
         #[cfg(target_os = "windows")]
-        self.refresh_windows();
+        self.refresh_windows()?;
         #[cfg(target_os = "linux")]
-        self.refresh_linux();
+        self.refresh_linux()?;
         #[cfg(target_os = "macos")]
-        self.refresh_macos();
+        self.refresh_macos()?;
         Ok(())
     }
     pub fn displays(&self) -> &[DisplayInfo] {
@@ -158,7 +158,7 @@ impl DisplayMonitor {
     /// taken from it. Per-instance state would need the UID, which is why
     /// brightness is not taken from it.
     #[cfg(target_os = "windows")]
-    fn refresh_windows(&mut self) {
+    fn refresh_windows(&mut self) -> Result<(), crate::error::SimonError> {
         use windows::core::PCWSTR;
         use windows::Win32::Graphics::Gdi::{
             EnumDisplayDevicesW, EnumDisplaySettingsW, DEVMODEW, DISPLAY_DEVICEW,
@@ -275,6 +275,7 @@ impl DisplayMonitor {
         // nothing had observed. `count()` then reported 1 display on a machine
         // where detection had failed entirely, which is worse than reporting
         // none.
+        Ok(())
     }
     /// EDID-derived monitor metadata, keyed by hardware id.
     ///
@@ -351,14 +352,19 @@ impl DisplayMonitor {
     }
 
     #[cfg(target_os = "linux")]
-    fn refresh_linux(&mut self) {
+    fn refresh_linux(&mut self) -> Result<(), crate::error::SimonError> {
         use std::fs;
         use std::process::Command;
 
-        // Try DRM/sysfs first (works without X11)
+        // Try DRM/sysfs first (works without X11). No /sys/class/drm is a
+        // reading -- this kernel exposes no DRM -- and a directory that will
+        // not open is not.
         let drm_path = std::path::Path::new("/sys/class/drm");
         if drm_path.exists() {
-            if let Ok(entries) = fs::read_dir(drm_path) {
+            {
+                let entries = fs::read_dir(drm_path).map_err(|e| {
+                    crate::error::SimonError::System(format!("cannot read /sys/class/drm: {e}"))
+                })?;
                 let mut idx = 0u32;
                 for entry in entries.flatten() {
                     let name = entry.file_name().to_string_lossy().to_string();
@@ -527,20 +533,19 @@ impl DisplayMonitor {
 
         // No synthetic fallback — see the Windows collector. DRM and xrandr have both
         // been tried at this point; an empty list means no display was detected.
+        Ok(())
     }
 
     #[cfg(target_os = "macos")]
-    fn refresh_macos(&mut self) {
-        use std::process::Command;
-
-        // Use system_profiler for display info
-        if let Ok(output) = Command::new("system_profiler")
-            .args(["SPDisplaysDataType", "-json"])
-            .output()
+    fn refresh_macos(&mut self) -> Result<(), crate::error::SimonError> {
+        // `system_profiler` ships with macOS, so a failure to run it is a
+        // failure rather than an absent optional tool.
+        let stdout =
+            crate::core::command::capture("system_profiler", &["SPDisplaysDataType", "-json"])?;
         {
-            if output.status.success() {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&stdout) {
+            {
+                let stdout = stdout.as_str();
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(stdout) {
                     if let Some(displays_data) =
                         json.get("SPDisplaysDataType").and_then(|v| v.as_array())
                     {
@@ -636,6 +641,7 @@ impl DisplayMonitor {
         // No synthetic fallback — see the Windows collector. This one additionally
         // asserted `DisplayConnection::Internal`, claiming a built-in panel on
         // hardware that may well be a Mac mini or Mac Pro.
+        Ok(())
     }
 }
 
@@ -734,10 +740,24 @@ impl Default for DisplayMonitor {
 mod tests {
     use super::*;
 
+    /// Constructing the monitor either enumerates or says why it could not.
+    ///
+    /// See the identically-shaped tests in `camera`, `usb` and the rest: this
+    /// asserted `is_ok()`, which was true by construction while `refresh` could
+    /// not fail. A failure must carry a reason, because a reason is the whole
+    /// difference between "this machine has none" and "nobody looked".
     #[test]
     fn test_display_monitor_creation() {
-        let monitor = DisplayMonitor::new();
-        assert!(monitor.is_ok());
+        match DisplayMonitor::new() {
+            Ok(_monitor) => {}
+            Err(e) => {
+                let why = e.to_string();
+                assert!(
+                    why.len() > 10,
+                    "enumeration failed without saying why: {why:?}"
+                );
+            }
+        }
     }
 
     /// Whatever displays are reported must be real ones.
