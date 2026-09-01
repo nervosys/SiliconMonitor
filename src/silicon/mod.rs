@@ -28,6 +28,19 @@ pub enum CpuClusterType {
     Standard,
 }
 
+/// Mean frequency over the cores that reported one, or `None` when none did.
+///
+/// Averaging a list where an unread core contributes zero drags the figure
+/// toward zero in proportion to how much was unreadable, and reports the
+/// result as a measurement.
+pub fn average_reported_mhz(cores: &[CpuCore]) -> Option<u32> {
+    let reported: Vec<u32> = cores.iter().filter_map(|c| c.frequency_mhz).collect();
+    if reported.is_empty() {
+        return None;
+    }
+    Some(reported.iter().sum::<u32>() / reported.len() as u32)
+}
+
 /// Per-core CPU information
 #[derive(Debug, Clone)]
 pub struct CpuCore {
@@ -35,8 +48,15 @@ pub struct CpuCore {
     pub id: u32,
     /// Cluster type
     pub cluster: CpuClusterType,
-    /// Current frequency in MHz
-    pub frequency_mhz: u32,
+    /// Current frequency in MHz, or `None` where it was not measured.
+    ///
+    /// This was `u32`. On Windows the reader below calls the same
+    /// `CallNtPowerInformation(ProcessorInformation)` as
+    /// `platform::windows::get_cpu_frequency`, which returns the *nominal*
+    /// clock — 4400 for every core of a 9900X, whatever it is doing. That was
+    /// fixed there and not here, because the fix was applied where the defect
+    /// was seen rather than where it is. Two readers, one API, one lie.
+    pub frequency_mhz: Option<u32>,
     /// Utilization percentage (0-100)
     pub utilization: u8,
     /// Temperature in Celsius (if available)
@@ -50,8 +70,9 @@ pub struct CpuCluster {
     pub cluster_type: CpuClusterType,
     /// Core IDs in this cluster
     pub core_ids: Vec<u32>,
-    /// Average frequency in MHz
-    pub frequency_mhz: u32,
+    /// Average frequency in MHz over the cores that reported one, or `None`
+    /// when none did. See [`CpuCore::frequency_mhz`].
+    pub frequency_mhz: Option<u32>,
     /// Average utilization percentage (0-100)
     pub utilization: u8,
     /// Power consumption in watts (if available)

@@ -70,7 +70,10 @@ fn report<M: SiliconMonitor>(monitor: &M) -> Result<(), Box<dyn std::error::Erro
 
         println!("\n{} Cluster:", cluster_name);
         println!("  Cores: {:?}", cluster.core_ids);
-        println!("  Average Frequency: {} MHz", cluster.frequency_mhz);
+        match cluster.frequency_mhz {
+            Some(mhz) => println!("  Average Frequency: {mhz} MHz"),
+            None => println!("  Average Frequency: not measured"),
+        }
         println!("  Average Utilization: {}%", cluster.utilization);
 
         if let Some(power) = cluster.power_watts {
@@ -88,7 +91,10 @@ fn report<M: SiliconMonitor>(monitor: &M) -> Result<(), Box<dyn std::error::Erro
         };
 
         print!("Core {:2} [{}]: ", core.id, cluster_name);
-        print!("{:4} MHz, ", core.frequency_mhz);
+        match core.frequency_mhz {
+            Some(mhz) => print!("{mhz:4} MHz, "),
+            None => print!("   -  MHz, "),
+        }
         print!("{:3}% util", core.utilization);
 
         if let Some(temp) = core.temperature {
@@ -102,11 +108,14 @@ fn report<M: SiliconMonitor>(monitor: &M) -> Result<(), Box<dyn std::error::Erro
     println!("\n=== Summary Statistics ===");
 
     let total_cores = cores.len();
-    let avg_freq = cores.iter().map(|c| c.frequency_mhz as u64).sum::<u64>() / total_cores as u64;
+    let avg_freq = simonlib::silicon::average_reported_mhz(&cores);
     let avg_util = cores.iter().map(|c| c.utilization as u32).sum::<u32>() / total_cores as u32;
 
     println!("Total Cores: {}", total_cores);
-    println!("Average Frequency: {} MHz", avg_freq);
+    match avg_freq {
+        Some(mhz) => println!("Average Frequency: {mhz} MHz"),
+        None => println!("Average Frequency: not measured on this platform"),
+    }
     println!("Average Utilization: {}%", avg_util);
 
     // Temperature statistics (if available)

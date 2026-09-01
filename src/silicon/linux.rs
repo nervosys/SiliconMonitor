@@ -376,7 +376,9 @@ impl SiliconMonitor for LinuxSiliconMonitor {
 
         for cpu_id in 0..self.cpu_count as u32 {
             let cluster = self.determine_cluster_type(cpu_id);
-            let frequency = self.read_cpu_frequency(cpu_id).unwrap_or(0);
+            // A core whose scaling_cur_freq could not be read has no
+            // frequency, not a frequency of zero.
+            let frequency = self.read_cpu_frequency(cpu_id);
             let utilization = utilization_map.get(&cpu_id).copied().unwrap_or(0);
             let temperature = self.read_cpu_temperature(cpu_id);
 
@@ -404,8 +406,7 @@ impl SiliconMonitor for LinuxSiliconMonitor {
         let mut clusters = Vec::new();
 
         if !p_cores.is_empty() {
-            let avg_freq =
-                p_cores.iter().map(|c| c.frequency_mhz).sum::<u32>() / p_cores.len() as u32;
+            let avg_freq = average_reported_mhz(&p_cores);
             let avg_util =
                 p_cores.iter().map(|c| c.utilization as u32).sum::<u32>() / p_cores.len() as u32;
 
@@ -422,8 +423,7 @@ impl SiliconMonitor for LinuxSiliconMonitor {
         }
 
         if !e_cores.is_empty() {
-            let avg_freq =
-                e_cores.iter().map(|c| c.frequency_mhz).sum::<u32>() / e_cores.len() as u32;
+            let avg_freq = average_reported_mhz(&e_cores);
             let avg_util =
                 e_cores.iter().map(|c| c.utilization as u32).sum::<u32>() / e_cores.len() as u32;
 
@@ -440,8 +440,7 @@ impl SiliconMonitor for LinuxSiliconMonitor {
         }
 
         if !std_cores.is_empty() {
-            let avg_freq =
-                std_cores.iter().map(|c| c.frequency_mhz).sum::<u32>() / std_cores.len() as u32;
+            let avg_freq = average_reported_mhz(&std_cores);
             let avg_util = std_cores.iter().map(|c| c.utilization as u32).sum::<u32>()
                 / std_cores.len() as u32;
 

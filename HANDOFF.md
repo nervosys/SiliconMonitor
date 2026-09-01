@@ -61,9 +61,55 @@ Since the tag, on `master` and green on all three platforms:
 | `0121d86` | A clean bill of health drawn from 2 of 23,541 settings |
 | `f34f72c` | "No engines detected" on a platform with no engine reader |
 | `916bf08` | A sentinel introduced by an earlier fix in this same session |
+| `HEAD` | The same nominal-clock lie, in a second reader of the same API |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### Two readers, one API, one lie — and only one was fixed
+
+Following the lesson below immediately paid. Sweeping for `unwrap_or` on the
+fields made `Option` this session turned up
+`src/silicon/linux.rs`'s `read_cpu_frequency(cpu_id).unwrap_or(0)` — and pulling
+that thread found something larger on Windows.
+
+`silicon::windows::read_cpu_frequencies` calls
+**`CallNtPowerInformation(ProcessorInformation)`** — the same API, on the same
+machine, as `platform::windows::get_cpu_frequency`, which `6617020` fixed
+earlier today for returning the nominal clock rather than the current one. This
+second reader was never touched, so `cargo run --example cpu_monitor` printed:
+
+```
+Core  0 [P]: 4400 MHz,   0% util
+Core  1 [P]: 4400 MHz,   0% util          ... for all 24
+  Average Frequency: 4400 MHz
+```
+
+4400 on every core of a 9900X, whatever it is doing. **The module is live**: the
+TUI's silicon pane uses it on all three platforms.
+
+Worse than the duplicate: when the call *failed*, the reader filled the vector
+with `self.base_frequency_mhz`, publishing a registry nominal figure as every
+core's measured current one. Removing that fallback made `base_frequency_mhz`
+and `detect_base_frequency` dead — **the field existed only to fabricate**,
+which is a useful signal in itself. Both deleted.
+
+`CpuCore::frequency_mhz` and `CpuCluster::frequency_mhz` are `Option<u32>` now,
+and cluster averages go through `average_reported_mhz`, which returns `None`
+rather than dividing by a count that includes cores contributing zero. Averaging
+unread cores as zero drags the figure toward zero in proportion to how much was
+unreadable and reports the result as a measurement.
+
+**The sweep that found it is worth repeating after any `Option` migration:**
+
+```bash
+grep -rnE "(the_field_you_changed)[^;]*unwrap_or" src/ examples/
+```
+
+**And the generalisation: when a reader is wrong, grep for the API it calls, not
+for the reader's name.** `get_cpu_frequency` and `read_cpu_frequencies` share no
+identifier; they share `CallNtPowerInformation`. Two modules can hold the same
+defect and no rename-level search will connect them.
 
 ### A fix in this session introduced the defect it was fixing
 

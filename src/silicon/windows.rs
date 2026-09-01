@@ -43,19 +43,14 @@ static PREV_IDLE_TIME: AtomicU64 = AtomicU64::new(0);
 /// Windows silicon monitor
 pub struct WindowsSiliconMonitor {
     cpu_count: usize,
-    base_frequency_mhz: u32,
 }
 
 impl WindowsSiliconMonitor {
     /// Create a new Windows silicon monitor
     pub fn new() -> Result<Self> {
         let cpu_count = Self::detect_cpu_count();
-        let base_frequency_mhz = Self::detect_base_frequency();
 
-        Ok(Self {
-            cpu_count,
-            base_frequency_mhz,
-        })
+        Ok(Self { cpu_count })
     }
 
     #[cfg(target_os = "windows")]
@@ -74,20 +69,6 @@ impl WindowsSiliconMonitor {
 
     /// Detect base CPU frequency from registry
     #[cfg(target_os = "windows")]
-    fn detect_base_frequency() -> u32 {
-        use winreg::enums::*;
-        use winreg::RegKey;
-
-        let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
-        if let Ok(cpu_key) = hklm.open_subkey("HARDWARE\\DESCRIPTION\\System\\CentralProcessor\\0")
-        {
-            if let Ok(mhz) = cpu_key.get_value::<u32, _>("~MHz") {
-                return mhz;
-            }
-        }
-        0
-    }
-
     #[cfg(not(target_os = "windows"))]
     fn detect_base_frequency() -> u32 {
         0
@@ -95,7 +76,7 @@ impl WindowsSiliconMonitor {
 
     /// Read current CPU frequency using CallNtPowerInformation
     #[cfg(target_os = "windows")]
-    fn read_cpu_frequencies(&self) -> Vec<u32> {
+    fn read_cpu_frequencies(&self) -> Vec<Option<u32>> {
         use std::mem;
 
         // PROCESSOR_POWER_INFORMATION structure
@@ -139,17 +120,23 @@ impl WindowsSiliconMonitor {
         };
 
         if result == 0 {
-            // STATUS_SUCCESS
-            buffer.iter().map(|p| p.current_mhz).collect()
+            // STATUS_SUCCESS. `current_mhz` equal to `max_mhz` is the nominal
+            // clock, not a measurement — Windows reports the former through
+            // this API and has no unprivileged way to give the latter.
+            buffer
+                .iter()
+                .map(|p| (p.current_mhz != p.max_mhz).then_some(p.current_mhz))
+                .collect()
         } else {
-            // Fallback to base frequency
-            vec![self.base_frequency_mhz; self.cpu_count]
+            // The call failed. Filling the vector with the base frequency
+            // published a nominal figure as each core's current one.
+            vec![None; self.cpu_count]
         }
     }
 
     #[cfg(not(target_os = "windows"))]
-    fn read_cpu_frequencies(&self) -> Vec<u32> {
-        vec![0; self.cpu_count]
+    fn read_cpu_frequencies(&self) -> Vec<Option<u32>> {
+        vec![None; self.cpu_count]
     }
 
     /// Read CPU utilization using GetSystemTimes
@@ -393,10 +380,7 @@ impl SiliconMonitor for WindowsSiliconMonitor {
 
         for cpu_id in 0..self.cpu_count as u32 {
             let cluster = self.determine_cluster_type(cpu_id);
-            let frequency = frequencies
-                .get(cpu_id as usize)
-                .copied()
-                .unwrap_or(self.base_frequency_mhz);
+            let frequency = frequencies.get(cpu_id as usize).copied().flatten();
             let utilization = utilization_map.get(&cpu_id).copied().unwrap_or(0);
             let temperature = self.read_cpu_temperature(cpu_id);
 
@@ -410,10 +394,13 @@ impl SiliconMonitor for WindowsSiliconMonitor {
         }
 
         // Calculate cluster averages
-        let avg_freq = if !cores.is_empty() {
-            cores.iter().map(|c| c.frequency_mhz).sum::<u32>() / cores.len() as u32
+        // Average over the cores that reported a frequency; `None` when none
+        // did, rather than an average of zeros.
+        let reported: Vec<u32> = cores.iter().filter_map(|c| c.frequency_mhz).collect();
+        let avg_freq = if reported.is_empty() {
+            None
         } else {
-            0
+            Some(reported.iter().sum::<u32>() / reported.len() as u32)
         };
 
         let avg_util = if !cores.is_empty() {
