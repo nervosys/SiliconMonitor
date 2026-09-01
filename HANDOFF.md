@@ -82,7 +82,7 @@ Since the tag, on `master` and green on all three platforms:
 | `acf4e69` | The same swallow in sixteen more enumerators |
 | `57c7eb9` | Two enumerations, both failing, reported as one empty |
 | `3485fbb` | "This machine has no TPM", published as a measurement |
-| `HEAD` | Measured boot reported off, on a host where it is on |
+| `a053f16` | Measured boot reported off, on a host where it is on |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
