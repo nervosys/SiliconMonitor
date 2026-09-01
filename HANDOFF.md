@@ -79,7 +79,7 @@ Since the tag, on `master` and green on all three platforms:
 | `cd15e37` | Cache and block geometry assumed rather than read |
 | `ae625ab` | A rate published as a total, for the wrong drive |
 | `89b6cd9` | A failed enumeration reported as an empty machine |
-| `HEAD` | The same swallow in sixteen more enumerators |
+| `acf4e69` | The same swallow in sixteen more enumerators |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
