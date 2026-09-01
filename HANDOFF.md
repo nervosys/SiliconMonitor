@@ -80,7 +80,7 @@ Since the tag, on `master` and green on all three platforms:
 | `ae625ab` | A rate published as a total, for the wrong drive |
 | `89b6cd9` | A failed enumeration reported as an empty machine |
 | `acf4e69` | The same swallow in sixteen more enumerators |
-| `HEAD` | Two enumerations, both failing, reported as one empty |
+| `57c7eb9` | Two enumerations, both failing, reported as one empty |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
