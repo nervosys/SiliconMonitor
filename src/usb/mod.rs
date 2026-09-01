@@ -59,14 +59,19 @@ impl UsbMonitor {
         monitor.refresh()?;
         Ok(monitor)
     }
+    /// Re-enumerate the USB tree.
+    ///
+    /// Returns `Err` when the enumeration failed, and `Ok` with an empty list
+    /// only when it succeeded and found nothing -- which the resolver publishes
+    /// as `usb.<none>`, a claim about the machine. See [`crate::core::command`].
     pub fn refresh(&mut self) -> Result<(), crate::error::SimonError> {
         self.devices.clear();
         #[cfg(target_os = "windows")]
-        self.refresh_windows();
+        self.refresh_windows()?;
         #[cfg(target_os = "linux")]
-        self.refresh_linux();
+        self.refresh_linux()?;
         #[cfg(target_os = "macos")]
-        self.refresh_macos();
+        self.refresh_macos()?;
         Ok(())
     }
     pub fn devices(&self) -> &[UsbDevice] {
@@ -74,80 +79,95 @@ impl UsbMonitor {
     }
 
     #[cfg(target_os = "windows")]
-    fn refresh_windows(&mut self) {
-        // Use WMI to enumerate real USB devices
-        if let Ok(devices) = Self::wmi_enumerate_usb() {
-            self.devices = devices;
+    fn refresh_windows(&mut self) -> Result<(), crate::error::SimonError> {
+        // Two independent enumerations. Either one succeeding is enough to
+        // trust an empty result; both failing is not an empty machine, and
+        // both failing used to be reported as one.
+        let wmi = Self::wmi_enumerate_usb();
+        if let Ok(devices) = &wmi {
+            self.devices.clone_from(devices);
         }
+        if !self.devices.is_empty() {
+            return Ok(());
+        }
+
         // Fallback to setupapi-based approach
-        if self.devices.is_empty() {
-            if let Ok(devices) = Self::registry_enumerate_usb() {
-                self.devices = devices;
-            }
+        let registry = Self::registry_enumerate_usb();
+        if let Ok(devices) = &registry {
+            self.devices.clone_from(devices);
+        }
+
+        match (wmi, registry) {
+            (Err(wmi_err), Err(registry_err)) => Err(crate::error::SimonError::System(format!(
+                "no USB enumeration succeeded: WMI said {wmi_err}; the registry walk said \
+                 {registry_err}"
+            ))),
+            _ => Ok(()),
         }
     }
 
     #[cfg(target_os = "linux")]
-    fn refresh_linux(&mut self) {
+    fn refresh_linux(&mut self) -> Result<(), crate::error::SimonError> {
         use std::fs;
         use std::path::Path;
         // Read from /sys/bus/usb/devices
         let usb_path = Path::new("/sys/bus/usb/devices");
         if usb_path.exists() {
-            if let Ok(entries) = fs::read_dir(usb_path) {
-                for entry in entries.flatten() {
-                    if let Ok(name) = entry.file_name().into_string() {
-                        if !name.contains('-') || name.contains(':') {
-                            continue;
-                        }
-                        let path = entry.path();
-                        let vendor_id = read_usb_attr(&path, "idVendor");
-                        let product_id = read_usb_attr(&path, "idProduct");
-                        let manufacturer = read_usb_string(&path, "manufacturer");
-                        let product = read_usb_string(&path, "product");
-                        let serial = read_usb_string(&path, "serial");
-                        let speed = match read_usb_string(&path, "speed").as_deref() {
-                            Some("1.5") => UsbSpeed::Low,
-                            Some("12") => UsbSpeed::Full,
-                            Some("480") => UsbSpeed::High,
-                            Some("5000") => UsbSpeed::Super,
-                            Some("10000") => UsbSpeed::SuperPlus,
-                            Some("20000") => UsbSpeed::SuperPlusx2,
-                            _ => UsbSpeed::Unknown,
-                        };
-                        let class_code = read_usb_attr(&path, "bDeviceClass");
-                        let class = match class_code {
-                            0x01 => UsbDeviceClass::Audio,
-                            0x02 => UsbDeviceClass::Communication,
-                            0x03 => UsbDeviceClass::Hid,
-                            0x07 => UsbDeviceClass::Printer,
-                            0x08 => UsbDeviceClass::MassStorage,
-                            0x09 => UsbDeviceClass::Hub,
-                            0x0e => UsbDeviceClass::Video,
-                            0xe0 => UsbDeviceClass::Wireless,
-                            0xff => UsbDeviceClass::Vendor,
-                            _ => UsbDeviceClass::Unknown,
-                        };
-                        let parts: Vec<&str> = name.split('-').collect();
-                        let bus_number = parts.first().and_then(|s| s.parse().ok()).unwrap_or(0);
-                        let port_number = parts
-                            .get(1)
-                            .and_then(|s| s.split('.').next())
-                            .and_then(|s| s.parse().ok())
-                            .unwrap_or(0);
-                        self.devices.push(UsbDevice {
-                            bus_number,
-                            port_number,
-                            vendor_id: Some(vendor_id as u16),
-                            product_id: Some(product_id as u16),
-                            manufacturer,
-                            product,
-                            description: None,
-                            serial_number: serial,
-                            class,
-                            speed,
-                        });
+            let entries = fs::read_dir(usb_path).map_err(|e| {
+                crate::error::SimonError::System(format!("cannot read {usb_path:?}: {e}"))
+            })?;
+            for entry in entries.flatten() {
+                if let Ok(name) = entry.file_name().into_string() {
+                    if !name.contains('-') || name.contains(':') {
+                        continue;
                     }
+                    let path = entry.path();
+                    let vendor_id = read_usb_attr(&path, "idVendor");
+                    let product_id = read_usb_attr(&path, "idProduct");
+                    let manufacturer = read_usb_string(&path, "manufacturer");
+                    let product = read_usb_string(&path, "product");
+                    let serial = read_usb_string(&path, "serial");
+                    let speed = match read_usb_string(&path, "speed").as_deref() {
+                        Some("1.5") => UsbSpeed::Low,
+                        Some("12") => UsbSpeed::Full,
+                        Some("480") => UsbSpeed::High,
+                        Some("5000") => UsbSpeed::Super,
+                        Some("10000") => UsbSpeed::SuperPlus,
+                        Some("20000") => UsbSpeed::SuperPlusx2,
+                        _ => UsbSpeed::Unknown,
+                    };
+                    let class_code = read_usb_attr(&path, "bDeviceClass");
+                    let class = match class_code {
+                        0x01 => UsbDeviceClass::Audio,
+                        0x02 => UsbDeviceClass::Communication,
+                        0x03 => UsbDeviceClass::Hid,
+                        0x07 => UsbDeviceClass::Printer,
+                        0x08 => UsbDeviceClass::MassStorage,
+                        0x09 => UsbDeviceClass::Hub,
+                        0x0e => UsbDeviceClass::Video,
+                        0xe0 => UsbDeviceClass::Wireless,
+                        0xff => UsbDeviceClass::Vendor,
+                        _ => UsbDeviceClass::Unknown,
+                    };
+                    let parts: Vec<&str> = name.split('-').collect();
+                    let bus_number = parts.first().and_then(|s| s.parse().ok()).unwrap_or(0);
+                    let port_number = parts
+                        .get(1)
+                        .and_then(|s| s.split('.').next())
+                        .and_then(|s| s.parse().ok())
+                        .unwrap_or(0);
+                    self.devices.push(UsbDevice {
+                        bus_number,
+                        port_number,
+                        vendor_id: Some(vendor_id as u16),
+                        product_id: Some(product_id as u16),
+                        manufacturer,
+                        product,
+                        description: None,
+                        serial_number: serial,
+                        class,
+                        speed,
+                    });
                 }
             }
         }
@@ -160,22 +180,18 @@ impl UsbMonitor {
         // no way to tell it from a machine with exactly one hub.
         //
         // An empty list is the honest answer, and the callers say so.
+        Ok(())
     }
 
     #[cfg(target_os = "macos")]
-    fn refresh_macos(&mut self) {
-        use std::process::Command;
-
-        // Use system_profiler to enumerate USB devices
-        let output = match Command::new("system_profiler")
-            .args(["SPUSBDataType", "-detailLevel", "full"])
-            .output()
-        {
-            Ok(o) => o,
-            Err(_) => return,
-        };
-
-        let stdout = String::from_utf8_lossy(&output.stdout);
+    fn refresh_macos(&mut self) -> Result<(), crate::error::SimonError> {
+        // `Err(_) => return` here reported a machine with no USB devices at all
+        // whenever `system_profiler` could not be spawned, and a non-zero exit
+        // was never looked at.
+        let stdout = crate::core::command::capture(
+            "system_profiler",
+            &["SPUSBDataType", "-detailLevel", "full"],
+        )?;
         let mut current_name: Option<String> = None;
         let mut current_vendor_id: Option<u16> = None;
         let mut current_product_id: Option<u16> = None;
@@ -285,6 +301,7 @@ impl UsbMonitor {
                 speed: current_speed,
             });
         }
+        Ok(())
     }
 }
 

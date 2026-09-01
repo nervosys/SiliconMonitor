@@ -80,9 +80,59 @@ Since the tag, on `master` and green on all three platforms:
 | `ae625ab` | A rate published as a total, for the wrong drive |
 | `89b6cd9` | A failed enumeration reported as an empty machine |
 | `acf4e69` | The same swallow in sixteen more enumerators |
+| `HEAD` | Two enumerations, both failing, reported as one empty |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### Two enumerations, both failing, reported as one empty
+
+Converting `usb` and `input`, the next two off the list in the entry below.
+
+`usb::refresh_windows` had a shape none of the others did — a fallback:
+
+```rust
+if let Ok(devices) = Self::wmi_enumerate_usb() { self.devices = devices; }
+if self.devices.is_empty() {
+    if let Ok(devices) = Self::registry_enumerate_usb() { self.devices = devices; }
+}
+```
+
+Two independent enumerations, and **a fallback is exactly the structure that
+makes a swallowed failure hardest to see**: the second source exists because the
+first is known to be unreliable, so the code already expects to arrive at the
+bottom with an empty list, and cannot tell "both said nothing" from "neither
+answered". The rule now is that **either source succeeding is enough to trust an
+empty result, and both failing is not an empty machine** — the error names both
+reasons.
+
+`input` had four of the plain shape across three platforms. Its Linux reader
+also shows why "propagate everything" is not the rule either:
+
+```rust
+Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+Err(e) => return Err(..),
+```
+
+**A file that is absent and a file that will not open are different answers.** A
+kernel without `/proc/bus/input/devices` has no input layer, which is a reading;
+a permission error on the same path is not. The same split appears in every
+sysfs reader converted so far, always as `Path::exists()` guarding the
+enumeration and `read_dir` propagating.
+
+`codec` was on the list and comes off it: its Windows and macOS readers are
+empty stubs and every capability it publishes is already tagged
+`CapabilitySource::Inferred`, so a failed `vainfo` or `lspci` costs an optional
+source rather than producing a false claim about the hardware. **The list was
+built by grepping for a shape; one of the sixteen did not have the defect that
+shape usually carries.**
+
+Verified on this machine after the change:
+
+```
+usb: 39 devices
+input: 6 -> ["Enhanced (101- or 102-key)", ..., "HID-compliant mouse", ...]
+```
 
 ### The same swallow in sixteen more enumerators
 
@@ -2074,16 +2124,17 @@ feature stayed broken through eight published versions.
 
 ## Open work
 
-1. **Fourteen enumerators still swallow their failures.** `core::command` and
-   the two conversions in the entry above leave the rest of the list untouched:
-   `audio`, `bluetooth`, `codec`, `cpu_cache`, `display`, `firmware`, `input`,
+1. **Eleven enumerators still swallow their failures.** `camera`, `sensors`,
+   `usb` and `input` are converted; `codec` was examined and does not have the
+   defect. Left: `audio`, `bluetooth`, `cpu_cache`, `display`, `firmware`,
    `numa`, `os_info`, `power_profile`, `printer`, `smart`, `storage_controller`,
-   `tpm`, `usb`. Each has a `refresh_<os>` returning `()` into a `refresh()`
-   returning `Result`, so each can report a machine as empty when the reader
-   merely failed. Convert with `capture_json` / `capture`, one or two modules per
+   `tpm`. Each has a `refresh_<os>` returning `()` into a `refresh()` returning
+   `Result`, so each can report a machine as empty when the reader merely
+   failed. Convert with `capture_json` / `capture`, one or two modules per
    commit, and run the module against this host afterwards — `sensors` only gave
    up its dead `MSFT_Sensor` query because someone looked at what the new error
-   said.
+   said. Check each for the `codec` case before converting: a source that is
+   optional by design, and already labelled as inferred, is not this defect.
 
 2. **`hardware_ai` was audited on one machine, and only one.** Every conclusion
    corrected in `a584dd0` and `7607401` was verifiably wrong on this desktop, and

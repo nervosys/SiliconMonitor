@@ -102,17 +102,22 @@ impl InputMonitor {
     }
 
     /// Refresh the list of input devices from the system.
+    /// Re-enumerate keyboards, pointing devices and other input hardware.
+    ///
+    /// Returns `Err` when the enumeration failed, and `Ok` with an empty list
+    /// only when it succeeded and found nothing -- which the resolver publishes
+    /// as `board.input.<none>`. See [`crate::core::command`].
     pub fn refresh(&mut self) -> Result<(), SimonError> {
         self.devices.clear();
 
         #[cfg(target_os = "linux")]
-        self.refresh_linux();
+        self.refresh_linux()?;
 
         #[cfg(target_os = "windows")]
-        self.refresh_windows();
+        self.refresh_windows()?;
 
         #[cfg(target_os = "macos")]
-        self.refresh_macos();
+        self.refresh_macos()?;
 
         Ok(())
     }
@@ -157,131 +162,141 @@ impl InputMonitor {
     }
 
     #[cfg(target_os = "linux")]
-    fn refresh_linux(&mut self) {
+    fn refresh_linux(&mut self) -> Result<(), SimonError> {
         // Parse /proc/bus/input/devices for comprehensive device info
-        if let Ok(content) = std::fs::read_to_string("/proc/bus/input/devices") {
-            let mut name = String::new();
-            let mut phys = String::new();
-            let mut sysfs = String::new();
-            let mut handlers = String::new();
-            let mut bitmap_ev = String::new();
-            let mut bitmap_key = String::new();
-            let mut bitmap_rel = String::new();
-            let mut bitmap_abs = String::new();
-            let mut vendor_id = String::new();
-            let mut product_id = String::new();
-
-            let flush = |devices: &mut Vec<InputDevice>,
-                         name: &str,
-                         phys: &str,
-                         sysfs: &str,
-                         handlers: &str,
-                         bitmap_ev: &str,
-                         bitmap_key: &str,
-                         bitmap_rel: &str,
-                         bitmap_abs: &str,
-                         vendor_id: &str,
-                         product_id: &str| {
-                if name.is_empty() {
-                    return;
-                }
-                let device_type = Self::classify_linux(
-                    name, handlers, bitmap_ev, bitmap_key, bitmap_rel, bitmap_abs,
-                );
-                let interface = Self::infer_interface_linux(phys, sysfs);
-                let mut caps = Vec::new();
-                if !bitmap_key.is_empty() && bitmap_key != "0" {
-                    caps.push("keys".into());
-                }
-                if !bitmap_rel.is_empty() && bitmap_rel != "0" {
-                    caps.push("relative-axes".into());
-                }
-                if !bitmap_abs.is_empty() && bitmap_abs != "0" {
-                    caps.push("absolute-axes".into());
-                }
-                if handlers.contains("js") {
-                    caps.push("joystick".into());
-                }
-
-                devices.push(InputDevice {
-                    name: name.to_string(),
-                    device_type,
-                    interface,
-                    vendor: format!("0x{}", vendor_id),
-                    product: format!("0x{}", product_id),
-                    physical_path: sysfs.to_string(),
-                    is_active: handlers.contains("event"),
-                    capabilities: caps,
-                });
-            };
-
-            for line in content.lines() {
-                if line.is_empty() {
-                    flush(
-                        &mut self.devices,
-                        &name,
-                        &phys,
-                        &sysfs,
-                        &handlers,
-                        &bitmap_ev,
-                        &bitmap_key,
-                        &bitmap_rel,
-                        &bitmap_abs,
-                        &vendor_id,
-                        &product_id,
-                    );
-                    name.clear();
-                    phys.clear();
-                    sysfs.clear();
-                    handlers.clear();
-                    bitmap_ev.clear();
-                    bitmap_key.clear();
-                    bitmap_rel.clear();
-                    bitmap_abs.clear();
-                    vendor_id.clear();
-                    product_id.clear();
-                } else if let Some(rest) = line.strip_prefix("N: Name=\"") {
-                    name = rest.trim_end_matches('"').to_string();
-                } else if let Some(rest) = line.strip_prefix("P: Phys=") {
-                    phys = rest.to_string();
-                } else if let Some(rest) = line.strip_prefix("S: Sysfs=") {
-                    sysfs = rest.to_string();
-                } else if let Some(rest) = line.strip_prefix("H: Handlers=") {
-                    handlers = rest.to_string();
-                } else if let Some(rest) = line.strip_prefix("I: Bus=") {
-                    // Format: Bus=XXXX Vendor=XXXX Product=XXXX Version=XXXX
-                    for part in rest.split_whitespace() {
-                        if let Some(v) = part.strip_prefix("Vendor=") {
-                            vendor_id = v.to_string();
-                        } else if let Some(p) = part.strip_prefix("Product=") {
-                            product_id = p.to_string();
-                        }
-                    }
-                } else if let Some(rest) = line.strip_prefix("B: EV=") {
-                    bitmap_ev = rest.to_string();
-                } else if let Some(rest) = line.strip_prefix("B: KEY=") {
-                    bitmap_key = rest.to_string();
-                } else if let Some(rest) = line.strip_prefix("B: REL=") {
-                    bitmap_rel = rest.to_string();
-                } else if let Some(rest) = line.strip_prefix("B: ABS=") {
-                    bitmap_abs = rest.to_string();
-                }
+        // A machine with no /proc/bus/input/devices has no input layer at
+        // all, which is a real answer; an unreadable one is not.
+        let content = match std::fs::read_to_string("/proc/bus/input/devices") {
+            Ok(c) => c,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(e) => {
+                return Err(SimonError::System(format!(
+                    "cannot read /proc/bus/input/devices: {e}"
+                )))
             }
-            // Flush last device
-            flush(
-                &mut self.devices,
-                &name,
-                &phys,
-                &sysfs,
-                &handlers,
-                &bitmap_ev,
-                &bitmap_key,
-                &bitmap_rel,
-                &bitmap_abs,
-                &vendor_id,
-                &product_id,
+        };
+        let mut name = String::new();
+        let mut phys = String::new();
+        let mut sysfs = String::new();
+        let mut handlers = String::new();
+        let mut bitmap_ev = String::new();
+        let mut bitmap_key = String::new();
+        let mut bitmap_rel = String::new();
+        let mut bitmap_abs = String::new();
+        let mut vendor_id = String::new();
+        let mut product_id = String::new();
+
+        let flush = |devices: &mut Vec<InputDevice>,
+                     name: &str,
+                     phys: &str,
+                     sysfs: &str,
+                     handlers: &str,
+                     bitmap_ev: &str,
+                     bitmap_key: &str,
+                     bitmap_rel: &str,
+                     bitmap_abs: &str,
+                     vendor_id: &str,
+                     product_id: &str| {
+            if name.is_empty() {
+                return;
+            }
+            let device_type = Self::classify_linux(
+                name, handlers, bitmap_ev, bitmap_key, bitmap_rel, bitmap_abs,
             );
+            let interface = Self::infer_interface_linux(phys, sysfs);
+            let mut caps = Vec::new();
+            if !bitmap_key.is_empty() && bitmap_key != "0" {
+                caps.push("keys".into());
+            }
+            if !bitmap_rel.is_empty() && bitmap_rel != "0" {
+                caps.push("relative-axes".into());
+            }
+            if !bitmap_abs.is_empty() && bitmap_abs != "0" {
+                caps.push("absolute-axes".into());
+            }
+            if handlers.contains("js") {
+                caps.push("joystick".into());
+            }
+
+            devices.push(InputDevice {
+                name: name.to_string(),
+                device_type,
+                interface,
+                vendor: format!("0x{}", vendor_id),
+                product: format!("0x{}", product_id),
+                physical_path: sysfs.to_string(),
+                is_active: handlers.contains("event"),
+                capabilities: caps,
+            });
+        };
+
+        for line in content.lines() {
+            if line.is_empty() {
+                flush(
+                    &mut self.devices,
+                    &name,
+                    &phys,
+                    &sysfs,
+                    &handlers,
+                    &bitmap_ev,
+                    &bitmap_key,
+                    &bitmap_rel,
+                    &bitmap_abs,
+                    &vendor_id,
+                    &product_id,
+                );
+                name.clear();
+                phys.clear();
+                sysfs.clear();
+                handlers.clear();
+                bitmap_ev.clear();
+                bitmap_key.clear();
+                bitmap_rel.clear();
+                bitmap_abs.clear();
+                vendor_id.clear();
+                product_id.clear();
+            } else if let Some(rest) = line.strip_prefix("N: Name=\"") {
+                name = rest.trim_end_matches('"').to_string();
+            } else if let Some(rest) = line.strip_prefix("P: Phys=") {
+                phys = rest.to_string();
+            } else if let Some(rest) = line.strip_prefix("S: Sysfs=") {
+                sysfs = rest.to_string();
+            } else if let Some(rest) = line.strip_prefix("H: Handlers=") {
+                handlers = rest.to_string();
+            } else if let Some(rest) = line.strip_prefix("I: Bus=") {
+                // Format: Bus=XXXX Vendor=XXXX Product=XXXX Version=XXXX
+                for part in rest.split_whitespace() {
+                    if let Some(v) = part.strip_prefix("Vendor=") {
+                        vendor_id = v.to_string();
+                    } else if let Some(p) = part.strip_prefix("Product=") {
+                        product_id = p.to_string();
+                    }
+                }
+            } else if let Some(rest) = line.strip_prefix("B: EV=") {
+                bitmap_ev = rest.to_string();
+            } else if let Some(rest) = line.strip_prefix("B: KEY=") {
+                bitmap_key = rest.to_string();
+            } else if let Some(rest) = line.strip_prefix("B: REL=") {
+                bitmap_rel = rest.to_string();
+            } else if let Some(rest) = line.strip_prefix("B: ABS=") {
+                bitmap_abs = rest.to_string();
+            }
         }
+        // Flush last device
+        flush(
+            &mut self.devices,
+            &name,
+            &phys,
+            &sysfs,
+            &handlers,
+            &bitmap_ev,
+            &bitmap_key,
+            &bitmap_rel,
+            &bitmap_abs,
+            &vendor_id,
+            &product_id,
+        );
+        Ok(())
     }
 
     #[cfg(target_os = "linux")]
@@ -366,184 +381,167 @@ impl InputMonitor {
     }
 
     #[cfg(target_os = "windows")]
-    fn refresh_windows(&mut self) {
+    fn refresh_windows(&mut self) -> Result<(), SimonError> {
         // Keyboards via WMI
-        if let Ok(output) = std::process::Command::new("powershell")
-            .args(["-NoProfile", "-Command",
-                "Get-CimInstance Win32_Keyboard | Select-Object Name, Description, DeviceID, Status, Layout | ConvertTo-Json -Compress"])
-            .output()
-        {
-            if let Ok(text) = String::from_utf8(output.stdout) {
-                if let Ok(val) = serde_json::from_str::<serde_json::Value>(&text) {
-                    let items = match &val {
-                        serde_json::Value::Array(arr) => arr.clone(),
-                        obj @ serde_json::Value::Object(_) => vec![obj.clone()],
-                        _ => vec![],
-                    };
-                    for item in &items {
-                        let name = item["Name"].as_str().unwrap_or("Unknown Keyboard").to_string();
-                        let device_id = item["DeviceID"].as_str().unwrap_or("").to_string();
-                        // NOTE: a bare `HID\` instance names the device class, not the
-                        // transport — it may be Bluetooth or I2C rather than USB. This
-                        // reports USB for both, which is a guess for the non-USB cases.
-                        let iface = if device_id.to_lowercase().contains("usb")
-                            || device_id.to_lowercase().contains("hid")
-                        {
-                            InputInterface::USB
-                        } else if device_id.contains("PS2") || device_id.contains("ACPI") {
-                            InputInterface::PS2
-                        } else {
-                            InputInterface::Unknown
-                        };
-                        self.devices.push(InputDevice {
-                            name,
-                            device_type: InputDeviceType::Keyboard,
-                            interface: iface,
-                            vendor: String::new(),
-                            product: String::new(),
-                            physical_path: device_id,
-                            is_active: item["Status"].as_str() == Some("OK"),
-                            capabilities: vec!["keys".into()],
-                        });
-                    }
-                }
+        let keyboards = crate::core::command::capture_json(
+            "powershell",
+            &["-NoProfile", "-Command", "Get-CimInstance Win32_Keyboard | Select-Object Name, Description, DeviceID, Status, Layout | ConvertTo-Json -Compress"],
+        )?;
+        if let Some(val) = keyboards {
+            let items = crate::core::command::json_items(&val);
+            for item in &items {
+                let name = item["Name"]
+                    .as_str()
+                    .unwrap_or("Unknown Keyboard")
+                    .to_string();
+                let device_id = item["DeviceID"].as_str().unwrap_or("").to_string();
+                // NOTE: a bare `HID\` instance names the device class, not the
+                // transport — it may be Bluetooth or I2C rather than USB. This
+                // reports USB for both, which is a guess for the non-USB cases.
+                let iface = if device_id.to_lowercase().contains("usb")
+                    || device_id.to_lowercase().contains("hid")
+                {
+                    InputInterface::USB
+                } else if device_id.contains("PS2") || device_id.contains("ACPI") {
+                    InputInterface::PS2
+                } else {
+                    InputInterface::Unknown
+                };
+                self.devices.push(InputDevice {
+                    name,
+                    device_type: InputDeviceType::Keyboard,
+                    interface: iface,
+                    vendor: String::new(),
+                    product: String::new(),
+                    physical_path: device_id,
+                    is_active: item["Status"].as_str() == Some("OK"),
+                    capabilities: vec!["keys".into()],
+                });
             }
         }
 
         // Pointing devices via WMI
-        if let Ok(output) = std::process::Command::new("powershell")
-            .args(["-NoProfile", "-Command",
-                "Get-CimInstance Win32_PointingDevice | Select-Object Name, Description, DeviceID, Status, PointingType, NumberOfButtons | ConvertTo-Json -Compress"])
-            .output()
-        {
-            if let Ok(text) = String::from_utf8(output.stdout) {
-                if let Ok(val) = serde_json::from_str::<serde_json::Value>(&text) {
-                    let items = match &val {
-                        serde_json::Value::Array(arr) => arr.clone(),
-                        obj @ serde_json::Value::Object(_) => vec![obj.clone()],
-                        _ => vec![],
-                    };
-                    for item in &items {
-                        let name = item["Name"].as_str().unwrap_or("Unknown Pointing Device").to_string();
-                        let lower = name.to_lowercase();
-                        let device_type = if lower.contains("touchpad") || lower.contains("trackpad") {
-                            InputDeviceType::Touchpad
-                        } else if lower.contains("trackball") {
-                            InputDeviceType::Trackball
-                        } else if lower.contains("touchscreen") || lower.contains("touch screen") {
-                            InputDeviceType::Touchscreen
-                        } else if lower.contains("tablet") || lower.contains("wacom") {
-                            InputDeviceType::Tablet
-                        } else {
-                            InputDeviceType::Mouse
-                        };
-                        let device_id = item["DeviceID"].as_str().unwrap_or("").to_string();
-                        let iface = if device_id.to_lowercase().contains("usb") || device_id.to_lowercase().contains("hid") {
-                            InputInterface::USB
-                        } else if device_id.contains("PS2") || device_id.contains("ACPI") {
-                            InputInterface::PS2
-                        } else {
-                            InputInterface::Unknown
-                        };
-                        let buttons = item["NumberOfButtons"].as_u64().unwrap_or(0);
-                        let mut caps = vec!["relative-axes".into()];
-                        if buttons > 0 {
-                            caps.push(format!("buttons:{}", buttons));
-                        }
-                        self.devices.push(InputDevice {
-                            name,
-                            device_type,
-                            interface: iface,
-                            vendor: String::new(),
-                            product: String::new(),
-                            physical_path: device_id,
-                            is_active: item["Status"].as_str() == Some("OK"),
-                            capabilities: caps,
-                        });
-                    }
+        let pointers = crate::core::command::capture_json(
+            "powershell",
+            &["-NoProfile", "-Command", "Get-CimInstance Win32_PointingDevice | Select-Object Name, Description, DeviceID, Status, PointingType, NumberOfButtons | ConvertTo-Json -Compress"],
+        )?;
+        if let Some(val) = pointers {
+            let items = crate::core::command::json_items(&val);
+            for item in &items {
+                let name = item["Name"]
+                    .as_str()
+                    .unwrap_or("Unknown Pointing Device")
+                    .to_string();
+                let lower = name.to_lowercase();
+                let device_type = if lower.contains("touchpad") || lower.contains("trackpad") {
+                    InputDeviceType::Touchpad
+                } else if lower.contains("trackball") {
+                    InputDeviceType::Trackball
+                } else if lower.contains("touchscreen") || lower.contains("touch screen") {
+                    InputDeviceType::Touchscreen
+                } else if lower.contains("tablet") || lower.contains("wacom") {
+                    InputDeviceType::Tablet
+                } else {
+                    InputDeviceType::Mouse
+                };
+                let device_id = item["DeviceID"].as_str().unwrap_or("").to_string();
+                let iface = if device_id.to_lowercase().contains("usb")
+                    || device_id.to_lowercase().contains("hid")
+                {
+                    InputInterface::USB
+                } else if device_id.contains("PS2") || device_id.contains("ACPI") {
+                    InputInterface::PS2
+                } else {
+                    InputInterface::Unknown
+                };
+                let buttons = item["NumberOfButtons"].as_u64().unwrap_or(0);
+                let mut caps = vec!["relative-axes".into()];
+                if buttons > 0 {
+                    caps.push(format!("buttons:{}", buttons));
                 }
+                self.devices.push(InputDevice {
+                    name,
+                    device_type,
+                    interface: iface,
+                    vendor: String::new(),
+                    product: String::new(),
+                    physical_path: device_id,
+                    is_active: item["Status"].as_str() == Some("OK"),
+                    capabilities: caps,
+                });
             }
         }
+        Ok(())
     }
 
     #[cfg(target_os = "macos")]
-    fn refresh_macos(&mut self) {
+    fn refresh_macos(&mut self) -> Result<(), SimonError> {
         // Use system_profiler for HID devices
-        if let Ok(output) = std::process::Command::new("system_profiler")
-            .args(["SPUSBDataType", "-detailLevel", "mini"])
-            .output()
-        {
-            if let Ok(text) = String::from_utf8(output.stdout) {
-                // Parse USB tree for HID/input devices
-                let mut current_name = String::new();
-                let mut current_vendor = String::new();
-                let mut current_product = String::new();
+        let text = crate::core::command::capture(
+            "system_profiler",
+            &["SPUSBDataType", "-detailLevel", "mini"],
+        )?;
+        // Parse USB tree for HID/input devices
+        let mut current_name = String::new();
+        let mut current_vendor = String::new();
+        let mut current_product = String::new();
 
-                for line in text.lines() {
-                    let trimmed = line.trim();
-                    if trimmed.ends_with(':') && !trimmed.starts_with("USB") && !trimmed.is_empty()
-                    {
-                        // This is a device name
-                        if !current_name.is_empty() {
-                            // Check if previous device was an input device
-                            self.maybe_add_macos_device(
-                                &current_name,
-                                &current_vendor,
-                                &current_product,
-                            );
-                        }
-                        current_name = trimmed.trim_end_matches(':').to_string();
-                        current_vendor.clear();
-                        current_product.clear();
-                    } else if let Some(v) = trimmed.strip_prefix("Vendor ID:") {
-                        current_vendor = v.trim().to_string();
-                    } else if let Some(p) = trimmed.strip_prefix("Product ID:") {
-                        current_product = p.trim().to_string();
-                    }
-                }
+        for line in text.lines() {
+            let trimmed = line.trim();
+            if trimmed.ends_with(':') && !trimmed.starts_with("USB") && !trimmed.is_empty() {
+                // This is a device name
                 if !current_name.is_empty() {
+                    // Check if previous device was an input device
                     self.maybe_add_macos_device(&current_name, &current_vendor, &current_product);
                 }
+                current_name = trimmed.trim_end_matches(':').to_string();
+                current_vendor.clear();
+                current_product.clear();
+            } else if let Some(v) = trimmed.strip_prefix("Vendor ID:") {
+                current_vendor = v.trim().to_string();
+            } else if let Some(p) = trimmed.strip_prefix("Product ID:") {
+                current_product = p.trim().to_string();
             }
+        }
+        if !current_name.is_empty() {
+            self.maybe_add_macos_device(&current_name, &current_vendor, &current_product);
         }
 
         // Also check for Bluetooth input devices
-        if let Ok(output) = std::process::Command::new("system_profiler")
-            .args(["SPBluetoothDataType", "-detailLevel", "mini"])
-            .output()
-        {
-            if let Ok(text) = String::from_utf8(output.stdout) {
-                for line in text.lines() {
-                    let trimmed = line.trim();
-                    let lower = trimmed.to_lowercase();
-                    if (lower.contains("keyboard")
-                        || lower.contains("mouse")
-                        || lower.contains("trackpad")
-                        || lower.contains("magic"))
-                        && trimmed.ends_with(':')
-                    {
-                        let name = trimmed.trim_end_matches(':').to_string();
-                        let device_type = if lower.contains("keyboard") {
-                            InputDeviceType::Keyboard
-                        } else if lower.contains("trackpad") {
-                            InputDeviceType::Touchpad
-                        } else {
-                            InputDeviceType::Mouse
-                        };
-                        self.devices.push(InputDevice {
-                            name,
-                            device_type,
-                            interface: InputInterface::Bluetooth,
-                            vendor: "Apple".into(),
-                            product: String::new(),
-                            physical_path: String::new(),
-                            is_active: true,
-                            capabilities: Vec::new(),
-                        });
-                    }
-                }
+        let text = crate::core::command::capture(
+            "system_profiler",
+            &["SPBluetoothDataType", "-detailLevel", "mini"],
+        )?;
+        for line in text.lines() {
+            let trimmed = line.trim();
+            let lower = trimmed.to_lowercase();
+            if (lower.contains("keyboard")
+                || lower.contains("mouse")
+                || lower.contains("trackpad")
+                || lower.contains("magic"))
+                && trimmed.ends_with(':')
+            {
+                let name = trimmed.trim_end_matches(':').to_string();
+                let device_type = if lower.contains("keyboard") {
+                    InputDeviceType::Keyboard
+                } else if lower.contains("trackpad") {
+                    InputDeviceType::Touchpad
+                } else {
+                    InputDeviceType::Mouse
+                };
+                self.devices.push(InputDevice {
+                    name,
+                    device_type,
+                    interface: InputInterface::Bluetooth,
+                    vendor: "Apple".into(),
+                    product: String::new(),
+                    physical_path: String::new(),
+                    is_active: true,
+                    capabilities: Vec::new(),
+                });
             }
         }
+        Ok(())
     }
 
     #[cfg(target_os = "macos")]
