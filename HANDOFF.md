@@ -83,7 +83,7 @@ Since the tag, on `master` and green on all three platforms:
 | `57c7eb9` | Two enumerations, both failing, reported as one empty |
 | `3485fbb` | "This machine has no TPM", published as a measurement |
 | `a053f16` | Measured boot reported off, on a host where it is on |
-| `HEAD` | SIP read as Secure Boot, and advice from an unread flag |
+| `e913250` | SIP read as Secure Boot, and advice from an unread flag |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
