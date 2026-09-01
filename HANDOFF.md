@@ -77,9 +77,84 @@ Since the tag, on `master` and green on all three platforms:
 | `aed27cd` | A `> 0` guard defeated by a sentinel of 64 |
 | `f5a54ee` | An `Option` field filled with a sentinel wrapped in `Some` |
 | `cd15e37` | Cache and block geometry assumed rather than read |
+| `HEAD` | A rate published as a total, for the wrong drive |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### A rate published as a total, for the wrong drive
+
+The `Some(<literal>)` grep recommended two entries below turned up
+`disk/windows.rs`:
+
+```rust
+read_time_ms: Some(0),
+write_time_ms: Some(0),
+queue_depth: Some(0),
+```
+
+Chasing where those zeros came from found three defects stacked on each other,
+each of which hid the next. All three are confirmed against this machine.
+
+**A rate stored in a field documented as a total.** The reader queried
+`Win32_PerfFormattedData_PerfDisk_PhysicalDisk`, whose `DiskReadBytesPerSec` is
+what its name says: an instantaneous rate. It was assigned to
+`DiskIoStats::read_bytes`, whose doc comment reads "Total bytes read since
+boot", and `gui/app.rs` renders it with `format_bytes` and `ai_api/tools.rs`
+publishes it as `"bytes_read"`. Linux fills the same field from
+`/sys/block/*/stat`, which really is cumulative. **The same struct field held a
+different physical quantity depending on the platform** — and no type could
+have caught it, because both are `u64` bytes.
+
+Two samples three seconds apart on this idle host:
+
+```
+FORMATTED  bytes=0              ops=0
+RAW        bytes=3874044762112  ops=68170018   (+98304 bytes, +5 ops in 3s)
+```
+
+A machine that had read 3.87 TB since boot reported `0.00 GB`. **The wrong
+answer was zero, so it looked like the honest absence this whole session has
+been arguing for.** `Win32_PerfRawData_PerfDisk_PhysicalDisk` carries the same
+property names as raw cumulative counters.
+
+**An instance filter that matched nothing.** The query was
+`WHERE Name LIKE '%{index}'` — the index as a *suffix*. The instances are named
+`0 C:`, `1 E:`, `2`, `3 D:`. Verified here:
+
+```
+LIKE '%0' matches:            (nothing)
+LIKE '0%' matches:   0 C:
+```
+
+So on any machine whose drives have letters the filter matched nothing, every
+call fell through to the `_Total` fallback, and **each disk reported the whole
+machine's I/O as its own**. The fallback is now gone: a drive with no instance
+returns an error, because the sum of every other drive is not a worse reading
+of this drive, it is a reading of something else.
+
+**And the zeros.** `read_time_ms`, `write_time_ms` and `queue_depth` were
+hardcoded `Some(0)` while the very class being queried published
+`PercentDiskReadTime`, `PercentDiskWriteTime` and `CurrentDiskQueueLength`. The
+two timers are `PERF_PRECISION_100NS_TIMER`, so the raw value is busy time in
+100-ns units.
+
+After, run against this machine, matching the PowerShell reading per drive:
+
+```
+Disk: PhysicalDrive1 (NvmeSsd)   Samsung SSD 990 PRO 4TB
+  Read:       176.40 GB (354996 ops)
+  Read Time:  476221 ms
+```
+
+**A fabricated value is easiest to spot when it is implausible, and these were
+plausible.** Zero bytes on an idle disk, zero service time, zero queue depth —
+every one of them is what a quiet disk really looks like. The tell was not the
+value, it was that the *code could not have known it*: nothing in
+`read_io_counters` ever asked for a service time.
+
+The same commit removed `rotation_rate: Some(7200) // Common HDD speed`, an
+invented RPM for every Windows drive not already known to be an SSD.
 
 ### The doc comment said not to assume 64 bytes; all three readers did
 

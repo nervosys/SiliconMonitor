@@ -100,8 +100,30 @@ impl WindowsDisk {
         DiskType::Unknown
     }
 
-    /// Read I/O statistics from WMI Performance Counters
-    fn read_io_counters(&self) -> Result<(u64, u64, u64, u64), Error> {
+    /// Read this drive's cumulative I/O counters.
+    ///
+    /// Three defects were fixed here together, because each hid the next.
+    ///
+    /// The class was `Win32_PerfFormattedData_PerfDisk_PhysicalDisk`, whose
+    /// `DiskReadBytesPerSec` is what its name says: an instantaneous **rate**.
+    /// It was stored in `DiskIoStats::read_bytes`, documented "Total bytes read
+    /// since boot" and rendered by the GUI as a byte total. On an idle machine
+    /// the rate is 0, so a host that had read 3.87 TB since boot reported 0 B.
+    /// `Win32_PerfRawData_PerfDisk_PhysicalDisk` carries the same property
+    /// names as raw cumulative counters, which is the quantity the field
+    /// promises and the quantity Linux's `/sys/block/*/stat` already supplied.
+    ///
+    /// The instance filter was `Name LIKE '%{index}'`, matching the index as a
+    /// **suffix**. The instances are named `0 C:`, `1 E:`, `2`, `3 D:` — so on
+    /// a machine with a lettered drive the filter matched nothing, every call
+    /// fell through to the `_Total` fallback, and each disk reported the whole
+    /// machine's I/O as its own. The filter is now a prefix match, and there is
+    /// no `_Total` fallback: a drive with no instance has no counters, which is
+    /// not the same as having the sum of every other drive's.
+    ///
+    /// `read_time_ms`, `write_time_ms` and `queue_depth` were hardcoded
+    /// `Some(0)` while this very class published all three.
+    fn read_io_counters(&self) -> Result<DiskIoStats, Error> {
         use serde::Deserialize;
 
         #[derive(Deserialize, Debug)]
@@ -111,45 +133,46 @@ impl WindowsDisk {
             name: String,
             disk_read_bytes_per_sec: u64,
             disk_write_bytes_per_sec: u64,
-            disk_reads_per_sec: u32,
-            disk_writes_per_sec: u32,
+            disk_reads_per_sec: u64,
+            disk_writes_per_sec: u64,
+            percent_disk_read_time: u64,
+            percent_disk_write_time: u64,
+            current_disk_queue_length: u32,
         }
 
         // Use robust WMI connection
         let wmi_con = create_wmi_connection()?;
 
-        // Query disk performance data
+        // The instance name is the physical index, optionally followed by a
+        // space and the drive letters: "0 C:", "1 E:", "2".
+        let index = self.name.replace("PhysicalDrive", "");
         let query = format!(
-            "SELECT Name, DiskReadBytesPerSec, DiskWriteBytesPerSec, DiskReadsPerSec, DiskWritesPerSec FROM Win32_PerfFormattedData_PerfDisk_PhysicalDisk WHERE Name LIKE '%{}'",
-            self.name.replace("PhysicalDrive", "")
+            "SELECT Name, DiskReadBytesPerSec, DiskWriteBytesPerSec, DiskReadsPerSec,              DiskWritesPerSec, PercentDiskReadTime, PercentDiskWriteTime,              CurrentDiskQueueLength FROM Win32_PerfRawData_PerfDisk_PhysicalDisk              WHERE Name = '{index}' OR Name LIKE '{index} %'"
         );
 
         let perfs: Vec<DiskPerf> = wmi_con.raw_query(&query).unwrap_or_default();
+        let Some(perf) = perfs.first() else {
+            return Err(Error::QueryFailed(format!(
+                "no PhysicalDisk performance instance named '{index}'"
+            )));
+        };
 
-        if let Some(perf) = perfs.first() {
-            Ok((
-                perf.disk_read_bytes_per_sec,
-                perf.disk_write_bytes_per_sec,
-                perf.disk_reads_per_sec as u64,
-                perf.disk_writes_per_sec as u64,
-            ))
-        } else {
-            // Try querying the "_Total" instance
-            let total_perfs: Vec<DiskPerf> = wmi_con
-                .raw_query("SELECT Name, DiskReadBytesPerSec, DiskWriteBytesPerSec, DiskReadsPerSec, DiskWritesPerSec FROM Win32_PerfFormattedData_PerfDisk_PhysicalDisk WHERE Name = '_Total'")
-                .unwrap_or_default();
-
-            if let Some(perf) = total_perfs.first() {
-                Ok((
-                    perf.disk_read_bytes_per_sec,
-                    perf.disk_write_bytes_per_sec,
-                    perf.disk_reads_per_sec as u64,
-                    perf.disk_writes_per_sec as u64,
-                ))
-            } else {
-                Ok((0, 0, 0, 0))
-            }
-        }
+        Ok(DiskIoStats {
+            read_bytes: perf.disk_read_bytes_per_sec,
+            write_bytes: perf.disk_write_bytes_per_sec,
+            read_ops: perf.disk_reads_per_sec,
+            write_ops: perf.disk_writes_per_sec,
+            // The two timers are PERF_PRECISION_100NS_TIMER: the raw value is
+            // busy time in 100-nanosecond units.
+            read_time_ms: Some(perf.percent_disk_read_time / 10_000),
+            write_time_ms: Some(perf.percent_disk_write_time / 10_000),
+            queue_depth: Some(perf.current_disk_queue_length),
+            // Both need two samples to difference; one call has nothing to
+            // difference against.
+            avg_latency_us: None,
+            read_throughput: None,
+            write_throughput: None,
+        })
     }
 }
 
@@ -318,30 +341,17 @@ impl DiskDevice for WindowsDisk {
             // called, 512 was the common value standing in for this drive's.
             physical_sector_size: None,
             logical_sector_size: None,
-            rotation_rate: if matches!(self.disk_type, DiskType::NvmeSsd | DiskType::SataSsd) {
-                Some(0)
-            } else {
-                Some(7200) // Common HDD speed
-            },
+            // Not read. This was `Some(7200)` under the comment "Common HDD
+            // speed" for every drive not already known to be an SSD -- an
+            // invented RPM, not this drive's. A real rate comes from ATA
+            // IDENTIFY word 217; `disk_type` already carries SSD vs HDD.
+            rotation_rate: None,
             vendor: None,
         })
     }
 
     fn io_stats(&self) -> Result<DiskIoStats, Error> {
-        let (read_bytes, write_bytes, read_ops, write_ops) = self.read_io_counters()?;
-
-        Ok(DiskIoStats {
-            read_bytes,
-            write_bytes,
-            read_ops,
-            write_ops,
-            read_time_ms: Some(0),
-            write_time_ms: Some(0),
-            queue_depth: Some(0),
-            avg_latency_us: None,
-            read_throughput: None,
-            write_throughput: None,
-        })
+        self.read_io_counters()
     }
 
     fn health(&self) -> Result<DiskHealth, Error> {
