@@ -552,16 +552,24 @@ pub fn quick_health_check() -> HealthStatus {
         .unwrap_or(HealthStatus::Unknown)
 }
 
-/// Get health score (0-100)
-pub fn health_score() -> u8 {
-    SystemHealth::check().map(|h| h.score).unwrap_or(0)
+/// Health score (0-100), or `None` when the check itself failed.
+///
+/// This returned `u8` with `unwrap_or(0)`, so a failed check reported a score
+/// of zero — the worst possible health — rather than no score. That errs
+/// alarming rather than reassuring, which is the safer direction, but zero is
+/// a real score and a caller cannot tell the two apart.
+pub fn health_score() -> Option<u8> {
+    SystemHealth::check().map(|h| h.score).ok()
 }
 
-/// Check if system has critical issues
-pub fn has_critical_issues() -> bool {
-    SystemHealth::check()
-        .map(|h| h.has_critical())
-        .unwrap_or(false)
+/// Whether the system has critical issues, or `None` when the check failed.
+///
+/// `unwrap_or(false)` reported **no critical issues** when nothing had been
+/// checked. `health_status` beside it already returned `HealthStatus::Unknown`
+/// for the same failure, so the module had the right answer and two of its
+/// three helpers did not use it.
+pub fn has_critical_issues() -> Option<bool> {
+    SystemHealth::check().map(|h| h.has_critical()).ok()
 }
 
 #[cfg(test)]

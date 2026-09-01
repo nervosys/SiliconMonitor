@@ -144,13 +144,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn print_overall_status(score: u8, status: &HealthStatus) {
+fn print_overall_status(score: Option<u8>, status: &HealthStatus) {
     let (icon, text, bar_char) = match status {
         HealthStatus::Healthy => ("✅", "EXCELLENT", '█'),
         HealthStatus::Good => ("🟢", "GOOD", '▓'),
         HealthStatus::Warning => ("⚠️ ", "WARNING", '▒'),
         HealthStatus::Critical => ("🔴", "CRITICAL", '░'),
         HealthStatus::Unknown => ("❓", "UNKNOWN", '?'),
+    };
+
+    // No score is not a score of zero — a failed check used to render an
+    // empty bar reading 0/100, which is the worst possible health.
+    let Some(score) = score else {
+        println!(
+            "║  {icon} Overall Health Score: [{:<20}] not run              ║",
+            ""
+        );
+        println!("║     Status: {:<56} ║", text);
+        return;
     };
 
     // Create score bar

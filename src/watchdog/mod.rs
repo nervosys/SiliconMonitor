@@ -76,7 +76,11 @@ pub struct WatchdogInfo {
     /// Watchdog type.
     pub watchdog_type: WatchdogType,
     /// Timeout in seconds.
-    pub timeout_secs: u32,
+    /// Configured timeout in seconds, where it was read.
+    ///
+    /// `unwrap_or(0)` published a watchdog with a zero-second timeout, which
+    /// would fire immediately and is not a configuration any device holds.
+    pub timeout_secs: Option<u32>,
     /// Pre-timeout in seconds (0 = disabled).
     pub pretimeout_secs: u32,
     /// Pre-timeout governor.
@@ -94,9 +98,10 @@ pub struct WatchdogInfo {
 }
 
 impl WatchdogInfo {
-    /// Whether timeout is at default value (usually 30-60 seconds).
-    pub fn is_default_timeout(&self) -> bool {
-        self.timeout_secs == 30 || self.timeout_secs == 60
+    /// Whether the timeout is at a common default (30 or 60 seconds), or
+    /// `None` when the timeout was not read.
+    pub fn is_default_timeout(&self) -> Option<bool> {
+        self.timeout_secs.map(|t| t == 30 || t == 60)
     }
 }
 
@@ -174,7 +179,7 @@ impl WatchdogMonitor {
                 WatchdogType::Unknown
             };
 
-            let timeout_secs = Self::read_sysfs_u32(&path.join("timeout")).unwrap_or(0);
+            let timeout_secs = Self::read_sysfs_u32(&path.join("timeout"));
             let pretimeout_secs = Self::read_sysfs_u32(&path.join("pretimeout")).unwrap_or(0);
             let min_timeout_secs = Self::read_sysfs_u32(&path.join("min_timeout")).unwrap_or(0);
             let max_timeout_secs = Self::read_sysfs_u32(&path.join("max_timeout")).unwrap_or(0);
@@ -320,7 +325,7 @@ mod tests {
             name: "watchdog0".into(),
             identity: "iTCO_wdt".into(),
             watchdog_type: WatchdogType::Hardware,
-            timeout_secs: 30,
+            timeout_secs: Some(30),
             pretimeout_secs: 0,
             pretimeout_governor: PreTimeoutGovernor::None,
             min_timeout_secs: 2,
@@ -333,7 +338,15 @@ mod tests {
             },
             available_governors: Vec::new(),
         };
-        assert!(info.is_default_timeout());
+        assert_eq!(info.is_default_timeout(), Some(true));
+
+        // A timeout that was not read is not a non-default timeout. It used to
+        // hold `0` and answer `false`.
+        let unread = WatchdogInfo {
+            timeout_secs: None,
+            ..info
+        };
+        assert_eq!(unread.is_default_timeout(), None);
     }
 
     #[test]
@@ -348,7 +361,7 @@ mod tests {
             name: "watchdog0".into(),
             identity: "softdog".into(),
             watchdog_type: WatchdogType::Software,
-            timeout_secs: 60,
+            timeout_secs: Some(60),
             pretimeout_secs: 10,
             pretimeout_governor: PreTimeoutGovernor::Panic,
             min_timeout_secs: 1,

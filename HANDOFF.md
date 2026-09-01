@@ -73,9 +73,48 @@ Since the tag, on `master` and green on all three platforms:
 | `3935301` | `is_turbo` closed, and the guess above its known defect |
 | `dd2f56a` | Secure Boot read from a file's existence, not its value |
 | `05468fb` | An unread thermal zone reported 0 C and "not throttling" |
+| `HEAD` | A failed health check reporting no critical issues |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### Three helpers, one module, and only one of them right
+
+Acting on the rule from the entry below — *a sentinel feeding a threshold
+comparison silently answers "under the threshold"* — pointed at the modules that
+compute conclusions. `health.rs` has three convenience functions over the same
+fallible check, and they disagree with each other:
+
+```rust
+pub fn health_status() -> HealthStatus {
+    SystemHealth::check().map(|h| h.status).unwrap_or(HealthStatus::Unknown)  // right
+}
+pub fn health_score() -> u8 {
+    SystemHealth::check().map(|h| h.score).unwrap_or(0)                        // wrong
+}
+pub fn has_critical_issues() -> bool {
+    SystemHealth::check().map(|h| h.has_critical()).unwrap_or(false)           // wrong, and
+}                                                                              // reassuringly so
+```
+
+**The module already had the right answer.** `HealthStatus::Unknown` exists and
+is used by the first function; the other two, written beside it, defaulted
+instead. `has_critical_issues` reported **no critical issues** when nothing had
+been checked; `health_score` reported **0**, the worst possible health, which
+errs alarming rather than reassuring but is still a real score a caller cannot
+distinguish from a measured one.
+
+Both are `Option` now. `examples/health_check.rs` rendered the zero as an empty
+bar reading `0/100`; it prints "not run".
+
+`watchdog::timeout_secs` went with them: `unwrap_or(0)` published a watchdog
+with a **zero-second timeout**, which would fire immediately and is not a
+configuration any device holds, and `is_default_timeout` compared it against 30
+and 60 to answer `false`.
+
+**Where an enum already has an `Unknown` variant, look for the sibling functions
+that do not use it.** The vocabulary for the absence existed here and was one
+line away from each site that ignored it.
 
 ### An unread thermal zone is not a cool one
 
