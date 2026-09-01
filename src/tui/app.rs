@@ -390,7 +390,11 @@ impl PeripheralCache {
                 ));
                 for dev in devices.iter().take(4) {
                     let icon = if dev.is_output { "♪" } else { "⚬" };
-                    let dflt = if dev.is_default { " [default]" } else { "" };
+                    let dflt = if dev.is_default == Some(true) {
+                        " [default]"
+                    } else {
+                        ""
+                    };
                     lines.push(format!("  {} {}{}", icon, dev.name, dflt));
                 }
                 if devices.len() > 4 {

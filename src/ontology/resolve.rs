@@ -2685,11 +2685,17 @@ fn resolve_audio(out: &mut Vec<Reading>) {
             Some(Unit::Identifier),
             "the platform did not report an endpoint state for this device",
         );
-        out.push(Reading::measured(
+        push_opt(
+            out,
             format!("{base}.default"),
-            serde_json::json!(d.is_default),
+            d.is_default.map(|v| serde_json::json!(v)),
             None,
-        ));
+            concat!(
+                "which endpoint the system routes to by default is a COM call ",
+                "this crate does not make; it was previously whichever row the ",
+                "enumeration returned first"
+            ),
+        );
         // Neither of these is read on any platform yet. The volume row already
         // said so; the mute row published a constant `false` as `measured`,
         // and the conformance suite caught it the moment the field could

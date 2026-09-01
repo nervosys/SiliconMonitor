@@ -95,9 +95,73 @@ Since the tag, on `master` and green on all three platforms:
 | `c79d4c5` | Nine tests asserting a contract the readers no longer make |
 | `6fbf520` | A device's name read as the speed it negotiated |
 | `6f289bd` | Three displays where one exists, two of them graphics cards |
+| `HEAD` | Twelve audio endpoints where four exist, two facing backwards |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### Twelve audio endpoints where four exist, two facing backwards
+
+The display entry below ends by saying a wrong enumeration is a wrong value in
+every field of every row. `audio` is the same defect in the same shape, found by
+going looking for it, and it is worse in one specific way.
+
+The reader concatenated `Win32_SoundDevice` — audio **adapters** — with the PnP
+`AudioEndpoint` class, giving twelve rows on this host. Eight are codecs and
+controllers: `Realtek High Definition Audio`, `AMD Streaming Audio Device`,
+`NVIDIA High Definition Audio` twice. The entity reads "endpoint name **as the
+platform presents it to a user**", and a user is shown none of them.
+
+Direction came from a regular expression over the name:
+
+```powershell
+$isInput = $dev.Name -match 'Microphone|Input|Capture|Line In'
+```
+
+**It was inverted on half of the real endpoints.** A virtual audio interface
+names its endpoints from the application's point of view, so `MOTIV Mix Virtual
+Input` is what you play *into* — a **render** endpoint — and `MOTIV Mix Virtual
+Output` is what you record *from*. The registry says Render and Capture
+respectively; the regex said the opposite of both, with complete confidence, and
+`board.audio.{n}.direction` published it as `Measured`.
+
+That is the thing worth keeping. Every other fabrication in this file is a
+missing reading dressed as a present one — a zero, a default, an absence with
+nowhere to go. **This one is a present reading pointing the wrong way**, and no
+amount of `Option` would have helped: the field was populated, non-null, and
+exactly backwards. What catches it is not a type but asking where the value came
+from, and "a regex over a human-readable label" is an answer that should end the
+conversation.
+
+And the default endpoint was whichever row came first:
+
+```rust
+let is_default = if is_output && !has_default_output { .. true } else { false };
+```
+
+which on this machine named an audio *controller* as the default output.
+
+The endpoint list Windows itself presents is kept — four rows, no duplicates —
+and joined to `MMDevices\Audio\{Render,Capture}` on the GUID that ends the PnP
+device id, which is exactly the registry subkey name. **An equality on a unique
+key, not a name match**: the friendly names do not join, because Windows
+disambiguates a second instance of an adapter by prefixing `2- `, and
+`LG ULTRAWIDE (2- NVIDIA High Definition Audio)` matches nothing in the
+registry. I tried the name join first and it failed on one of four, which is
+exactly the hit rate that makes a heuristic look like it works.
+
+Before and after:
+
+```
+before: 12 devices; 8 of them adapters; MOTIV Virtual Output = Output, Virtual Input = Input
+after:   4 endpoints; MOTIV Virtual Output = Input, Virtual Input = Output; state from
+         DeviceState; default absent
+```
+
+`DeviceState` is masked with `0xF` — the documented states are a four-bit field
+and Windows sets further undocumented bits above them. That also makes
+`board.audio.{n}.state` a real reading for the first time; the entry two below
+notes that three of its four values were unreachable.
 
 ### Three displays where one exists, two of them graphics cards
 
@@ -2962,7 +3026,8 @@ feature stayed broken through eight published versions.
    `usb`, `input`, `tpm`, `storage_controller`, `numa` and `printer` are
    converted; `codec` was examined and does not have the defect. Left: `audio`,
    `bluetooth`, `cpu_cache`, `display`, `firmware`, `os_info`, `power_profile`,
-   `smart`. Each has a `refresh_<os>` returning `()` into a `refresh()` returning
+   `smart`. (`display` and `audio` had their Windows readers rewritten for a
+   different defect since; their `refresh_<os>` signatures are untouched.) Each has a `refresh_<os>` returning `()` into a `refresh()` returning
    `Result`, so each can report a machine as empty when the reader merely
    failed. Convert with `capture_json` / `capture`, one or two modules per
    commit, and run the module against this host afterwards — `sensors` only gave

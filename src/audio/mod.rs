@@ -49,7 +49,11 @@ pub struct AudioDevice {
     /// (1 active, 2 disabled, 4 not present, 8 unplugged), readable without
     /// elevation; this reader does not go through that enumeration.
     pub state: Option<AudioState>,
-    pub is_default: bool,
+    /// Whether this is the endpoint the system routes to by default.
+    ///
+    /// `None` where it was not established. On Windows this was "whichever row
+    /// came first", which named an audio *controller* as the default output.
+    pub is_default: Option<bool>,
     pub is_output: bool,
     pub is_enabled: bool,
     /// Device volume, if it has been read. Nothing reads it: the default
@@ -58,6 +62,13 @@ pub struct AudioDevice {
     pub volume: Option<u8>,
     /// Device mute state, if it has been read. Nothing reads it either.
     pub muted: Option<bool>,
+}
+
+/// One endpoint as the Windows audio service records it.
+#[cfg(target_os = "windows")]
+struct WindowsEndpoint {
+    is_output: bool,
+    state: Option<AudioState>,
 }
 
 pub struct AudioMonitor {
@@ -112,10 +123,14 @@ impl AudioMonitor {
         self.master_muted
     }
     pub fn default_output(&self) -> Option<&AudioDevice> {
-        self.devices.iter().find(|d| d.is_default && d.is_output)
+        self.devices
+            .iter()
+            .find(|d| d.is_default == Some(true) && d.is_output)
     }
     pub fn default_input(&self) -> Option<&AudioDevice> {
-        self.devices.iter().find(|d| d.is_default && !d.is_output)
+        self.devices
+            .iter()
+            .find(|d| d.is_default == Some(true) && !d.is_output)
     }
 
     // ==================== Hardware Control APIs ====================
@@ -207,127 +222,152 @@ impl AudioMonitor {
         }
     }
 
+    /// Enumerate this machine's audio endpoints.
+    ///
+    /// Three separate things were wrong here, and all three came from the same
+    /// root cause as the display reader: **the list was of the wrong kind of
+    /// object**, so everything hung off it had to be guessed.
+    ///
+    /// The PowerShell it ran concatenated `Win32_SoundDevice` — audio
+    /// *adapters* — with the PnP `AudioEndpoint` class. On the development
+    /// machine that produced twelve "endpoints", eight of which are codecs and
+    /// controllers: `Realtek High Definition Audio`, `AMD Streaming Audio
+    /// Device`, `NVIDIA High Definition Audio` twice. The entity reads
+    /// "endpoint name **as the platform presents it to a user**", and a user is
+    /// never shown any of those.
+    ///
+    /// Direction came from a regular expression over the name:
+    ///
+    /// ```ignore
+    /// $isInput = $dev.Name -match 'Microphone|Input|Capture|Line In'
+    /// ```
+    ///
+    /// which was **inverted on half the real endpoints here**. A virtual audio
+    /// interface names its endpoints from the application's point of view, so
+    /// `MOTIV Mix Virtual Input` is what you play *into* — a render endpoint —
+    /// and `MOTIV Mix Virtual Output` is what you record *from*. The registry
+    /// says Render and Capture respectively; the regex said the opposite of
+    /// both.
+    ///
+    /// And the default endpoint was whichever row came first:
+    ///
+    /// ```ignore
+    /// let is_default = if is_output && !has_default_output { .. true } else { false };
+    /// ```
+    ///
+    /// The endpoint list itself is kept — it is Windows' own presentation, and
+    /// it carries no duplicates — and joined to
+    /// `MMDevices\Audio\{Render,Capture}` on the GUID that ends the PnP device
+    /// id, which is exactly the registry subkey name. That join is an equality
+    /// on a unique key rather than a name match: the friendly names do not join
+    /// reliably, because Windows disambiguates a second instance of an adapter
+    /// by prefixing `2- `.
     #[cfg(target_os = "windows")]
     fn refresh_windows(&mut self) {
-        use std::process::Command;
+        const QUERY: &str = concat!(
+            "Get-CimInstance Win32_PnPEntity | Where-Object { $_.PNPClass -eq 'AudioEndpoint' } ",
+            "| Select-Object Name, PNPDeviceID | ConvertTo-Json -Compress"
+        );
 
-        // Use PowerShell to enumerate audio devices via WMI + MMDevice API
-        let output = Command::new("powershell")
-            .args(["-NoProfile", "-Command",
-                r#"
-                $result = @()
-                
-                # Get playback devices via Win32_SoundDevice
-                $soundDevices = Get-CimInstance Win32_SoundDevice -ErrorAction SilentlyContinue
-                foreach ($dev in $soundDevices) {
-                    $result += [PSCustomObject]@{
-                        Id = $dev.DeviceID
-                        Name = $dev.Name
-                        Manufacturer = $dev.Manufacturer
-                        Status = $dev.Status
-                        Type = "Output"
-                        IsDefault = ($result.Count -eq 0)
-                    }
-                }
-                
-                # Also get PnP audio devices for input devices
-                $pnpAudio = Get-CimInstance Win32_PnPEntity | Where-Object { $_.PNPClass -eq 'AudioEndpoint' } -ErrorAction SilentlyContinue
-                foreach ($dev in $pnpAudio) {
-                    $isInput = $dev.Name -match 'Microphone|Input|Capture|Line In'
-                    $result += [PSCustomObject]@{
-                        Id = $dev.PNPDeviceID
-                        Name = $dev.Name
-                        Manufacturer = $dev.Manufacturer
-                        Status = $dev.Status
-                        Type = if ($isInput) { "Input" } else { "Output" }
-                        IsDefault = $false
-                    }
-                }
-                
-                $result | ConvertTo-Json -Compress
-                "#])
-            .output();
+        let endpoints = Self::windows_endpoint_registry();
 
-        if let Ok(output) = output {
-            if output.status.success() {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                let trimmed = stdout.trim();
-                if !trimmed.is_empty() {
-                    if let Ok(json) = serde_json::from_str::<serde_json::Value>(trimmed) {
-                        let items = if json.is_array() {
-                            json.as_array().cloned().unwrap_or_default()
-                        } else {
-                            vec![json]
-                        };
+        let Ok(Some(value)) =
+            crate::core::command::capture_json("powershell", &["-NoProfile", "-Command", QUERY])
+        else {
+            return;
+        };
 
-                        let mut has_default_output = false;
-                        let mut has_default_input = false;
+        for (idx, item) in crate::core::command::json_items(&value).iter().enumerate() {
+            let Some(name) = item["Name"].as_str().map(str::to_string) else {
+                continue;
+            };
+            let pnp_id = item["PNPDeviceID"].as_str().unwrap_or("");
 
-                        for item in &items {
-                            let name = item
-                                .get("Name")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("Unknown");
-                            let id = item.get("Id").and_then(|v| v.as_str()).unwrap_or("unknown");
-                            let status =
-                                item.get("Status").and_then(|v| v.as_str()).unwrap_or("OK");
-                            let dev_type = item
-                                .get("Type")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("Output");
-                            let is_output = dev_type == "Output";
+            // `SWD\MMDEVAPI\{0.0.0.00000000}.{116ba9f0-...}` — the endpoint's
+            // own GUID is the last brace group.
+            let Some(guid) = pnp_id
+                .rfind('{')
+                .map(|i| pnp_id[i..].to_ascii_lowercase())
+                .filter(|g| g.ends_with('}'))
+            else {
+                continue;
+            };
 
-                            let is_default = if is_output && !has_default_output {
-                                has_default_output = true;
-                                true
-                            } else if !is_output && !has_default_input {
-                                has_default_input = true;
-                                true
-                            } else {
-                                false
-                            };
+            // An endpoint the audio service does not have a key for is one this
+            // reader cannot describe: its direction and state would both have
+            // to be invented, which is what the previous version did.
+            let Some(endpoint) = endpoints.get(&guid) else {
+                continue;
+            };
 
-                            // `Degraded` used to map to `Idle`, which is an
-                            // activity state and not a health one, and every
-                            // other value fell through to `Active`.
-                            let state = match status {
-                                "OK" => Some(AudioState::Active),
-                                "Error" => Some(AudioState::Unavailable),
-                                _ => None,
-                            };
-
-                            self.devices.push(AudioDevice {
-                                id: id.to_string(),
-                                name: name.to_string(),
-                                device_type: if is_output {
-                                    AudioDeviceType::Output
-                                } else {
-                                    AudioDeviceType::Input
-                                },
-                                state,
-                                is_default,
-                                is_output,
-                                is_enabled: status == "OK",
-                                // Not read. `Some(100)` for the default
-                                // device was a guess wearing a measurement.
-                                volume: None,
-                                muted: None,
-                            });
-                        }
-                    }
-                }
-            }
+            self.devices.push(AudioDevice {
+                id: format!("audio{idx}"),
+                name,
+                device_type: if endpoint.is_output {
+                    AudioDeviceType::Output
+                } else {
+                    AudioDeviceType::Input
+                },
+                state: endpoint.state,
+                // Not read. Which endpoint the system routes to by default is
+                // `IMMDeviceEnumerator::GetDefaultAudioEndpoint`, a COM call;
+                // the registry does not record it. This was "whichever row came
+                // first", which on this machine named an audio *controller* as
+                // the default output.
+                is_default: None,
+                is_output: endpoint.is_output,
+                is_enabled: endpoint.state == Some(AudioState::Active),
+                volume: None,
+                muted: None,
+            });
         }
-
-        // There is deliberately no fallback device here.
-        //
-        // This invented one when the enumeration found nothing: "Default Audio
-        // Output", active, enabled, unmuted, at 100% volume — none of it read
-        // from anything. A machine with no enumerable audio reported one
-        // working output, indistinguishable from a machine that has one. The
-        // same shape as the Intel root hub the USB reader used to invent.
     }
 
+    /// Every audio endpoint the Windows audio service knows about, by GUID.
+    ///
+    /// `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio` has a
+    /// `Render` and a `Capture` subtree, which is where the direction comes
+    /// from, and each endpoint key carries a `DeviceState` DWORD. Both are
+    /// readable without elevation.
+    #[cfg(target_os = "windows")]
+    fn windows_endpoint_registry() -> std::collections::HashMap<String, WindowsEndpoint> {
+        use winreg::enums::HKEY_LOCAL_MACHINE;
+        use winreg::RegKey;
+
+        const BASE: &str = r"SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio";
+
+        let mut out = std::collections::HashMap::new();
+        for (flow, is_output) in [("Render", true), ("Capture", false)] {
+            let Ok(tree) =
+                RegKey::predef(HKEY_LOCAL_MACHINE).open_subkey(format!("{BASE}\\{flow}"))
+            else {
+                continue;
+            };
+            for guid in tree.enum_keys().flatten() {
+                let Ok(key) = tree.open_subkey(&guid) else {
+                    continue;
+                };
+                // The documented states are a four-bit mask -- 1 active,
+                // 2 disabled, 4 not present, 8 unplugged -- and Windows sets
+                // further undocumented bits above them, so the value is masked
+                // rather than compared.
+                let state =
+                    key.get_value::<u32, _>("DeviceState")
+                        .ok()
+                        .and_then(|raw| match raw & 0xF {
+                            1 => Some(AudioState::Active),
+                            2 => Some(AudioState::Suspended),
+                            4 | 8 => Some(AudioState::Unavailable),
+                            _ => None,
+                        });
+                out.insert(
+                    guid.to_ascii_lowercase(),
+                    WindowsEndpoint { is_output, state },
+                );
+            }
+        }
+        out
+    }
     #[cfg(target_os = "linux")]
     fn refresh_linux(&mut self) {
         use std::fs;
@@ -375,7 +415,7 @@ impl AudioMonitor {
                             name: full_name,
                             device_type,
                             state: None,
-                            is_default: card_num == 0,
+                            is_default: Some(card_num == 0),
                             is_output,
                             is_enabled: true,
                             volume: None,
@@ -396,7 +436,7 @@ impl AudioMonitor {
                             // Mark matching device as default
                             let sink_name = name.trim();
                             if let Some(dev) = self.devices.iter_mut().find(|d| d.is_output) {
-                                dev.is_default = true;
+                                dev.is_default = Some(true);
                                 if dev.name == format!("hw:{}", 0) {
                                     dev.name = sink_name.to_string();
                                 }
@@ -463,7 +503,7 @@ impl AudioMonitor {
                                 name: name.to_string(),
                                 device_type,
                                 state: None,
-                                is_default: has_output || has_input,
+                                is_default: Some(has_output || has_input),
                                 is_output: has_output || (!has_input),
                                 is_enabled: true,
                                 volume: None,
@@ -598,7 +638,7 @@ mod tests {
             name: "Test Device".to_string(),
             device_type: AudioDeviceType::Output,
             state: Some(AudioState::Active),
-            is_default: true,
+            is_default: Some(true),
             is_output: true,
             is_enabled: true,
             volume: Some(50),

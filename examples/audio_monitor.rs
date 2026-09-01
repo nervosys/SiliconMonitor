@@ -36,7 +36,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             simonlib::audio::AudioDeviceType::Input => "Input",
             simonlib::audio::AudioDeviceType::Duplex => "Duplex",
         };
-        let default = if device.is_default { " (Default)" } else { "" };
+        let default = match device.is_default {
+            Some(true) => " (Default)",
+            Some(false) => "",
+            // The default endpoint is a COM call this crate does not make; it
+            // is not "not the default".
+            None => "",
+        };
         let enabled = if device.is_enabled { "" } else { " [Disabled]" };
 
         println!(

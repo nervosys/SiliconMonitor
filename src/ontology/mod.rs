@@ -1277,7 +1277,10 @@ impl Ontology {
             K::Identity,
             None,
             P::Measured,
-            false,
+            // Nullable since 6.0.0: no platform reads it. The id is built
+            // with `format!`, so the static nullability check cannot see
+            // it and this had to be flipped by hand.
+            true,
             "Whether this is the endpoint the system routes to by default.",
         ));
         add(Entity::new(
