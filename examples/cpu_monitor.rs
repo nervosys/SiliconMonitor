@@ -54,6 +54,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ))]
 fn report<M: SiliconMonitor>(monitor: &M) -> Result<(), Box<dyn std::error::Error>> {
     // Get CPU information
+    // Utilization is a delta between two samples, so a single call has
+    // nothing to difference against and reports `None`. Sample twice.
+    let _ = monitor.cpu_info()?;
+    std::thread::sleep(std::time::Duration::from_millis(500));
     let (cores, clusters) = monitor.cpu_info()?;
 
     println!("CPU Cores: {}", cores.len());
@@ -74,7 +78,10 @@ fn report<M: SiliconMonitor>(monitor: &M) -> Result<(), Box<dyn std::error::Erro
             Some(mhz) => println!("  Average Frequency: {mhz} MHz"),
             None => println!("  Average Frequency: not measured"),
         }
-        println!("  Average Utilization: {}%", cluster.utilization);
+        match cluster.utilization {
+            Some(u) => println!("  Average Utilization: {u}%"),
+            None => println!("  Average Utilization: not measured"),
+        }
 
         if let Some(power) = cluster.power_watts {
             println!("  Power Consumption: {:.2} W", power);
@@ -95,7 +102,10 @@ fn report<M: SiliconMonitor>(monitor: &M) -> Result<(), Box<dyn std::error::Erro
             Some(mhz) => print!("{mhz:4} MHz, "),
             None => print!("   -  MHz, "),
         }
-        print!("{:3}% util", core.utilization);
+        match core.utilization {
+            Some(u) => print!("{u:3}% util"),
+            None => print!("  -  util"),
+        }
 
         if let Some(temp) = core.temperature {
             print!(", {}°C", temp);
@@ -109,14 +119,17 @@ fn report<M: SiliconMonitor>(monitor: &M) -> Result<(), Box<dyn std::error::Erro
 
     let total_cores = cores.len();
     let avg_freq = simonlib::silicon::average_reported_mhz(&cores);
-    let avg_util = cores.iter().map(|c| c.utilization as u32).sum::<u32>() / total_cores as u32;
+    let avg_util = simonlib::silicon::average_reported_util(&cores);
 
     println!("Total Cores: {}", total_cores);
     match avg_freq {
         Some(mhz) => println!("Average Frequency: {mhz} MHz"),
         None => println!("Average Frequency: not measured on this platform"),
     }
-    println!("Average Utilization: {}%", avg_util);
+    match avg_util {
+        Some(u) => println!("Average Utilization: {u}%"),
+        None => println!("Average Utilization: not measured on this platform"),
+    }
 
     // Temperature statistics (if available)
     let temps: Vec<i32> = cores.iter().filter_map(|c| c.temperature).collect();

@@ -325,7 +325,7 @@ impl SiliconMonitor for AppleSiliconMonitor {
                 id: *id,
                 cluster: CpuClusterType::Efficiency,
                 frequency_mhz: Some(*freq),
-                utilization: *util,
+                utilization: Some(*util),
                 temperature: None,
             });
         }
@@ -336,7 +336,7 @@ impl SiliconMonitor for AppleSiliconMonitor {
                 id: *id,
                 cluster: CpuClusterType::Performance,
                 frequency_mhz: Some(*freq),
-                utilization: *util,
+                utilization: Some(*util),
                 temperature: None,
             });
         }
@@ -346,7 +346,7 @@ impl SiliconMonitor for AppleSiliconMonitor {
             cluster_type: CpuClusterType::Efficiency,
             core_ids: (0..self.soc_info.e_core_count).collect(),
             frequency_mhz: Some(data.e_cluster_freq_mhz),
-            utilization: data.e_cluster_active,
+            utilization: Some(data.e_cluster_active),
             power_watts: Some(data.cpu_power_mw as f32 / 1000.0 * 0.4), // Approximate
         });
 
@@ -355,7 +355,7 @@ impl SiliconMonitor for AppleSiliconMonitor {
             cluster_type: CpuClusterType::Performance,
             core_ids: (0..self.soc_info.p_core_count).collect(),
             frequency_mhz: Some(data.p_cluster_freq_mhz),
-            utilization: data.p_cluster_active,
+            utilization: Some(data.p_cluster_active),
             power_watts: Some(data.cpu_power_mw as f32 / 1000.0 * 0.6), // Approximate
         });
 

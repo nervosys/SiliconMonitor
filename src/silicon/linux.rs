@@ -389,7 +389,9 @@ impl SiliconMonitor for LinuxSiliconMonitor {
             // A core whose scaling_cur_freq could not be read has no
             // frequency, not a frequency of zero.
             let frequency = self.read_cpu_frequency(cpu_id);
-            let utilization = utilization_map.get(&cpu_id).copied().unwrap_or(0);
+            // /proc/stat carries a line per cpu; a core missing from it was
+            // not measured.
+            let utilization = utilization_map.get(&cpu_id).copied();
             let temperature = self.read_cpu_temperature(cpu_id);
 
             let core = CpuCore {
@@ -417,8 +419,7 @@ impl SiliconMonitor for LinuxSiliconMonitor {
 
         if !p_cores.is_empty() {
             let avg_freq = average_reported_mhz(&p_cores);
-            let avg_util =
-                p_cores.iter().map(|c| c.utilization as u32).sum::<u32>() / p_cores.len() as u32;
+            let avg_util = average_reported_util(&p_cores);
 
             // P-cores typically use more power, estimate ~60% of package power
             let power = package_power.map(|p| p * 0.6);
@@ -427,15 +428,14 @@ impl SiliconMonitor for LinuxSiliconMonitor {
                 cluster_type: CpuClusterType::Performance,
                 core_ids: p_cores.iter().map(|c| c.id).collect(),
                 frequency_mhz: avg_freq,
-                utilization: avg_util as u8,
+                utilization: avg_util,
                 power_watts: power,
             });
         }
 
         if !e_cores.is_empty() {
             let avg_freq = average_reported_mhz(&e_cores);
-            let avg_util =
-                e_cores.iter().map(|c| c.utilization as u32).sum::<u32>() / e_cores.len() as u32;
+            let avg_util = average_reported_util(&e_cores);
 
             // E-cores use less power, estimate ~40% of package power
             let power = package_power.map(|p| p * 0.4);
@@ -444,21 +444,20 @@ impl SiliconMonitor for LinuxSiliconMonitor {
                 cluster_type: CpuClusterType::Efficiency,
                 core_ids: e_cores.iter().map(|c| c.id).collect(),
                 frequency_mhz: avg_freq,
-                utilization: avg_util as u8,
+                utilization: avg_util,
                 power_watts: power,
             });
         }
 
         if !std_cores.is_empty() {
             let avg_freq = average_reported_mhz(&std_cores);
-            let avg_util = std_cores.iter().map(|c| c.utilization as u32).sum::<u32>()
-                / std_cores.len() as u32;
+            let avg_util = average_reported_util(&std_cores);
 
             clusters.push(CpuCluster {
                 cluster_type: CpuClusterType::Standard,
                 core_ids: std_cores.iter().map(|c| c.id).collect(),
                 frequency_mhz: avg_freq,
-                utilization: avg_util as u8,
+                utilization: avg_util,
                 power_watts: package_power, // Full package power for standard cores
             });
         }

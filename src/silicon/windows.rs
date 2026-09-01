@@ -5,7 +5,6 @@
 use super::*;
 use crate::error::Result;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 #[cfg(target_os = "windows")]
 use serde::Deserialize;
@@ -37,8 +36,6 @@ struct Win32Processor {
 }
 
 // Global state for per-core utilization tracking
-static PREV_TOTAL_TIME: AtomicU64 = AtomicU64::new(0);
-static PREV_IDLE_TIME: AtomicU64 = AtomicU64::new(0);
 
 /// Windows silicon monitor
 pub struct WindowsSiliconMonitor {
@@ -138,66 +135,18 @@ impl WindowsSiliconMonitor {
     fn read_cpu_frequencies(&self) -> Vec<Option<u32>> {
         vec![None; self.cpu_count]
     }
-
-    /// Read CPU utilization using GetSystemTimes
-    /// Returns overall utilization percentage
-    #[cfg(target_os = "windows")]
-    fn read_cpu_utilization_percent(&self) -> u8 {
-        use ::windows::Win32::Foundation::FILETIME;
-
-        #[link(name = "kernel32")]
-        extern "system" {
-            fn GetSystemTimes(
-                lpIdleTime: *mut FILETIME,
-                lpKernelTime: *mut FILETIME,
-                lpUserTime: *mut FILETIME,
-            ) -> i32;
-        }
-
-        let mut idle_time: FILETIME = unsafe { std::mem::zeroed() };
-        let mut kernel_time: FILETIME = unsafe { std::mem::zeroed() };
-        let mut user_time: FILETIME = unsafe { std::mem::zeroed() };
-
-        let result = unsafe { GetSystemTimes(&mut idle_time, &mut kernel_time, &mut user_time) };
-
-        if result == 0 {
-            return 0;
-        }
-
-        // Convert FILETIME to u64
-        let idle = ((idle_time.dwHighDateTime as u64) << 32) | (idle_time.dwLowDateTime as u64);
-        let kernel =
-            ((kernel_time.dwHighDateTime as u64) << 32) | (kernel_time.dwLowDateTime as u64);
-        let user = ((user_time.dwHighDateTime as u64) << 32) | (user_time.dwLowDateTime as u64);
-
-        let total = kernel + user; // kernel includes idle
-
-        // Get previous values
-        let prev_total = PREV_TOTAL_TIME.load(Ordering::Relaxed);
-        let prev_idle = PREV_IDLE_TIME.load(Ordering::Relaxed);
-
-        // Store current values
-        PREV_TOTAL_TIME.store(total, Ordering::Relaxed);
-        PREV_IDLE_TIME.store(idle, Ordering::Relaxed);
-
-        // Calculate delta
-        let total_delta = total.saturating_sub(prev_total);
-        let idle_delta = idle.saturating_sub(prev_idle);
-
-        if total_delta == 0 || prev_total == 0 {
-            return 0; // First call or no change
-        }
-
-        let used_delta = total_delta.saturating_sub(idle_delta);
-        let utilization = (used_delta as f64 / total_delta as f64 * 100.0) as u8;
-        utilization.min(100)
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    fn read_cpu_utilization_percent(&self) -> u8 {
-        0
-    }
-
+    // `read_cpu_utilization_percent` and its two `AtomicU64` statics were here.
+    //
+    // They sampled `GetSystemTimes` and differenced it — a whole-machine
+    // figure, correct in shape — and reported 100% on an idle desktop where
+    // `core::cpu` read 7.3% at the same moment. Probing the API directly over
+    // the same window gives deltas that check out (kernel+user = 12.0s across
+    // 24 cores in 500ms) and an idle delta implying ~35%, so the arithmetic is
+    // not obviously at fault and the disagreement was never explained.
+    //
+    // Removed rather than left behind an `#[allow(dead_code)]`: a reader
+    // nothing calls, which disagreed with a known-good source by an order of
+    // magnitude, is not an asset. `core::cpu` reads this correctly.
     /// Read CPU temperature using WMI
     /// Query: SELECT * FROM MSAcpi_ThermalZoneTemperature
     /// Note: Returns zone temperature (often CPU package temp), requires admin privileges
@@ -249,12 +198,18 @@ impl WindowsSiliconMonitor {
     }
 
     /// Read CPU utilization using Performance Counters
+    /// Per-core utilization. Empty on Windows: there is no per-core source
+    /// wired here.
+    ///
+    /// This called `read_cpu_utilization_percent`, a **system-wide**
+    /// `GetSystemTimes` figure, and copied it into every core's entry — so a
+    /// 24-core machine reported the same number 24 times as though each had
+    /// been measured. That is the macOS defect from `24a7314` on a second
+    /// platform, in a second module. The real per-core figures exist in
+    /// `core::cpu`, which this module does not use; until it does, each core
+    /// reports `None`.
     fn read_cpu_utilization(&self) -> HashMap<u32, u8> {
-        // Use overall system utilization for all cores (simplified)
-        let overall_util = self.read_cpu_utilization_percent();
-        (0..self.cpu_count as u32)
-            .map(|id| (id, overall_util))
-            .collect()
+        HashMap::new()
     }
 
     /// Determine if CPU has hybrid architecture (P+E cores)
@@ -381,7 +336,7 @@ impl SiliconMonitor for WindowsSiliconMonitor {
         for cpu_id in 0..self.cpu_count as u32 {
             let cluster = self.determine_cluster_type(cpu_id);
             let frequency = frequencies.get(cpu_id as usize).copied().flatten();
-            let utilization = utilization_map.get(&cpu_id).copied().unwrap_or(0);
+            let utilization = utilization_map.get(&cpu_id).copied();
             let temperature = self.read_cpu_temperature(cpu_id);
 
             cores.push(CpuCore {
@@ -403,17 +358,13 @@ impl SiliconMonitor for WindowsSiliconMonitor {
             Some(reported.iter().sum::<u32>() / reported.len() as u32)
         };
 
-        let avg_util = if !cores.is_empty() {
-            cores.iter().map(|c| c.utilization as u32).sum::<u32>() / cores.len() as u32
-        } else {
-            0
-        };
+        let avg_util = crate::silicon::average_reported_util(&cores);
 
         let clusters = vec![CpuCluster {
             cluster_type: CpuClusterType::Standard,
             core_ids: (0..self.cpu_count as u32).collect(),
             frequency_mhz: avg_freq,
-            utilization: avg_util as u8,
+            utilization: avg_util,
             power_watts: None,
         }];
 

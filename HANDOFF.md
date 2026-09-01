@@ -65,9 +65,51 @@ Since the tag, on `master` and green on all three platforms:
 | `eaf7e3f` | A fifth AdapterRAM reader, on the public API, still capped at 4GB |
 | `9bc2524` | NPU core counts guessed from a vendor guessed from a name |
 | `b2e84af` | A doc comment that named the danger, ignored by the caller two lines away |
+| `HEAD` | One system-wide number, copied into 24 cores as though each were measured |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### One number, copied into twenty-four cores
+
+`silicon::windows::read_cpu_utilization` was:
+
+```rust
+// Use overall system utilization for all cores (simplified)
+let overall_util = self.read_cpu_utilization_percent();
+(0..self.cpu_count as u32).map(|id| (id, overall_util)).collect()
+```
+
+`read_cpu_utilization_percent` is `GetSystemTimes` — a **whole-machine** figure
+— copied into every core's entry, so a 24-core machine reported the same number
+twenty-four times as though each had been measured. That is `24a7314`'s macOS
+defect ("the system-wide figure repeated across every core") on a second
+platform, in a second module. Linux is unaffected: it reads real per-cpu lines
+from `/proc/stat`.
+
+`CpuCore::utilization` and `CpuCluster::utilization` are `Option<u8>` now, and
+Windows contributes an empty map, so each core reads `None`.
+
+**And an honest failure worth recording, because the next person will be
+tempted by the same idea.** Wiring the system-wide figure to the *cluster*
+average looked right — a cluster spanning every core is exactly what a
+whole-machine number describes. It reported **100% on an idle desktop** where
+`simon cli cpu`, reading `core::cpu`, said 7.3% at the same moment. Probing
+`GetSystemTimes` directly over the same window gives deltas that check out —
+kernel+user = 120,156,250 ticks, which is exactly 12.0s across 24 cores in
+500ms — and an idle delta implying ~35%. **The arithmetic is not obviously
+wrong and the disagreement was never explained.**
+
+So the function was removed rather than published or left behind an
+`#[allow(dead_code)]`. **A reader that contradicts a known-good source by an
+order of magnitude does not get shipped because its formula looks right.** If
+someone wants a system-wide figure in `silicon`, take it from `core::cpu`, which
+is correct, rather than re-deriving it here.
+
+One earlier note in this session, that the reader was simply "wrong", was
+itself premature: the first probe showed `idle delta = 0`, and that was real —
+cargo was compiling at the time and the machine genuinely was saturated. The
+100% on a quiet machine is the finding; the first reading was not.
 
 ### A warning in a doc comment does not bind the caller
 

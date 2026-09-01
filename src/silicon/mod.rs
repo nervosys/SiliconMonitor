@@ -41,6 +41,18 @@ pub fn average_reported_mhz(cores: &[CpuCore]) -> Option<u32> {
     Some(reported.iter().sum::<u32>() / reported.len() as u32)
 }
 
+/// Mean utilization over the cores that reported one, or `None` when none did.
+pub fn average_reported_util(cores: &[CpuCore]) -> Option<u8> {
+    let reported: Vec<u32> = cores
+        .iter()
+        .filter_map(|c| c.utilization.map(u32::from))
+        .collect();
+    if reported.is_empty() {
+        return None;
+    }
+    Some((reported.iter().sum::<u32>() / reported.len() as u32) as u8)
+}
+
 /// Per-core CPU information
 #[derive(Debug, Clone)]
 pub struct CpuCore {
@@ -57,8 +69,15 @@ pub struct CpuCore {
     /// fixed there and not here, because the fix was applied where the defect
     /// was seen rather than where it is. Two readers, one API, one lie.
     pub frequency_mhz: Option<u32>,
-    /// Utilization percentage (0-100)
-    pub utilization: u8,
+    /// Per-core utilization, or `None` where no per-core figure was read.
+    ///
+    /// Windows had no per-core source wired: `read_cpu_utilization` called
+    /// `GetSystemTimes`, which is **system-wide**, and copied that one number
+    /// into every core's entry. That is the macOS defect from `24a7314` — "the
+    /// system-wide figure repeated across every core" — on a second platform,
+    /// in a second module. Linux reads real per-cpu lines from `/proc/stat`
+    /// and is unaffected.
+    pub utilization: Option<u8>,
     /// Temperature in Celsius (if available)
     pub temperature: Option<i32>,
 }
@@ -73,8 +92,8 @@ pub struct CpuCluster {
     /// Average frequency in MHz over the cores that reported one, or `None`
     /// when none did. See [`CpuCore::frequency_mhz`].
     pub frequency_mhz: Option<u32>,
-    /// Average utilization percentage (0-100)
-    pub utilization: u8,
+    /// Average utilization over the cores that reported one, or `None`.
+    pub utilization: Option<u8>,
     /// Power consumption in watts (if available)
     pub power_watts: Option<f32>,
 }
