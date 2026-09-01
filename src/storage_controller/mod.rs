@@ -559,72 +559,21 @@ impl StorageControllerMonitor {
             Err(e) => failures.push(format!("Win32_IDEController: {e}")),
         }
 
-        // NVMe detection. MSFT_PhysicalDisk is what Get-PhysicalDisk wraps; BusType 17
-        // is NVMe.
-        let nvme = Self::query_wmi_json(
-            "root\\Microsoft\\Windows\\Storage",
-            "SELECT FriendlyName, Manufacturer, Model, SerialNumber, FirmwareVersion \
-             FROM MSFT_PhysicalDisk WHERE BusType = 17",
-        );
-        match &nvme {
-            Ok(_) => any_ok = true,
-            Err(e) => failures.push(format!("MSFT_PhysicalDisk: {e}")),
-        }
-        if let Ok(text) = &nvme {
-            {
-                if let Ok(val) = serde_json::from_str::<serde_json::Value>(text) {
-                    let items = crate::core::command::json_items(&val);
-                    for (i, item) in items.iter().enumerate() {
-                        let model = item["Model"].as_str().unwrap_or("").trim().to_string();
-                        let serial = item["SerialNumber"]
-                            .as_str()
-                            .unwrap_or("")
-                            .trim()
-                            .to_string();
-                        let firmware = item["FirmwareVersion"]
-                            .as_str()
-                            .unwrap_or("")
-                            .trim()
-                            .to_string();
-                        let friendly = item["FriendlyName"].as_str().unwrap_or(&model).to_string();
-
-                        self.controllers.push(StorageControllerInfo {
-                            name: format!("nvme{}", i),
-                            vendor: item["Manufacturer"]
-                                .as_str()
-                                .unwrap_or("")
-                                .trim()
-                                .to_string(),
-                            model: friendly,
-                            driver: "nvme".to_string(),
-                            interface: StorageInterface::NVMe,
-                            pci_address: String::new(),
-                            // Not read. The Windows NVMe paths learn nothing
-                            // about a port or namespace count, and a literal 1
-                            // published under `disk.controller.{n}.ports` --- which
-                            // is declared `Measured` and described as "port count
-                            // the controller reports" --- is a constant wearing a
-                            // measurement's provenance. Zero is what the resolver
-                            // already reads as absent, and the entity is nullable
-                            // for exactly this. The sysfs path above uses the real
-                            // namespace count.
-                            ports: 0,
-                            nvme_info: Some(NvmeControllerInfo {
-                                name: format!("nvme{}", i),
-                                model,
-                                serial,
-                                firmware,
-                                pcie_speed: String::new(),
-                                pcie_width: String::new(),
-                                namespace_count: 1,
-                                transport: "pcie".to_string(),
-                            }),
-                        });
-                    }
-                }
-            }
-        }
-
+        // There is deliberately no `MSFT_PhysicalDisk` query here.
+        //
+        // One used to run, `WHERE BusType = 17`, and push each row as a
+        // controller. `MSFT_PhysicalDisk` is what `Get-PhysicalDisk` wraps: it
+        // enumerates **disks**. So every NVMe device appeared twice -- once as
+        // its actual controller from `Win32_SCSIController`, and once as the
+        // drive itself -- and this host reported nine controllers where six
+        // exist, three of them named `Samsung SSD 990 PRO 4TB` and carrying no
+        // PCI address, because a disk does not have a controller's address.
+        //
+        // Everything that branch published about those drives -- model, serial,
+        // firmware -- is disk identity, and `disk.{n}` already reports it from
+        // a reader that knows it is describing a disk. The `nvme_info` it
+        // attached was never resolved into the ontology at all, and its
+        // `namespace_count: 1` was a constant.
         if any_ok {
             Ok(())
         } else {
@@ -648,14 +597,30 @@ impl StorageControllerMonitor {
                 let vendor = item["Manufacturer"].as_str().unwrap_or("").to_string();
                 let driver = item["DriverName"].as_str().unwrap_or("").to_string();
 
-                let interface = if name.to_lowercase().contains("nvme") {
-                    StorageInterface::NVMe
-                } else if name.to_lowercase().contains("sas") {
-                    StorageInterface::SAS
-                } else if name.to_lowercase().contains("usb") {
-                    StorageInterface::USB
-                } else {
-                    default_iface.clone()
+                // The bound driver names the transport, and the row already
+                // carries it. `default_iface` is the class of the WMI query
+                // that returned the row, which is not a property of the
+                // device: Windows exposes NVMe controllers through
+                // `Win32_SCSIController`, so all three on this host were
+                // published as `SCSI`.
+                //
+                // The name check below it did not save them either. It looked
+                // for `nvme`, and Windows calls them `Standard NVM Express
+                // Controller` -- the substring the reader wanted is the one
+                // string Windows does not use.
+                let lower_name = name.to_lowercase();
+                let interface = match driver.to_lowercase().as_str() {
+                    "stornvme" => StorageInterface::NVMe,
+                    "storahci" => StorageInterface::AHCI,
+                    _ if lower_name.contains("nvme") || lower_name.contains("nvm express") => {
+                        StorageInterface::NVMe
+                    }
+                    _ if lower_name.contains("sas") => StorageInterface::SAS,
+                    _ if lower_name.contains("usb") => StorageInterface::USB,
+                    _ if lower_name.contains("ahci") || lower_name.contains("sata") => {
+                        StorageInterface::AHCI
+                    }
+                    _ => default_iface.clone(),
                 };
 
                 self.controllers.push(StorageControllerInfo {

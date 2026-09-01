@@ -96,9 +96,71 @@ Since the tag, on `master` and green on all three platforms:
 | `6fbf520` | A device's name read as the speed it negotiated |
 | `6f289bd` | Three displays where one exists, two of them graphics cards |
 | `4b004c7` | Twelve audio endpoints where four exist, two facing backwards |
+| `HEAD` | Every NVMe device counted twice, once as its own controller |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### Every NVMe device counted twice, once as its own controller
+
+Two entries below fixed a display reader that enumerated adapters, and one below
+that an audio reader that enumerated codecs. Rather than wait for a third to
+turn up, the same question was asked of every family at once: **how many
+instances does each report on this machine, and is that number right?**
+
+```
+board.audio     4     board.display   1     cpu.core      24
+disk            4     disk.controller 9     memory.dimm    2
+gpu             3     pci            64     usb           41
+```
+
+`disk.controller 9` on a machine with three NVMe drives is the one that does not
+add up, and the listing said why:
+
+```
+Standard NVM Express Controller   iface=SCSI  driver=stornvme  pci=PCI\VEN_144D&DEV_A810…
+Standard NVM Express Controller   iface=SCSI  driver=stornvme  pci=PCI\VEN_144D&DEV_A808…
+Standard NVM Express Controller   iface=SCSI  driver=stornvme  pci=PCI\VEN_144D&DEV_A80C…
+Samsung SSD 990 PRO 4TB           iface=NVMe  driver=nvme      pci=""
+Samsung SSD 970 EVO Plus 2TB      iface=NVMe  driver=nvme      pci=""
+Samsung SSD 9100 PRO 4TB          iface=NVMe  driver=nvme      pci=""
+```
+
+**Each NVMe device appears twice** — once as its actual controller, once as the
+drive itself. The second set came from a `MSFT_PhysicalDisk WHERE BusType = 17`
+query, and `MSFT_PhysicalDisk` is what `Get-PhysicalDisk` wraps: it enumerates
+**disks**. The empty `pci_address` on those three rows is the tell, and it was
+sitting in the output the whole time — *a controller without a bus address is
+not a controller*. Everything that branch published is disk identity, which
+`disk.{n}` already reports from a reader that knows it is describing a disk.
+
+And the three real controllers were labelled **SCSI**:
+
+```rust
+self.parse_windows_controllers(&text, StorageInterface::SCSI);   // Win32_SCSIController
+...
+let interface = if name.to_lowercase().contains("nvme") { NVMe } else { default_iface }
+```
+
+The default is *the class of the WMI query that returned the row*, which is not
+a property of the device — Windows exposes NVMe controllers through
+`Win32_SCSIController`. The name check that was supposed to rescue them looked
+for `nvme`, and Windows calls them `Standard NVM Express Controller`: **the one
+spelling of the word that Windows does not use.** Meanwhile `stornvme` sat in
+the `DriverName` field of the same row. The bound driver names the transport, so
+that is what the classification reads now.
+
+```
+before: 9 controllers, 3 of them disks, 3 real NVMe controllers labelled SCSI
+after:  6 controllers, the 3 NVMe ones labelled NVMe
+```
+
+**Worth keeping: counting is a cheap detector and nobody had done it.** Three
+enumeration defects in three days of the same session, and all three announce
+themselves in a single number. The check is one query against a live snapshot,
+it needs no knowledge of the reader, and the question it asks — *does this
+machine really have that many?* — is one a person can answer by looking at the
+machine.
 
 ### Twelve audio endpoints where four exist, two facing backwards
 
