@@ -87,9 +87,48 @@ Since the tag, on `master` and green on all three platforms:
 | `f1470d5` | Fifteen codecs, one frame rate: a constant with a derivation |
 | `599e8ff` | An idle webcam reporting that it was streaming |
 | `7fde63e` | A green gate that could not see the defect it shipped |
+| `HEAD` | The same field, right on two platforms and invented on the third |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### The same field, right on two platforms and invented on the third
+
+Following the webcam entry below, a sweep of every field derived from a WMI or
+PnP `Status` string, since that is where the last three "right answer to the
+wrong question" findings came from. `board.input.{n}.active` came back — and it
+is a useful negative result, because on two of three platforms it is correct.
+
+The entity asks a precise question:
+
+> Whether the platform reports the device as connected and usable. A present but
+> inactive device is a different fact from an absent one — **a Bluetooth
+> keyboard out of range is still enumerated.**
+
+Windows answers it with `Win32_PnPEntity.Status == "OK"`, which really is
+"connected and usable" — the *same expression* that was wrong for
+`board.camera.{n}.active`, because there the question was "is it streaming".
+**The defect was never the expression; it was the pairing.** Linux reads the
+`Handlers` line, also right.
+
+macOS sets the literal `true` at both construction sites, including the
+Bluetooth branch — the one case the description singles out. An out-of-range
+Apple keyboard was reported as connected and usable.
+
+Now `Option<bool>`: `Some` from a real read on Linux and Windows, `None` on
+macOS. This host is unchanged, all six devices still `Some(true)`, which is the
+correct outcome for a change that only removes an invention.
+
+**Two things worth keeping.** First, a sweep that returns mostly correct code is
+not a wasted sweep — knowing that `Status == "OK"` is right *here* and wrong
+*there* is what turns a pattern into a rule. Second, this one had to be caught
+by reading: the entity id is built with `format!`, so
+`entities_with_an_absence_path_are_declared_nullable` could not see it and the
+`nullable` flag had to be flipped by hand. **The static check's blind spot is
+exactly the per-instance entities, which are most of them.** Anyone converting
+another field to `Option` should assume the flag needs flipping and check.
+
+The macOS branch is correct by inspection and unverified — there is no Mac here.
 
 ### A green gate that could not see the defect it shipped
 

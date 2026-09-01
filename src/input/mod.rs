@@ -81,7 +81,15 @@ pub struct InputDevice {
     /// Physical path (sysfs path on Linux, device instance on Windows)
     pub physical_path: String,
     /// Whether the device appears active / connected
-    pub is_active: bool,
+    /// Whether the platform reports the device as connected and usable.
+    ///
+    /// `None` where it was not established. Linux reads it from the device's
+    /// `Handlers` line and Windows from `Status`, both of which answer the
+    /// question the entity asks. macOS set the literal `true` at every
+    /// construction site -- including the Bluetooth branch, and the entity's own
+    /// description names that exact case: "a Bluetooth keyboard out of range is
+    /// still enumerated".
+    pub is_active: Option<bool>,
     /// Device-specific capabilities (e.g., "buttons:5", "axes:2")
     pub capabilities: Vec<String>,
 }
@@ -225,7 +233,7 @@ impl InputMonitor {
                 vendor: format!("0x{}", vendor_id),
                 product: format!("0x{}", product_id),
                 physical_path: sysfs.to_string(),
-                is_active: handlers.contains("event"),
+                is_active: Some(handlers.contains("event")),
                 capabilities: caps,
             });
         };
@@ -415,7 +423,7 @@ impl InputMonitor {
                     vendor: String::new(),
                     product: String::new(),
                     physical_path: device_id,
-                    is_active: item["Status"].as_str() == Some("OK"),
+                    is_active: Some(item["Status"].as_str() == Some("OK")),
                     capabilities: vec!["keys".into()],
                 });
             }
@@ -467,7 +475,7 @@ impl InputMonitor {
                     vendor: String::new(),
                     product: String::new(),
                     physical_path: device_id,
-                    is_active: item["Status"].as_str() == Some("OK"),
+                    is_active: Some(item["Status"].as_str() == Some("OK")),
                     capabilities: caps,
                 });
             }
@@ -537,7 +545,7 @@ impl InputMonitor {
                     vendor: "Apple".into(),
                     product: String::new(),
                     physical_path: String::new(),
-                    is_active: true,
+                    is_active: None,
                     capabilities: Vec::new(),
                 });
             }
@@ -573,7 +581,7 @@ impl InputMonitor {
             vendor: vendor.to_string(),
             product: product.to_string(),
             physical_path: String::new(),
-            is_active: true,
+            is_active: None,
             capabilities: Vec::new(),
         });
     }
@@ -657,7 +665,7 @@ mod tests {
             vendor: "TestVendor".into(),
             product: "TestProduct".into(),
             physical_path: "/sys/test".into(),
-            is_active: true,
+            is_active: Some(true),
             capabilities: vec!["keys".into()],
         };
         let json = serde_json::to_string(&device).unwrap();

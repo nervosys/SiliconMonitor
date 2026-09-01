@@ -1217,7 +1217,11 @@ impl Ontology {
             K::Identity,
             None,
             P::Measured,
-            false,
+            // Nullable since 6.0.0: macOS does not read it. The id is
+            // built with `format!`, so the static check in
+            // `entities_with_an_absence_path_are_declared_nullable`
+            // cannot see this one -- it had to be flipped by hand.
+            true,
             "Whether the platform reports the device as connected and usable. A \
              present but inactive device is a different fact from an absent one \
              - a Bluetooth keyboard out of range is still enumerated.",

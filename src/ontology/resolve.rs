@@ -2635,11 +2635,13 @@ fn resolve_input(out: &mut Vec<Reading>) {
         );
         push_text(out, format!("{base}.vendor"), &d.vendor);
         push_text(out, format!("{base}.product"), &d.product);
-        out.push(Reading::measured(
+        push_opt(
+            out,
             format!("{base}.active"),
-            serde_json::json!(d.is_active),
+            d.is_active.map(|a| serde_json::json!(a)),
             None,
-        ));
+            "the platform did not report whether this device is connected and usable",
+        );
     }
 }
 
