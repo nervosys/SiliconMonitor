@@ -131,7 +131,7 @@ impl FirmwareInventory {
         self.refresh_linux();
 
         #[cfg(target_os = "windows")]
-        self.refresh_windows();
+        self.refresh_windows()?;
 
         #[cfg(target_os = "macos")]
         self.refresh_macos();
@@ -471,8 +471,25 @@ impl FirmwareInventory {
         }
     }
 
+    /// Read what Windows publishes about this machine's firmware.
+    ///
+    /// This was one function running four PowerShell queries in sequence, each
+    /// wrapped in `if let Ok(output)`. Two of the four **enumerate** — the BIOS
+    /// and the storage devices both push `FirmwareEntry` values — and two only
+    /// **decorate** what the others found, setting the system vendor and the
+    /// Secure Boot state. Mixing them meant a failure of any one was
+    /// indistinguishable from a failure of all four, and an empty entry list is
+    /// what the resolver publishes as a fact about the machine.
+    ///
+    /// They are four methods now, and the rule from `usb::refresh_windows`
+    /// applies to the two that enumerate: either succeeding is enough to trust
+    /// an empty result, and both failing is an error naming both reasons. The
+    /// two that decorate are allowed to fail quietly, because their absence is
+    /// already expressible — `system_vendor` stays empty and `secure_boot`
+    /// stays `Unknown`, which is what `Confirm-SecureBootUEFI` does anyway
+    /// without elevation.
     #[cfg(target_os = "windows")]
-    fn refresh_windows(&mut self) {
+    fn refresh_windows(&mut self) -> Result<(), SimonError> {
         // `GetFirmwareType` answers this, and this crate already wraps it --
         // `boot_config` calls the same helper and its comment says why:
         // "claiming Legacy on a failed query is how the old code got it wrong".
@@ -486,116 +503,159 @@ impl FirmwareInventory {
             _ => BootMode::Unknown,
         };
 
-        // BIOS information
-        if let Ok(output) = std::process::Command::new("powershell")
-            .args(["-NoProfile", "-Command",
-                "Get-CimInstance Win32_BIOS | Select-Object Manufacturer,SMBIOSBIOSVersion,ReleaseDate | ConvertTo-Json"])
-            .output()
-        {
-            let text = String::from_utf8(output.stdout).unwrap_or_default();
-            if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
-                let vendor = json.get("Manufacturer").and_then(|v| v.as_str()).unwrap_or("");
-                let version = json.get("SMBIOSBIOSVersion").and_then(|v| v.as_str()).unwrap_or("");
-                let date = json.get("ReleaseDate").and_then(|v| v.as_str()).unwrap_or("");
+        let bios = self.read_windows_bios();
+        let storage = self.read_windows_storage_firmware();
 
-                // Extract date from WMI format: /Date(1234567890000)/
-                let clean_date = if date.contains("/Date(") {
-                    // Parse WMI timestamp
-                    date.trim_start_matches("/Date(")
-                        .trim_end_matches(")/")
-                        .split(')')
-                        .next()
-                        .and_then(|ts| ts.parse::<i64>().ok())
-                        .map(|ts| {
-                            let secs = ts / 1000;
-                            let _d = std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs as u64);
-                            format!("{}", secs) // simplified
-                        })
-                        .unwrap_or_default()
-                } else {
-                    date.to_string()
-                };
+        // Decoration: neither of these adds an entry, and both have a resting
+        // value that already means "not established".
+        self.read_windows_system_identity();
+        self.read_windows_secure_boot();
 
-                if !vendor.is_empty() {
-                    self.entries.push(FirmwareEntry {
-                        component: FirmwareComponent::SystemBios,
-                        vendor: vendor.to_string(),
-                        version: version.to_string(),
-                        date: clean_date,
-                        device: "System BIOS".into(),
-                        updateable: true,
-                        estimated_age_days: None,
-                        inferred_risk_score: 0,
-                    });
-                }
-            }
+        match (bios, storage) {
+            (Err(bios_err), Err(storage_err)) => Err(SimonError::System(format!(
+                "no firmware source could be read: Win32_BIOS said {bios_err}; \
+                 Get-PhysicalDisk said {storage_err}"
+            ))),
+            _ => Ok(()),
         }
+    }
 
-        // System info
-        if let Ok(output) = std::process::Command::new("powershell")
-            .args(["-NoProfile", "-Command",
-                "Get-CimInstance Win32_ComputerSystem | Select-Object Manufacturer,Model | ConvertTo-Json"])
-            .output()
-        {
-            let text = String::from_utf8(output.stdout).unwrap_or_default();
-            if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
-                self.system_vendor = json.get("Manufacturer")
-                    .and_then(|v| v.as_str()).unwrap_or("").to_string();
-                self.system_product = json.get("Model")
-                    .and_then(|v| v.as_str()).unwrap_or("").to_string();
-            }
-        }
+    /// The system BIOS entry, from `Win32_BIOS`.
+    #[cfg(target_os = "windows")]
+    fn read_windows_bios(&mut self) -> Result<(), SimonError> {
+        const QUERY: &str = concat!(
+            "Get-CimInstance Win32_BIOS | Select-Object ",
+            "Manufacturer,SMBIOSBIOSVersion,ReleaseDate | ConvertTo-Json"
+        );
+        let Some(json) =
+            crate::core::command::capture_json("powershell", &["-NoProfile", "-Command", QUERY])?
+        else {
+            return Ok(());
+        };
 
-        // Secure Boot status
-        if let Ok(output) = std::process::Command::new("powershell")
-            .args(["-NoProfile", "-Command", "Confirm-SecureBootUEFI"])
-            .output()
-        {
-            let text = String::from_utf8(output.stdout)
+        let vendor = json
+            .get("Manufacturer")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let version = json
+            .get("SMBIOSBIOSVersion")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let date = json
+            .get("ReleaseDate")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
+        // Extract date from WMI format: /Date(1234567890000)/
+        let clean_date = if date.contains("/Date(") {
+            date.trim_start_matches("/Date(")
+                .trim_end_matches(")/")
+                .split(')')
+                .next()
+                .and_then(|ts| ts.parse::<i64>().ok())
+                .map(|ts| format!("{}", ts / 1000))
                 .unwrap_or_default()
-                .trim()
+        } else {
+            date.to_string()
+        };
+
+        if !vendor.is_empty() {
+            self.entries.push(FirmwareEntry {
+                component: FirmwareComponent::SystemBios,
+                vendor: vendor.to_string(),
+                version: version.to_string(),
+                date: clean_date,
+                device: "System BIOS".into(),
+                updateable: true,
+                estimated_age_days: None,
+                inferred_risk_score: 0,
+            });
+        }
+        Ok(())
+    }
+
+    /// One entry per drive that reports a firmware revision.
+    #[cfg(target_os = "windows")]
+    fn read_windows_storage_firmware(&mut self) -> Result<(), SimonError> {
+        const QUERY: &str = concat!(
+            "Get-PhysicalDisk | Select-Object ",
+            "FriendlyName,Manufacturer,FirmwareVersion | ConvertTo-Json"
+        );
+        let Some(json) =
+            crate::core::command::capture_json("powershell", &["-NoProfile", "-Command", QUERY])?
+        else {
+            return Ok(());
+        };
+
+        for disk in crate::core::command::json_items(&json) {
+            let name = disk
+                .get("FriendlyName")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let vendor = disk
+                .get("Manufacturer")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let fw = disk
+                .get("FirmwareVersion")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+
+            if !fw.is_empty() {
+                self.entries.push(FirmwareEntry {
+                    component: FirmwareComponent::Storage,
+                    vendor: vendor.to_string(),
+                    version: fw.to_string(),
+                    date: String::new(),
+                    device: name.to_string(),
+                    updateable: false,
+                    estimated_age_days: None,
+                    inferred_risk_score: 0,
+                });
+            }
+        }
+        Ok(())
+    }
+
+    /// System vendor and model. Decoration: the resting value is an empty
+    /// string, which already reads as "not established".
+    #[cfg(target_os = "windows")]
+    fn read_windows_system_identity(&mut self) {
+        const QUERY: &str =
+            "Get-CimInstance Win32_ComputerSystem | Select-Object Manufacturer,Model | ConvertTo-Json";
+        if let Ok(Some(json)) =
+            crate::core::command::capture_json("powershell", &["-NoProfile", "-Command", QUERY])
+        {
+            self.system_vendor = json
+                .get("Manufacturer")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
                 .to_string();
-            self.secure_boot = match text.as_str() {
+            self.system_product = json
+                .get("Model")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+        }
+    }
+
+    /// Secure Boot state.
+    ///
+    /// `Confirm-SecureBootUEFI` needs elevation and exits non-zero without it,
+    /// which is the ordinary case rather than a fault -- so this is decoration
+    /// and leaves `SecureBootStatus::Unknown` alone. `system.boot.secure_boot`
+    /// is resolved from the registry instead, which is readable unelevated.
+    #[cfg(target_os = "windows")]
+    fn read_windows_secure_boot(&mut self) {
+        if let Ok(text) = crate::core::command::capture(
+            "powershell",
+            &["-NoProfile", "-Command", "Confirm-SecureBootUEFI"],
+        ) {
+            self.secure_boot = match text.trim() {
                 "True" => SecureBootStatus::Enabled,
                 "False" => SecureBootStatus::Disabled,
                 _ => SecureBootStatus::Unknown,
             };
-        }
-
-        // Storage firmware
-        if let Ok(output) = std::process::Command::new("powershell")
-            .args(["-NoProfile", "-Command",
-                "Get-PhysicalDisk | Select-Object FriendlyName,Manufacturer,FirmwareVersion | ConvertTo-Json"])
-            .output()
-        {
-            let text = String::from_utf8(output.stdout).unwrap_or_default();
-            // Handle both single object and array
-            let disks: Vec<serde_json::Value> = if text.trim_start().starts_with('[') {
-                serde_json::from_str(&text).unwrap_or_default()
-            } else {
-                serde_json::from_str::<serde_json::Value>(&text)
-                    .map(|v| vec![v])
-                    .unwrap_or_default()
-            };
-
-            for disk in disks {
-                let name = disk.get("FriendlyName").and_then(|v| v.as_str()).unwrap_or("");
-                let vendor = disk.get("Manufacturer").and_then(|v| v.as_str()).unwrap_or("");
-                let fw = disk.get("FirmwareVersion").and_then(|v| v.as_str()).unwrap_or("");
-
-                if !fw.is_empty() {
-                    self.entries.push(FirmwareEntry {
-                        component: FirmwareComponent::Storage,
-                        vendor: vendor.to_string(),
-                        version: fw.to_string(),
-                        date: String::new(),
-                        device: name.to_string(),
-                        updateable: false,
-                        estimated_age_days: None,
-                        inferred_risk_score: 0,
-                    });
-                }
-            }
         }
     }
 

@@ -1045,17 +1045,18 @@ fn resolve_usb(out: &mut Vec<Reading>) {
     }
 
     for dev in monitor.devices() {
-        // Bus and port rather than enumeration order: an index shifts when an
-        // unrelated device is unplugged, which would silently repoint every id.
+        // The device's own path, not enumeration order and not bus-and-port.
         //
-        // That is the intent, and the Windows reader does not meet it -- it
-        // fills `bus_number: 0, port_number: idx`, so every id here is
-        // `usb.0_<index>`, which is the thing the sentence above says it is
-        // not. The macOS reader parsed a real port and then overwrote it with a
-        // counter until 6.0.0. Neither is fixed by changing this line; see the
-        // USB identity item in `HANDOFF.md` for why it needs an id-format
-        // decision rather than a one-line patch.
-        let base = format!("usb.{}_{}", dev.bus_number, dev.port_number);
+        // This used to be `{bus_number}_{port_number}` with a comment arguing
+        // that an index would repoint every id when an unrelated device was
+        // unplugged -- and the Windows reader filled those two fields with `0`
+        // and the index. Bus and port cannot fix it either: of this machine's
+        // 41 USB nodes only 14 have a hub and port Windows reports, and the
+        // composite-device interfaces share their parent's location, so the
+        // ids would have been stable and collided. `UsbDevice::address` is the
+        // platform's own device path, which is unique and moves only with the
+        // device.
+        let base = format!("usb.{}", id_segment(&dev.address));
         push_opt(
             out,
             format!("{base}.product"),

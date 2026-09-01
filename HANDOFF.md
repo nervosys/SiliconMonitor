@@ -103,9 +103,62 @@ Since the tag, on `master` and green on all three platforms:
 | `4ed9145` | Boot mode asserted because it is usually right |
 | `15a60ab` | 97 GB of swap in use, on a machine using 3.4 GB of it |
 | `5bd14aa` | The last six enumerators, and what the list was really for |
+| `HEAD` | The last swallow, a real USB key, and a swap series that changed meaning |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### The last swallow, a real USB key, and a series that changed meaning
+
+Three things that were each recorded as needing a decision, decided.
+
+**`firmware`, the sixteenth and last swallowing reader.** The entry below
+reverted a mechanical conversion of it and said the four PowerShell queries
+wanted separating first. They are four methods now, and separating them made
+the rule obvious: `Win32_BIOS` and `Get-PhysicalDisk` **enumerate** — both push
+`FirmwareEntry` values — while `Win32_ComputerSystem` and
+`Confirm-SecureBootUEFI` only **decorate** what those found. So the first two
+take the any-source-succeeded rule and the second two are allowed to fail
+quietly, because their resting values already mean "not established": an empty
+vendor string, and `SecureBootStatus::Unknown`, which is what
+`Confirm-SecureBootUEFI` produces without elevation anyway. **The conversion
+was impossible to do mechanically because the function was four functions.**
+
+**USB ids.** The entry two below left this as an id-format decision with three
+candidates, each failing one requirement. Measuring the machine settled it. Of
+41 USB nodes, **only 14 have a hub and port Windows will report**; 18 are
+interfaces of composite devices, which share their parent's location and are
+distinguished only by the `MI_xx` in their instance path; 9 are root hubs with
+no location at all. So a hub-and-port id would have been stable and **collided
+for two thirds of them** — worse than the unstable-but-unique index it replaced.
+
+The id is now each platform's own device path, normalised to one segment: the
+sysfs name on Linux, the PnP instance path on Windows, the `Location ID` on
+macOS. 41 devices, 41 distinct addresses, and each changes only when that device
+moves or is replaced. They are uglier —
+`usb.usb_root_hub30_5_239a9e6d_0_0` — and that is the trade: an id a human
+skims less easily, in exchange for one that does not silently repoint a device's
+history when something else is unplugged.
+
+**A claim of mine that was wrong.** That entry also said `tsdb` is keyed on
+these ids and would need a migration note. It is not: `SystemSnapshot` is a
+fixed-layout record with no USB data in it at all. Checking that turned up the
+real migration, in a different field:
+
+`swap_used` and `swap_total` **are** stored, and the pagefile fix three entries
+below changed what they mean on Windows — from commit accounting to actual
+pagefile usage, 97 GB to 3.4 GB on this host. **The layout is unchanged, so an
+old file still parses**, which is exactly why `DB_VERSION` goes to 4 rather than
+being left alone: a series spliced from both definitions is readable, plausible
+and wrong, and nothing in the record says which definition produced a given row.
+Version 3 was rejected for the same kind of reason — a stored zero that does not
+say whether it was measured.
+
+**Worth keeping.** I went looking for the consequences of an id change and found
+the consequences of a *value* change I had shipped two commits earlier without
+noticing it touched recorded history. **The question "what else stores this?" is
+worth asking after every reader fix, not only after the ones that look
+structural.**
 
 ### The last six enumerators, and what the list was really for
 
@@ -3443,37 +3496,7 @@ feature stayed broken through eight published versions.
 
 ## Open work
 
-1. **`firmware` is the last reader that swallows its failures.** The other
-   fifteen are converted or exempt. Its Windows reader interleaves four
-   PowerShell queries -- two that add entries and two that only decorate them --
-   and a mechanical conversion was attempted and reverted when the brace
-   bookkeeping went wrong. Separate the four queries, then apply the same rule
-   as `usb::refresh_windows`: any source succeeding is enough to trust an empty
-   result, and every source failing is an error.
-
-2. **USB device ids are enumeration order on Windows and collide on Linux.**
-   The entity for `usb.{addr}.*` says the segment is bus and port, "which
-   survives re-enumeration where an index does not". Windows fills
-   `bus_number: 0, port_number: idx`, so it is exactly an index; Linux keeps
-   only the first hop of `1-4.2`, so two devices behind one hub share an id.
-   macOS is correct since the entry above. Fixing the other two needs an
-   id-format decision, because the three available sources each fail one of the
-   two requirements:
-
-   * Windows `LocationInformation` (`Port_#0011.Hub_#0002`) is stable but is
-     shared by every interface of a composite device — adopting it as-is makes
-     two devices write to one id.
-   * Linux's full port chain (`1-4.2`) is stable and unique but contains a dot,
-     and ids are dot-separated: `usb.1_4.2.product` would gain a segment and
-     stop matching its template. A different separator inside the segment
-     (`1_4_2`) works and changes the shape of every USB id.
-   * The device's own identity (VID:PID:serial) is stable and unique when a
-     serial exists, and many devices have none.
-
-   Whatever is chosen, `tsdb` is keyed on these ids, so the change wants a note
-   in the migration path alongside `DB_VERSION`.
-
-3. **`hardware_ai` was audited on one machine, and only one.** Every conclusion
+1. **`hardware_ai` was audited on one machine, and only one.** Every conclusion
    corrected in `a584dd0` and `7607401` was verifiably wrong on this desktop, and
    each fix was checked against a second source. That is not the same as being
    right in general. Two things specifically want a second machine before they
@@ -3497,7 +3520,7 @@ feature stayed broken through eight published versions.
    Ti dates to 2020 because it matches the RTX 30 series rule, and the Ti shipped
    in 2022. `infer_gpu_year` and the TDP tables were not audited.
 
-4. **Per-core CPU frequency is unreported on Windows, and could be reported.**
+2. **Per-core CPU frequency is unreported on Windows, and could be reported.**
    `CallNtPowerInformation` returns `CurrentMhz == MaxMhz` whatever the cores are
    doing, so `cpu.core.{n}.frequency` now declines rather than publishing the
    nominal clock as a measurement. The real figure is
@@ -3512,7 +3535,7 @@ feature stayed broken through eight published versions.
    single-value PDH pattern to copy. The provenance would be `Derived` from the
    counter and the nominal clock, not `Measured`.
 
-5. **The Windows ATA SMART path has never met a SATA drive.** 3.3.0 reads the
+3. **The Windows ATA SMART path has never met a SATA drive.** 3.3.0 reads the
    attribute table unelevated through `IOCTL_STORAGE_PREDICT_FAILURE`, and the
    parse in `src/disk/ata_smart.rs` is tested only against buffers this project
    built. This machine has three NVMe drives and a USB gadget; on all four the
@@ -3543,7 +3566,7 @@ feature stayed broken through eight published versions.
    property of its `CTL_CODE`, and is worth reading off the definition before
    planning around it.
 
-6. **macOS GPU, power and temperature are still unimplemented.** CPU (per-core,
+4. **macOS GPU, power and temperature are still unimplemented.** CPU (per-core,
    with nice time), memory, swap, uptime and board info work — `Simon::cpu()`,
    `memory()`, `uptime()`. `Simon::snapshot()` still fails, because it requires
    every reader. Power and temperature need `powermetrics`, which requires root,
@@ -3568,7 +3591,7 @@ feature stayed broken through eight published versions.
    the `vm_stat` used/free split is a judgement about which pages count as in
    use, which a conformance test cannot check.
 
-7. **The Linux SMART/NVMe paths have executed exactly once**, in CI on
+5. **The Linux SMART/NVMe paths have executed exactly once**, in CI on
    `33ee241` — 733 tests, 0 failures. No one has run them against real Linux
    hardware. The sysfs paths (`/sys/class/nvme/<ctrl>/{model,serial,firmware_rev,cntlid}`)
    are documented kernel ABI, but tests are not a substitute for a drive.
@@ -3581,7 +3604,7 @@ feature stayed broken through eight published versions.
    what remains to benefit is USB storage — and every Linux machine, where a
    sweep spawns `smartctl` once per drive and the old shape was quadratic.
 
-8. **The ontology names ~232 entities; the library has ~88 subsystem modules.**
+6. **The ontology names ~232 entities; the library has ~88 subsystem modules.**
    The running list of which clusters exist, which readers answer on which
    machine, and what is left is under **plan item F** below — it is kept in one
    place rather than two, because the last time it lived in both they disagreed.
@@ -3636,7 +3659,7 @@ feature stayed broken through eight published versions.
    sizes, AER capability, ARI and ATS support, SR-IOV — are readable by the same
    two calls with a different pid, if anyone wants them.
 
-9. **`simon tune`'s policy table covers five settings, and its game detection is
+7. **`simon tune`'s policy table covers five settings, and its game detection is
    a name table.** Both are deliberate first cuts, and both are where the feature
    grows.
 
@@ -3657,7 +3680,7 @@ feature stayed broken through eight published versions.
    from a model. `tuning::tests::a_recommendation_never_proposes_a_value_the_driver_did_not_offer`
    is the test that keeps it true. A model may classify; it may not pick numbers.
 
-10. **The Dewey port was tried across 4.0.0–4.0.4 and withdrawn in 5.0.0.**
+8. **The Dewey port was tried across 4.0.0–4.0.4 and withdrawn in 5.0.0.**
    `src/gui/` is the egui application again — `app.rs`, `widgets.rs`, `theme.rs`,
    `profile_tab.rs`, `headless.rs`, `mod.rs`, restored from `927ffaa^`. The
    `deweygui` dependency, the `dewey-gui` feature and `simonlib::gui_dewey` are
@@ -3702,7 +3725,7 @@ feature stayed broken through eight published versions.
    name is the whole defect — every call site was written by someone who
    reasonably believed `new()` constructs a thing from the system.
 
-11. **Verify with `--lib --tests` when the disk is tight.** `cargo test
+9. **Verify with `--lib --tests` when the disk is tight.** `cargo test
    --all-features` links every example. That is affordable again now the duplicate
    egui is gone, but if it ever fails with `link.exe` 1318, the split is
    `cargo test --all-features --lib --tests` for execution plus
@@ -3710,7 +3733,7 @@ feature stayed broken through eight published versions.
    Note `--lib --tests` skips doc-tests; run those before a release.
 
 
-12. **Two Dewey bugs found during the port, recorded because they are real
+10. **Two Dewey bugs found during the port, recorded because they are real
    and unfixed — but no longer reachable from this crate.** Neither affects simon
    now that `deweygui` is gone. Both are for whoever works on Dewey itself, or
    for anyone who reconsiders open work 9.
@@ -3734,7 +3757,7 @@ feature stayed broken through eight published versions.
    three `eprintln!` calls in `resize`, the surface-acquire error arm and the
    frame-area computation in `render`, driven by `ShowWindow(hwnd, 3)`.
 
-13. **Applied settings are reversible; the tuning loop is not yet closed.**
+11. **Applied settings are reversible; the tuning loop is not yet closed.**
    `ApplyHandler::read_current()` reads a setting before it is written,
    `ApplyOutcome.previous` carries what was overwritten, `revert_setting()` puts
    it back through the same confirmed and audit-logged path, and

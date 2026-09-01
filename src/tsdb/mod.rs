@@ -19,7 +19,7 @@ const DEFAULT_MAX_SIZE: u64 = 100 * 1024 * 1024;
 const MAGIC_BYTES: &[u8; 8] = b"SIMONDB\0";
 
 /// Current database version
-const DB_VERSION: u32 = 3;
+const DB_VERSION: u32 = 4;
 
 /// Size of the database header
 const HEADER_SIZE: u64 = 128;
@@ -271,14 +271,28 @@ impl TimeSeriesDb {
             )));
         }
         if header.version < DB_VERSION {
+            // Version 4 changed what `swap_used` and `swap_total` mean on
+            // Windows. They held `CommitLimit` and `CommitTotal` -- the
+            // system's commit accounting, most of which is resident in RAM and
+            // never written to disk -- and now hold the pagefile's real
+            // capacity and usage from `Win32_PageFileUsage`. On the development
+            // machine that is the difference between 97 GB and 3.4 GB.
+            //
+            // The layout is unchanged, so an old file still parses. That is
+            // exactly why the version is rejected rather than tolerated: a
+            // series spliced from both definitions is readable, plausible, and
+            // wrong, and nothing in the record says which definition produced
+            // any given row. Version 3 was rejected for the same kind of reason
+            // -- a stored zero that does not say whether it was measured.
             return Err(SimonError::Configuration(format!(
                 concat!(
-                    "Database version {} predates version {}, which records an ",
-                    "unreadable GPU figure as absent rather than as zero. The ",
-                    "layouts differ and the old records cannot be converted, ",
-                    "because a stored zero does not say whether it was ",
-                    "measured. Record to a new file, or delete this one with ",
-                    "`simon record clear`.",
+                    "Database version {} predates version {}. Older files ",
+                    "record an unreadable GPU figure as zero rather than as ",
+                    "absent (before 3), and Windows swap as the system commit ",
+                    "charge rather than pagefile usage (before 4). Neither can ",
+                    "be converted, because a stored number does not say which ",
+                    "definition produced it. Record to a new file, or delete ",
+                    "this one with `simon record clear`.",
                 ),
                 header.version, DB_VERSION
             )));

@@ -29,16 +29,37 @@ pub enum UsbDeviceClass {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UsbDevice {
+    /// A key for this device that is stable across re-enumeration.
+    ///
+    /// The ontology builds `usb.{addr}` from this, and the property it needs is
+    /// narrow: **unplugging an unrelated device must not change it.** Before
+    /// 6.0.0 the id was `{bus_number}_{port_number}`, and Windows filled those
+    /// with `0` and the enumeration index -- so every id after a removed device
+    /// shifted by one, silently repointing the history in `tsdb`.
+    ///
+    /// Bus and port are not enough on their own. Of this machine's 41 USB
+    /// nodes, only 14 have a hub and port Windows will report; 18 are
+    /// interfaces of composite devices, which *share* their parent's location
+    /// and are told apart only by the `MI_xx` in their instance path; and 9 are
+    /// root hubs with no location at all. An id built from hub and port would
+    /// have been stable and **collided** for more than half of them, which is
+    /// worse than unstable-and-unique.
+    ///
+    /// So this is each platform's own device path, normalised into one id
+    /// segment: the sysfs name on Linux (`1-4.2`), the PnP instance path on
+    /// Windows, the `Location ID` on macOS. Each is what its operating system
+    /// uses to identify the device, each is unique by construction, and each
+    /// changes only when *this* device's position or identity changes -- which
+    /// is the point.
+    pub address: String,
     /// The bus this device is attached to.
     pub bus_number: u8,
-    /// The port on that bus.
+    /// The port on that bus, where the platform reports one.
     ///
-    /// This is the second half of the id segment the ontology builds for a USB
-    /// device, and both the resolver and the entity say why it is bus and port
-    /// rather than an index: "an index shifts when an unrelated device is
-    /// unplugged, which would silently repoint every id". See the open-work
-    /// item in `HANDOFF.md` -- that claim does not hold on every platform yet,
-    /// and two of the three readers still have an enumeration counter in here.
+    /// No longer part of the id -- see [`Self::address`]. Windows does not fill
+    /// this: `Win32_PnPEntity` gives no bus or port, and the hub and port in
+    /// the registry's `LocationInformation` are absent for two thirds of the
+    /// nodes it enumerates.
     pub port_number: u8,
     /// USB vendor id, or `None` for an entry that has none — a root hub's
     /// PnP id is `USB\ROOT_HUB30\...` with no `VID_` at all. This was `u16`
@@ -54,6 +75,24 @@ pub struct UsbDevice {
     pub serial_number: Option<String>,
     pub class: UsbDeviceClass,
     pub speed: UsbSpeed,
+}
+
+/// Fold a platform device path into something usable as one id segment.
+///
+/// Lowercased, with every character that is not alphanumeric collapsed to `_`,
+/// and runs of `_` squeezed. The dot matters most: ids are dot-separated, so a
+/// Linux path of `1-4.2` left alone would make `usb.1-4.2.product` parse as an
+/// extra segment and stop matching its template.
+fn normalise_address(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    for ch in raw.chars() {
+        if ch.is_ascii_alphanumeric() {
+            out.extend(ch.to_lowercase());
+        } else if !out.ends_with('_') {
+            out.push('_');
+        }
+    }
+    out.trim_matches('_').to_string()
 }
 
 pub struct UsbMonitor {
@@ -166,6 +205,9 @@ impl UsbMonitor {
                         .and_then(|s| s.parse().ok())
                         .unwrap_or(0);
                     self.devices.push(UsbDevice {
+                        // `1-4.2` -- the bus, the root port and the chain of
+                        // hub ports below it. Exactly the device's position.
+                        address: normalise_address(&name),
                         bus_number,
                         port_number,
                         vendor_id: Some(vendor_id as u16),
@@ -210,6 +252,9 @@ impl UsbMonitor {
         // `Speed` line has not reported a speed, and full speed is a real value
         // that some devices genuinely negotiate.
         let mut current_speed: UsbSpeed = UsbSpeed::Unknown;
+        // The raw `Location ID`, kept for the device address. It encodes the
+        // controller and the port chain, which is what makes it stable.
+        let mut current_location = String::new();
         let mut bus_number: u8 = 0;
         let mut port_number: u8 = 0;
         let mut device_idx: u8 = 0;
@@ -223,6 +268,7 @@ impl UsbMonitor {
                 if let Some(name) = current_name.take() {
                     device_idx += 1;
                     self.devices.push(UsbDevice {
+                        address: normalise_address(&current_location),
                         bus_number,
                         // `port_number`, parsed from the `Location ID` above --
                         // not `device_idx`, which is how many devices the
@@ -241,6 +287,7 @@ impl UsbMonitor {
                     current_vendor_id = None;
                     current_product_id = None;
                     current_speed = UsbSpeed::Unknown;
+                    current_location.clear();
                 }
                 current_name = Some(trimmed.trim_end_matches(':').to_string());
             } else if let Some((key, val)) = trimmed.split_once(':') {
@@ -289,6 +336,7 @@ impl UsbMonitor {
                         };
                     }
                     "Location ID" => {
+                        current_location = val.to_string();
                         // Parse bus from location ID hex (e.g., "0x14200000 / 7")
                         if let Some(hex) = val
                             .strip_prefix("0x")
@@ -309,6 +357,7 @@ impl UsbMonitor {
         if let Some(name) = current_name.take() {
             device_idx += 1;
             self.devices.push(UsbDevice {
+                address: normalise_address(&current_location),
                 bus_number,
                 // See the flush above: the parsed port, not the counter.
                 port_number,
@@ -357,7 +406,7 @@ impl UsbMonitor {
                     vec![json]
                 };
 
-                for (idx, item) in items.iter().enumerate() {
+                for item in items.iter() {
                     let name = item.get("Name").and_then(|v| v.as_str()).unwrap_or("");
                     let manufacturer = item.get("Manufacturer").and_then(|v| v.as_str());
                     let pnp_id = item
@@ -400,8 +449,14 @@ impl UsbMonitor {
                         .map(|s| s.to_string());
 
                     devices.push(UsbDevice {
+                        // `USB\\VID_046D&PID_C548&MI_01\\9&24C94812&0&0001` --
+                        // vendor, product, interface number and the hub-port
+                        // chain Windows derived the instance id from. Unique
+                        // for every node this query returns, including the
+                        // interfaces that share a parent's location.
+                        address: normalise_address(pnp_id),
                         bus_number: 0,
-                        port_number: idx as u8,
+                        port_number: 0,
                         vendor_id: vid,
                         product_id: pid,
                         manufacturer: manufacturer.map(|s| s.to_string()),
@@ -448,13 +503,18 @@ impl UsbMonitor {
                     vec![json]
                 };
 
-                for (idx, item) in items.iter().enumerate() {
+                for item in items.iter() {
                     let dep = item.get("Dependent").and_then(|v| v.as_str()).unwrap_or("");
                     let (vid, pid) = parse_vid_pid(dep);
                     if vid.is_some() || pid.is_some() {
                         devices.push(UsbDevice {
+                            // The `Dependent` reference is this fallback's
+                            // device path -- the same instance path the WMI
+                            // enumeration above reads, wrapped in a CIM
+                            // reference.
+                            address: normalise_address(dep),
                             bus_number: 0,
-                            port_number: idx as u8,
+                            port_number: 0,
                             vendor_id: vid,
                             product_id: pid,
                             manufacturer: None,
@@ -652,6 +712,7 @@ mod tests {
     #[test]
     fn test_usb_device_serialization() {
         let device = UsbDevice {
+            address: "1_4_2".into(),
             bus_number: 1,
             port_number: 2,
             vendor_id: Some(0x1234),

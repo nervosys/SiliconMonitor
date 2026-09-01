@@ -2099,11 +2099,12 @@ impl Ontology {
             true,
             concat!(
                 "Product string as the device reports it. The id segment is ",
-                "bus and port, which is intended to survive re-enumeration ",
-                "where an index does not -- but only the Linux reader fills ",
-                "it that way today. Windows reports bus 0 and the ",
-                "enumeration index, so its ids do shift when a device is ",
-                "unplugged. See the USB identity item in HANDOFF.md."
+                "the platform's own device path -- the sysfs name on Linux, ",
+                "the PnP instance path on Windows, the Location ID on ",
+                "macOS -- normalised into one segment. It is unique per ",
+                "device and changes only when that device moves or is ",
+                "replaced, so unplugging one device does not repoint the ",
+                "ids of the others."
             ),
         ));
         add(Entity::new(
