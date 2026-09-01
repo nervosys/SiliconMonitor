@@ -267,8 +267,9 @@ pub struct MotherboardContext {
 pub struct PowerSupplyContext {
     /// Power supply status
     pub status: String,
-    /// Whether on AC power
-    pub on_ac_power: bool,
+    /// Whether on AC power. `None` when the platform did not report it --
+    /// which used to be indistinguishable from `false`, "on battery".
+    pub on_ac_power: Option<bool>,
     /// Battery percentage (if applicable)
     pub battery_percent: Option<f32>,
     /// Battery status (charging, discharging, full)

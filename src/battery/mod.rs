@@ -47,16 +47,21 @@ pub struct BatteryInfo {
 }
 
 /// Battery monitor
+///
+/// `Default` is derived now that `ac_connected` is an `Option`: the hand-written
+/// impl existed to seed it with `true`, an unread machine reported as plugged in.
+#[derive(Default)]
 pub struct BatteryMonitor {
     batteries: Vec<BatteryInfo>,
-    ac_connected: bool,
+    /// Whether mains power is connected, or `None` if that was not read.
+    ac_connected: Option<bool>,
 }
 
 impl BatteryMonitor {
     pub fn new() -> Result<Self, crate::error::SimonError> {
         let mut monitor = Self {
             batteries: Vec::new(),
-            ac_connected: true,
+            ac_connected: None,
         };
         monitor.refresh()?;
         Ok(monitor)
@@ -64,7 +69,7 @@ impl BatteryMonitor {
 
     pub fn refresh(&mut self) -> Result<(), crate::error::SimonError> {
         self.batteries.clear();
-        self.ac_connected = true;
+        self.ac_connected = None;
 
         // Delegate to the comprehensive PowerSupplyMonitor
         if let Ok(ps_monitor) = crate::power_supply::PowerSupplyMonitor::new() {
@@ -126,7 +131,7 @@ impl BatteryMonitor {
     pub fn batteries(&self) -> &[BatteryInfo] {
         &self.batteries
     }
-    pub fn ac_connected(&self) -> bool {
+    pub fn ac_connected(&self) -> Option<bool> {
         self.ac_connected
     }
     pub fn has_battery(&self) -> bool {
@@ -134,14 +139,5 @@ impl BatteryMonitor {
     }
     pub fn primary_battery(&self) -> Option<&BatteryInfo> {
         self.batteries.first()
-    }
-}
-
-impl Default for BatteryMonitor {
-    fn default() -> Self {
-        Self {
-            batteries: Vec::new(),
-            ac_connected: true,
-        }
     }
 }

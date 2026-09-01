@@ -21,14 +21,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("║                                                                    ║");
     println!(
         "║  Quick Summary: AC={}, Battery={}                              ║",
-        if summary.on_ac_power { "✅" } else { "❌" },
-        if summary.on_battery { "✅" } else { "❌" }
+        match summary.on_ac_power {
+            Some(true) => "✅",
+            Some(false) => "❌",
+            None => "?",
+        },
+        match summary.on_battery {
+            Some(true) => "✅",
+            Some(false) => "❌",
+            None => "?",
+        }
     );
 
-    if simonlib::is_on_ac_power() {
-        println!("║  Status: 🔌 Running on AC Power                                   ║");
-    } else {
-        println!("║  Status: 🔋 Running on Battery                                    ║");
+    // "Not on AC" is a reading only when something said so. It used to be
+    // printed whenever the question could not be answered.
+    match simonlib::is_on_ac_power() {
+        Some(true) => {
+            println!("║  Status: 🔌 Running on AC Power                                   ║")
+        }
+        Some(false) => {
+            println!("║  Status: 🔋 Running on Battery                                    ║")
+        }
+        None => println!("║  Status: ·  Mains state not read                                  ║"),
     }
 
     if let Some(pct) = simonlib::battery_percent() {
@@ -70,7 +84,11 @@ fn print_supply_info(supply: &PowerSupplyInfo) {
     );
     println!(
         "║    Online: {:<57} ║",
-        if supply.online { "✅ Yes" } else { "❌ No" }
+        match supply.online {
+            Some(true) => "✅ Yes",
+            Some(false) => "❌ No",
+            None => "·  not read",
+        }
     );
 
     if supply.supply_type == PowerSupplyType::Battery {

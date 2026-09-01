@@ -995,10 +995,13 @@ impl ObservabilityApi {
         if let Ok(monitor) = PowerSupplyMonitor::new() {
             let battery = monitor.primary_battery();
             return Some(PowerSupplyContext {
-                status: if monitor.on_ac_power() {
-                    "AC Power".to_string()
-                } else {
-                    "Battery".to_string()
+                status: match monitor.on_ac_power() {
+                    Some(true) => "AC Power".to_string(),
+                    Some(false) => "Battery".to_string(),
+                    // Not "Battery". An empty supply list and a mains supply
+                    // that did not report its state both used to arrive here as
+                    // `false`.
+                    None => "Unknown".to_string(),
                 },
                 on_ac_power: monitor.on_ac_power(),
                 battery_percent: battery.and_then(|b| b.capacity_percent.map(|c| c as f32)),

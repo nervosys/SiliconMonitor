@@ -521,10 +521,10 @@ impl PeripheralCache {
                 let mut lines: Vec<String> = Vec::new();
                 lines.push(format!(
                     "AC: {}",
-                    if monitor.ac_connected() {
-                        "Connected"
-                    } else {
-                        "Disconnected"
+                    match monitor.ac_connected() {
+                        Some(true) => "Connected",
+                        Some(false) => "Disconnected",
+                        None => "not read",
                     }
                 ));
                 for bat in monitor.batteries() {
@@ -548,10 +548,10 @@ impl PeripheralCache {
             } else {
                 format!(
                     "AC Power: {}",
-                    if monitor.ac_connected() {
-                        "Connected"
-                    } else {
-                        "Unknown"
+                    match monitor.ac_connected() {
+                        Some(true) => "Connected",
+                        Some(false) => "Disconnected",
+                        None => "Unknown",
                     }
                 )
             }

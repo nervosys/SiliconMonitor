@@ -135,7 +135,17 @@ pub struct PowerSupplyInfo {
     /// Type of power supply
     pub supply_type: PowerSupplyType,
     /// Whether the supply is online/connected
-    pub online: bool,
+    /// Whether this supply is currently delivering power.
+    ///
+    /// `None` when the platform did not say. Windows documents
+    /// `SYSTEM_POWER_STATUS::ACLineStatus` as 0 offline, 1 online and **255
+    /// unknown**, and this was `status.ACLineStatus == 1` -- so a host that
+    /// answered "unknown" was recorded as running on battery. The rest of that
+    /// function already handles every other sentinel the struct defines (255
+    /// for `BatteryLifePercent`, `0xFFFFFFFF` for both time fields, 128 for "no
+    /// battery"), which is what made this one worth fixing rather than the
+    /// function worth rewriting.
+    pub online: Option<bool>,
     /// Charging status (for batteries)
     pub status: ChargingStatus,
     /// Battery health (for batteries)
@@ -186,7 +196,7 @@ impl PowerSupplyInfo {
         Self {
             name: name.to_string(),
             supply_type: PowerSupplyType::Unknown,
-            online: false,
+            online: None,
             status: ChargingStatus::Unknown,
             health: BatteryHealth::Unknown,
             capacity_percent: None,
@@ -265,8 +275,11 @@ impl PowerSupplyInfo {
     }
 
     /// Check if AC power is connected
-    pub fn is_on_ac_power(&self) -> bool {
-        self.supply_type == PowerSupplyType::Mains && self.online
+    pub fn is_on_ac_power(&self) -> Option<bool> {
+        if self.supply_type != PowerSupplyType::Mains {
+            return Some(false);
+        }
+        self.online
     }
 }
 
@@ -312,20 +325,42 @@ impl PowerSupplyMonitor {
             .find(|s| s.supply_type == PowerSupplyType::Mains)
     }
 
-    /// Check if running on AC power
-    pub fn on_ac_power(&self) -> bool {
-        self.supplies
+    /// Check if running on AC power.
+    ///
+    /// `None` when no mains supply was enumerated, or when the one that was
+    /// did not report its state. An empty supply list is a failed enumeration
+    /// as often as it is a machine with no power supplies, and this used to
+    /// answer `false` -- "on battery" -- for both.
+    pub fn on_ac_power(&self) -> Option<bool> {
+        let mains: Vec<&PowerSupplyInfo> = self
+            .supplies
             .iter()
-            .any(|s| s.supply_type == PowerSupplyType::Mains && s.online)
+            .filter(|s| s.supply_type == PowerSupplyType::Mains)
+            .collect();
+        if mains.is_empty() {
+            return None;
+        }
+        // Any mains supply that says it is online settles it. Otherwise the
+        // answer is `false` only if at least one of them actually said so.
+        if mains.iter().any(|s| s.online == Some(true)) {
+            Some(true)
+        } else if mains.iter().any(|s| s.online == Some(false)) {
+            Some(false)
+        } else {
+            None
+        }
     }
 
-    /// Check if running on battery
-    pub fn on_battery(&self) -> bool {
-        !self.on_ac_power()
-            && self
-                .supplies
-                .iter()
-                .any(|s| s.supply_type == PowerSupplyType::Battery)
+    /// Check if running on battery.
+    ///
+    /// `None` when the AC state is unknown: "not on mains" cannot be concluded
+    /// from "nobody said whether it is on mains".
+    pub fn on_battery(&self) -> Option<bool> {
+        let has_battery = self
+            .supplies
+            .iter()
+            .any(|s| s.supply_type == PowerSupplyType::Battery);
+        Some(!self.on_ac_power()? && has_battery)
     }
 
     /// Get total system power consumption in watts (if available)
@@ -383,7 +418,7 @@ impl PowerSupplyMonitor {
 
             // Read online status
             if let Ok(online_str) = fs::read_to_string(path.join("online")) {
-                info.online = online_str.trim() == "1";
+                info.online = Some(online_str.trim() == "1");
             }
 
             // Read status
@@ -561,7 +596,12 @@ impl PowerSupplyMonitor {
                 // AC Line Status
                 let mut ac_info = PowerSupplyInfo::new("AC");
                 ac_info.supply_type = PowerSupplyType::Mains;
-                ac_info.online = status.ACLineStatus == 1;
+                // 0 offline, 1 online, 255 unknown.
+                ac_info.online = match status.ACLineStatus {
+                    0 => Some(false),
+                    1 => Some(true),
+                    _ => None,
+                };
                 supplies.push(ac_info);
 
                 // Battery
@@ -569,7 +609,7 @@ impl PowerSupplyMonitor {
                     // 128 = No battery
                     let mut battery_info = PowerSupplyInfo::new("Battery");
                     battery_info.supply_type = PowerSupplyType::Battery;
-                    battery_info.online = true;
+                    battery_info.online = Some(true);
 
                     // Capacity
                     if status.BatteryLifePercent != 255 {
@@ -615,7 +655,7 @@ impl PowerSupplyMonitor {
             // Parse AC adapter
             let mut ac_info = PowerSupplyInfo::new("AC");
             ac_info.supply_type = PowerSupplyType::Mains;
-            ac_info.online = stdout.contains("AC Power");
+            ac_info.online = Some(stdout.contains("AC Power"));
             supplies.push(ac_info);
 
             // Parse battery
@@ -623,7 +663,7 @@ impl PowerSupplyMonitor {
                 if line.contains("InternalBattery") || line.contains("Battery") {
                     let mut battery_info = PowerSupplyInfo::new("Battery");
                     battery_info.supply_type = PowerSupplyType::Battery;
-                    battery_info.online = true;
+                    battery_info.online = Some(true);
 
                     // Parse percentage
                     if let Some(pct_start) = line.find(char::is_numeric) {
@@ -687,10 +727,10 @@ impl Default for PowerSupplyMonitor {
 /// Summary of system power state
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PowerSummary {
-    /// Whether running on AC power
-    pub on_ac_power: bool,
-    /// Whether running on battery
-    pub on_battery: bool,
+    /// Whether running on AC power. `None` if that was not established.
+    pub on_ac_power: Option<bool>,
+    /// Whether running on battery. `None` if that was not established.
+    pub on_battery: Option<bool>,
     /// Primary battery capacity (if any)
     pub battery_percent: Option<u8>,
     /// Primary battery status
@@ -730,17 +770,13 @@ pub fn power_summary() -> Result<PowerSummary> {
 }
 
 /// Check if running on AC power
-pub fn is_on_ac_power() -> bool {
-    PowerSupplyMonitor::new()
-        .map(|m| m.on_ac_power())
-        .unwrap_or(false)
+pub fn is_on_ac_power() -> Option<bool> {
+    PowerSupplyMonitor::new().ok().and_then(|m| m.on_ac_power())
 }
 
 /// Check if running on battery
-pub fn is_on_battery() -> bool {
-    PowerSupplyMonitor::new()
-        .map(|m| m.on_battery())
-        .unwrap_or(false)
+pub fn is_on_battery() -> Option<bool> {
+    PowerSupplyMonitor::new().ok().and_then(|m| m.on_battery())
 }
 
 /// Get battery percentage (if available)
@@ -759,7 +795,7 @@ mod tests {
         let info = PowerSupplyInfo::new("BAT0");
         assert_eq!(info.name, "BAT0");
         assert_eq!(info.supply_type, PowerSupplyType::Unknown);
-        assert!(!info.online);
+        assert_eq!(info.online, None);
         assert_eq!(info.status, ChargingStatus::Unknown);
         assert_eq!(info.health, BatteryHealth::Unknown);
         assert!(info.capacity_percent.is_none());
