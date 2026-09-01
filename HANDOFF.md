@@ -62,9 +62,45 @@ Since the tag, on `master` and green on all three platforms:
 | `f34f72c` | "No engines detected" on a platform with no engine reader |
 | `916bf08` | A sentinel introduced by an earlier fix in this same session |
 | `49e40ef` | The same nominal-clock lie, in a second reader of the same API |
+| `HEAD` | A fifth AdapterRAM reader, on the public API, still capped at 4GB |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### The API map, and the fifth reader it found
+
+Acting on the rule below — grep for the API, not the reader — produced a map
+worth keeping. Every Windows API and WMI class read from more than one module:
+
+| Read from | Modules |
+|---|---|
+| `CallNtPowerInformation` | platform, silicon *(both now fixed; the other three references are prose)* |
+| `Win32_VideoController` | codec, display, drm_monitor, gpu, hardware_ai, motherboard, platform |
+| `Win32_PnPEntity` | audio, bluetooth, camera, motherboard, pci_devices, pcie, sensors, silicon, usb |
+| `Win32_Processor` | cpu_microarch, crypto_accel, hardware_ai, interconnect, motherboard, numa, silicon |
+| `Get-PhysicalDisk` | firmware, hardware_ai, smart, storage_controller |
+| `Win32_OperatingSystem` | boot_config, hardware_ai, motherboard, numa, os_info |
+
+**Seven modules read `Win32_VideoController`, and `AdapterRAM` is 32 bits.**
+`7607401` fixed the 4GB cap in `hardware_ai` and `platform::windows`; `gpu/amd`
+and `gpu/intel` prefer DXGI and fall back to it. **`drm_monitor` read it raw** —
+no DXGI, no registry, no comment — and reported `vram_total_bytes: Some(4293918720)`
+for a 24GB card. It has no internal callers and is re-exported from `lib.rs`, so
+the only people it lied to were library users, which is why running the binary
+never caught it.
+
+Fixed by preferring the registry `REG_QWORD` and withholding anything at or
+above the cap rather than publishing ~4GB. `examples/drm_vram_check.rs` confirms
+it against `nvidia-smi`: **24.0 GiB** for each 3090 Ti, 2.0 GiB for the
+integrated Radeon.
+
+**A module with no internal callers is not dead — it is public API, and it is
+the one place running the binary cannot check.** Four of five readers of this
+field were fixed because they were reachable from a command.
+
+Checked and clean in the same sweep: `silicon/windows.rs` appears in the
+`Win32_Processor` list but reads no `Name` from it, so the space-padding defect
+fixed in `hardware_ai` has no sibling there.
 
 ### Two readers, one API, one lie — and only one was fixed
 

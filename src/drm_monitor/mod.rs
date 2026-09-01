@@ -447,10 +447,27 @@ impl DrmMonitor {
                     vec![val]
                 };
 
+                // `Win32_VideoController.AdapterRAM` is a 32-bit field: an RTX
+                // 3090 Ti with 24GB reports 4293918720, one byte under 4GiB.
+                // That was fixed in `hardware_ai` and `platform::windows` at
+                // 7607401 and left here, in a module with no internal callers
+                // and a public re-export — so a library user got the capped
+                // figure. Prefer the registry's REG_QWORD, by adapter name.
+                let by_name = crate::platform::windows::adapter_vram_bytes();
+
                 for (i, item) in items.iter().enumerate() {
                     let name = item["Name"].as_str().unwrap_or("Unknown GPU");
                     let driver_version = item["DriverVersion"].as_str().unwrap_or("");
-                    let vram = item["AdapterRAM"].as_u64();
+                    let vram = by_name
+                        .iter()
+                        .find(|(desc, _)| desc == name)
+                        .map(|(_, bytes)| *bytes)
+                        .or_else(|| {
+                            // No registry entry for this adapter. AdapterRAM is
+                            // still capped, so anything at or above the cap is
+                            // withheld rather than published as ~4GB.
+                            item["AdapterRAM"].as_u64().filter(|b| *b < 4_293_918_720)
+                        });
 
                     devices.push(DrmDevice {
                         card_name: format!("card{}", i),
