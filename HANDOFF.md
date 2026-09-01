@@ -77,10 +77,70 @@ Since the tag, on `master` and green on all three platforms:
 | `aed27cd` | A `> 0` guard defeated by a sentinel of 64 |
 | `f5a54ee` | An `Option` field filled with a sentinel wrapped in `Some` |
 | `cd15e37` | Cache and block geometry assumed rather than read |
-| `HEAD` | A rate published as a total, for the wrong drive |
+| `ae625ab` | A rate published as a total, for the wrong drive |
+| `HEAD` | A failed enumeration reported as an empty machine |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### A failed enumeration reported as an empty machine
+
+Found by a test going red, once, and only under the full fifteen-suite run:
+
+```
+---- resolution_is_stable_across_calls ----
+entity coverage differed between two snapshots
+  first only:  ["pci.<none>"]
+  second only: ["pci.{addr}.class", "pci.{addr}.device", ... ]
+```
+
+Two snapshots of the same machine, seconds apart: the first found no PCI
+devices, the second found nine entities' worth. It did not reproduce in three
+isolated runs or in a fourth at four threads — **only under the load of every
+suite at once.**
+
+The temptation is to call that a flaky test. The cause is in the code:
+
+```rust
+fn refresh_windows(&mut self) {
+    if let Ok(output) = Command::new("powershell").args([...]).output() {
+        if let Ok(text) = String::from_utf8(output.stdout) {
+            if let Ok(val) = serde_json::from_str::<Value>(&text) {
+```
+
+Three `if let Ok` with no `else`, no check of `output.status`, and a `refresh()`
+that returned `Ok(())` whatever happened. A spawn failure, a non-zero exit,
+empty stdout and unparseable JSON all left `self.devices` empty and reported
+success. The resolver then did the honest thing with a dishonest input:
+
+```rust
+if monitor.devices().is_empty() {
+    out.push(Reading::unavailable("pci.<none>", None,
+        "no PCI devices enumerated on this machine"));
+```
+
+**The absence was reported with a reason, and the reason was false.** This
+whole session has argued that an honest absence beats a confident wrong answer;
+this is the case where the absence *is* the confident wrong answer. Publishing
+`Unavailable` is not enough on its own — the reason attached to it is a claim
+like any other, and here it claimed a fact about the hardware ("this machine has
+no PCI devices") when the truth was a fact about the process ("PowerShell did
+not run").
+
+Both `refresh_linux` and `refresh_macos` had the same shape. All three now
+return `Result`, and each distinguishable failure gets its own error, which
+`resolve_pci` already had an arm for — `"PCI enumeration failed: {e}"`. Only one
+path still returns an empty list as success on each platform, and on each it
+means what it says: Linux, no `/sys/bus/pci/devices` at all; Windows, a
+`ConvertTo-Json` that printed nothing for an empty result set.
+
+**Two things worth keeping.** A reader that swallows failure produces a defect
+whose frequency depends on machine load, so it will be rare on a developer's
+box and rare in CI and not rare in a datacenter. And `resolution_is_stable_-
+across_calls` — a test that only ever asserts a snapshot equals another snapshot
+of the same machine, with no expected values in it at all — is what caught it.
+**A test that knows nothing about the hardware can still catch a reader lying
+about the hardware,** by asking it the same question twice.
 
 ### A rate published as a total, for the wrong drive
 

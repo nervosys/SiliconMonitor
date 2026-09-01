@@ -141,17 +141,28 @@ impl PciDeviceMonitor {
         Ok(monitor)
     }
 
+    /// Re-enumerate the PCI bus.
+    ///
+    /// Returns `Err` when the enumeration itself failed, and `Ok` with an empty
+    /// device list only when the enumeration succeeded and found nothing. The
+    /// three platform readers used to swallow every failure -- a spawn error, a
+    /// non-zero exit, empty output, unparseable JSON -- and this returned
+    /// `Ok(())` regardless. A failed enumeration was therefore indistinguishable
+    /// from a machine with no PCI devices, and the resolver above published the
+    /// second: "no PCI devices enumerated on this machine". It was found by
+    /// `resolution_is_stable_across_calls` going red once under a fully loaded
+    /// test run, where one PowerShell spawn lost the race.
     pub fn refresh(&mut self) -> Result<(), SimonError> {
         self.devices.clear();
 
         #[cfg(target_os = "linux")]
-        self.refresh_linux();
+        self.refresh_linux()?;
 
         #[cfg(target_os = "windows")]
-        self.refresh_windows();
+        self.refresh_windows()?;
 
         #[cfg(target_os = "macos")]
-        self.refresh_macos();
+        self.refresh_macos()?;
 
         Ok(())
     }
@@ -224,118 +235,120 @@ impl PciDeviceMonitor {
     }
 
     #[cfg(target_os = "linux")]
-    fn refresh_linux(&mut self) {
+    fn refresh_linux(&mut self) -> Result<(), SimonError> {
         let pci_base = std::path::Path::new("/sys/bus/pci/devices");
         if !pci_base.exists() {
-            return;
+            // A real answer: this kernel exposes no PCI bus at all.
+            return Ok(());
         }
 
-        if let Ok(entries) = std::fs::read_dir(pci_base) {
-            for entry in entries.flatten() {
-                let address = entry.file_name().to_string_lossy().to_string();
-                let base = entry.path();
+        let entries = std::fs::read_dir(pci_base)
+            .map_err(|e| SimonError::System(format!("cannot read /sys/bus/pci/devices: {e}")))?;
+        for entry in entries.flatten() {
+            let address = entry.file_name().to_string_lossy().to_string();
+            let base = entry.path();
 
-                let vendor_id = Self::read_hex_id(&base.join("vendor"));
-                let device_id = Self::read_hex_id(&base.join("device"));
-                let subsystem_vendor_id = Self::read_hex_id(&base.join("subsystem_vendor"));
-                let subsystem_device_id = Self::read_hex_id(&base.join("subsystem_device"));
-                let revision = Self::read_hex_id(&base.join("revision"));
+            let vendor_id = Self::read_hex_id(&base.join("vendor"));
+            let device_id = Self::read_hex_id(&base.join("device"));
+            let subsystem_vendor_id = Self::read_hex_id(&base.join("subsystem_vendor"));
+            let subsystem_device_id = Self::read_hex_id(&base.join("subsystem_device"));
+            let revision = Self::read_hex_id(&base.join("revision"));
 
-                let class_hex = Self::read_trimmed(&base.join("class"));
-                let class_byte = u8::from_str_radix(
-                    class_hex.trim_start_matches("0x").get(..2).unwrap_or("00"),
-                    16,
-                )
-                .unwrap_or(0);
-                let class = Self::classify_pci(class_byte);
-                let class_code = format!("{:02x}", class_byte);
+            let class_hex = Self::read_trimmed(&base.join("class"));
+            let class_byte = u8::from_str_radix(
+                class_hex.trim_start_matches("0x").get(..2).unwrap_or("00"),
+                16,
+            )
+            .unwrap_or(0);
+            let class = Self::classify_pci(class_byte);
+            let class_code = format!("{:02x}", class_byte);
 
-                // Driver
-                let driver = std::fs::read_link(base.join("driver"))
-                    .ok()
-                    .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
-                    .unwrap_or_default();
+            // Driver
+            let driver = std::fs::read_link(base.join("driver"))
+                .ok()
+                .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
+                .unwrap_or_default();
 
-                // IOMMU group
-                let iommu_group = std::fs::read_link(base.join("iommu_group"))
-                    .ok()
-                    .and_then(|p| p.file_name().and_then(|n| n.to_string_lossy().parse().ok()));
+            // IOMMU group
+            let iommu_group = std::fs::read_link(base.join("iommu_group"))
+                .ok()
+                .and_then(|p| p.file_name().and_then(|n| n.to_string_lossy().parse().ok()));
 
-                // NUMA node
-                let numa_node: i32 = Self::read_trimmed(&base.join("numa_node"))
+            // NUMA node
+            let numa_node: i32 = Self::read_trimmed(&base.join("numa_node"))
+                .parse()
+                .unwrap_or(-1);
+
+            // Power state
+            let power_state = Self::read_trimmed(&base.join("power_state"));
+
+            // SR-IOV
+            let sriov_capable = base.join("sriov_totalvfs").exists();
+            let sriov_vfs: u32 = if sriov_capable {
+                Self::read_trimmed(&base.join("sriov_numvfs"))
                     .parse()
-                    .unwrap_or(-1);
+                    .unwrap_or(0)
+            } else {
+                0
+            };
 
-                // Power state
-                let power_state = Self::read_trimmed(&base.join("power_state"));
-
-                // SR-IOV
-                let sriov_capable = base.join("sriov_totalvfs").exists();
-                let sriov_vfs: u32 = if sriov_capable {
-                    Self::read_trimmed(&base.join("sriov_numvfs"))
-                        .parse()
-                        .unwrap_or(0)
-                } else {
-                    0
-                };
-
-                // PCIe link info
-                let link_info = {
-                    let speed = Self::read_trimmed(&base.join("current_link_speed"));
-                    let width = Self::read_trimmed(&base.join("current_link_width"));
-                    let max_speed = Self::read_trimmed(&base.join("max_link_speed"));
-                    let max_width = Self::read_trimmed(&base.join("max_link_width"));
-                    if !speed.is_empty() || !max_speed.is_empty() {
-                        let gen = if max_speed.contains("32") {
-                            5
-                        } else if max_speed.contains("16") {
-                            4
-                        } else if max_speed.contains("8") {
-                            3
-                        } else if max_speed.contains("5") {
-                            2
-                        } else if max_speed.contains("2.5") {
-                            1
-                        } else {
-                            0
-                        };
-                        Some(PciLinkInfo {
-                            speed,
-                            width,
-                            max_speed,
-                            max_width,
-                            generation: gen,
-                        })
+            // PCIe link info
+            let link_info = {
+                let speed = Self::read_trimmed(&base.join("current_link_speed"));
+                let width = Self::read_trimmed(&base.join("current_link_width"));
+                let max_speed = Self::read_trimmed(&base.join("max_link_speed"));
+                let max_width = Self::read_trimmed(&base.join("max_link_width"));
+                if !speed.is_empty() || !max_speed.is_empty() {
+                    let gen = if max_speed.contains("32") {
+                        5
+                    } else if max_speed.contains("16") {
+                        4
+                    } else if max_speed.contains("8") {
+                        3
+                    } else if max_speed.contains("5") {
+                        2
+                    } else if max_speed.contains("2.5") {
+                        1
                     } else {
-                        None
-                    }
-                };
+                        0
+                    };
+                    Some(PciLinkInfo {
+                        speed,
+                        width,
+                        max_speed,
+                        max_width,
+                        generation: gen,
+                    })
+                } else {
+                    None
+                }
+            };
 
-                // Vendor/device name from lspci or /usr/share/hwdata
-                let (vendor_name, device_name) = Self::lookup_pci_names(&vendor_id, &device_id);
+            // Vendor/device name from lspci or /usr/share/hwdata
+            let (vendor_name, device_name) = Self::lookup_pci_names(&vendor_id, &device_id);
 
-                self.devices.push(PciDeviceInfo {
-                    address,
-                    vendor_id,
-                    device_id,
-                    subsystem_vendor_id,
-                    subsystem_device_id,
-                    class_code,
-                    class,
-                    vendor_name,
-                    device_name,
-                    driver,
-                    kernel_module: String::new(),
-                    revision,
-                    iommu_group,
-                    link_info,
-                    sriov_capable,
-                    sriov_vfs,
-                    numa_node,
-                    power_state,
-                });
-            }
+            self.devices.push(PciDeviceInfo {
+                address,
+                vendor_id,
+                device_id,
+                subsystem_vendor_id,
+                subsystem_device_id,
+                class_code,
+                class,
+                vendor_name,
+                device_name,
+                driver,
+                kernel_module: String::new(),
+                revision,
+                iommu_group,
+                link_info,
+                sriov_capable,
+                sriov_vfs,
+                numa_node,
+                power_state,
+            });
         }
+        Ok(())
     }
 
     #[cfg(target_os = "linux")]
@@ -378,62 +391,74 @@ impl PciDeviceMonitor {
     }
 
     #[cfg(target_os = "windows")]
-    fn refresh_windows(&mut self) {
-        if let Ok(output) = std::process::Command::new("powershell")
+    fn refresh_windows(&mut self) -> Result<(), SimonError> {
+        let output = std::process::Command::new("powershell")
             .args(["-NoProfile", "-Command",
                 r#"Get-CimInstance Win32_PnPEntity | Where-Object { $_.PNPDeviceID -like 'PCI\*' } | Select-Object Name, Manufacturer, PNPDeviceID, Status, ConfigManagerErrorCode -First 500 | ConvertTo-Json -Compress"#])
             .output()
-        {
-            if let Ok(text) = String::from_utf8(output.stdout) {
-                if let Ok(val) = serde_json::from_str::<serde_json::Value>(&text) {
-                    let items = match &val {
-                        serde_json::Value::Array(arr) => arr.clone(),
-                        obj @ serde_json::Value::Object(_) => vec![obj.clone()],
-                        _ => vec![],
-                    };
-                    for item in &items {
-                        let pnp_id = item["PNPDeviceID"].as_str().unwrap_or("");
-                        let name = item["Name"].as_str().unwrap_or("").to_string();
-                        let vendor_name = item["Manufacturer"].as_str().unwrap_or("").to_string();
-
-                        // Parse VEN_XXXX&DEV_XXXX from PNP ID
-                        let vendor_id = Self::extract_pnp_field(pnp_id, "VEN_");
-                        let device_id = Self::extract_pnp_field(pnp_id, "DEV_");
-                        let subsys_id = Self::extract_pnp_field(pnp_id, "SUBSYS_");
-
-                        // Infer class from name
-                        let class = Self::infer_class_from_name(&name);
-
-                        // The PnP id is a device-instance path, not an address, and
-                        // its tail is a volatile instance id — unusable as a stable
-                        // key. The registry holds the real bus/device/function and
-                        // the bound driver, both readable unelevated.
-                        let (bdf, service) = Self::registry_location_and_service(pnp_id);
-
-                        self.devices.push(PciDeviceInfo {
-                            address: bdf.unwrap_or_else(|| pnp_id.to_string()),
-                            vendor_id,
-                            device_id,
-                            subsystem_vendor_id: subsys_id.clone(),
-                            subsystem_device_id: subsys_id,
-                            class_code: String::new(),
-                            class,
-                            vendor_name,
-                            device_name: name,
-                            driver: service.unwrap_or_default(),
-                            kernel_module: String::new(),
-                            revision: String::new(),
-                            iommu_group: None,
-                            link_info: Self::devnode_link_info(pnp_id),
-                            sriov_capable: false,
-                            sriov_vfs: 0,
-                            numa_node: -1,
-                            power_state: item["Status"].as_str().unwrap_or("").to_string(),
-                        });
-                    }
-                }
-            }
+            .map_err(|e| SimonError::CommandFailed(format!("powershell: {e}")))?;
+        if !output.status.success() {
+            return Err(SimonError::CommandFailed(format!(
+                "Win32_PnPEntity query exited {}: {}",
+                output.status,
+                String::from_utf8_lossy(&output.stderr).trim()
+            )));
         }
+        let text = String::from_utf8(output.stdout)
+            .map_err(|e| SimonError::Parse(format!("Win32_PnPEntity output not UTF-8: {e}")))?;
+        if text.trim().is_empty() {
+            // ConvertTo-Json of an empty result set prints nothing, so this is
+            // the one shape that really does mean "no PCI devices".
+            return Ok(());
+        }
+        let val: serde_json::Value = serde_json::from_str(&text)
+            .map_err(|e| SimonError::Parse(format!("Win32_PnPEntity JSON: {e}")))?;
+        let items = match &val {
+            serde_json::Value::Array(arr) => arr.clone(),
+            obj @ serde_json::Value::Object(_) => vec![obj.clone()],
+            _ => vec![],
+        };
+        for item in &items {
+            let pnp_id = item["PNPDeviceID"].as_str().unwrap_or("");
+            let name = item["Name"].as_str().unwrap_or("").to_string();
+            let vendor_name = item["Manufacturer"].as_str().unwrap_or("").to_string();
+
+            // Parse VEN_XXXX&DEV_XXXX from PNP ID
+            let vendor_id = Self::extract_pnp_field(pnp_id, "VEN_");
+            let device_id = Self::extract_pnp_field(pnp_id, "DEV_");
+            let subsys_id = Self::extract_pnp_field(pnp_id, "SUBSYS_");
+
+            // Infer class from name
+            let class = Self::infer_class_from_name(&name);
+
+            // The PnP id is a device-instance path, not an address, and
+            // its tail is a volatile instance id — unusable as a stable
+            // key. The registry holds the real bus/device/function and
+            // the bound driver, both readable unelevated.
+            let (bdf, service) = Self::registry_location_and_service(pnp_id);
+
+            self.devices.push(PciDeviceInfo {
+                address: bdf.unwrap_or_else(|| pnp_id.to_string()),
+                vendor_id,
+                device_id,
+                subsystem_vendor_id: subsys_id.clone(),
+                subsystem_device_id: subsys_id,
+                class_code: String::new(),
+                class,
+                vendor_name,
+                device_name: name,
+                driver: service.unwrap_or_default(),
+                kernel_module: String::new(),
+                revision: String::new(),
+                iommu_group: None,
+                link_info: Self::devnode_link_info(pnp_id),
+                sriov_capable: false,
+                sriov_vfs: 0,
+                numa_node: -1,
+                power_state: item["Status"].as_str().unwrap_or("").to_string(),
+            });
+        }
+        Ok(())
     }
 
     /// Bus/device/function and bound driver for one PnP device, from the registry.
@@ -673,75 +698,80 @@ impl PciDeviceMonitor {
     }
 
     #[cfg(target_os = "macos")]
-    fn refresh_macos(&mut self) {
-        if let Ok(output) = std::process::Command::new("system_profiler")
+    fn refresh_macos(&mut self) -> Result<(), SimonError> {
+        let output = std::process::Command::new("system_profiler")
             .args(["SPPCIDataType", "-json"])
             .output()
-        {
-            if let Ok(text) = String::from_utf8(output.stdout) {
-                if let Ok(val) = serde_json::from_str::<serde_json::Value>(&text) {
-                    if let Some(items) = val["SPPCIDataType"].as_array() {
-                        for item in items {
-                            let name = item["_name"].as_str().unwrap_or("").to_string();
-                            let vendor_id = item["sppci_vendor-id"]
-                                .as_str()
-                                .unwrap_or("")
-                                .trim_start_matches("0x")
-                                .to_lowercase();
-                            let device_id = item["sppci_device-id"]
-                                .as_str()
-                                .unwrap_or("")
-                                .trim_start_matches("0x")
-                                .to_lowercase();
-                            let slot = item["sppci_slot_name"].as_str().unwrap_or("").to_string();
-                            let driver = item["sppci_driver_installed"]
-                                .as_str()
-                                .unwrap_or("")
-                                .to_string();
-                            let link_speed =
-                                item["sppci_link-speed"].as_str().unwrap_or("").to_string();
-                            let link_width =
-                                item["sppci_link-width"].as_str().unwrap_or("").to_string();
+            .map_err(|e| SimonError::CommandFailed(format!("system_profiler: {e}")))?;
+        if !output.status.success() {
+            return Err(SimonError::CommandFailed(format!(
+                "system_profiler SPPCIDataType exited {}: {}",
+                output.status,
+                String::from_utf8_lossy(&output.stderr).trim()
+            )));
+        }
+        let text = String::from_utf8(output.stdout)
+            .map_err(|e| SimonError::Parse(format!("system_profiler output not UTF-8: {e}")))?;
+        let val: serde_json::Value = serde_json::from_str(&text)
+            .map_err(|e| SimonError::Parse(format!("SPPCIDataType JSON: {e}")))?;
+        if let Some(items) = val["SPPCIDataType"].as_array() {
+            for item in items {
+                let name = item["_name"].as_str().unwrap_or("").to_string();
+                let vendor_id = item["sppci_vendor-id"]
+                    .as_str()
+                    .unwrap_or("")
+                    .trim_start_matches("0x")
+                    .to_lowercase();
+                let device_id = item["sppci_device-id"]
+                    .as_str()
+                    .unwrap_or("")
+                    .trim_start_matches("0x")
+                    .to_lowercase();
+                let slot = item["sppci_slot_name"].as_str().unwrap_or("").to_string();
+                let driver = item["sppci_driver_installed"]
+                    .as_str()
+                    .unwrap_or("")
+                    .to_string();
+                let link_speed = item["sppci_link-speed"].as_str().unwrap_or("").to_string();
+                let link_width = item["sppci_link-width"].as_str().unwrap_or("").to_string();
 
-                            let link_info = if !link_speed.is_empty() {
-                                Some(PciLinkInfo {
-                                    speed: link_speed.clone(),
-                                    width: link_width.clone(),
-                                    max_speed: link_speed,
-                                    max_width: link_width,
-                                    generation: 0,
-                                })
-                            } else {
-                                None
-                            };
+                let link_info = if !link_speed.is_empty() {
+                    Some(PciLinkInfo {
+                        speed: link_speed.clone(),
+                        width: link_width.clone(),
+                        max_speed: link_speed,
+                        max_width: link_width,
+                        generation: 0,
+                    })
+                } else {
+                    None
+                };
 
-                            let class = Self::infer_class_from_name_mac(&name);
+                let class = Self::infer_class_from_name_mac(&name);
 
-                            self.devices.push(PciDeviceInfo {
-                                address: slot,
-                                vendor_id,
-                                device_id,
-                                subsystem_vendor_id: String::new(),
-                                subsystem_device_id: String::new(),
-                                class_code: String::new(),
-                                class,
-                                vendor_name: String::new(),
-                                device_name: name,
-                                driver,
-                                kernel_module: String::new(),
-                                revision: String::new(),
-                                iommu_group: None,
-                                link_info,
-                                sriov_capable: false,
-                                sriov_vfs: 0,
-                                numa_node: -1,
-                                power_state: String::new(),
-                            });
-                        }
-                    }
-                }
+                self.devices.push(PciDeviceInfo {
+                    address: slot,
+                    vendor_id,
+                    device_id,
+                    subsystem_vendor_id: String::new(),
+                    subsystem_device_id: String::new(),
+                    class_code: String::new(),
+                    class,
+                    vendor_name: String::new(),
+                    device_name: name,
+                    driver,
+                    kernel_module: String::new(),
+                    revision: String::new(),
+                    iommu_group: None,
+                    link_info,
+                    sriov_capable: false,
+                    sriov_vfs: 0,
+                    numa_node: -1,
+                    power_state: String::new(),
+                });
             }
         }
+        Ok(())
     }
 
     #[cfg(target_os = "macos")]
