@@ -3151,7 +3151,10 @@ fn resolve_microarch(out: &mut Vec<Reading>) {
     // decoded from the same leaf -- and stepping 0 is a legitimate value, so
     // publishing it while family is absent would present a default as a
     // reading. All three go together or none of them do.
-    let cpuid_read = report.family > 0;
+    // `family > 0` was the proxy for "the triple was read", because the reader
+    // returned zeros when it was not. The fields are `Option` now, so the
+    // question is asked directly.
+    let cpuid_read = report.family.is_some();
     for (suffix, value) in [
         ("family", report.family),
         ("model", report.model),
@@ -3160,7 +3163,10 @@ fn resolve_microarch(out: &mut Vec<Reading>) {
         push_spec_opt(
             out,
             format!("cpu.microarch.{suffix}"),
-            cpuid_read.then(|| serde_json::json!(value)),
+            cpuid_read
+                .then_some(value)
+                .flatten()
+                .map(|v| serde_json::json!(v)),
             Some(Unit::Count),
             "the CPUID family/model/stepping triple was not read on this platform",
         );

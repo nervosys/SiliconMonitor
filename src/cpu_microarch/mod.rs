@@ -16,7 +16,15 @@ use crate::error::SimonError;
 
 /// What each platform's `read_cpu_info` returns:
 /// `(model_name, family, model, stepping, flags, cores, threads)`.
-type CpuInfoFields = (String, u32, u32, u32, Vec<String>, u32, u32);
+type CpuInfoFields = (
+    String,
+    Option<u32>,
+    Option<u32>,
+    Option<u32>,
+    Vec<String>,
+    u32,
+    u32,
+);
 
 /// CPU vendor/designer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -130,11 +138,21 @@ pub struct CpuMicroarchReport {
     /// CPU model name string.
     pub model_name: String,
     /// CPUID family.
-    pub family: u32,
+    /// CPUID family, where it is readable.
+    ///
+    /// `None` on Windows: WMI does not expose the CPUID triple, and the reader
+    /// returned `(0, 0, 0)` under a comment saying so. Family 0 is not a value
+    /// any modern x86 CPU reports — a Ryzen 9 9900X is family 0x1A — so the
+    /// report published an impossible triple rather than an absent one. The
+    /// ontology already withheld these on Windows; this is the same decision
+    /// one layer down.
+    pub family: Option<u32>,
     /// CPUID model.
-    pub model: u32,
+    /// CPUID model, where it is readable. See [`Self::family`].
+    pub model: Option<u32>,
     /// CPUID stepping.
-    pub stepping: u32,
+    /// CPUID stepping, where it is readable. See [`Self::family`].
+    pub stepping: Option<u32>,
     /// Detected microarchitecture.
     pub microarch: Microarchitecture,
     /// ISA extensions.
@@ -205,9 +223,9 @@ impl CpuMicroarchMonitor {
     /// Identify microarchitecture from CPUID family/model and model name.
     fn identify_microarch(
         model_name: &str,
-        family: u32,
-        model: u32,
-        _stepping: u32,
+        family: Option<u32>,
+        model: Option<u32>,
+        _stepping: Option<u32>,
     ) -> Microarchitecture {
         let upper = model_name.to_uppercase();
 
@@ -286,7 +304,7 @@ impl CpuMicroarchMonitor {
         }
     }
 
-    fn identify_intel(name: &str, family: u32, model: u32) -> Microarchitecture {
+    fn identify_intel(name: &str, family: Option<u32>, model: Option<u32>) -> Microarchitecture {
         // Intel identification via model name patterns and CPUID family/model
         let (uarch, codename, process, year, hybrid, p_core, e_core) = if name.contains("ULTRA 9 2")
             || name.contains("ULTRA 7 2")
@@ -307,7 +325,7 @@ impl CpuMicroarchMonitor {
             || name.contains("14700")
             || name.contains("14600")
             || name.contains("RAPTOR LAKE")
-            || (family == 6 && (model == 0xB7 || model == 0xBF))
+            || (family == Some(6) && matches!(model, Some(0xB7) | Some(0xBF)))
         {
             (
                 "Raptor Lake",
@@ -337,7 +355,7 @@ impl CpuMicroarchMonitor {
             || name.contains("12700")
             || name.contains("12600")
             || name.contains("ALDER LAKE")
-            || (family == 6 && model == 0x97)
+            || (family == Some(6) && model == Some(0x97))
         {
             (
                 "Alder Lake",
@@ -352,7 +370,7 @@ impl CpuMicroarchMonitor {
             || name.contains("11900")
             || name.contains("11700")
             || name.contains("ROCKET LAKE")
-            || (family == 6 && model == 0xA7)
+            || (family == Some(6) && model == Some(0xA7))
         {
             ("Cypress Cove", "Rocket Lake", 14, 2021, false, None, None)
         } else if name.contains("TIGER LAKE") || name.contains("1165") || name.contains("1185") {
@@ -417,7 +435,7 @@ impl CpuMicroarchMonitor {
         }
     }
 
-    fn identify_amd(name: &str, _family: u32, _model: u32) -> Microarchitecture {
+    fn identify_amd(name: &str, _family: Option<u32>, _model: Option<u32>) -> Microarchitecture {
         let (uarch, codename, process, year) = if name.contains("9950")
             || name.contains("9900")
             || name.contains("9700")
@@ -954,9 +972,11 @@ impl CpuMicroarchMonitor {
         let cpuinfo = std::fs::read_to_string("/proc/cpuinfo").map_err(SimonError::Io)?;
 
         let mut model_name = String::new();
-        let mut family = 0u32;
-        let mut model = 0u32;
-        let mut stepping = 0u32;
+        // `None` until /proc/cpuinfo supplies them. Zero was both the
+        // "not seen yet" marker and a publishable value.
+        let mut family: Option<u32> = None;
+        let mut model: Option<u32> = None;
+        let mut stepping: Option<u32> = None;
         let mut flags = Vec::new();
         let mut siblings = 0u32;
         let mut cores = 0u32;
@@ -967,14 +987,14 @@ impl CpuMicroarchMonitor {
                 let val = val.trim();
                 match key {
                     "model name" if model_name.is_empty() => model_name = val.into(),
-                    "cpu family" if family == 0 => {
-                        family = val.parse().unwrap_or(0);
+                    "cpu family" if family.is_none() => {
+                        family = val.parse().ok();
                     }
-                    "model" if model == 0 => {
-                        model = val.parse().unwrap_or(0);
+                    "model" if model.is_none() => {
+                        model = val.parse().ok();
                     }
-                    "stepping" if stepping == 0 => {
-                        stepping = val.parse().unwrap_or(0);
+                    "stepping" if stepping.is_none() => {
+                        stepping = val.parse().ok();
                     }
                     "flags" if flags.is_empty() => {
                         flags = val.split_whitespace().map(String::from).collect();
@@ -1011,17 +1031,23 @@ impl CpuMicroarchMonitor {
         let text = String::from_utf8_lossy(&output.stdout);
         let val: serde_json::Value = serde_json::from_str(text.trim()).unwrap_or_default();
 
-        let model_name = val["Name"].as_str().unwrap_or("Unknown CPU").to_string();
+        // `Win32_Processor.Name` is space-padded to a fixed width; the same
+        // padding reached hardware_ai before it was trimmed there.
+        let model_name = val["Name"]
+            .as_str()
+            .unwrap_or("Unknown CPU")
+            .trim()
+            .to_string();
         let cores = val["NumberOfCores"].as_u64().unwrap_or(1) as u32;
         let threads = val["NumberOfLogicalProcessors"]
             .as_u64()
             .unwrap_or(cores as u64) as u32;
 
-        // Windows doesn't easily expose CPUID family/model via WMI in the same format
-        // Try registry for flags
+        // WMI does not expose the CPUID triple. This returned (0, 0, 0),
+        // which is not a triple any x86 CPU reports.
         let flags = Self::read_windows_cpu_features();
 
-        Ok((model_name, 0, 0, 0, flags, cores, threads))
+        Ok((model_name, None, None, None, flags, cores, threads))
     }
 
     #[cfg(target_os = "windows")]
@@ -1061,22 +1087,19 @@ impl CpuMicroarchMonitor {
             .args(["-n", "machdep.cpu.family"])
             .output()
             .ok()
-            .and_then(|o| String::from_utf8_lossy(&o.stdout).trim().parse().ok())
-            .unwrap_or(0);
+            .and_then(|o| String::from_utf8_lossy(&o.stdout).trim().parse().ok());
 
         let model = std::process::Command::new("sysctl")
             .args(["-n", "machdep.cpu.model"])
             .output()
             .ok()
-            .and_then(|o| String::from_utf8_lossy(&o.stdout).trim().parse().ok())
-            .unwrap_or(0);
+            .and_then(|o| String::from_utf8_lossy(&o.stdout).trim().parse().ok());
 
         let stepping = std::process::Command::new("sysctl")
             .args(["-n", "machdep.cpu.stepping"])
             .output()
             .ok()
-            .and_then(|o| String::from_utf8_lossy(&o.stdout).trim().parse().ok())
-            .unwrap_or(0);
+            .and_then(|o| String::from_utf8_lossy(&o.stdout).trim().parse().ok());
 
         let features_str = std::process::Command::new("sysctl")
             .args(["-n", "machdep.cpu.features"])
@@ -1118,9 +1141,9 @@ impl Default for CpuMicroarchMonitor {
         Self::new().unwrap_or(Self {
             report: CpuMicroarchReport {
                 model_name: String::new(),
-                family: 0,
-                model: 0,
-                stepping: 0,
+                family: None,
+                model: None,
+                stepping: None,
                 microarch: Microarchitecture {
                     name: "Unknown".into(),
                     codename: String::new(),
@@ -1158,9 +1181,9 @@ mod tests {
     fn test_intel_raptor_lake() {
         let uarch = CpuMicroarchMonitor::identify_microarch(
             "13th Gen Intel(R) Core(TM) i9-13900K",
-            6,
-            0xB7,
-            1,
+            Some(6),
+            Some(0xB7),
+            Some(1),
         );
         assert_eq!(uarch.name, "Raptor Lake");
         assert_eq!(uarch.vendor, CpuVendor::Intel);
@@ -1172,9 +1195,9 @@ mod tests {
     fn test_amd_zen4() {
         let uarch = CpuMicroarchMonitor::identify_microarch(
             "AMD Ryzen 9 7950X 16-Core Processor",
-            25,
-            97,
-            2,
+            Some(25),
+            Some(97),
+            Some(2),
         );
         assert_eq!(uarch.name, "Zen 4");
         assert_eq!(uarch.vendor, CpuVendor::AMD);
@@ -1182,9 +1205,61 @@ mod tests {
         assert_eq!(uarch.process_nm, 5);
     }
 
+    /// The published CPUID triple is absent where it was not read, not zero.
+    ///
+    /// `read_cpu_info` on Windows returned `(0, 0, 0)` under a comment saying
+    /// WMI does not expose the triple. Family 0 is not a value any modern x86
+    /// CPU reports — a Ryzen 9 9900X is family 0x1A — so the report carried an
+    /// impossible triple rather than an absent one, and `simon`'s own ontology
+    /// had to test `family > 0` to work out whether to publish it.
+    #[test]
+    fn an_unread_cpuid_triple_is_absent_not_zero() {
+        let report = CpuMicroarchMonitor::new()
+            .expect("a report")
+            .report()
+            .clone();
+
+        // Whatever the platform, the three go together: all read or none.
+        let present = [
+            report.family.is_some(),
+            report.model.is_some(),
+            report.stepping.is_some(),
+        ];
+        assert!(
+            present.iter().all(|p| *p) || present.iter().all(|p| !*p),
+            concat!(
+                "family/model/stepping are decoded from one CPUID leaf ",
+                "and must not be published separately: {:?}"
+            ),
+            present
+        );
+
+        assert_ne!(
+            report.family,
+            Some(0),
+            "family 0 is not a value any modern x86 CPU reports"
+        );
+    }
+
+    /// `Win32_Processor.Name` is space-padded to a fixed width.
+    #[test]
+    fn the_model_name_carries_no_padding() {
+        let report = CpuMicroarchMonitor::new()
+            .expect("a report")
+            .report()
+            .clone();
+        assert_eq!(
+            report.model_name.trim(),
+            report.model_name,
+            "the model name kept its WMI padding: {:?}",
+            report.model_name
+        );
+    }
+
     #[test]
     fn test_apple_m3() {
-        let uarch = CpuMicroarchMonitor::identify_microarch("Apple M3 Pro", 0, 0, 0);
+        // Apple reports no x86 CPUID triple; identification is by name.
+        let uarch = CpuMicroarchMonitor::identify_microarch("Apple M3 Pro", None, None, None);
         assert_eq!(uarch.name, "Ibiza");
         assert_eq!(uarch.vendor, CpuVendor::Apple);
         assert!(uarch.hybrid);

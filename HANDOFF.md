@@ -69,9 +69,43 @@ Since the tag, on `master` and green on all three platforms:
 | `b16feec` | A link's capacity published as the traffic on it |
 | `1c018b8` | A typical NVLink count reported as this board's |
 | `a015d58` | Every AMD CPU classified as Intel, by the word in "12-Core" |
+| `HEAD` | A CPUID family of 0, and a name still carrying its WMI padding |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### A CPUID family of zero, published by the struct the ontology protects
+
+Third module off the callerless list. `CpuMicroarchReport` published
+`family: 0, model: 0, stepping: 0` on Windows, from:
+
+```rust
+// Windows doesn't easily expose CPUID family/model via WMI in the same format
+Ok((model_name, 0, 0, 0, flags, cores, threads))
+```
+
+The comment states the problem and the return contradicts it. **Family 0 is not
+a value any modern x86 CPU reports** — a Ryzen 9 9900X is family 0x1A — so the
+report carried an impossible triple rather than an absent one.
+
+**The ontology was already right, and that is the point.** `resolve.rs` tested
+`report.family > 0` before publishing, under a comment reading *"All three go
+together or none of them do"*, so `simon snapshot` correctly showed
+`cpu.microarch.family unavailable`. A library consumer reading
+`CpuMicroarchReport` directly got the zeros. **Fifth instance this session of a
+consumer guarding a sentinel its source should not have made**, and the guard is
+now `family.is_some()` — asking the question instead of inferring it.
+
+The same reader also returned `Win32_Processor.Name` untrimmed, so `model_name`
+carried the WMI field's fixed-width padding:
+`"AMD Ryzen 9 9900X 12-Core Processor            "`. That padding was trimmed in
+`hardware_ai` earlier this session and left here; an earlier sweep checked
+`silicon/windows.rs` for the same defect and cleared it, but never looked at
+this module.
+
+Linux and macOS read the triple properly and now return `Option` rather than
+`unwrap_or(0)` — on Linux `0` was serving as both "not seen yet" in the parse
+loop *and* a publishable value, which is why the loop guarded `if family == 0`.
 
 ### Every AMD CPU classified as Intel, by the word in "12-Core"
 
