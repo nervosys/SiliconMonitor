@@ -67,7 +67,7 @@ Since the tag, on `master` and green on all three platforms:
 | `b2e84af` | A doc comment that named the danger, ignored by the caller two lines away |
 | `8f8680a` | One system-wide number, copied into 24 cores as though each were measured |
 | `b16feec` | A link's capacity published as the traffic on it |
-| `HEAD` | A typical NVLink count reported as this board's |
+| `1c018b8` | A typical NVLink count reported as this board's |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
