@@ -121,17 +121,23 @@ impl CameraMonitor {
     }
 
     /// Refresh the list of camera devices.
+    ///
+    /// Returns `Err` when the enumeration failed, and `Ok` with an empty list
+    /// only when it succeeded and found nothing. Those were the same value
+    /// until 6.0.0, and the resolver publishes the second as a fact about the
+    /// machine -- `"no cameras detected"`, an answer to "can this machine see".
+    /// See [`crate::core::command`].
     pub fn refresh(&mut self) -> Result<(), SimonError> {
         self.cameras.clear();
 
         #[cfg(target_os = "linux")]
-        self.refresh_linux();
+        self.refresh_linux()?;
 
         #[cfg(target_os = "windows")]
-        self.refresh_windows();
+        self.refresh_windows()?;
 
         #[cfg(target_os = "macos")]
-        self.refresh_macos();
+        self.refresh_macos()?;
 
         Ok(())
     }
@@ -147,95 +153,96 @@ impl CameraMonitor {
     }
 
     #[cfg(target_os = "linux")]
-    fn refresh_linux(&mut self) {
+    fn refresh_linux(&mut self) -> Result<(), SimonError> {
         // Enumerate /sys/class/video4linux/
         let v4l_path = std::path::Path::new("/sys/class/video4linux");
         if !v4l_path.exists() {
-            return;
+            // A real answer: no V4L2 subsystem, so no camera can be seen.
+            return Ok(());
         }
 
-        if let Ok(entries) = std::fs::read_dir(v4l_path) {
-            for entry in entries.flatten() {
-                let dev_name = entry.file_name().to_string_lossy().to_string();
-                if !dev_name.starts_with("video") {
-                    continue;
-                }
-                let index: u32 = dev_name
-                    .strip_prefix("video")
-                    .and_then(|s| s.parse().ok())
-                    .unwrap_or(0);
-
-                let base = entry.path();
-                let name = std::fs::read_to_string(base.join("name"))
-                    .unwrap_or_default()
-                    .trim()
-                    .to_string();
-
-                // Skip metadata / output-only devices
-                // Check device capabilities via uevent
-                let uevent = std::fs::read_to_string(base.join("uevent")).unwrap_or_default();
-                if uevent.contains("DEVTYPE=video4linux-subdev") {
-                    continue;
-                }
-
-                let driver = Self::read_sysfs_link_name(&base.join("device/driver"));
-
-                // Infer connection type from device path
-                let dev_path_str = base.to_string_lossy().to_string();
-                let connection = if dev_path_str.contains("usb") {
-                    CameraConnection::USB
-                } else if dev_path_str.contains("platform") || dev_path_str.contains("csi") {
-                    CameraConnection::CSI
-                } else if name.to_lowercase().contains("virtual")
-                    || name.to_lowercase().contains("obs")
-                {
-                    CameraConnection::Virtual
-                } else if dev_path_str.contains("pci") {
-                    CameraConnection::Internal
-                } else {
-                    CameraConnection::Unknown
-                };
-
-                let mut capabilities = vec![CameraCapability::VideoCapture];
-
-                // Try to read supported formats from /dev/videoN
-                let dev_file = format!("/dev/{}", dev_name);
-                let formats = Self::read_v4l2_formats(&dev_file);
-                if formats.iter().any(|f| f == "H264" || f == "HEVC") {
-                    capabilities.push(CameraCapability::HardwareEncoding);
-                }
-                if formats
-                    .iter()
-                    .any(|f| f.contains("Z16") || f.contains("INZI"))
-                {
-                    capabilities.push(CameraCapability::DepthSensing);
-                }
-                if name.to_lowercase().contains("ir ") || name.to_lowercase().contains("infrared") {
-                    capabilities.push(CameraCapability::Infrared);
-                }
-
-                // Try to infer vendor from USB path
-                let vendor = Self::read_usb_vendor(&base);
-
-                self.cameras.push(CameraInfo {
-                    name: if name.is_empty() {
-                        dev_name.clone()
-                    } else {
-                        name
-                    },
-                    connection,
-                    device_path: dev_file,
-                    driver,
-                    vendor,
-                    max_width: 0, // Would need v4l2 ioctl to get actual max
-                    max_height: 0,
-                    formats,
-                    capabilities,
-                    is_active: Self::is_device_busy(&format!("/dev/{}", dev_name)),
-                    index,
-                });
+        let entries = std::fs::read_dir(v4l_path)
+            .map_err(|e| SimonError::System(format!("cannot read /sys/class/video4linux: {e}")))?;
+        for entry in entries.flatten() {
+            let dev_name = entry.file_name().to_string_lossy().to_string();
+            if !dev_name.starts_with("video") {
+                continue;
             }
+            let index: u32 = dev_name
+                .strip_prefix("video")
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0);
+
+            let base = entry.path();
+            let name = std::fs::read_to_string(base.join("name"))
+                .unwrap_or_default()
+                .trim()
+                .to_string();
+
+            // Skip metadata / output-only devices
+            // Check device capabilities via uevent
+            let uevent = std::fs::read_to_string(base.join("uevent")).unwrap_or_default();
+            if uevent.contains("DEVTYPE=video4linux-subdev") {
+                continue;
+            }
+
+            let driver = Self::read_sysfs_link_name(&base.join("device/driver"));
+
+            // Infer connection type from device path
+            let dev_path_str = base.to_string_lossy().to_string();
+            let connection = if dev_path_str.contains("usb") {
+                CameraConnection::USB
+            } else if dev_path_str.contains("platform") || dev_path_str.contains("csi") {
+                CameraConnection::CSI
+            } else if name.to_lowercase().contains("virtual") || name.to_lowercase().contains("obs")
+            {
+                CameraConnection::Virtual
+            } else if dev_path_str.contains("pci") {
+                CameraConnection::Internal
+            } else {
+                CameraConnection::Unknown
+            };
+
+            let mut capabilities = vec![CameraCapability::VideoCapture];
+
+            // Try to read supported formats from /dev/videoN
+            let dev_file = format!("/dev/{}", dev_name);
+            let formats = Self::read_v4l2_formats(&dev_file);
+            if formats.iter().any(|f| f == "H264" || f == "HEVC") {
+                capabilities.push(CameraCapability::HardwareEncoding);
+            }
+            if formats
+                .iter()
+                .any(|f| f.contains("Z16") || f.contains("INZI"))
+            {
+                capabilities.push(CameraCapability::DepthSensing);
+            }
+            if name.to_lowercase().contains("ir ") || name.to_lowercase().contains("infrared") {
+                capabilities.push(CameraCapability::Infrared);
+            }
+
+            // Try to infer vendor from USB path
+            let vendor = Self::read_usb_vendor(&base);
+
+            self.cameras.push(CameraInfo {
+                name: if name.is_empty() {
+                    dev_name.clone()
+                } else {
+                    name
+                },
+                connection,
+                device_path: dev_file,
+                driver,
+                vendor,
+                max_width: 0, // Would need v4l2 ioctl to get actual max
+                max_height: 0,
+                formats,
+                capabilities,
+                is_active: Self::is_device_busy(&format!("/dev/{}", dev_name)),
+                index,
+            });
         }
+        Ok(())
     }
 
     #[cfg(target_os = "linux")]
@@ -280,9 +287,10 @@ impl CameraMonitor {
     }
 
     #[cfg(target_os = "windows")]
-    fn refresh_windows(&mut self) {
-        if let Ok(output) = std::process::Command::new("powershell")
-            .args(["-NoProfile", "-Command",
+    fn refresh_windows(&mut self) -> Result<(), SimonError> {
+        let json = crate::core::command::capture_json(
+            "powershell",
+            &["-NoProfile", "-Command",
                 // `Image` is the PnP class for still-image devices --
                 // scanners, and the scanner half of a multifunction printer.
                 // Including it here made `simon` report a Brother MFC-L2900DW
@@ -291,122 +299,115 @@ impl CameraMonitor {
                 // "can this machine see". Windows 10 1703 and later put every
                 // webcam under `Camera`, so nothing real is lost by asking only
                 // for that.
-                "Get-CimInstance Win32_PnPEntity | Where-Object { $_.PNPClass -eq 'Camera' } | Select-Object Name, Manufacturer, DeviceID, Status, PNPClass | ConvertTo-Json -Compress"])
-            .output()
-        {
-            if let Ok(text) = String::from_utf8(output.stdout) {
-                if let Ok(val) = serde_json::from_str::<serde_json::Value>(&text) {
-                    let items = match &val {
-                        serde_json::Value::Array(arr) => arr.clone(),
-                        obj @ serde_json::Value::Object(_) => vec![obj.clone()],
-                        _ => vec![],
-                    };
-                    for (i, item) in items.iter().enumerate() {
-                        let name = item["Name"].as_str().unwrap_or("Unknown Camera").to_string();
-                        let vendor = item["Manufacturer"].as_str().unwrap_or("").to_string();
-                        let device_id = item["DeviceID"].as_str().unwrap_or("").to_string();
-                        let lower = device_id.to_lowercase();
-                        let connection = if lower.contains("usb") {
-                            CameraConnection::USB
-                        } else if lower.contains("pci") {
-                            CameraConnection::Internal
-                        } else if name.to_lowercase().contains("virtual") || name.to_lowercase().contains("obs") {
-                            CameraConnection::Virtual
-                        } else {
-                            CameraConnection::Internal
-                        };
+                "Get-CimInstance Win32_PnPEntity | Where-Object { $_.PNPClass -eq 'Camera' } | Select-Object Name, Manufacturer, DeviceID, Status, PNPClass | ConvertTo-Json -Compress"],
+        )?;
+        let Some(val) = json else {
+            return Ok(());
+        };
+        let items = crate::core::command::json_items(&val);
+        for (i, item) in items.iter().enumerate() {
+            let name = item["Name"]
+                .as_str()
+                .unwrap_or("Unknown Camera")
+                .to_string();
+            let vendor = item["Manufacturer"].as_str().unwrap_or("").to_string();
+            let device_id = item["DeviceID"].as_str().unwrap_or("").to_string();
+            let lower = device_id.to_lowercase();
+            let connection = if lower.contains("usb") {
+                CameraConnection::USB
+            } else if lower.contains("pci") {
+                CameraConnection::Internal
+            } else if name.to_lowercase().contains("virtual") || name.to_lowercase().contains("obs")
+            {
+                CameraConnection::Virtual
+            } else {
+                CameraConnection::Internal
+            };
 
-                        self.cameras.push(CameraInfo {
-                            name,
-                            connection,
-                            device_path: device_id,
-                            driver: String::new(),
-                            vendor,
-                            max_width: 0,
-                            max_height: 0,
-                            formats: Vec::new(),
-                            capabilities: vec![CameraCapability::VideoCapture],
-                            is_active: item["Status"].as_str() == Some("OK"),
-                            index: i as u32,
-                        });
-                    }
-                }
-            }
+            self.cameras.push(CameraInfo {
+                name,
+                connection,
+                device_path: device_id,
+                driver: String::new(),
+                vendor,
+                max_width: 0,
+                max_height: 0,
+                formats: Vec::new(),
+                capabilities: vec![CameraCapability::VideoCapture],
+                is_active: item["Status"].as_str() == Some("OK"),
+                index: i as u32,
+            });
         }
+        Ok(())
     }
 
     #[cfg(target_os = "macos")]
-    fn refresh_macos(&mut self) {
-        if let Ok(output) = std::process::Command::new("system_profiler")
-            .args(["SPCameraDataType", "-detailLevel", "full"])
-            .output()
-        {
-            if let Ok(text) = String::from_utf8(output.stdout) {
-                let mut name = String::new();
-                let mut model_id = String::new();
-                let mut unique_id = String::new();
-                let mut index: u32 = 0;
+    fn refresh_macos(&mut self) -> Result<(), SimonError> {
+        let text = crate::core::command::capture(
+            "system_profiler",
+            &["SPCameraDataType", "-detailLevel", "full"],
+        )?;
+        let mut name = String::new();
+        let mut model_id = String::new();
+        let mut unique_id = String::new();
+        let mut index: u32 = 0;
 
-                for line in text.lines() {
-                    let trimmed = line.trim();
-                    if trimmed.ends_with(':')
-                        && !trimmed.starts_with("Camera")
-                        && !trimmed.is_empty()
-                    {
-                        // Flush previous
-                        if !name.is_empty() {
-                            let connection = if model_id.to_lowercase().contains("usb") {
-                                CameraConnection::USB
-                            } else if model_id.to_lowercase().contains("virtual") {
-                                CameraConnection::Virtual
-                            } else {
-                                CameraConnection::Internal
-                            };
-                            self.cameras.push(CameraInfo {
-                                name: name.clone(),
-                                connection,
-                                device_path: unique_id.clone(),
-                                driver: String::new(),
-                                vendor: "Apple".into(),
-                                max_width: 0,
-                                max_height: 0,
-                                formats: Vec::new(),
-                                capabilities: vec![
-                                    CameraCapability::VideoCapture,
-                                    CameraCapability::Autofocus,
-                                ],
-                                is_active: true,
-                                index,
-                            });
-                            index += 1;
-                        }
-                        name = trimmed.trim_end_matches(':').to_string();
-                        model_id.clear();
-                        unique_id.clear();
-                    } else if let Some(v) = trimmed.strip_prefix("Model ID:") {
-                        model_id = v.trim().to_string();
-                    } else if let Some(v) = trimmed.strip_prefix("Unique ID:") {
-                        unique_id = v.trim().to_string();
-                    }
-                }
-                // Flush last
+        for line in text.lines() {
+            let trimmed = line.trim();
+            if trimmed.ends_with(':') && !trimmed.starts_with("Camera") && !trimmed.is_empty() {
+                // Flush previous
                 if !name.is_empty() {
+                    let connection = if model_id.to_lowercase().contains("usb") {
+                        CameraConnection::USB
+                    } else if model_id.to_lowercase().contains("virtual") {
+                        CameraConnection::Virtual
+                    } else {
+                        CameraConnection::Internal
+                    };
                     self.cameras.push(CameraInfo {
-                        name,
-                        connection: CameraConnection::Internal,
-                        device_path: unique_id,
+                        name: name.clone(),
+                        connection,
+                        device_path: unique_id.clone(),
                         driver: String::new(),
                         vendor: "Apple".into(),
                         max_width: 0,
                         max_height: 0,
                         formats: Vec::new(),
-                        capabilities: vec![CameraCapability::VideoCapture],
+                        capabilities: vec![
+                            CameraCapability::VideoCapture,
+                            CameraCapability::Autofocus,
+                        ],
                         is_active: true,
                         index,
                     });
+                    index += 1;
                 }
+                name = trimmed.trim_end_matches(':').to_string();
+                model_id.clear();
+                unique_id.clear();
+            } else if let Some(v) = trimmed.strip_prefix("Model ID:") {
+                model_id = v.trim().to_string();
+            } else if let Some(v) = trimmed.strip_prefix("Unique ID:") {
+                unique_id = v.trim().to_string();
             }
         }
+        // Flush last
+        if !name.is_empty() {
+            self.cameras.push(CameraInfo {
+                name,
+                connection: CameraConnection::Internal,
+                device_path: unique_id,
+                driver: String::new(),
+                vendor: "Apple".into(),
+                max_width: 0,
+                max_height: 0,
+                formats: Vec::new(),
+                capabilities: vec![CameraCapability::VideoCapture],
+                is_active: true,
+                index,
+            });
+        }
+        Ok(())
     }
 }
 

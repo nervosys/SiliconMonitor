@@ -118,18 +118,24 @@ impl SensorMonitor {
         Ok(monitor)
     }
 
+    /// Re-enumerate the platform's sensors.
+    ///
+    /// Returns `Err` when the enumeration failed, and `Ok` with an empty list
+    /// only when it succeeded and found nothing -- which the resolver publishes
+    /// as `board.sensor.<none>`, a claim that this board has no sensors.
+    /// See [`crate::core::command`].
     pub fn refresh(&mut self) -> Result<(), SimonError> {
         self.items.clear();
         self.last_note = None;
 
         #[cfg(target_os = "linux")]
-        self.refresh_linux();
+        self.refresh_linux()?;
 
         #[cfg(target_os = "windows")]
-        self.refresh_windows();
+        self.refresh_windows()?;
 
         #[cfg(target_os = "macos")]
-        self.refresh_macos();
+        self.refresh_macos()?;
 
         Ok(())
     }
@@ -140,10 +146,16 @@ impl SensorMonitor {
 
     /// Why the sensor list is empty, when it is.
     ///
-    /// Every platform path here swallows its failures: a missing helper, output
-    /// that is not UTF-8, output that is not JSON and a machine with genuinely
-    /// no sensors all produced the same empty list. That is the distinction this
-    /// crate exists to keep, so the reason is recorded rather than discarded.
+    /// This used to be the only place a failure was recorded, and it was fed by
+    /// a probe -- a `powershell -Command "exit 0"` spawned purely to see whether
+    /// spawning worked -- while the real query one line below still swallowed a
+    /// missing helper, a non-zero exit and unparseable output alike. Those now
+    /// arrive as an `Err` from [`Self::refresh`], which is where the reason
+    /// belongs.
+    ///
+    /// What remains for this accessor is [`Default`], which calls
+    /// `new().unwrap_or(..)` and so has nowhere to put an error: it records one
+    /// here instead.
     ///
     /// `None` alongside an empty list means the enumeration ran and found
     /// nothing — a desktop with no ambient-light or accelerometer sensors, which
@@ -184,94 +196,94 @@ impl SensorMonitor {
     }
 
     #[cfg(target_os = "linux")]
-    fn refresh_linux(&mut self) {
+    fn refresh_linux(&mut self) -> Result<(), SimonError> {
         let iio_base = std::path::Path::new("/sys/bus/iio/devices");
         if !iio_base.exists() {
-            return;
+            // A real answer: this kernel exposes no IIO subsystem.
+            return Ok(());
         }
 
-        if let Ok(entries) = std::fs::read_dir(iio_base) {
-            for entry in entries.flatten() {
-                let base = entry.path();
-                let dev_name = entry.file_name().to_string_lossy().to_string();
+        let entries = std::fs::read_dir(iio_base)
+            .map_err(|e| SimonError::System(format!("cannot read {iio_base:?}: {e}")))?;
+        for entry in entries.flatten() {
+            let base = entry.path();
+            let dev_name = entry.file_name().to_string_lossy().to_string();
 
-                let name = Self::read_trimmed(&base.join("name"));
-                if name.is_empty() {
-                    continue;
-                }
-
-                // Determine type by scanning available channels
-                let sensor_type = Self::detect_iio_type(&base);
-                let mut values = Vec::new();
-
-                // Read channels based on type
-                match &sensor_type {
-                    SensorType::Accelerometer => {
-                        for axis in &["x", "y", "z"] {
-                            if let Some(val) = Self::read_iio_channel(&base, "accel", axis) {
-                                values.push(val);
-                            }
-                        }
-                    }
-                    SensorType::Gyroscope => {
-                        for axis in &["x", "y", "z"] {
-                            if let Some(val) = Self::read_iio_channel(&base, "anglvel", axis) {
-                                values.push(val);
-                            }
-                        }
-                    }
-                    SensorType::Magnetometer => {
-                        for axis in &["x", "y", "z"] {
-                            if let Some(val) = Self::read_iio_channel(&base, "magn", axis) {
-                                values.push(val);
-                            }
-                        }
-                    }
-                    SensorType::AmbientLight => {
-                        if let Some(val) = Self::read_iio_single(&base, "in_illuminance_raw", "lux")
-                        {
-                            values.push(val);
-                        }
-                    }
-                    SensorType::Proximity => {
-                        if let Some(val) = Self::read_iio_single(&base, "in_proximity_raw", "cm") {
-                            values.push(val);
-                        }
-                    }
-                    SensorType::Pressure => {
-                        if let Some(val) = Self::read_iio_single(&base, "in_pressure_raw", "hPa") {
-                            values.push(val);
-                        }
-                    }
-                    SensorType::Humidity => {
-                        if let Some(val) =
-                            Self::read_iio_single(&base, "in_humidityrelative_raw", "%RH")
-                        {
-                            values.push(val);
-                        }
-                    }
-                    SensorType::Temperature => {
-                        if let Some(val) = Self::read_iio_single(&base, "in_temp_raw", "°C") {
-                            values.push(val);
-                        }
-                    }
-                    _ => {}
-                }
-
-                let freq = Self::read_trimmed(&base.join("sampling_frequency"))
-                    .parse::<f64>()
-                    .ok();
-
-                self.items.push(SensorInfo {
-                    name,
-                    sensor_type,
-                    device: dev_name,
-                    values,
-                    sampling_frequency_hz: freq,
-                    active: true,
-                    vendor: String::new(),
-                });
+            let name = Self::read_trimmed(&base.join("name"));
+            if name.is_empty() {
+                continue;
             }
+
+            // Determine type by scanning available channels
+            let sensor_type = Self::detect_iio_type(&base);
+            let mut values = Vec::new();
+
+            // Read channels based on type
+            match &sensor_type {
+                SensorType::Accelerometer => {
+                    for axis in &["x", "y", "z"] {
+                        if let Some(val) = Self::read_iio_channel(&base, "accel", axis) {
+                            values.push(val);
+                        }
+                    }
+                }
+                SensorType::Gyroscope => {
+                    for axis in &["x", "y", "z"] {
+                        if let Some(val) = Self::read_iio_channel(&base, "anglvel", axis) {
+                            values.push(val);
+                        }
+                    }
+                }
+                SensorType::Magnetometer => {
+                    for axis in &["x", "y", "z"] {
+                        if let Some(val) = Self::read_iio_channel(&base, "magn", axis) {
+                            values.push(val);
+                        }
+                    }
+                }
+                SensorType::AmbientLight => {
+                    if let Some(val) = Self::read_iio_single(&base, "in_illuminance_raw", "lux") {
+                        values.push(val);
+                    }
+                }
+                SensorType::Proximity => {
+                    if let Some(val) = Self::read_iio_single(&base, "in_proximity_raw", "cm") {
+                        values.push(val);
+                    }
+                }
+                SensorType::Pressure => {
+                    if let Some(val) = Self::read_iio_single(&base, "in_pressure_raw", "hPa") {
+                        values.push(val);
+                    }
+                }
+                SensorType::Humidity => {
+                    if let Some(val) =
+                        Self::read_iio_single(&base, "in_humidityrelative_raw", "%RH")
+                    {
+                        values.push(val);
+                    }
+                }
+                SensorType::Temperature => {
+                    if let Some(val) = Self::read_iio_single(&base, "in_temp_raw", "°C") {
+                        values.push(val);
+                    }
+                }
+                _ => {}
+            }
+
+            let freq = Self::read_trimmed(&base.join("sampling_frequency"))
+                .parse::<f64>()
+                .ok();
+
+            self.items.push(SensorInfo {
+                name,
+                sensor_type,
+                device: dev_name,
+                values,
+                sampling_frequency_hz: freq,
+                active: true,
+                vendor: String::new(),
+            });
         }
 
         // Also check hwmon for voltage/current sensors
@@ -339,6 +351,7 @@ impl SensorMonitor {
                 }
             }
         }
+        Ok(())
     }
 
     #[cfg(target_os = "linux")]
@@ -453,88 +466,76 @@ impl SensorMonitor {
     }
 
     #[cfg(target_os = "windows")]
-    fn refresh_windows(&mut self) {
-        // Windows Sensor API via PowerShell. If the helper cannot be run at all,
-        // that is recorded: "no sensors" and "could not ask" are different, and
-        // this path used to return the same empty list for both.
-        let probe = std::process::Command::new("powershell")
-            .args(["-NoProfile", "-Command", "exit 0"])
-            .output();
-        if let Err(e) = probe {
-            self.last_note = Some(format!(
-                "the Windows Sensor API is queried through powershell, which could not be run: {e}"
-            ));
-            return;
-        }
+    fn refresh_windows(&mut self) -> Result<(), SimonError> {
+        // This function already knew that "no sensors" and "could not ask" are
+        // different: it spawned `powershell -Command "exit 0"` first, purely so
+        // it could record a note when that spawn failed. The distinction was
+        // drawn in the probe and thrown away by the real query one line later,
+        // which swallowed a spawn failure, a non-zero exit and unparseable
+        // output alike. The probe is gone; the queries report for themselves.
+        // `MSFT_Sensor` does not exist in `root/standardcimv2` on
+        // Windows 11 -- `Get-CimClass` there answers "Invalid class" and
+        // PowerShell exits 1 even under `-ErrorAction SilentlyContinue`.
+        // So this query has never returned a sensor on such a host, and
+        // swallowing its failure is precisely why nobody noticed. Asking
+        // for the class first keeps the two answers apart: a platform
+        // that does not define it prints nothing and exits 0, while a
+        // query that genuinely fails still reports.
+        const SENSOR_API: &str = r#"if (Get-CimClass -Namespace root/standardcimv2 -ClassName MSFT_Sensor -ErrorAction SilentlyContinue) { Get-CimInstance -Namespace root/standardcimv2 -ClassName MSFT_Sensor | Select-Object SensorType, FriendlyName, CurrentState | ConvertTo-Json -Compress }"#;
+        const HID_SENSORS: &str = r#"Get-CimInstance Win32_PnPEntity | Where-Object { $_.PNPClass -eq 'Sensor' } | Select-Object Name, Manufacturer, Status | ConvertTo-Json -Compress"#;
 
-        if let Ok(output) = std::process::Command::new("powershell")
-            .args(["-NoProfile", "-Command",
-                r#"Get-CimInstance -Namespace root/standardcimv2 -ClassName MSFT_Sensor -ErrorAction SilentlyContinue | Select-Object SensorType, FriendlyName, CurrentState | ConvertTo-Json -Compress"#])
-            .output()
-        {
-            if let Ok(text) = String::from_utf8(output.stdout) {
-                if let Ok(val) = serde_json::from_str::<serde_json::Value>(&text) {
-                    let items = match &val {
-                        serde_json::Value::Array(arr) => arr.clone(),
-                        obj @ serde_json::Value::Object(_) => vec![obj.clone()],
-                        _ => vec![],
-                    };
-                    for item in &items {
-                        // A sensor whose name the platform did not give is
-                        // skipped rather than named "Unknown". A literal
-                        // "Unknown" in a name field reads as the sensor's
-                        // actual name, which is the exact mistake
-                        // `unknown_is_never_dressed_as_a_measurement` exists
-                        // to catch one layer down.
-                        let Some(name) = item["FriendlyName"].as_str().map(str::to_string) else {
-                            continue;
-                        };
-                        let type_str = item["SensorType"].as_str().unwrap_or("");
-                        let sensor_type = Self::parse_sensor_type_win(type_str, &name);
+        if let Some(val) = crate::core::command::capture_json(
+            "powershell",
+            &["-NoProfile", "-Command", SENSOR_API],
+        )? {
+            for item in &crate::core::command::json_items(&val) {
+                // A sensor whose name the platform did not give is skipped
+                // rather than named "Unknown". A literal "Unknown" in a name
+                // field reads as the sensor's actual name, which is the exact
+                // mistake `unknown_is_never_dressed_as_a_measurement` exists to
+                // catch one layer down.
+                let Some(name) = item["FriendlyName"].as_str().map(str::to_string) else {
+                    continue;
+                };
+                let type_str = item["SensorType"].as_str().unwrap_or("");
+                let sensor_type = Self::parse_sensor_type_win(type_str, &name);
 
-                        self.items.push(SensorInfo {
-                            name,
-                            sensor_type,
-                            device: String::new(),
-                            values: Vec::new(),
-                            sampling_frequency_hz: None,
-                            active: item["CurrentState"].as_str() == Some("Ready"),
-                            vendor: String::new(),
-                        });
-                    }
-                }
+                self.items.push(SensorInfo {
+                    name,
+                    sensor_type,
+                    device: String::new(),
+                    values: Vec::new(),
+                    sampling_frequency_hz: None,
+                    active: item["CurrentState"].as_str() == Some("Ready"),
+                    vendor: String::new(),
+                });
             }
         }
 
-        // Also check for HID sensors (ambient light, accelerometer) via PnP
-        if let Ok(output) = std::process::Command::new("powershell")
-            .args(["-NoProfile", "-Command",
-                r#"Get-CimInstance Win32_PnPEntity | Where-Object { $_.PNPClass -eq 'Sensor' } | Select-Object Name, Manufacturer, Status | ConvertTo-Json -Compress"#])
-            .output()
-        {
-            if let Ok(text) = String::from_utf8(output.stdout) {
-                if let Ok(val) = serde_json::from_str::<serde_json::Value>(&text) {
-                    let items = match &val {
-                        serde_json::Value::Array(arr) => arr.clone(),
-                        obj @ serde_json::Value::Object(_) => vec![obj.clone()],
-                        _ => vec![],
-                    };
-                    for item in &items {
-                        let name = item["Name"].as_str().unwrap_or("").to_string();
-                        let sensor_type = Self::infer_sensor_type(&name);
-                        self.items.push(SensorInfo {
-                            name,
-                            sensor_type,
-                            device: String::new(),
-                            values: Vec::new(),
-                            sampling_frequency_hz: None,
-                            active: item["Status"].as_str() == Some("OK"),
-                            vendor: item["Manufacturer"].as_str().unwrap_or("").to_string(),
-                        });
-                    }
-                }
+        // Also check for HID sensors (ambient light, accelerometer) via PnP.
+        // A failure here is propagated rather than keeping whatever the first
+        // query found: half an enumeration is not an enumeration, and the
+        // caller has no way to tell the difference.
+        if let Some(val) = crate::core::command::capture_json(
+            "powershell",
+            &["-NoProfile", "-Command", HID_SENSORS],
+        )? {
+            for item in &crate::core::command::json_items(&val) {
+                let name = item["Name"].as_str().unwrap_or("").to_string();
+                let sensor_type = Self::infer_sensor_type(&name);
+                self.items.push(SensorInfo {
+                    name,
+                    sensor_type,
+                    device: String::new(),
+                    values: Vec::new(),
+                    sampling_frequency_hz: None,
+                    active: item["Status"].as_str() == Some("OK"),
+                    vendor: item["Manufacturer"].as_str().unwrap_or("").to_string(),
+                });
             }
         }
+
+        Ok(())
     }
 
     #[cfg(target_os = "windows")]
@@ -576,42 +577,37 @@ impl SensorMonitor {
     }
 
     #[cfg(target_os = "macos")]
-    fn refresh_macos(&mut self) {
+    fn refresh_macos(&mut self) -> Result<(), SimonError> {
         // macOS has limited IIO-style sensors, mainly on laptops with motion sensors
         // Check for sudden motion sensor
-        if let Ok(output) = std::process::Command::new("system_profiler")
-            .args(["SPSensorsDataType"])
-            .output()
-        {
-            if let Ok(text) = String::from_utf8(output.stdout) {
-                // Parse ambient light and motion sensors
-                for line in text.lines() {
-                    let line = line.trim();
-                    if line.contains("Light Sensor") {
-                        self.items.push(SensorInfo {
-                            name: "Ambient Light Sensor".into(),
-                            sensor_type: SensorType::AmbientLight,
-                            device: "built-in".into(),
-                            values: Vec::new(),
-                            sampling_frequency_hz: None,
-                            active: line.contains("Yes"),
-                            vendor: "Apple".into(),
-                        });
-                    }
-                    if line.contains("Motion Sensor") {
-                        self.items.push(SensorInfo {
-                            name: "Sudden Motion Sensor".into(),
-                            sensor_type: SensorType::Accelerometer,
-                            device: "built-in".into(),
-                            values: Vec::new(),
-                            sampling_frequency_hz: None,
-                            active: line.contains("Yes"),
-                            vendor: "Apple".into(),
-                        });
-                    }
-                }
+        let text = crate::core::command::capture("system_profiler", &["SPSensorsDataType"])?;
+        // Parse ambient light and motion sensors
+        for line in text.lines() {
+            let line = line.trim();
+            if line.contains("Light Sensor") {
+                self.items.push(SensorInfo {
+                    name: "Ambient Light Sensor".into(),
+                    sensor_type: SensorType::AmbientLight,
+                    device: "built-in".into(),
+                    values: Vec::new(),
+                    sampling_frequency_hz: None,
+                    active: line.contains("Yes"),
+                    vendor: "Apple".into(),
+                });
+            }
+            if line.contains("Motion Sensor") {
+                self.items.push(SensorInfo {
+                    name: "Sudden Motion Sensor".into(),
+                    sensor_type: SensorType::Accelerometer,
+                    device: "built-in".into(),
+                    values: Vec::new(),
+                    sampling_frequency_hz: None,
+                    active: line.contains("Yes"),
+                    vendor: "Apple".into(),
+                });
             }
         }
+        Ok(())
     }
 }
 

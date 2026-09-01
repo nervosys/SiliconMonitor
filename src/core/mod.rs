@@ -1,5 +1,6 @@
 //! Core monitoring modules
 
+pub mod command;
 pub mod cpu;
 pub mod engine;
 pub mod fan;
