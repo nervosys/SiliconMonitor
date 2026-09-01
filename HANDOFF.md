@@ -91,7 +91,7 @@ Since the tag, on `master` and green on all three platforms:
 | `bde8726` | Sockets counted as NUMA nodes, memory divided evenly between them |
 | `3606758` | A field derived from the one thing it exists not to be derived from |
 | `e037198` | The same inequality again, this time against a string |
-| `HEAD` | "On battery" concluded from nobody having asked |
+| `ca71102` | "On battery" concluded from nobody having asked |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
