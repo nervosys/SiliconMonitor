@@ -84,12 +84,26 @@ pub struct GpuLink {
     pub to_gpu: u32,
     /// Interconnect type.
     pub link_type: GpuInterconnectType,
-    /// Number of links (e.g. NVLink count).
-    pub num_links: u32,
+    /// Number of links, where it is known.
+    ///
+    /// Not known anywhere yet. `estimate_link_bandwidth` returned a flat `6`
+    /// for any NVLink pair and `2` for any xGMI pair, under comments reading
+    /// "Typical config: 6 or 12 links" and "typically 2-4 links". A link
+    /// *count* is a property of the specific board — an A100 has 12, an RTX
+    /// 3090 has 4 — so a typical value is not this pair's value. Reading it
+    /// needs NVML's `nvmlDeviceGetNvLinkState` or `nvidia-smi nvlink -s`.
+    pub num_links: Option<u32>,
     /// Bandwidth per link in GB/s.
+    ///
+    /// This one *is* a specification of the link type — NVLink 3.0 and 4.0 are
+    /// both ~25 GB/s per link, xGMI ~23 — and is the same for every board using
+    /// it, so it stays.
     pub bandwidth_per_link_gbs: f64,
-    /// Total bandwidth in GB/s.
-    pub total_bandwidth_gbs: f64,
+    /// Total bandwidth in GB/s, where the link count is known.
+    ///
+    /// `num_links * bandwidth_per_link_gbs`, so `None` whenever the count is.
+    /// This read 150 GB/s for any NVLink pair.
+    pub total_bandwidth_gbs: Option<f64>,
 }
 
 /// GPU topology overview.
@@ -252,7 +266,7 @@ impl GpuTopologyMonitor {
         for i in 0..gpus.len() {
             for j in (i + 1)..gpus.len() {
                 let link_type = Self::detect_link_type(&gpus[i], &gpus[j]);
-                let (num_links, bw_per_link) = Self::estimate_link_bandwidth(&link_type, &gpus[i]);
+                let (num_links, bw_per_link) = Self::link_bandwidth(&link_type, &gpus[i]);
 
                 links.push(GpuLink {
                     from_gpu: gpus[i].index,
@@ -260,7 +274,7 @@ impl GpuTopologyMonitor {
                     link_type,
                     num_links,
                     bandwidth_per_link_gbs: bw_per_link,
-                    total_bandwidth_gbs: num_links as f64 * bw_per_link,
+                    total_bandwidth_gbs: num_links.map(|n| n as f64 * bw_per_link),
                 });
             }
         }
@@ -357,24 +371,28 @@ impl GpuTopologyMonitor {
     }
 
     #[cfg(target_os = "linux")]
-    fn estimate_link_bandwidth(
+    /// Per-link bandwidth for an interconnect type, and its link count where
+    /// that is known.
+    ///
+    /// The per-link figure is a specification of the link type and is the same
+    /// on every board using it. The **count** is per-board and is not read
+    /// anywhere: this returned a flat 6 for NVLink and 2 for xGMI, so any pair
+    /// of NVLink GPUs reported 150 GB/s between them whatever they actually
+    /// had. PCIe peer-to-peer is a single link by definition, so that one is
+    /// known.
+    fn link_bandwidth(
         link_type: &GpuInterconnectType,
         gpu: &GpuTopologyNode,
-    ) -> (u32, f64) {
+    ) -> (Option<u32>, f64) {
         match link_type {
-            GpuInterconnectType::NvLink => {
-                // NVLink 3.0 ~25 GB/s/link, NVLink 4.0 ~25 GB/s/link
-                // Typical config: 6 or 12 links
-                (6, 25.0)
-            }
-            GpuInterconnectType::XGmi => {
-                // xGMI ~23 GB/s per link, typically 2-4 links
-                (2, 23.0)
-            }
+            // NVLink 3.0 and 4.0 are both ~25 GB/s per link. How many this
+            // board has needs NVML.
+            GpuInterconnectType::NvLink => (None, 25.0),
+            GpuInterconnectType::XGmi => (None, 23.0),
             GpuInterconnectType::PciePeerToPeer | GpuInterconnectType::PcieThroughCpu => {
-                (1, gpu.pcie_bandwidth_gbs)
+                (Some(1), gpu.pcie_bandwidth_gbs)
             }
-            _ => (0, 0.0),
+            _ => (None, 0.0),
         }
     }
 
@@ -472,9 +490,9 @@ mod tests {
                 from_gpu: 0,
                 to_gpu: 1,
                 link_type: GpuInterconnectType::PcieThroughCpu,
-                num_links: 1,
+                num_links: Some(1),
                 bandwidth_per_link_gbs: 31.5,
-                total_bandwidth_gbs: 31.5,
+                total_bandwidth_gbs: Some(31.5),
             }],
             gpu_count: 2,
             numa_node_count: 2,

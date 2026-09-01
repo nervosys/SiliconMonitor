@@ -67,9 +67,48 @@ Since the tag, on `master` and green on all three platforms:
 | `b2e84af` | A doc comment that named the danger, ignored by the caller two lines away |
 | `8f8680a` | One system-wide number, copied into 24 cores as though each were measured |
 | `b16feec` | A link's capacity published as the traffic on it |
+| `HEAD` | A typical NVLink count reported as this board's |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### The callerless-module sweep, and what it found
+
+The `io_info` and `drm_monitor` findings shared a shape worth turning into a
+check: **public API with no internal consumers is exactly where running the
+binary cannot reach.** Enumerating it is one command:
+
+```bash
+for m in $(grep -oP '^pub mod \K\w+' src/lib.rs | sort -u); do
+  refs=$(grep -rl "crate::$m::" src/ --include=*.rs | grep -v "^src/$m" | wc -l)
+  [ "$refs" -eq 0 ] && echo "$m"
+done
+```
+
+**Twenty-six modules** come back: `anomaly`, `bandwidth`, `cgroup_monitor`,
+`cpufreq`, `datacenter`, `dma_engine`, `drm_monitor`, `fleet`, `gpu_topology`,
+`hardware_ai`, `health`, `interconnect`, `interrupt_map`, `io_scheduler`,
+`iommu`, `memory_management`, `pcie`, `predictive`, `process_tree`,
+`prometheus`, `scheduler`, `security_mitigations`, `thermal_zone`,
+`voltage_regulator`, `watchdog`, `wsl`. Two of them had already yielded defects
+this session without the list existing.
+
+Crossing that list with the admission-comment grep ranks them, and the top hit
+was real. `gpu_topology::estimate_link_bandwidth` returned a flat `(6, 25.0)`
+for **any** NVLink pair and `(2, 23.0)` for any xGMI pair, under comments
+reading *"Typical config: 6 or 12 links"* and *"typically 2-4 links"*, so
+`total_bandwidth_gbs` read 150 GB/s between any two NVLink GPUs.
+
+The split that matters: **25 GB/s per NVLink is a genuine specification of the
+link type** and is the same on every board using it. The link *count* is a
+property of the specific board — an A100 has 12, an RTX 3090 has 4 — so a
+typical value is not this pair's value. The per-link figure stays; the count is
+`Option<u32>` and `None` until something calls
+`nvmlDeviceGetNvLinkState`. `total_bandwidth_gbs` follows it.
+
+**Checked and sound in the same pass:** `predictive` names its estimates
+(`Estimated time to issue in hours (None if cannot predict)`) and already uses
+`Option`, which is what the rest of this list should look like.
 
 ### A link's capacity, published as the traffic on it
 
