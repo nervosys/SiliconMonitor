@@ -76,7 +76,7 @@ Since the tag, on `master` and green on all three platforms:
 | `0e67be4` | A failed health check reporting no critical issues |
 | `aed27cd` | A `> 0` guard defeated by a sentinel of 64 |
 | `f5a54ee` | An `Option` field filled with a sentinel wrapped in `Some` |
-| `HEAD` | Cache and block geometry assumed rather than read |
+| `cd15e37` | Cache and block geometry assumed rather than read |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
