@@ -240,16 +240,28 @@ impl CpuFreqInfo {
         self.current_freq_khz <= self.min_freq_khz
     }
 
-    /// Check if turbo boost might be active
-    pub fn is_turbo(&self) -> bool {
-        if let Some(base) = self.base_freq_khz {
-            self.current_freq_khz > base
-        } else if let Some(max) = self.cpuinfo_max_freq_khz {
-            // Assume turbo if current > 95% of max
-            self.current_freq_khz > (max * 95 / 100)
-        } else {
-            false
-        }
+    /// Whether the core is above its base frequency, or `None` when the base
+    /// frequency is not known.
+    ///
+    /// This returned `bool`, so "cannot tell" and "not boosting" were the same
+    /// answer — and the middle branch made a third case look like the first two:
+    ///
+    /// ```text
+    /// } else if let Some(max) = self.cpuinfo_max_freq_khz {
+    ///     // Assume turbo if current > 95% of max
+    /// ```
+    ///
+    /// 95% of the maximum is not a test for turbo. A part whose non-turbo
+    /// ceiling *is* its `cpuinfo_max_freq` reads as boosting whenever it is
+    /// busy, and one boosting to 96% of max reads as boosting for a reason
+    /// that has nothing to do with the base clock. Turbo means "above base",
+    /// and without a base there is no answer to give.
+    ///
+    /// `scaling_cur_freq` above `base_frequency` is the real test, and
+    /// `base_freq_khz` comes from `cpufreq/base_frequency`, which
+    /// intel_pstate exposes and other governors do not.
+    pub fn is_turbo(&self) -> Option<bool> {
+        self.base_freq_khz.map(|base| self.current_freq_khz > base)
     }
 }
 
@@ -1391,5 +1403,33 @@ mod tests {
             let parsed: EnergyPreference = serde_json::from_str(&json).unwrap();
             assert_eq!(&parsed, pref);
         }
+    }
+
+    /// "Cannot tell" and "not boosting" must not be the same answer.
+    ///
+    /// `is_turbo` returned `bool`. With no `base_frequency` it returned
+    /// `false`, and with a maximum but no base it guessed from ">95% of max",
+    /// which is not a test for turbo: a part whose non-turbo ceiling *is* its
+    /// `cpuinfo_max_freq` reads as boosting whenever it is busy.
+    #[test]
+    fn turbo_is_unknown_without_a_base_frequency() {
+        let mut cpu = CpuFreqInfo::new(0);
+        cpu.current_freq_khz = 4_400_000;
+        cpu.cpuinfo_max_freq_khz = Some(4_400_000);
+        cpu.base_freq_khz = None;
+
+        assert_eq!(
+            cpu.is_turbo(),
+            None,
+            "at 100% of max with no base frequency, turbo is unknowable"
+        );
+
+        // Above base is boosting.
+        cpu.base_freq_khz = Some(3_700_000);
+        assert_eq!(cpu.is_turbo(), Some(true));
+
+        // At or below base is not.
+        cpu.current_freq_khz = 3_700_000;
+        assert_eq!(cpu.is_turbo(), Some(false));
     }
 }

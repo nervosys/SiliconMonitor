@@ -162,7 +162,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     gov_str
                 };
 
-                let turbo_marker = if cpu.is_turbo() { "🔥" } else { "  " };
+                let turbo_marker = match cpu.is_turbo() {
+                    Some(true) => "🔥",
+                    Some(false) => "  ",
+                    // No base frequency, so no answer — not "not boosting".
+                    None => " ?",
+                };
 
                 println!(
                     "   {:>4} │ {:>6} {} │ {:>6} │ {:>6} │ {} │ {:<12}",
@@ -195,7 +200,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     // Limit to 16 CPUs for display
                     let bar_len = ((cpu.current_freq_khz as f64 / max_freq as f64) * 40.0) as usize;
                     let bar = "█".repeat(bar_len);
-                    let turbo = if cpu.is_turbo() { "🔥" } else { "" };
+                    let turbo = match cpu.is_turbo() {
+                        Some(true) => "🔥",
+                        Some(false) => "",
+                        None => "?",
+                    };
 
                     println!(
                         "   CPU{:>2} │{}│ {} MHz {}",

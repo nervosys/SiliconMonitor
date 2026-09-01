@@ -70,9 +70,39 @@ Since the tag, on `master` and green on all three platforms:
 | `1c018b8` | A typical NVLink count reported as this board's |
 | `a015d58` | Every AMD CPU classified as Intel, by the word in "12-Core" |
 | `ad8dfff` | A CPUID family of 0, and a name still carrying its WMI padding |
+| `HEAD` | `is_turbo` closed, and the guess above its known defect |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### The first 7.0.0 item, closed
+
+`cpufreq::is_turbo` was recorded below as the first entry queued for the next
+major version — "returns `bool` where it means 'cannot tell'". It is `Option<bool>`
+now, and the change was smaller than the write-up: two call sites, both in an
+example.
+
+Reading it again turned up more than the recorded diagnosis. The `false` branch
+was known; the **middle** branch was not:
+
+```rust
+} else if let Some(max) = self.cpuinfo_max_freq_khz {
+    // Assume turbo if current > 95% of max
+    self.current_freq_khz > (max * 95 / 100)
+```
+
+**95% of the maximum is not a test for turbo.** A part whose non-turbo ceiling
+*is* its `cpuinfo_max_freq` reads as boosting whenever it is busy; one boosting
+to 96% of max reads as boosting for a reason unrelated to its base clock. Turbo
+means *above base*, and without a base frequency there is no answer — so the
+whole function is now the one comparison that is true: `current > base`, and
+`None` when `base_frequency` is absent, which is every governor but
+intel_pstate.
+
+**A recorded item is worth re-reading before closing it.** The entry named the
+`false`; the guess sitting above it had been described only as "guesses from
+'>95% of max'" and not as wrong, and it is the branch that would fire on most
+Intel machines.
 
 ### A CPUID family of zero, published by the struct the ontology protects
 
@@ -1421,11 +1451,10 @@ two latent ones. The distinction matters and is easy to overstate:
 
 - **Latent, fixed:** `dma_engine` claimed memcpy support whenever the `cap` file
   was unreadable. Nothing calls it.
-- **Latent, deliberately not fixed:** `cpufreq::is_turbo` returns `bool` where it
-  means "cannot tell" — with no base frequency it guesses from ">95% of max", and
-  with neither base nor max it returns `false`, encoding unknown as "no turbo".
-  It has no callers, and the fix is `Option<bool>`, which is breaking. **This is
-  the pattern in *Queued for the next major version* recurring exactly as that
+- **Latent, now fixed:** `cpufreq::is_turbo` returned `bool` where it meant
+  "cannot tell". Closed above; `Option<bool>`, and the ">95% of max" branch is
+  gone rather than kept. **It was the pattern in *Queued for the next major
+  version* recurring exactly as that
   section predicted**, and it is the first entry for 7.0.0.
 
 `src/audio/mod.rs` was checked and is clean — the "placeholder" comment is in a
@@ -2030,12 +2059,10 @@ it uncovers are, and there are always more than expected. Item 1 turned up five.
    exists** — the `Option` is destroyed at construction, so nothing downstream
    can recover it.
 
-5. **`cpufreq::is_turbo` returns `bool` where it means "cannot tell".** With no
-   base frequency it guesses turbo from `current > 95% of max`; with neither base
-   nor max it returns `false`, so "unknown" and "turbo is off" are the same
-   answer. Wants `Option<bool>`, which is breaking. It has no callers today,
-   which is the only reason it was left — a `false` nobody reads misleads nobody,
-   and 6.0.0 had been tagged an hour earlier. Fix it before something calls it.
+5. ~~**`cpufreq::is_turbo` returns `bool` where it means "cannot tell".**~~
+   **Done.** `Option<bool>`, and the ">95% of max" guess removed with it — that
+   branch was the one this entry under-described, and the one that fires on most
+   Intel parts. See the entry near the top of this file.
 
 6. **Historical metrics for the agent surface.** `get_historical_data` and
    `compare_metrics` were advertised in the tool catalogue — full descriptions,
