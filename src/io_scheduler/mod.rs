@@ -86,16 +86,19 @@ pub struct BlockDeviceIo {
     pub scheduler: IoSchedulerType,
     /// Available schedulers.
     pub available_schedulers: Vec<IoSchedulerType>,
-    /// Whether this is a rotational (HDD) device.
-    pub rotational: bool,
-    /// Queue depth (nr_requests).
-    pub queue_depth: u32,
-    /// Logical block size.
-    pub logical_block_size: u32,
-    /// Physical block size.
-    pub physical_block_size: u32,
-    /// Whether device supports discard (TRIM).
-    pub discard_support: bool,
+    /// Whether this is a rotational (HDD) device. `None` when
+    /// `queue/rotational` was not readable — which is not the same as an SSD.
+    pub rotational: Option<bool>,
+    /// Queue depth (nr_requests). `None` when not readable.
+    pub queue_depth: Option<u32>,
+    /// Logical block size. `None` when not readable — never 512.
+    pub logical_block_size: Option<u32>,
+    /// Physical block size. `None` when not readable — never 512. A 4Kn drive
+    /// reports 4096 for both and an Advanced Format drive 512 over 4096, which
+    /// is the distinction these two fields exist to carry.
+    pub physical_block_size: Option<u32>,
+    /// Whether device supports discard (TRIM). `None` when not readable.
+    pub discard_support: Option<bool>,
     /// I/O statistics.
     pub stats: IoStats,
     /// Device size in bytes.
@@ -134,9 +137,11 @@ impl BlockDeviceIo {
         }
     }
 
-    /// Whether scheduler is optimal for device type.
-    pub fn scheduler_optimal(&self) -> bool {
-        if self.rotational {
+    /// Whether the scheduler is optimal for this device type, or `None` when
+    /// `rotational` was not read — the answer depends entirely on it, so there
+    /// is no verdict to give without it.
+    pub fn scheduler_optimal(&self) -> Option<bool> {
+        let optimal = if self.rotational? {
             // HDDs benefit from BFQ or mq-deadline
             matches!(
                 self.scheduler,
@@ -148,7 +153,8 @@ impl BlockDeviceIo {
                 self.scheduler,
                 IoSchedulerType::None | IoSchedulerType::MqDeadline | IoSchedulerType::Kyber
             )
-        }
+        };
+        Some(optimal)
     }
 }
 
@@ -233,21 +239,18 @@ impl IoSchedulerMonitor {
             let (scheduler, available) = Self::read_scheduler(&queue_path);
 
             // Rotational
-            let rotational = Self::read_sysfs_u32(&queue_path.join("rotational")).unwrap_or(0) == 1;
+            let rotational = Self::read_sysfs_u32(&queue_path.join("rotational")).map(|v| v == 1);
 
             // Queue depth
-            let queue_depth = Self::read_sysfs_u32(&queue_path.join("nr_requests")).unwrap_or(128);
+            let queue_depth = Self::read_sysfs_u32(&queue_path.join("nr_requests"));
 
             // Block sizes
-            let logical_block_size =
-                Self::read_sysfs_u32(&queue_path.join("logical_block_size")).unwrap_or(512);
-            let physical_block_size =
-                Self::read_sysfs_u32(&queue_path.join("physical_block_size")).unwrap_or(512);
+            let logical_block_size = Self::read_sysfs_u32(&queue_path.join("logical_block_size"));
+            let physical_block_size = Self::read_sysfs_u32(&queue_path.join("physical_block_size"));
 
             // Discard support
-            let discard_support = Self::read_sysfs_u32(&queue_path.join("discard_max_bytes"))
-                .map(|v| v > 0)
-                .unwrap_or(false);
+            let discard_support =
+                Self::read_sysfs_u32(&queue_path.join("discard_max_bytes")).map(|v| v > 0);
 
             // Stats
             let stats = Self::read_stats(&dev_path);
@@ -278,22 +281,24 @@ impl IoSchedulerMonitor {
         }
 
         let total = devices.len() as u32;
-        let non_optimal = devices.iter().filter(|d| !d.scheduler_optimal()).count() as u32;
+        // A device whose `rotational` was not read is counted neither optimal
+        // nor not: there is nothing to compare its scheduler against.
+        let non_optimal = devices
+            .iter()
+            .filter(|d| d.scheduler_optimal() == Some(false))
+            .count() as u32;
 
         let mut recommendations = Vec::new();
         for dev in &devices {
-            if !dev.scheduler_optimal() {
-                let suggested = if dev.rotational { "bfq" } else { "none" };
+            if dev.scheduler_optimal() == Some(false) {
+                let rotational = dev.rotational == Some(true);
+                let suggested = if rotational { "bfq" } else { "none" };
                 recommendations.push(format!(
                     "{}: using '{}' scheduler; '{}' may be better for {} devices",
                     dev.name,
                     dev.scheduler,
                     suggested,
-                    if dev.rotational {
-                        "rotational"
-                    } else {
-                        "SSD/NVMe"
-                    }
+                    if rotational { "rotational" } else { "SSD/NVMe" }
                 ));
             }
         }
@@ -445,11 +450,11 @@ mod tests {
             name: "nvme0n1".into(),
             scheduler: IoSchedulerType::None,
             available_schedulers: vec![IoSchedulerType::None, IoSchedulerType::MqDeadline],
-            rotational: false,
-            queue_depth: 256,
-            logical_block_size: 512,
-            physical_block_size: 4096,
-            discard_support: true,
+            rotational: Some(false),
+            queue_depth: Some(256),
+            logical_block_size: Some(512),
+            physical_block_size: Some(4096),
+            discard_support: Some(true),
             stats: IoStats {
                 reads_completed: 0,
                 reads_merged: 0,
@@ -467,7 +472,7 @@ mod tests {
             size_bytes: 1_000_000_000_000,
             model: "Samsung 990 Pro".into(),
         };
-        assert!(dev.scheduler_optimal());
+        assert_eq!(dev.scheduler_optimal(), Some(true));
     }
 
     #[test]
@@ -476,11 +481,11 @@ mod tests {
             name: "sda".into(),
             scheduler: IoSchedulerType::None,
             available_schedulers: vec![IoSchedulerType::None, IoSchedulerType::Bfq],
-            rotational: true,
-            queue_depth: 128,
-            logical_block_size: 512,
-            physical_block_size: 512,
-            discard_support: false,
+            rotational: Some(true),
+            queue_depth: Some(128),
+            logical_block_size: Some(512),
+            physical_block_size: Some(512),
+            discard_support: Some(false),
             stats: IoStats {
                 reads_completed: 0,
                 reads_merged: 0,
@@ -498,7 +503,7 @@ mod tests {
             size_bytes: 2_000_000_000_000,
             model: "WDC WD20EARS".into(),
         };
-        assert!(!dev.scheduler_optimal());
+        assert_eq!(dev.scheduler_optimal(), Some(false));
     }
 
     #[test]
@@ -526,5 +531,39 @@ mod tests {
         let json = serde_json::to_string(&stats).unwrap();
         assert!(json.contains("1000"));
         let _: IoStats = serde_json::from_str(&json).unwrap();
+    }
+    /// A device whose `queue/rotational` was not readable has no optimal
+    /// scheduler, because which scheduler is optimal is defined entirely by
+    /// that flag. Before 6.0.0 an unreadable flag read as `0` and the device
+    /// was judged as an SSD.
+    #[test]
+    fn an_unread_rotational_flag_yields_no_verdict() {
+        let dev = BlockDeviceIo {
+            name: "sdz".into(),
+            scheduler: IoSchedulerType::Bfq,
+            available_schedulers: vec![IoSchedulerType::Bfq],
+            rotational: None,
+            queue_depth: None,
+            logical_block_size: None,
+            physical_block_size: None,
+            discard_support: None,
+            stats: IoStats {
+                reads_completed: 0,
+                reads_merged: 0,
+                sectors_read: 0,
+                read_time_ms: 0,
+                writes_completed: 0,
+                writes_merged: 0,
+                sectors_written: 0,
+                write_time_ms: 0,
+                in_flight: 0,
+                io_time_ms: 0,
+                weighted_io_time_ms: 0,
+                discards_completed: 0,
+            },
+            size_bytes: 0,
+            model: String::new(),
+        };
+        assert_eq!(dev.scheduler_optimal(), None);
     }
 }

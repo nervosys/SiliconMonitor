@@ -1296,7 +1296,7 @@ fn resolve_cpu_cache(out: &mut Vec<Reading>) {
         push_opt(
             out,
             format!("{base}.line_size"),
-            (cache.line_size > 0).then(|| serde_json::json!(cache.line_size)),
+            cache.line_size.map(|b| serde_json::json!(b)),
             Some(Unit::Bytes),
             "the platform reported no line size for this cache",
         );

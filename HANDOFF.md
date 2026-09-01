@@ -75,10 +75,68 @@ Since the tag, on `master` and green on all three platforms:
 | `05468fb` | An unread thermal zone reported 0 C and "not throttling" |
 | `0e67be4` | A failed health check reporting no critical issues |
 | `aed27cd` | A `> 0` guard defeated by a sentinel of 64 |
-| `HEAD` | An `Option` field filled with a sentinel wrapped in `Some` |
+| `f5a54ee` | An `Option` field filled with a sentinel wrapped in `Some` |
+| `HEAD` | Cache and block geometry assumed rather than read |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### The doc comment said not to assume 64 bytes; all three readers did
+
+Continuing the non-zero-default sweep into `cpu_cache` and `io_scheduler`.
+
+The ontology entity for `cpu.cache.{n}.line_size` carries this description,
+written before this session:
+
+> Cache line size. The unit of false sharing, and the reason this is exposed
+> per instance rather than assumed to be 64 bytes.
+
+Every reader assumed exactly 64 bytes. Linux `.parse().unwrap_or(64)`, Windows
+`item["LineSize"].as_u64().unwrap_or(64)`, macOS a `read_sysctl` closure ending
+in `.unwrap_or(0)` whose result was cast and stored unchecked. 64 is x86's line
+size; Apple silicon's is 128 — so the one platform where the assumption is
+wrong was also the one that could publish a zero.
+
+And the resolver in front of it:
+
+```rust
+(cache.line_size > 0).then(|| serde_json::json!(cache.line_size)),
+```
+
+A `> 0` guard, and the value it guards against is 64. This is the third time
+this session the same pair has appeared: a guard written against a zero
+sentinel standing in front of a reader that defaults to something else.
+
+`associativity` was worse than defaulted. Its own doc comment reads
+`0 = fully associative` — zero is a **real, distinct value** — and the readers
+filled unread associativity with `unwrap_or(0)`, macOS with a literal
+`associativity: 0` on every cache of every Mac. The sentinel and the
+measurement were the same number, so no guard anywhere could have separated
+them.
+
+**Where a field documents its own sentinel as meaningful, the type has already
+run out of room.** Nothing short of `Option` can fix it, and the doc comment
+naming the collision is the tell.
+
+`io_scheduler::BlockDeviceIo` had the block-size defaults of `f5a54ee`
+(`unwrap_or(512)` twice) plus two consequential ones:
+
+```rust
+let rotational = Self::read_sysfs_u32(&queue_path.join("rotational")).unwrap_or(0) == 1;
+let discard_support = ... .map(|v| v > 0).unwrap_or(false);
+```
+
+An unreadable `rotational` read as **SSD**, and `scheduler_optimal()` is
+defined entirely by that flag — HDDs want BFQ, SSDs want none. So an unread
+flag did not merely lose information, it produced a scheduler recommendation
+for the wrong class of device, printed as advice. `scheduler_optimal()` now
+returns `Option<bool>` and a device with no flag is counted neither optimal nor
+not.
+
+Note the shape of `discard_support`: `.map(|v| v > 0)` builds the `Option`
+correctly and `.unwrap_or(false)` throws it away on the same line. **The
+absence was constructed and then discarded** — the mirror image of `f5a54ee`,
+where it was wrapped back up in `Some`.
 
 ### An `Option` filled with a sentinel wrapped in `Some`
 

@@ -13,8 +13,12 @@
 //!
 //! let monitor = CpuCacheMonitor::new().unwrap();
 //! for cache in monitor.caches() {
-//!     println!("{} ({}): {} KB, {}-way, {}-byte lines",
-//!         cache.level, cache.cache_type, cache.size_kb, cache.associativity, cache.line_size);
+//!     // Every geometry field is optional: a platform that does not publish
+//!     // one leaves it `None` rather than standing in x86's 64-byte line.
+//!     let line = cache.line_size.map_or("?".to_string(), |b| format!("{b}-byte"));
+//!     let ways = cache.associativity.map_or("?".to_string(), |w| format!("{w}-way"));
+//!     println!("{} ({}): {} KB, {ways}, {line} lines",
+//!         cache.level, cache.cache_type, cache.size_kb);
 //! }
 //! println!("Total L3: {} KB", monitor.total_l3_kb());
 //! ```
@@ -54,14 +58,16 @@ pub struct CpuCacheInfo {
     pub cache_type: CacheType,
     /// Cache size in KiB
     pub size_kb: u64,
-    /// Cache line size in bytes
-    pub line_size: u32,
-    /// Set associativity (0 = fully associative)
-    pub associativity: u32,
-    /// Number of sets
-    pub sets: u64,
-    /// Number of physical partitions
-    pub partitions: u32,
+    /// Cache line size in bytes. `None` when the platform did not report it —
+    /// never 64, which is x86's value and not Apple silicon's 128.
+    pub line_size: Option<u32>,
+    /// Set associativity. `None` when the platform did not report it; `Some(0)`
+    /// is the real, distinct value meaning fully associative.
+    pub associativity: Option<u32>,
+    /// Number of sets. `None` when the platform did not report it.
+    pub sets: Option<u64>,
+    /// Number of physical partitions. `None` when the platform did not report it.
+    pub partitions: Option<u32>,
     /// Which CPU cores share this cache (e.g., "0-3")
     pub shared_cpu_list: String,
     /// Cache index within the topology
@@ -225,21 +231,23 @@ impl CpuCacheMonitor {
                 let size_str = Self::read_trimmed(&base.join("size"));
                 let size_kb = Self::parse_size_kb(&size_str);
 
-                let line_size: u32 = Self::read_trimmed(&base.join("coherency_line_size"))
+                let line_size: Option<u32> = Self::read_trimmed(&base.join("coherency_line_size"))
                     .parse()
-                    .unwrap_or(64);
+                    .ok();
 
-                let associativity: u32 = Self::read_trimmed(&base.join("ways_of_associativity"))
-                    .parse()
-                    .unwrap_or(0);
+                let associativity: Option<u32> =
+                    Self::read_trimmed(&base.join("ways_of_associativity"))
+                        .parse()
+                        .ok();
 
-                let sets: u64 = Self::read_trimmed(&base.join("number_of_sets"))
+                let sets: Option<u64> = Self::read_trimmed(&base.join("number_of_sets"))
                     .parse()
-                    .unwrap_or(0);
+                    .ok();
 
-                let partitions: u32 = Self::read_trimmed(&base.join("physical_line_partition"))
-                    .parse()
-                    .unwrap_or(1);
+                let partitions: Option<u32> =
+                    Self::read_trimmed(&base.join("physical_line_partition"))
+                        .parse()
+                        .ok();
 
                 let shared_cpu_list = Self::read_trimmed(&base.join("shared_cpu_list"));
 
@@ -324,8 +332,8 @@ impl CpuCacheMonitor {
                         };
 
                         let size_kb = item["InstalledSize"].as_u64().unwrap_or(0);
-                        let line_size = item["LineSize"].as_u64().unwrap_or(64) as u32;
-                        let assoc = item["Associativity"].as_u64().unwrap_or(0) as u32;
+                        let line_size = item["LineSize"].as_u64().map(|v| v as u32);
+                        let assoc = item["Associativity"].as_u64().map(|v| v as u32);
 
                         self.topology.caches.push(CpuCacheInfo {
                             level,
@@ -333,8 +341,9 @@ impl CpuCacheMonitor {
                             size_kb,
                             line_size,
                             associativity: assoc,
-                            sets: 0,
-                            partitions: 1,
+                            // Win32_CacheMemory carries neither field.
+                            sets: None,
+                            partitions: None,
                             shared_cpu_list: String::new(),
                             index: i as u32,
                         });
@@ -346,75 +355,75 @@ impl CpuCacheMonitor {
 
     #[cfg(target_os = "macos")]
     fn refresh_macos(&mut self) {
-        let read_sysctl = |name: &str| -> u64 {
+        let read_sysctl = |name: &str| -> Option<u64> {
             std::process::Command::new("sysctl")
                 .args(["-n", name])
                 .output()
                 .ok()
                 .and_then(|o| String::from_utf8(o.stdout).ok())
                 .and_then(|s| s.trim().parse().ok())
-                .unwrap_or(0)
         };
+        let line_size = read_sysctl("hw.cachelinesize").map(|v| v as u32);
 
         // L1 data cache
-        let l1d = read_sysctl("hw.l1dcachesize");
-        if l1d > 0 {
+        if let Some(l1d) = read_sysctl("hw.l1dcachesize").filter(|v| *v > 0) {
             self.topology.caches.push(CpuCacheInfo {
                 level: CacheLevel::L1,
                 cache_type: CacheType::Data,
                 size_kb: l1d / 1024,
-                line_size: read_sysctl("hw.cachelinesize") as u32,
-                associativity: 0,
-                sets: 0,
-                partitions: 1,
+                line_size,
+                // sysctl publishes none of these three.
+                associativity: None,
+                sets: None,
+                partitions: None,
                 shared_cpu_list: String::new(),
                 index: 0,
             });
         }
 
         // L1 instruction cache
-        let l1i = read_sysctl("hw.l1icachesize");
-        if l1i > 0 {
+        if let Some(l1i) = read_sysctl("hw.l1icachesize").filter(|v| *v > 0) {
             self.topology.caches.push(CpuCacheInfo {
                 level: CacheLevel::L1,
                 cache_type: CacheType::Instruction,
                 size_kb: l1i / 1024,
-                line_size: read_sysctl("hw.cachelinesize") as u32,
-                associativity: 0,
-                sets: 0,
-                partitions: 1,
+                line_size,
+                // sysctl publishes none of these three.
+                associativity: None,
+                sets: None,
+                partitions: None,
                 shared_cpu_list: String::new(),
                 index: 1,
             });
         }
 
         // L2 cache
-        let l2 = read_sysctl("hw.l2cachesize");
-        if l2 > 0 {
+        if let Some(l2) = read_sysctl("hw.l2cachesize").filter(|v| *v > 0) {
             self.topology.caches.push(CpuCacheInfo {
                 level: CacheLevel::L2,
                 cache_type: CacheType::Unified,
                 size_kb: l2 / 1024,
-                line_size: read_sysctl("hw.cachelinesize") as u32,
-                associativity: 0,
-                sets: 0,
-                partitions: 1,
+                line_size,
+                // sysctl publishes none of these three.
+                associativity: None,
+                sets: None,
+                partitions: None,
                 shared_cpu_list: String::new(),
                 index: 2,
             });
         }
 
         // L3 cache
-        let l3 = read_sysctl("hw.l3cachesize");
-        if l3 > 0 {
+        if let Some(l3) = read_sysctl("hw.l3cachesize").filter(|v| *v > 0) {
             self.topology.caches.push(CpuCacheInfo {
                 level: CacheLevel::L3,
                 cache_type: CacheType::Unified,
                 size_kb: l3 / 1024,
-                line_size: read_sysctl("hw.cachelinesize") as u32,
-                associativity: 0,
-                sets: 0,
-                partitions: 1,
+                line_size,
+                // sysctl publishes none of these three.
+                associativity: None,
+                sets: None,
+                partitions: None,
                 shared_cpu_list: String::new(),
                 index: 3,
             });
@@ -487,10 +496,10 @@ mod tests {
             level: CacheLevel::L2,
             cache_type: CacheType::Unified,
             size_kb: 256,
-            line_size: 64,
-            associativity: 8,
-            sets: 512,
-            partitions: 1,
+            line_size: Some(64),
+            associativity: Some(8),
+            sets: Some(512),
+            partitions: Some(1),
             shared_cpu_list: "0-1".into(),
             index: 0,
         };
@@ -510,5 +519,32 @@ mod tests {
         };
         let json = serde_json::to_string(&topo).unwrap();
         assert!(json.contains("8192"));
+    }
+    /// The ontology entity for `cpu.cache.{n}.line_size` says the field exists
+    /// "rather than assumed to be 64 bytes". Until 6.0.0 all three readers
+    /// assumed exactly that: Linux `unwrap_or(64)`, Windows `unwrap_or(64)`,
+    /// macOS a sysctl that returned 0 on failure. 64 is x86's line; Apple
+    /// silicon's is 128.
+    #[test]
+    fn cache_geometry_is_absent_rather_than_assumed() {
+        let unread = CpuCacheInfo {
+            level: CacheLevel::L1,
+            cache_type: CacheType::Data,
+            size_kb: 64,
+            line_size: None,
+            associativity: None,
+            sets: None,
+            partitions: None,
+            shared_cpu_list: String::new(),
+            index: 0,
+        };
+        assert!(unread.line_size.is_none());
+        // Zero associativity is a real value -- fully associative -- so it can
+        // never double as the marker for "not read".
+        let fully = CpuCacheInfo {
+            associativity: Some(0),
+            ..unread.clone()
+        };
+        assert_ne!(fully.associativity, unread.associativity);
     }
 }
