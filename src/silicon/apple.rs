@@ -401,8 +401,11 @@ impl SiliconMonitor for AppleSiliconMonitor {
                             "Storage".to_string()
                         },
                         name,
-                        bandwidth_mbps: mbps,
-                        max_bandwidth_mbps: 7000.0, // Apple Silicon NVMe max ~7 GB/s
+                        bandwidth_mbps: Some(mbps),
+                        // 7000 was the spec figure for Apple Silicon's fastest
+                        // NVMe, applied to whatever this disk is. Nothing about
+                        // the actual link is read here.
+                        max_bandwidth_mbps: None,
                         power_watts: None,
                     });
                 }
@@ -424,8 +427,12 @@ impl SiliconMonitor for AppleSiliconMonitor {
                     controllers.push(IoController {
                         controller_type: "Thunderbolt".to_string(),
                         name: format!("Thunderbolt Port {}", tb_count),
-                        bandwidth_mbps: 5000.0, // TB4 = 40 Gbps
-                        max_bandwidth_mbps: 5000.0,
+                        // The *current* bandwidth was set to the theoretical
+                        // maximum, so an idle Thunderbolt port reported 5000
+                        // MB/s of traffic — a fabricated saturated bus, not a
+                        // sentinel zero. Nothing here reads either figure.
+                        bandwidth_mbps: None,
+                        max_bandwidth_mbps: None,
                         power_watts: None,
                     });
                 }

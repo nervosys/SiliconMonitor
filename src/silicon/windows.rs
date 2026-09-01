@@ -465,11 +465,27 @@ impl SiliconMonitor for WindowsSiliconMonitor {
                                 continue;
                             }
 
-                            let read_mbps = disk.disk_read_bytes_per_sec.unwrap_or(0) as f64 / (1024.0 * 1024.0);
-                            let write_mbps = disk.disk_write_bytes_per_sec.unwrap_or(0) as f64 / (1024.0 * 1024.0);
-                            let bandwidth = read_mbps + write_mbps;
+                            // A counter that reported nothing is not a disk
+                            // doing no I/O; sum only what was reported.
+                            let reported = [
+                                disk.disk_read_bytes_per_sec,
+                                disk.disk_write_bytes_per_sec,
+                            ];
+                            let bandwidth = if reported.iter().all(Option::is_none) {
+                                None
+                            } else {
+                                Some(
+                                    reported.iter().flatten().sum::<u64>() as f64
+                                        / (1024.0 * 1024.0),
+                                )
+                            };
 
-                            // Determine controller type from disk name
+                            // These are `Win32_PerfFormattedData_PerfDisk_
+                            // PhysicalDisk` instances, whose Name is "0 C:" —
+                            // a disk index and drive letters, never a model
+                            // string. So the two branches below cannot match
+                            // and every entry has always been "Storage", which
+                            // is at least true of all of them.
                             let controller_type = if name.contains("NVMe") {
                                 "NVMe"
                             } else if name.contains("SSD") {
@@ -482,7 +498,10 @@ impl SiliconMonitor for WindowsSiliconMonitor {
                                 controller_type,
                                 name: name.clone(),
                                 bandwidth_mbps: bandwidth,
-                                max_bandwidth_mbps: 3500.0, // Assume PCIe 3.0 NVMe max
+                                // 3500 was assumed for every disk regardless of
+                                // bus — wrong by about six times for a SATA SSD.
+                                // Nothing about this disk's link is read.
+                                max_bandwidth_mbps: None,
                                 power_watts: None,
                             });
                         }

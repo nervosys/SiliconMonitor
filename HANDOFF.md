@@ -66,9 +66,50 @@ Since the tag, on `master` and green on all three platforms:
 | `9bc2524` | NPU core counts guessed from a vendor guessed from a name |
 | `b2e84af` | A doc comment that named the danger, ignored by the caller two lines away |
 | `8f8680a` | One system-wide number, copied into 24 cores as though each were measured |
+| `HEAD` | A link's capacity published as the traffic on it |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### A link's capacity, published as the traffic on it
+
+`silicon`'s `IoController` has `bandwidth_mbps` — documented "current bandwidth"
+— and `max_bandwidth_mbps`. Two platforms filled the first with the second.
+
+On Linux the NVMe path computed `cur_speed * cur_width * 1000 * 0.98462`, which
+is the capacity of the **negotiated PCIe link**, and assigned it to
+`bandwidth_mbps`. An idle NVMe drive reported about 3900 MB/s of I/O. On macOS
+the Thunderbolt row was blunter still — `bandwidth_mbps: 5000.0, // TB4 = 40
+Gbps` — so an idle port reported a saturated bus. **Neither is a sentinel zero;
+both are fabricated *high* values**, which is worse, because a reader concludes
+the device is busy rather than idle.
+
+The ceilings were mostly invented too. Only the Linux NVMe path derived one from
+the device's own link. Everything else assumed the fastest variant of its class
+and published it as *this* device's maximum: 3500 for every disk on Windows
+regardless of bus, 2500 for any USB controller (USB 3.2 Gen 2x2, when a USB 3.0
+controller is 500), 600 per SATA *port* on a row that is a controller, 7000 and
+5000 on Apple. A SATA SSD given a 3500 MB/s ceiling is wrong by about six times.
+
+Both fields are `Option<f64>`. The negotiated-link figure survives as the
+*maximum*, which is what it is and a genuinely useful one — a device that
+supports PCIe 4.0 x4 but trained at 3.0 x2 cannot exceed what it trained at.
+Three Linux rows carried `bandwidth_mbps: 0.0` beside comments saying the figure
+"would need USB traffic monitoring"; those are `None`.
+
+**Two things worth carrying:**
+
+- **`io_info` has exactly one consumer in the tree, and it is an example.** Like
+  `drm_monitor`, which is where the fifth `AdapterRAM` reader hid, this is
+  public API that running the binary never reaches. Both defect clusters found
+  this session in code with no internal callers were found by *reading the
+  module*, not by running anything.
+- The Windows rows are `Win32_PerfFormattedData_PerfDisk_PhysicalDisk`
+  instances, whose `Name` is `"0 C:"` — a disk index and drive letters. The
+  `name.contains("NVMe")` and `contains("SSD")` branches beside them **cannot
+  ever match**, so every row has always been "Storage". Left as-is, because
+  "Storage" is true of all of them, but the dead branches are now marked as
+  dead rather than looking like working classification.
 
 ### One number, copied into twenty-four cores
 

@@ -148,9 +148,16 @@ fn report<M: SiliconMonitor>(monitor: &M) -> Result<(), Box<dyn std::error::Erro
     match monitor.io_info() {
         Ok(controllers) if !controllers.is_empty() => {
             for ctrl in &controllers {
+                let rate = ctrl.bandwidth_mbps.map_or_else(
+                    || "not monitored".to_string(),
+                    |mbps| format!("{mbps:.2} MB/s"),
+                );
+                let ceiling = ctrl
+                    .max_bandwidth_mbps
+                    .map_or_else(String::new, |m| format!(" of {m:.0} MB/s"));
                 println!(
-                    "  {} ({}): {:.2} MB/s",
-                    ctrl.name, ctrl.controller_type, ctrl.bandwidth_mbps
+                    "  {} ({}): {}{}",
+                    ctrl.name, ctrl.controller_type, rate, ceiling
                 );
             }
         }

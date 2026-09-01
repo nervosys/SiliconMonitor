@@ -623,24 +623,19 @@ impl SiliconMonitor for LinuxSiliconMonitor {
                             .and_then(|s| s.trim().parse::<u32>().ok())
                             .unwrap_or(1);
 
-                        // Calculate bandwidth (GT/s * width * encoding efficiency)
-                        let bandwidth_mbps = cur_speed * cur_width as f64 * 1000.0 * 0.98462; // PCIe 3.0+ encoding
-
-                        let max_speed = std::fs::read_to_string(path.join("max_link_speed"))
-                            .ok()
-                            .and_then(|s| {
-                                s.split_whitespace()
-                                    .next()
-                                    .and_then(|n| n.parse::<f64>().ok())
-                            })
-                            .unwrap_or(cur_speed);
-
-                        let max_width = std::fs::read_to_string(path.join("max_link_width"))
-                            .ok()
-                            .and_then(|s| s.trim().parse::<u32>().ok())
-                            .unwrap_or(cur_width);
-
-                        let max_bandwidth_mbps = max_speed * max_width as f64 * 1000.0 * 0.98462;
+                        // `cur_speed * cur_width * encoding` is the capacity of
+                        // the *negotiated link*, not the traffic on it. It was
+                        // assigned to `bandwidth_mbps`, documented as "current
+                        // bandwidth", so an idle NVMe drive reported about 3900
+                        // MB/s of I/O — the same defect as the Apple
+                        // Thunderbolt row, which set current to the theoretical
+                        // maximum.
+                        //
+                        // It is a real and useful ceiling, so it becomes the
+                        // maximum. The negotiated link is the honest one to
+                        // use: a device that supports PCIe 4.0 x4 but trained
+                        // at 3.0 x2 cannot exceed what it trained at.
+                        let max_bandwidth_mbps = cur_speed * cur_width as f64 * 1000.0 * 0.98462;
 
                         // Try to read device name
                         let name = std::fs::read_to_string(path.join("device"))
@@ -651,8 +646,9 @@ impl SiliconMonitor for LinuxSiliconMonitor {
                         controllers.push(IoController {
                             controller_type: "NVMe".to_string(),
                             name,
-                            bandwidth_mbps,
-                            max_bandwidth_mbps,
+                            // No traffic counter is read on this path.
+                            bandwidth_mbps: None,
+                            max_bandwidth_mbps: Some(max_bandwidth_mbps),
                             power_watts: None,
                         });
                     }
@@ -660,14 +656,14 @@ impl SiliconMonitor for LinuxSiliconMonitor {
                     else if class.starts_with("0x0c03") {
                         let name = format!("USB Controller ({})", device_name);
 
-                        // USB 3.2 Gen 2x2 = 20 Gbps = 2500 MB/s
-                        let max_bandwidth_mbps = 2500.0;
-
                         controllers.push(IoController {
                             controller_type: "USB".to_string(),
                             name,
-                            bandwidth_mbps: 0.0, // Would need USB traffic monitoring
-                            max_bandwidth_mbps,
+                            // Not monitored, and 2500 was USB 3.2 Gen 2x2 — the
+                            // fastest variant — applied to any xHCI controller.
+                            // A USB 3.0 controller is 500 MB/s.
+                            bandwidth_mbps: None,
+                            max_bandwidth_mbps: None,
                             power_watts: None,
                         });
                     }
@@ -675,14 +671,13 @@ impl SiliconMonitor for LinuxSiliconMonitor {
                     else if class.starts_with("0x0c0a") {
                         let name = format!("Thunderbolt Controller ({})", device_name);
 
-                        // Thunderbolt 4 = 40 Gbps = 5000 MB/s
-                        let max_bandwidth_mbps = 5000.0;
-
                         controllers.push(IoController {
                             controller_type: "Thunderbolt".to_string(),
                             name,
-                            bandwidth_mbps: 0.0,
-                            max_bandwidth_mbps,
+                            // Neither figure is read; 5000 assumed TB4, and the
+                            // class code does not distinguish TB3 from TB4.
+                            bandwidth_mbps: None,
+                            max_bandwidth_mbps: None,
                             power_watts: None,
                         });
                     }
@@ -690,14 +685,13 @@ impl SiliconMonitor for LinuxSiliconMonitor {
                     else if class.starts_with("0x0106") {
                         let name = format!("SATA Controller ({})", device_name);
 
-                        // SATA 3.0 = 6 Gbps = 600 MB/s per port
-                        let max_bandwidth_mbps = 600.0;
-
                         controllers.push(IoController {
                             controller_type: "SATA".to_string(),
                             name,
-                            bandwidth_mbps: 0.0,
-                            max_bandwidth_mbps,
+                            // Not monitored. 600 is SATA 3.0 per *port*, and
+                            // this row is a controller, which has several.
+                            bandwidth_mbps: None,
+                            max_bandwidth_mbps: None,
                             power_watts: None,
                         });
                     }

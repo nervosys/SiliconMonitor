@@ -134,10 +134,24 @@ pub struct IoController {
     pub controller_type: String,
     /// Controller name
     pub name: String,
-    /// Current bandwidth in MB/s
-    pub bandwidth_mbps: f64,
-    /// Maximum bandwidth in MB/s
-    pub max_bandwidth_mbps: f64,
+    /// Current bandwidth in MB/s, or `None` where no traffic counter is read.
+    ///
+    /// The Linux USB, Thunderbolt and SATA paths each wrote `0.0` beside a
+    /// comment saying the figure "would need USB traffic monitoring" — three
+    /// admissions of an unread value published as an idle bus.
+    pub bandwidth_mbps: Option<f64>,
+    /// Theoretical maximum bandwidth in MB/s, where it was derived from the
+    /// device's actual link.
+    ///
+    /// Only the Linux NVMe path derives one, from `max_link_speed` and
+    /// `max_link_width` in sysfs. Everything else assumed the fastest variant
+    /// of its class and published that as this device's ceiling: 3500 for every
+    /// disk on Windows regardless of bus, 2500 for any USB controller (USB 3.2
+    /// Gen 2x2, when a USB 3.0 controller is 500), 7000 and 5000 on Apple. A
+    /// SATA SSD given a 3500 MB/s ceiling is wrong by about six times.
+    ///
+    /// `None` where nothing about the actual link was read.
+    pub max_bandwidth_mbps: Option<f64>,
     /// Power consumption in watts (if available)
     pub power_watts: Option<f32>,
 }
