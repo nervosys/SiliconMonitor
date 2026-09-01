@@ -29,7 +29,16 @@ pub enum UsbDeviceClass {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UsbDevice {
+    /// The bus this device is attached to.
     pub bus_number: u8,
+    /// The port on that bus.
+    ///
+    /// This is the second half of the id segment the ontology builds for a USB
+    /// device, and both the resolver and the entity say why it is bus and port
+    /// rather than an index: "an index shifts when an unrelated device is
+    /// unplugged, which would silently repoint every id". See the open-work
+    /// item in `HANDOFF.md` -- that claim does not hold on every platform yet,
+    /// and two of the three readers still have an enumeration counter in here.
     pub port_number: u8,
     /// USB vendor id, or `None` for an entry that has none — a root hub's
     /// PnP id is `USB\ROOT_HUB30\...` with no `VID_` at all. This was `u16`
@@ -215,7 +224,11 @@ impl UsbMonitor {
                     device_idx += 1;
                     self.devices.push(UsbDevice {
                         bus_number,
-                        port_number: device_idx,
+                        // `port_number`, parsed from the `Location ID` above --
+                        // not `device_idx`, which is how many devices the
+                        // parser has seen. Both were in scope; the real one was
+                        // computed and then overwritten by the counter.
+                        port_number,
                         vendor_id: current_vendor_id,
                         product_id: current_product_id,
                         manufacturer: current_manufacturer.take(),
@@ -297,7 +310,8 @@ impl UsbMonitor {
             device_idx += 1;
             self.devices.push(UsbDevice {
                 bus_number,
-                port_number: device_idx,
+                // See the flush above: the parsed port, not the counter.
+                port_number,
                 vendor_id: current_vendor_id,
                 product_id: current_product_id,
                 manufacturer: current_manufacturer.take(),

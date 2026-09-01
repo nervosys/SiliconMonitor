@@ -1047,6 +1047,14 @@ fn resolve_usb(out: &mut Vec<Reading>) {
     for dev in monitor.devices() {
         // Bus and port rather than enumeration order: an index shifts when an
         // unrelated device is unplugged, which would silently repoint every id.
+        //
+        // That is the intent, and the Windows reader does not meet it -- it
+        // fills `bus_number: 0, port_number: idx`, so every id here is
+        // `usb.0_<index>`, which is the thing the sentence above says it is
+        // not. The macOS reader parsed a real port and then overwrote it with a
+        // counter until 6.0.0. Neither is fixed by changing this line; see the
+        // USB identity item in `HANDOFF.md` for why it needs an id-format
+        // decision rather than a one-line patch.
         let base = format!("usb.{}_{}", dev.bus_number, dev.port_number);
         push_opt(
             out,

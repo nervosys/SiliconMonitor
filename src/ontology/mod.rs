@@ -2097,8 +2097,14 @@ impl Ontology {
             Some(U::Text),
             P::Measured,
             true,
-            "Product string as the device reports it. The id segment is bus and \
-             port, which survives re-enumeration where an index does not.",
+            concat!(
+                "Product string as the device reports it. The id segment is ",
+                "bus and port, which is intended to survive re-enumeration ",
+                "where an index does not -- but only the Linux reader fills ",
+                "it that way today. Windows reports bus 0 and the ",
+                "enumeration index, so its ids do shift when a device is ",
+                "unplugged. See the USB identity item in HANDOFF.md."
+            ),
         ));
         add(Entity::new(
             "usb.{addr}.manufacturer",
