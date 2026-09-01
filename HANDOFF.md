@@ -74,9 +74,46 @@ Since the tag, on `master` and green on all three platforms:
 | `dd2f56a` | Secure Boot read from a file's existence, not its value |
 | `05468fb` | An unread thermal zone reported 0 C and "not throttling" |
 | `0e67be4` | A failed health check reporting no critical issues |
+| `HEAD` | A `> 0` guard defeated by a sentinel of 64 |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### A guard that named the danger, defeated by a sentinel of 64
+
+The sharpest version of the compensating-consumer pattern, and the one that
+should change how the earlier ones are read.
+
+`DimmInfo::is_ecc()` is `total_width_bits > data_width_bits` — ECC is 72 bits
+carrying 64. Both widths defaulted: Linux and Windows set `data_width` to **64**
+and `total_width` to whatever `data_width` came out as, and macOS hardcoded both
+to 64. Equal widths mean no ECC, so **a machine with ECC memory reported that it
+had none** whenever the widths were not read, and always on macOS.
+
+The ontology resolver had already spotted this, and its comment is exactly
+right:
+
+> ECC is the widths differing, so it can only be stated when both are known.
+> **Two zeros are equal, and would otherwise report "no ECC".**
+
+And the guard it wrote was `if dimm.total_width_bits > 0 && dimm.data_width_bits > 0`.
+
+**The sentinel was not zero. It was 64.** Both defaults sail through a `> 0`
+test, so the resolver published `ecc: false` as a `derived` reading for every
+DIMM whose widths it had not read — while carrying a comment explaining why it
+must not.
+
+**A `> 0` guard defends against a zero sentinel and nothing else.** Every
+compensating consumer found this session — `observability/api.rs`'s
+`total_gpu_memory_bytes > 0`, the TUI's two, `resolve.rs`'s `family > 0` — is
+sound only because those particular sentinels happened to be zero. A default of
+64, or 3500, or 4400, or 1200 walks straight through. That is the argument for
+fixing sentinels at the source rather than guarding them downstream: the guard
+has to know which value was invented, and it usually assumes the most obvious
+one.
+
+`profile/memory.rs` had no guard at all and published `ECC = false` as a
+setting row.
 
 ### Three helpers, one module, and only one of them right
 

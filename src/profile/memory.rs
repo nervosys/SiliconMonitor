@@ -129,21 +129,25 @@ impl ProfileProvider for MemoryProfileProvider {
                 "Ranks",
                 SettingValue::Uint(dimm.ranks as u64),
             ));
-            g.push(Setting::info(
-                "data_width_bits",
-                "Data Width",
-                SettingValue::Uint(dimm.data_width_bits as u64),
-            ));
-            g.push(Setting::info(
-                "total_width_bits",
-                "Total Width",
-                SettingValue::Uint(dimm.total_width_bits as u64),
-            ));
-            g.push(Setting::info(
-                "ecc",
-                "ECC",
-                SettingValue::Bool(dimm.is_ecc()),
-            ));
+            if let Some(w) = dimm.data_width_bits {
+                g.push(Setting::info(
+                    "data_width_bits",
+                    "Data Width",
+                    SettingValue::Uint(w as u64),
+                ));
+            }
+            if let Some(w) = dimm.total_width_bits {
+                g.push(Setting::info(
+                    "total_width_bits",
+                    "Total Width",
+                    SettingValue::Uint(w as u64),
+                ));
+            }
+            // No row rather than a false one: `is_ecc` is unanswerable when
+            // either width was not read.
+            if let Some(ecc) = dimm.is_ecc() {
+                g.push(Setting::info("ecc", "ECC", SettingValue::Bool(ecc)));
+            }
             if !dimm.serial_number.is_empty() {
                 g.push(Setting::info(
                     "serial_number",

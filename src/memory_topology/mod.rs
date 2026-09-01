@@ -106,9 +106,11 @@ pub struct DimmInfo {
     /// Form factor.
     pub form_factor: FormFactor,
     /// Data width in bits (typically 64).
-    pub data_width_bits: u32,
+    /// Data width in bits, where it was read. See [`Self::is_ecc`].
+    pub data_width_bits: Option<u32>,
     /// Total width in bits (72 = ECC, 64 = non-ECC).
-    pub total_width_bits: u32,
+    /// Total width in bits, where it was read. See [`Self::is_ecc`].
+    pub total_width_bits: Option<u32>,
     /// Number of ranks.
     pub ranks: u32,
     /// Manufacturer name.
@@ -129,9 +131,16 @@ impl DimmInfo {
         self.capacity_bytes as f64 / (1024.0 * 1024.0 * 1024.0)
     }
 
-    /// Whether this DIMM has ECC.
-    pub fn is_ecc(&self) -> bool {
-        self.total_width_bits > self.data_width_bits
+    /// Whether this DIMM has ECC, or `None` when either width is unknown.
+    ///
+    /// ECC is inferred from the total width exceeding the data width — 72 bits
+    /// carrying 64. Both widths defaulted: Windows and Linux set `data_width`
+    /// to 64 and `total_width` to whatever `data_width` came out as, and macOS
+    /// hardcoded both to 64. Equal widths mean no ECC, so **a machine with ECC
+    /// memory reported that it had none** whenever the widths were not read,
+    /// and always on macOS.
+    pub fn is_ecc(&self) -> Option<bool> {
+        Some(self.total_width_bits? > self.data_width_bits?)
     }
 }
 
@@ -230,8 +239,9 @@ impl MemoryTopologyMonitor {
         let matched_capacities =
             capacities.windows(2).all(|w| w[0] == w[1]) || capacities.len() <= 1;
 
-        // ECC detection
-        let ecc_active = populated.iter().any(|d| d.is_ecc());
+        // ECC detection. `any` over `Option` must ask for `Some(true)`: a DIMM
+        // whose widths were not read is not a DIMM known to lack ECC.
+        let ecc_active = populated.iter().any(|d| d.is_ecc() == Some(true));
 
         // Channel inference from locator naming patterns
         let channel_count = Self::infer_channels(&populated);
@@ -379,8 +389,9 @@ impl MemoryTopologyMonitor {
             ));
         }
 
-        // ECC bonus for workstations/servers
-        if populated.iter().any(|d| d.is_ecc()) {
+        // ECC bonus for workstations/servers. Only credited where ECC was
+        // actually observed.
+        if populated.iter().any(|d| d.is_ecc() == Some(true)) {
             score += 5;
         }
 
@@ -517,17 +528,18 @@ impl MemoryTopologyMonitor {
         let ff_str = fields.get("Form Factor").cloned().unwrap_or_default();
         let form_factor = Self::parse_form_factor(&ff_str);
 
+        // 64 is the common data width and not this DIMM's, and defaulting the
+        // total width to the data width asserts "no ECC" for a field that was
+        // not read.
         let data_width = fields
             .get("Data Width")
             .and_then(|s| s.split_whitespace().next())
-            .and_then(|s| s.parse::<u32>().ok())
-            .unwrap_or(64);
+            .and_then(|s| s.parse::<u32>().ok());
 
         let total_width = fields
             .get("Total Width")
             .and_then(|s| s.split_whitespace().next())
-            .and_then(|s| s.parse::<u32>().ok())
-            .unwrap_or(data_width);
+            .and_then(|s| s.parse::<u32>().ok());
 
         let rank = fields
             .get("Rank")
@@ -666,8 +678,8 @@ impl MemoryTopologyMonitor {
                 let conf_speed = item["ConfiguredClockSpeed"]
                     .as_u64()
                     .unwrap_or(speed as u64) as u32;
-                let data_width = item["DataWidth"].as_u64().unwrap_or(64) as u32;
-                let total_width = item["TotalWidth"].as_u64().unwrap_or(data_width as u64) as u32;
+                let data_width = item["DataWidth"].as_u64().map(|w| w as u32);
+                let total_width = item["TotalWidth"].as_u64().map(|w| w as u32);
 
                 let smbios_type = item["SMBIOSMemoryType"].as_u64().unwrap_or(0);
                 let memory_type = match smbios_type {
@@ -742,8 +754,10 @@ impl MemoryTopologyMonitor {
                             configured_speed_mts: speed_mts,
                             memory_type: Self::parse_memory_type(type_str),
                             form_factor: FormFactor::Unknown,
-                            data_width_bits: 64,
-                            total_width_bits: 64,
+                            // system_profiler reports neither width, and
+                            // 64/64 asserted "no ECC" on every Mac.
+                            data_width_bits: None,
+                            total_width_bits: None,
                             ranks: 1,
                             manufacturer: slot["dimm_manufacturer"]
                                 .as_str()
@@ -814,8 +828,8 @@ mod tests {
             configured_speed_mts: 3200,
             memory_type: MemoryType::DDR4,
             form_factor: FormFactor::DIMM,
-            data_width_bits: 64,
-            total_width_bits: 64,
+            data_width_bits: Some(64),
+            total_width_bits: Some(64),
             ranks: 2,
             manufacturer: "Samsung".into(),
             part_number: "M378A2G43AB3-CWE".into(),
@@ -824,7 +838,48 @@ mod tests {
             voltage: 1.2,
         };
         assert!((dimm.capacity_gib() - 16.0).abs() < 0.01);
-        assert!(!dimm.is_ecc());
+        assert_eq!(dimm.is_ecc(), Some(false));
+    }
+
+    /// A DIMM whose widths were not read has no ECC answer.
+    ///
+    /// ECC is inferred from the total width exceeding the data width. The
+    /// readers defaulted `data_width` to 64 and `total_width` to whatever
+    /// `data_width` became — and macOS hardcoded both to 64 — so equal widths
+    /// reported **no ECC** for any DIMM nothing had measured.
+    ///
+    /// The ontology guarded this with `> 0`, under a comment that named the
+    /// danger exactly ("Two zeros are equal, and would otherwise report 'no
+    /// ECC'"), and the guard never fired because the sentinel was 64.
+    #[test]
+    fn unread_widths_give_no_ecc_answer() {
+        let mut dimm = DimmInfo {
+            locator: "DIMM_A1".into(),
+            bank: String::new(),
+            capacity_bytes: 0,
+            speed_mts: 0,
+            configured_speed_mts: 0,
+            memory_type: MemoryType::Unknown,
+            form_factor: FormFactor::Unknown,
+            data_width_bits: None,
+            total_width_bits: None,
+            ranks: 1,
+            manufacturer: String::new(),
+            part_number: String::new(),
+            serial_number: String::new(),
+            populated: true,
+            voltage: 0.0,
+        };
+        assert_eq!(dimm.is_ecc(), None, "neither width read");
+
+        dimm.data_width_bits = Some(64);
+        assert_eq!(dimm.is_ecc(), None, "only one width read");
+
+        dimm.total_width_bits = Some(72);
+        assert_eq!(dimm.is_ecc(), Some(true), "72 carrying 64 is ECC");
+
+        dimm.total_width_bits = Some(64);
+        assert_eq!(dimm.is_ecc(), Some(false), "equal widths, both read");
     }
 
     #[test]
@@ -837,8 +892,8 @@ mod tests {
             configured_speed_mts: 3200,
             memory_type: MemoryType::DDR4,
             form_factor: FormFactor::RDIMM,
-            data_width_bits: 64,
-            total_width_bits: 72,
+            data_width_bits: Some(64),
+            total_width_bits: Some(72),
             ranks: 2,
             manufacturer: "SK Hynix".into(),
             part_number: "".into(),
@@ -846,7 +901,7 @@ mod tests {
             populated: true,
             voltage: 1.2,
         };
-        assert!(dimm.is_ecc());
+        assert_eq!(dimm.is_ecc(), Some(true));
     }
 
     #[test]
@@ -887,8 +942,8 @@ mod tests {
                 configured_speed_mts: 3200,
                 memory_type: MemoryType::DDR4,
                 form_factor: FormFactor::DIMM,
-                data_width_bits: 64,
-                total_width_bits: 64,
+                data_width_bits: Some(64),
+                total_width_bits: Some(64),
                 ranks: 1,
                 manufacturer: "Samsung".into(),
                 part_number: "".into(),
@@ -904,8 +959,8 @@ mod tests {
                 configured_speed_mts: 3200,
                 memory_type: MemoryType::DDR4,
                 form_factor: FormFactor::DIMM,
-                data_width_bits: 64,
-                total_width_bits: 64,
+                data_width_bits: Some(64),
+                total_width_bits: Some(64),
                 ranks: 1,
                 manufacturer: "Samsung".into(),
                 part_number: "".into(),

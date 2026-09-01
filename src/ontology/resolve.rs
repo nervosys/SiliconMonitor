@@ -1187,23 +1187,35 @@ fn resolve_memory_dimms(out: &mut Vec<Reading>) {
         push_spec_opt(
             out,
             format!("{base}.data_width"),
-            (dimm.data_width_bits > 0).then(|| serde_json::json!(dimm.data_width_bits)),
+            dimm.data_width_bits
+                .filter(|w| *w > 0)
+                .map(|w| serde_json::json!(w)),
             Some(Unit::Count),
             "SMBIOS reported no data width",
         );
         push_spec_opt(
             out,
             format!("{base}.total_width"),
-            (dimm.total_width_bits > 0).then(|| serde_json::json!(dimm.total_width_bits)),
+            dimm.total_width_bits
+                .filter(|w| *w > 0)
+                .map(|w| serde_json::json!(w)),
             Some(Unit::Count),
             "SMBIOS reported no total width",
         );
         // ECC is the widths differing, so it can only be stated when both are
         // known. Two zeros are equal, and would otherwise report "no ECC".
-        if dimm.total_width_bits > 0 && dimm.data_width_bits > 0 {
+        //
+        // That guard was right about the danger and wrong about the sentinel:
+        // the readers defaulted `data_width` to **64** and `total_width` to
+        // whatever `data_width` became, so both passed `> 0` and this published
+        // `ecc: false` as `derived` for any DIMM whose widths were not read.
+        // A `> 0` guard only defends against a zero; a plausible default walks
+        // through it. The fields are `Option` now and the question is asked
+        // directly.
+        if let Some(ecc) = dimm.is_ecc() {
             out.push(Reading::derived(
                 format!("{base}.ecc"),
-                serde_json::json!(dimm.total_width_bits > dimm.data_width_bits),
+                serde_json::json!(ecc),
                 None,
             ));
         } else {
