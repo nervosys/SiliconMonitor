@@ -197,7 +197,10 @@ impl UsbMonitor {
         let mut current_product_id: Option<u16> = None;
         let mut current_manufacturer: Option<String> = None;
         let mut current_serial: Option<String> = None;
-        let mut current_speed: UsbSpeed = UsbSpeed::Full;
+        // `Unknown`, not `Full`: a device whose `system_profiler` entry has no
+        // `Speed` line has not reported a speed, and full speed is a real value
+        // that some devices genuinely negotiate.
+        let mut current_speed: UsbSpeed = UsbSpeed::Unknown;
         let mut bus_number: u8 = 0;
         let mut port_number: u8 = 0;
         let mut device_idx: u8 = 0;
@@ -224,7 +227,7 @@ impl UsbMonitor {
                     });
                     current_vendor_id = None;
                     current_product_id = None;
-                    current_speed = UsbSpeed::Full;
+                    current_speed = UsbSpeed::Unknown;
                 }
                 current_name = Some(trimmed.trim_end_matches(':').to_string());
             } else if let Some((key, val)) = trimmed.split_once(':') {
@@ -264,8 +267,12 @@ impl UsbMonitor {
                             UsbSpeed::Super
                         } else if val.contains("1.5") {
                             UsbSpeed::Low
-                        } else {
+                        } else if val.contains("12 Mb") {
                             UsbSpeed::Full
+                        } else {
+                            // A `Speed` line this parser does not recognise is
+                            // not full speed; it used to be.
+                            UsbSpeed::Unknown
                         };
                     }
                     "Location ID" => {
@@ -351,17 +358,25 @@ impl UsbMonitor {
                     // Determine device class from name/description
                     let class = classify_usb_device(name, description.unwrap_or(""));
 
-                    // Determine speed from class heuristic
-                    let speed = if pnp_id.contains("USB3")
-                        || name.contains("USB 3")
-                        || name.contains("xHCI")
-                    {
-                        UsbSpeed::Super
-                    } else if name.contains("USB 2") || name.contains("EHCI") {
-                        UsbSpeed::High
-                    } else {
-                        UsbSpeed::Unknown
-                    };
+                    // Not read on Windows.
+                    //
+                    // This was a "class heuristic": `USB3` or `xHCI` in the
+                    // device's name or PnP path meant `Super`, `USB 2` or
+                    // `EHCI` meant `High`. Those strings describe what the
+                    // device *is*, and the entity asks what it *negotiated* --
+                    // "a super-speed device on a high-speed port reports high,
+                    // which is how a wrong cable shows". A USB 3 device on a
+                    // USB 2 cable keeps `USB3` in its PnP path, so the reader
+                    // reported `Super` for precisely the case the field exists
+                    // to expose. On this host it made all six devices `super`.
+                    //
+                    // The negotiated speed comes from
+                    // `IOCTL_USB_GET_NODE_CONNECTION_INFORMATION_EX` on the
+                    // parent hub, whose `USB_NODE_CONNECTION_INFORMATION_EX`
+                    // carries a `Speed` field. Until that is called this is
+                    // `Unknown`, which the resolver already reports as "the
+                    // platform did not report a negotiated bus speed".
+                    let speed = UsbSpeed::Unknown;
 
                     // Extract serial from PNP ID (third segment)
                     let serial = pnp_id

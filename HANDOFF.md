@@ -93,9 +93,64 @@ Since the tag, on `master` and green on all three platforms:
 | `e037198` | The same inequality again, this time against a string |
 | `ca71102` | "On battery" concluded from nobody having asked |
 | `c79d4c5` | Nine tests asserting a contract the readers no longer make |
+| `HEAD` | A device's name read as the speed it negotiated |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### A device's name read as the speed it negotiated
+
+`usb.{addr}.speed` was one of the uniform families three entries down — six
+devices, all `"super"`. It was left alone at the time because a machine whose
+USB devices are all on USB 3 hubs would legitimately look like that. It is not
+that.
+
+The entity:
+
+> **Negotiated** bus speed — low, full, high, super. A super-speed device on a
+> high-speed port reports high, **which is how a wrong cable shows.**
+
+The Windows reader, under its own accurate comment:
+
+```rust
+// Determine speed from class heuristic
+let speed = if pnp_id.contains("USB3") || name.contains("USB 3") || name.contains("xHCI") {
+    UsbSpeed::Super
+} else if name.contains("USB 2") || name.contains("EHCI") { UsbSpeed::High }
+  else { UsbSpeed::Unknown };
+```
+
+Those strings describe what the device **is**. The entity asks what it
+**negotiated**. A USB 3 device plugged in through a USB 2 cable keeps `USB3` in
+its PnP path and was reported as `Super` — **the reader is wrong in exactly the
+case the field exists to expose**, and right only when nothing is wrong. That is
+the same shape as `printer.accepting_jobs` two entries below, and it is now the
+sixth time this session: *the description names the distinction, and the reader
+computes the thing the distinction rules out.*
+
+The tell was visible in the output all along, without reading any code:
+
+```
+USB Root Hub (USB 3.0)        speed=Super
+Generic SuperSpeed USB Hub    speed=Super
+```
+
+**A device whose name contains "SuperSpeed" reporting super speed is not
+evidence of anything.** When a reading can be predicted from the label next to
+it, it is the label.
+
+Windows genuinely can answer this —
+`IOCTL_USB_GET_NODE_CONNECTION_INFORMATION_EX` on the parent hub returns a
+`Speed` field — and until something calls it, `Unknown` is the honest value. The
+resolver already had the right sentence waiting for it: *"the platform did not
+report a negotiated bus speed"*.
+
+macOS parses a real `Speed:` line from `system_profiler`, and got two things
+wrong around it: the running value initialised and reset to `Full`, so a device
+with no `Speed` line reported full speed, and the parse's `else` arm was `Full`,
+so any string it did not recognise did too. Full speed is a real value some
+devices negotiate, which is what made it a bad default. Both are `Unknown` now
+and only a literal `12 Mb` reads as `Full`.
 
 ### Nine tests asserting a contract the readers no longer make
 
