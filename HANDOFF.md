@@ -65,7 +65,7 @@ Since the tag, on `master` and green on all three platforms:
 | `eaf7e3f` | A fifth AdapterRAM reader, on the public API, still capped at 4GB |
 | `9bc2524` | NPU core counts guessed from a vendor guessed from a name |
 | `b2e84af` | A doc comment that named the danger, ignored by the caller two lines away |
-| `HEAD` | One system-wide number, copied into 24 cores as though each were measured |
+| `8f8680a` | One system-wide number, copied into 24 cores as though each were measured |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
