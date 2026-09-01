@@ -87,7 +87,7 @@ Since the tag, on `master` and green on all three platforms:
 | `f1470d5` | Fifteen codecs, one frame rate: a constant with a derivation |
 | `599e8ff` | An idle webcam reporting that it was streaming |
 | `7fde63e` | A green gate that could not see the defect it shipped |
-| `HEAD` | The same field, right on two platforms and invented on the third |
+| `0106d6c` | The same field, right on two platforms and invented on the third |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
