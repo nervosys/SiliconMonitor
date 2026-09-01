@@ -92,7 +92,7 @@ Since the tag, on `master` and green on all three platforms:
 | `3606758` | A field derived from the one thing it exists not to be derived from |
 | `e037198` | The same inequality again, this time against a string |
 | `ca71102` | "On battery" concluded from nobody having asked |
-| `HEAD` | Nine tests asserting a contract the readers no longer make |
+| `c79d4c5` | Nine tests asserting a contract the readers no longer make |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
