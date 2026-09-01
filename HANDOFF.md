@@ -98,7 +98,7 @@ Since the tag, on `master` and green on all three platforms:
 | `4b004c7` | Twelve audio endpoints where four exist, two facing backwards |
 | `4410ea6` | Every NVMe device counted twice, once as its own controller |
 | `9a9b585` | A USB stick with no SMART, passing its SMART check |
-| `HEAD` | An id documented to be stable, built from enumeration order |
+| `9332a38` | An id documented to be stable, built from enumeration order |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
