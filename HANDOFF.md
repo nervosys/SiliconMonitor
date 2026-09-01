@@ -74,7 +74,7 @@ Since the tag, on `master` and green on all three platforms:
 | `dd2f56a` | Secure Boot read from a file's existence, not its value |
 | `05468fb` | An unread thermal zone reported 0 C and "not throttling" |
 | `0e67be4` | A failed health check reporting no critical issues |
-| `HEAD` | A `> 0` guard defeated by a sentinel of 64 |
+| `aed27cd` | A `> 0` guard defeated by a sentinel of 64 |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
