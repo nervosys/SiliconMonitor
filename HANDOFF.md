@@ -90,7 +90,7 @@ Since the tag, on `master` and green on all three platforms:
 | `0106d6c` | The same field, right on two platforms and invented on the third |
 | `bde8726` | Sockets counted as NUMA nodes, memory divided evenly between them |
 | `3606758` | A field derived from the one thing it exists not to be derived from |
-| `HEAD` | The same inequality again, this time against a string |
+| `e037198` | The same inequality again, this time against a string |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
