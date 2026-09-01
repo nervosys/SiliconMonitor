@@ -52,6 +52,17 @@ pub struct DisplayInfo {
     pub bits_per_pixel: Option<u8>,
 }
 
+/// EDID metadata for one monitor, joined to the GDI enumeration by hardware id.
+#[cfg(target_os = "windows")]
+struct WindowsMonitorMeta {
+    hardware_id: Option<String>,
+    name: Option<String>,
+    manufacturer: Option<String>,
+    connection: DisplayConnection,
+    physical_width_mm: Option<u32>,
+    physical_height_mm: Option<u32>,
+}
+
 impl DisplayInfo {
     /// The reduced aspect ratio, or `None` when there is no mode to reduce.
     ///
@@ -113,172 +124,230 @@ impl DisplayMonitor {
         self.displays.len()
     }
 
+    /// Enumerate the displays attached to this desktop.
+    ///
+    /// This used to loop over `Win32_VideoController` — graphics *adapters* —
+    /// and call each one a display, then paste monitor details onto them **by
+    /// array index**:
+    ///
+    /// ```ignore
+    /// foreach ($ctrl in $controllers) {
+    ///     $mon = [PSCustomObject]@{ Name = $ctrl.Name; ... }
+    ///     if ($monitorDetails -and $idx -lt @($monitorDetails).Count) {
+    ///         $mdet = @($monitorDetails)[$idx]      # positional, not a join
+    /// ```
+    ///
+    /// On the development machine that reported three displays where one
+    /// exists, two of them named `AMD Radeon(TM) Graphics` and
+    /// `NVIDIA GeForce RTX 3090 Ti`, and the one correct name was correct by
+    /// coincidence of ordering. Name, brightness and connection type were all
+    /// attributed by the same positional guess.
+    ///
+    /// `EnumDisplayDevices` answers the actual question. It enumerates display
+    /// devices, flags the ones `ATTACHED_TO_DESKTOP`, and gives each one's
+    /// attached monitor; `EnumDisplaySettings` gives that device's current
+    /// mode. The same machine enumerates thirteen devices with exactly one
+    /// attached, at 3440x1440.
+    ///
+    /// The monitor's friendly name, connection type and physical size still
+    /// come from `root\wmi`, joined on the **hardware id** — `GSM76F6` in both
+    /// `MONITOR\GSM76F6\{guid}\0001` and
+    /// `DISPLAY\GSM76F6\5&2a745970&0&UID4352_0`. Two monitors of the same model
+    /// share that id, and they also share their EDID name, connection family
+    /// and panel size, so the ambiguity does not reach any of the three values
+    /// taken from it. Per-instance state would need the UID, which is why
+    /// brightness is not taken from it.
     #[cfg(target_os = "windows")]
     fn refresh_windows(&mut self) {
-        use std::process::Command;
+        use windows::core::PCWSTR;
+        use windows::Win32::Graphics::Gdi::{
+            EnumDisplayDevicesW, EnumDisplaySettingsW, DEVMODEW, DISPLAY_DEVICEW,
+            ENUM_CURRENT_SETTINGS,
+        };
 
-        // Use PowerShell + WMI to enumerate monitors and video controllers
-        let output = Command::new("powershell")
-            .args(["-NoProfile", "-Command",
-                r#"
-                $monitors = @()
-                $idx = 0
-                
-                # Get video controllers for GPU-linked display info
-                $controllers = Get-CimInstance Win32_VideoController | Select-Object Name, CurrentHorizontalResolution, CurrentVerticalResolution, CurrentRefreshRate, CurrentBitsPerPixel, AdapterCompatibility, VideoModeDescription
-                
-                # Get monitor details
-                $monitorDetails = Get-CimInstance WmiMonitorID -Namespace root\wmi -ErrorAction SilentlyContinue
-                $brightness = Get-CimInstance WmiMonitorBrightness -Namespace root\wmi -ErrorAction SilentlyContinue
-                $connInfo = Get-CimInstance WmiMonitorConnectionParams -Namespace root\wmi -ErrorAction SilentlyContinue
-                
-                foreach ($ctrl in $controllers) {
-                    $mon = [PSCustomObject]@{
-                        Id = "display$idx"
-                        Name = $ctrl.Name
-                        Manufacturer = $ctrl.AdapterCompatibility
-                        Width = if ($ctrl.CurrentHorizontalResolution) { $ctrl.CurrentHorizontalResolution } else { 0 }
-                        Height = if ($ctrl.CurrentVerticalResolution) { $ctrl.CurrentVerticalResolution } else { 0 }
-                        RefreshRate = if ($ctrl.CurrentRefreshRate) { $ctrl.CurrentRefreshRate } else { 0 }
-                        BitsPerPixel = if ($ctrl.CurrentBitsPerPixel) { $ctrl.CurrentBitsPerPixel } else { 32 }
-                        IsPrimary = ($idx -eq 0)
-                        Connection = "Unknown"
-                        Brightness = -1
-                    }
-                    
-                    # Try to get brightness for this display
-                    if ($brightness -and $idx -lt $brightness.Count) {
-                        $mon.Brightness = $brightness[$idx].CurrentBrightness
-                    } elseif ($brightness -and $brightness.CurrentBrightness) {
-                        $mon.Brightness = $brightness.CurrentBrightness
-                    }
-                    
-                    # Try to get connection type
-                    if ($connInfo -and $idx -lt @($connInfo).Count) {
-                        $ctype = @($connInfo)[$idx].VideoOutputTechnology
-                        $mon.Connection = switch ($ctype) {
-                            0  { "VGA" }
-                            4  { "DVI" }
-                            5  { "HDMI" }
-                            6  { "LVDS" }
-                            9  { "DisplayPort" }
-                            10 { "DisplayPort" }
-                            11 { "DisplayPort" }
-                            14 { "eDP" }
-                            default { "Unknown" }
-                        }
-                    }
-                    
-                    # Try to get monitor name/manufacturer from WMI
-                    if ($monitorDetails -and $idx -lt @($monitorDetails).Count) {
-                        $mdet = @($monitorDetails)[$idx]
-                        $uname = ($mdet.UserFriendlyName | Where-Object { $_ -ne 0 } | ForEach-Object { [char]$_ }) -join ''
-                        $umfr  = ($mdet.ManufacturerName | Where-Object { $_ -ne 0 } | ForEach-Object { [char]$_ }) -join ''
-                        if ($uname) { $mon.Name = $uname }
-                        if ($umfr)  { $mon.Manufacturer = $umfr }
-                    }
-                    
-                    $monitors += $mon
-                    $idx++
-                }
-                
-                $monitors | ConvertTo-Json -Compress
-                "#])
-            .output();
+        /// `DISPLAY_DEVICE_ATTACHED_TO_DESKTOP`
+        const ATTACHED_TO_DESKTOP: u32 = 0x0000_0001;
+        /// `DISPLAY_DEVICE_PRIMARY_DEVICE`
+        const PRIMARY_DEVICE: u32 = 0x0000_0004;
 
-        if let Ok(output) = output {
-            if output.status.success() {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                if let Ok(json) = serde_json::from_str::<serde_json::Value>(stdout.trim()) {
-                    let items = if json.is_array() {
-                        json.as_array().cloned().unwrap_or_default()
-                    } else {
-                        vec![json]
-                    };
-
-                    for item in &items {
-                        let connection = match item
-                            .get("Connection")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("Unknown")
-                        {
-                            "HDMI" => DisplayConnection::Hdmi,
-                            "DisplayPort" => DisplayConnection::DisplayPort,
-                            "DVI" => DisplayConnection::Dvi,
-                            "VGA" => DisplayConnection::Vga,
-                            "eDP" | "LVDS" => DisplayConnection::Internal,
-                            _ => DisplayConnection::Unknown,
-                        };
-
-                        let brightness = item
-                            .get("Brightness")
-                            .and_then(|v| v.as_f64())
-                            .filter(|&b| b >= 0.0)
-                            .map(|b| (b / 100.0) as f32);
-
-                        self.displays.push(DisplayInfo {
-                            id: item
-                                .get("Id")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("display0")
-                                .to_string(),
-                            name: item
-                                .get("Name")
-                                .and_then(|v| v.as_str())
-                                .map(|s| s.to_string()),
-                            manufacturer: item
-                                .get("Manufacturer")
-                                .and_then(|v| v.as_str())
-                                .map(|s| s.to_string()),
-                            connection,
-                            is_primary: item
-                                .get("IsPrimary")
-                                .and_then(|v| v.as_bool())
-                                .unwrap_or(false),
-                            // The key is present and the value is 0 for a
-                            // display whose current mode Windows will not
-                            // report — an AV receiver on HDMI does this. A
-                            // missing key and a zero mean the same thing here,
-                            // and neither is a resolution, so both become None
-                            // at the reader rather than at each of the five
-                            // consumers.
-                            width: item
-                                .get("Width")
-                                .and_then(|v| v.as_u64())
-                                .filter(|v| *v > 0)
-                                .map(|v| v as u32),
-                            height: item
-                                .get("Height")
-                                .and_then(|v| v.as_u64())
-                                .filter(|v| *v > 0)
-                                .map(|v| v as u32),
-                            refresh_rate: item
-                                .get("RefreshRate")
-                                .and_then(|v| v.as_f64())
-                                .filter(|v| *v > 0.0)
-                                .map(|v| v as f32),
-                            brightness,
-                            hdr: HdrMode::Off,
-                            scale_factor: None,
-                            physical_width_mm: None,
-                            physical_height_mm: None,
-                            bits_per_pixel: item
-                                .get("BitsPerPixel")
-                                .and_then(|v| v.as_u64())
-                                .map(|b| b as u8),
-                        });
-                    }
-                }
-            }
+        fn wide_to_string(buf: &[u16]) -> String {
+            let end = buf.iter().position(|c| *c == 0).unwrap_or(buf.len());
+            String::from_utf16_lossy(&buf[..end])
         }
 
-        // No synthetic fallback: if WMI returned nothing, no display was detected and
-        // the list stays empty.
+        /// The hardware id segment of a device path, used to join the GDI
+        /// enumeration to the WMI monitor tables.
+        fn hardware_id(path: &str) -> Option<String> {
+            path.split('\\').nth(1).map(str::to_ascii_uppercase)
+        }
+
+        let wmi = Self::windows_monitor_metadata();
+
+        let mut idx = 0u32;
+        loop {
+            let mut adapter = DISPLAY_DEVICEW {
+                cb: std::mem::size_of::<DISPLAY_DEVICEW>() as u32,
+                ..Default::default()
+            };
+            if !unsafe { EnumDisplayDevicesW(None, idx, &mut adapter, 0) }.as_bool() {
+                break;
+            }
+            idx += 1;
+
+            // A device that is not attached to the desktop is not a display.
+            // Thirteen of the fourteen on the development machine are outputs
+            // the driver exposes and nothing is plugged into.
+            if adapter.StateFlags & ATTACHED_TO_DESKTOP == 0 {
+                continue;
+            }
+
+            let device_name: Vec<u16> = adapter.DeviceName.to_vec();
+            let mut mode = DEVMODEW {
+                dmSize: std::mem::size_of::<DEVMODEW>() as u16,
+                ..Default::default()
+            };
+            let has_mode = unsafe {
+                EnumDisplaySettingsW(
+                    PCWSTR(device_name.as_ptr()),
+                    ENUM_CURRENT_SETTINGS,
+                    &mut mode,
+                )
+            }
+            .as_bool();
+
+            // The monitor on this output, for its hardware id.
+            let mut monitor = DISPLAY_DEVICEW {
+                cb: std::mem::size_of::<DISPLAY_DEVICEW>() as u32,
+                ..Default::default()
+            };
+            let has_monitor =
+                unsafe { EnumDisplayDevicesW(PCWSTR(device_name.as_ptr()), 0, &mut monitor, 0) }
+                    .as_bool();
+            let monitor_id = has_monitor
+                .then(|| wide_to_string(&monitor.DeviceID))
+                .and_then(|id| hardware_id(&id));
+
+            let meta = monitor_id
+                .as_ref()
+                .and_then(|id| wmi.iter().find(|m| m.hardware_id.as_deref() == Some(id)));
+
+            // `DeviceString` for the monitor is the driver's name for it --
+            // "Generic PnP Monitor" -- so the EDID name from WMI is preferred
+            // and the driver name is not used as a stand-in for it.
+            let name = meta.and_then(|m| m.name.clone());
+
+            self.displays.push(DisplayInfo {
+                id: wide_to_string(&adapter.DeviceName),
+                name,
+                manufacturer: meta.and_then(|m| m.manufacturer.clone()),
+                connection: meta
+                    .map(|m| m.connection)
+                    .unwrap_or(DisplayConnection::Unknown),
+                is_primary: adapter.StateFlags & PRIMARY_DEVICE != 0,
+                // Zero is not a resolution, and `EnumDisplaySettings` fills the
+                // struct with zeroes when it fails.
+                width: has_mode.then_some(mode.dmPelsWidth).filter(|v| *v > 0),
+                height: has_mode.then_some(mode.dmPelsHeight).filter(|v| *v > 0),
+                refresh_rate: has_mode
+                    .then_some(mode.dmDisplayFrequency)
+                    .filter(|v| *v > 1)
+                    .map(|v| v as f32),
+                // Not read. `WmiMonitorBrightness` is keyed by the monitor's
+                // full instance name, and the hardware id this reader joins on
+                // does not distinguish two panels of the same model.
+                brightness: None,
+                hdr: HdrMode::Off,
+                scale_factor: None,
+                physical_width_mm: meta.and_then(|m| m.physical_width_mm),
+                physical_height_mm: meta.and_then(|m| m.physical_height_mm),
+                bits_per_pixel: has_mode
+                    .then_some(mode.dmBitsPerPel)
+                    .filter(|v| *v > 0)
+                    .map(|v| v as u8),
+            });
+        }
+
+        // No synthetic fallback: if nothing is attached to the desktop, no
+        // display was detected and the list stays empty.
         //
         // This previously invented a "Primary Display" with zero dimensions,
-        // `is_primary: true` and `hdr: Off` — definite claims about hardware nothing
-        // had observed. `count()` then reported 1 display on a machine where
-        // detection had failed entirely, which is worse than reporting none.
+        // `is_primary: true` and `hdr: Off` -- definite claims about hardware
+        // nothing had observed. `count()` then reported 1 display on a machine
+        // where detection had failed entirely, which is worse than reporting
+        // none.
+    }
+    /// EDID-derived monitor metadata, keyed by hardware id.
+    ///
+    /// `WmiMonitorID`, `WmiMonitorConnectionParams` and
+    /// `WmiMonitorBasicDisplayParams` all carry `InstanceName`, so they join to
+    /// each other exactly. All three are readable without elevation, and a
+    /// machine that publishes none of them simply has no metadata to attach.
+    #[cfg(target_os = "windows")]
+    fn windows_monitor_metadata() -> Vec<WindowsMonitorMeta> {
+        const QUERY: &str = concat!(
+            "$id = @(Get-CimInstance -Namespace root/wmi -ClassName WmiMonitorID ",
+            "-ErrorAction SilentlyContinue); ",
+            "$conn = @(Get-CimInstance -Namespace root/wmi -ClassName ",
+            "WmiMonitorConnectionParams -ErrorAction SilentlyContinue); ",
+            "$dim = @(Get-CimInstance -Namespace root/wmi -ClassName ",
+            "WmiMonitorBasicDisplayParams -ErrorAction SilentlyContinue); ",
+            "$id | ForEach-Object { $i = $_; [PSCustomObject]@{ ",
+            "InstanceName = $i.InstanceName; ",
+            "Name = (($i.UserFriendlyName | Where-Object { $_ -ne 0 } | ",
+            "ForEach-Object { [char]$_ }) -join ''); ",
+            "Manufacturer = (($i.ManufacturerName | Where-Object { $_ -ne 0 } | ",
+            "ForEach-Object { [char]$_ }) -join ''); ",
+            "Technology = ($conn | Where-Object { $_.InstanceName -eq $i.InstanceName } | ",
+            "Select-Object -First 1 -ExpandProperty VideoOutputTechnology); ",
+            "WidthCm = ($dim | Where-Object { $_.InstanceName -eq $i.InstanceName } | ",
+            "Select-Object -First 1 -ExpandProperty MaxHorizontalImageSize); ",
+            "HeightCm = ($dim | Where-Object { $_.InstanceName -eq $i.InstanceName } | ",
+            "Select-Object -First 1 -ExpandProperty MaxVerticalImageSize) } } | ",
+            "ConvertTo-Json -Compress"
+        );
+
+        let Ok(Some(value)) =
+            crate::core::command::capture_json("powershell", &["-NoProfile", "-Command", QUERY])
+        else {
+            return Vec::new();
+        };
+
+        crate::core::command::json_items(&value)
+            .iter()
+            .map(|item| {
+                let text = |k: &str| {
+                    item[k]
+                        .as_str()
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .map(str::to_string)
+                };
+                // EDID reports the panel size in whole centimetres; the field
+                // is millimetres, and a zero is EDID's "not stated".
+                let mm = |k: &str| item[k].as_u64().filter(|v| *v > 0).map(|v| (v * 10) as u32);
+                WindowsMonitorMeta {
+                    hardware_id: item["InstanceName"]
+                        .as_str()
+                        .and_then(|s| s.split('\\').nth(1))
+                        .map(str::to_ascii_uppercase),
+                    name: text("Name"),
+                    manufacturer: text("Manufacturer"),
+                    // `VideoOutputTechnology`, as defined by
+                    // `D3DKMDT_VIDEO_OUTPUT_TECHNOLOGY`.
+                    connection: match item["Technology"].as_i64() {
+                        Some(0) => DisplayConnection::Vga,
+                        Some(4) => DisplayConnection::Dvi,
+                        Some(5) => DisplayConnection::Hdmi,
+                        Some(9) | Some(10) => DisplayConnection::DisplayPort,
+                        Some(11) => DisplayConnection::Internal,
+                        Some(6) | Some(14) => DisplayConnection::Edp,
+                        _ => DisplayConnection::Unknown,
+                    },
+                    physical_width_mm: mm("WidthCm"),
+                    physical_height_mm: mm("HeightCm"),
+                }
+            })
+            .collect()
     }
 
     #[cfg(target_os = "linux")]

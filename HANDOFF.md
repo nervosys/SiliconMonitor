@@ -94,9 +94,81 @@ Since the tag, on `master` and green on all three platforms:
 | `ca71102` | "On battery" concluded from nobody having asked |
 | `c79d4c5` | Nine tests asserting a contract the readers no longer make |
 | `6fbf520` | A device's name read as the speed it negotiated |
+| `HEAD` | Three displays where one exists, two of them graphics cards |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### Three displays where one exists, two of them graphics cards
+
+Recorded as open work two commits ago on the grounds that the fix needed a
+dependency feature and a multi-monitor path that could not be verified here.
+Both halves of that turned out to be softer than they looked, so it is fixed.
+
+The defect, visible in a snapshot without reading any code:
+
+```
+board.display.0.name = "LG ULTRAWIDE"
+board.display.1.name = "AMD Radeon(TM) Graphics"
+board.display.2.name = "NVIDIA GeForce RTX 3090 Ti"
+```
+
+The reader looped over `Win32_VideoController` — graphics **adapters** — and
+pasted monitor details onto them by array index:
+
+```powershell
+foreach ($ctrl in $controllers) {
+    $mon = [PSCustomObject]@{ Name = $ctrl.Name; ... }
+    if ($monitorDetails -and $idx -lt @($monitorDetails).Count) {
+        $mdet = @($monitorDetails)[$idx]      # positional, not a join
+```
+
+So the display *count* was the adapter count, and name, brightness and
+connection type were each attributed to whichever adapter happened to sit at the
+same index. **Display 0 having the right name was a coincidence of ordering.**
+
+`EnumDisplayDevices` answers the question that was actually being asked. On this
+machine it enumerates **fourteen** display devices and flags exactly **one** as
+`ATTACHED_TO_DESKTOP` — the other thirteen are outputs the drivers expose with
+nothing plugged in. `EnumDisplaySettings` then gives that device's current mode.
+
+The EDID metadata still comes from `root\wmi`, but joined on the **hardware
+id** rather than an index: `GSM76F6` appears in both
+`MONITOR\GSM76F6\{guid}\0001` and `DISPLAY\GSM76F6\5&2a745970&0&UID4352_0`.
+Two monitors of the same model share that id — and they also share their EDID
+name, connection family and panel size, so **the ambiguity cannot reach any of
+the three values taken from it.** Brightness is per-instance and would need the
+UID, so it is not taken from that join at all.
+
+Before and after, on this host:
+
+```
+before:  3 displays; names "LG ULTRAWIDE", "AMD Radeon(TM) Graphics", "NVIDIA GeForce RTX 3090 Ti"
+after:   1 display; LG ULTRAWIDE (GSM), HDMI, primary, 3440x1440@60, 800x340 mm, 32 bpp
+```
+
+Physical size is new — nothing published it before.
+
+**Two things about the process.**
+
+The reason to enumerate the right objects is not tidiness. Every one of the
+three fabricated properties came from the same root cause: **the collection was
+of the wrong kind of thing, so everything attached to it had to be guessed.** A
+sentinel is one wrong value; a wrong enumeration is a wrong value in every field
+of every row.
+
+And I damaged the file while fixing it. Extracting the untouched Linux reader
+with `subprocess.run(..., text=True)` decoded git's UTF-8 output as cp1252, and
+two em-dashes went back in double-encoded — the three UTF-8 bytes of an
+em-dash re-read as three cp1252 characters and re-encoded. (Writing the
+mangled sequence here as a literal mangled it a second time, which is its
+own small demonstration.) It survived `cargo fmt`, `clippy`, 864
+tests and both cross-target checks, because a comment is not code. It was caught
+by diffing the two functions I had *not* meant to change against `HEAD` — which
+is worth doing after any splice, and is the second self-inflicted encoding
+mangle this session. **A tool that rewrites a file it only meant to move is
+indistinguishable from one that reads it correctly, until something compares
+bytes.**
 
 ### A device's name read as the speed it negotiated
 
@@ -2898,56 +2970,7 @@ feature stayed broken through eight published versions.
    said. Check each for the `codec` case before converting: a source that is
    optional by design, and already labelled as inferred, is not this defect.
 
-2. **The Windows display reader enumerates graphics adapters and calls them
-   displays.** Found by reading a snapshot of `board.display.*` on this host and
-   noticing the names:
-
-   ```
-   board.display.0.name = "LG ULTRAWIDE"
-   board.display.1.name = "AMD Radeon(TM) Graphics"
-   board.display.2.name = "NVIDIA GeForce RTX 3090 Ti"
-   ```
-
-   Two of the three "displays" are GPUs. This machine has **one** monitor —
-   `WmiMonitorID` returns exactly one row, `GSM LG ULTRAWIDE`, `Active=True` —
-   and `Win32_VideoController` returns three rows, which is what the reader
-   loops over:
-
-   ```powershell
-   foreach ($ctrl in $controllers) {          # ← video controllers
-       $mon = [PSCustomObject]@{ Name = $ctrl.Name; ... }
-       if ($monitorDetails -and $idx -lt @($monitorDetails).Count) {
-           $mdet = @($monitorDetails)[$idx]   # ← monitors matched by ARRAY INDEX
-   ```
-
-   So the display *count* is the adapter count, and monitor name, brightness and
-   connection type are pasted onto adapters **by array position**. Display 0
-   getting the right name is a coincidence of ordering, not a join. Three
-   distinct properties are attributed to the wrong entity by the same mistake.
-
-   The join exists and needs no elevation. `WmiMonitorID`,
-   `WmiMonitorConnectionParams` and `WmiMonitorBasicDisplayParams` all carry
-   `InstanceName`, and on this host all three agree on
-   `DISPLAY\GSM76F6\5&2a745970&0&UID4352_0` — giving the name, HDMI
-   (`VideoOutputTechnology = 5`) and an 80 cm × 34 cm panel for the one real
-   monitor. That fixes identity, connection and physical size.
-
-   The **mode** (width, height, refresh) is the part that still needs work:
-   it lives on the controller, and associating a controller with a monitor
-   properly means `EnumDisplayDevices` + `EnumDisplaySettings`, which enumerate
-   adapters, the monitors attached to each, and that adapter's current mode.
-   Both are in the `windows` crate behind the **`Win32_Graphics_Gdi`** feature,
-   which this crate does not currently enable — that is the one dependency
-   change the fix needs. Note that `Win32_VideoController` here reports the
-   3090 Ti twice, at 3440x1440@59 and 1920x1080@60, so "pick the one controller
-   with a mode" is not a sound shortcut even on a single-monitor machine.
-
-   Whoever does this can verify the single-monitor case against this host — the
-   answer is one display, `LG ULTRAWIDE`, HDMI, 3440x1440@59 — but **the
-   multi-monitor path will be unverified**, which is the situation that produced
-   the index-matching bug in the first place.
-
-3. **`hardware_ai` was audited on one machine, and only one.** Every conclusion
+2. **`hardware_ai` was audited on one machine, and only one.** Every conclusion
    corrected in `a584dd0` and `7607401` was verifiably wrong on this desktop, and
    each fix was checked against a second source. That is not the same as being
    right in general. Two things specifically want a second machine before they
@@ -2971,7 +2994,7 @@ feature stayed broken through eight published versions.
    Ti dates to 2020 because it matches the RTX 30 series rule, and the Ti shipped
    in 2022. `infer_gpu_year` and the TDP tables were not audited.
 
-4. **Per-core CPU frequency is unreported on Windows, and could be reported.**
+3. **Per-core CPU frequency is unreported on Windows, and could be reported.**
    `CallNtPowerInformation` returns `CurrentMhz == MaxMhz` whatever the cores are
    doing, so `cpu.core.{n}.frequency` now declines rather than publishing the
    nominal clock as a measurement. The real figure is
@@ -2986,7 +3009,7 @@ feature stayed broken through eight published versions.
    single-value PDH pattern to copy. The provenance would be `Derived` from the
    counter and the nominal clock, not `Measured`.
 
-5. **The Windows ATA SMART path has never met a SATA drive.** 3.3.0 reads the
+4. **The Windows ATA SMART path has never met a SATA drive.** 3.3.0 reads the
    attribute table unelevated through `IOCTL_STORAGE_PREDICT_FAILURE`, and the
    parse in `src/disk/ata_smart.rs` is tested only against buffers this project
    built. This machine has three NVMe drives and a USB gadget; on all four the
@@ -3017,7 +3040,7 @@ feature stayed broken through eight published versions.
    property of its `CTL_CODE`, and is worth reading off the definition before
    planning around it.
 
-6. **macOS GPU, power and temperature are still unimplemented.** CPU (per-core,
+5. **macOS GPU, power and temperature are still unimplemented.** CPU (per-core,
    with nice time), memory, swap, uptime and board info work — `Simon::cpu()`,
    `memory()`, `uptime()`. `Simon::snapshot()` still fails, because it requires
    every reader. Power and temperature need `powermetrics`, which requires root,
@@ -3042,7 +3065,7 @@ feature stayed broken through eight published versions.
    the `vm_stat` used/free split is a judgement about which pages count as in
    use, which a conformance test cannot check.
 
-7. **The Linux SMART/NVMe paths have executed exactly once**, in CI on
+6. **The Linux SMART/NVMe paths have executed exactly once**, in CI on
    `33ee241` — 733 tests, 0 failures. No one has run them against real Linux
    hardware. The sysfs paths (`/sys/class/nvme/<ctrl>/{model,serial,firmware_rev,cntlid}`)
    are documented kernel ABI, but tests are not a substitute for a drive.
@@ -3055,7 +3078,7 @@ feature stayed broken through eight published versions.
    what remains to benefit is USB storage — and every Linux machine, where a
    sweep spawns `smartctl` once per drive and the old shape was quadratic.
 
-8. **The ontology names ~232 entities; the library has ~88 subsystem modules.**
+7. **The ontology names ~232 entities; the library has ~88 subsystem modules.**
    The running list of which clusters exist, which readers answer on which
    machine, and what is left is under **plan item F** below — it is kept in one
    place rather than two, because the last time it lived in both they disagreed.
@@ -3110,7 +3133,7 @@ feature stayed broken through eight published versions.
    sizes, AER capability, ARI and ATS support, SR-IOV — are readable by the same
    two calls with a different pid, if anyone wants them.
 
-9. **`simon tune`'s policy table covers five settings, and its game detection is
+8. **`simon tune`'s policy table covers five settings, and its game detection is
    a name table.** Both are deliberate first cuts, and both are where the feature
    grows.
 
@@ -3131,7 +3154,7 @@ feature stayed broken through eight published versions.
    from a model. `tuning::tests::a_recommendation_never_proposes_a_value_the_driver_did_not_offer`
    is the test that keeps it true. A model may classify; it may not pick numbers.
 
-10. **The Dewey port was tried across 4.0.0–4.0.4 and withdrawn in 5.0.0.**
+9. **The Dewey port was tried across 4.0.0–4.0.4 and withdrawn in 5.0.0.**
    `src/gui/` is the egui application again — `app.rs`, `widgets.rs`, `theme.rs`,
    `profile_tab.rs`, `headless.rs`, `mod.rs`, restored from `927ffaa^`. The
    `deweygui` dependency, the `dewey-gui` feature and `simonlib::gui_dewey` are
@@ -3176,7 +3199,7 @@ feature stayed broken through eight published versions.
    name is the whole defect — every call site was written by someone who
    reasonably believed `new()` constructs a thing from the system.
 
-11. **Verify with `--lib --tests` when the disk is tight.** `cargo test
+10. **Verify with `--lib --tests` when the disk is tight.** `cargo test
    --all-features` links every example. That is affordable again now the duplicate
    egui is gone, but if it ever fails with `link.exe` 1318, the split is
    `cargo test --all-features --lib --tests` for execution plus
@@ -3184,7 +3207,7 @@ feature stayed broken through eight published versions.
    Note `--lib --tests` skips doc-tests; run those before a release.
 
 
-12. **Two Dewey bugs found during the port, recorded because they are real
+11. **Two Dewey bugs found during the port, recorded because they are real
    and unfixed — but no longer reachable from this crate.** Neither affects simon
    now that `deweygui` is gone. Both are for whoever works on Dewey itself, or
    for anyone who reconsiders open work 9.
@@ -3208,7 +3231,7 @@ feature stayed broken through eight published versions.
    three `eprintln!` calls in `resize`, the surface-acquire error arm and the
    frame-area computation in `render`, driven by `ShowWindow(hwnd, 3)`.
 
-13. **Applied settings are reversible; the tuning loop is not yet closed.**
+12. **Applied settings are reversible; the tuning loop is not yet closed.**
    `ApplyHandler::read_current()` reads a setting before it is written,
    `ApplyOutcome.previous` carries what was overwritten, `revert_setting()` puts
    it back through the same confirmed and audit-logged path, and
