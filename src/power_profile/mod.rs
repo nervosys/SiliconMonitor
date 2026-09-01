@@ -118,8 +118,16 @@ pub struct PowerProfileMonitor {
     cpu_freq: Option<CpuFreqConfig>,
     charge_policy: ChargePolicy,
     inferred: Option<InferredPowerBehavior>,
-    /// Whether system is on AC power
-    pub on_ac_power: bool,
+    /// Whether the system is on AC power.
+    ///
+    /// `None` when it was not established. It was a `bool` initialised to
+    /// `true`, so a machine where nothing had been read was on mains, and the
+    /// Windows reader set it with `text != "1"` on the output of a PowerShell
+    /// query -- an empty string from a failed query is not "1", so a failure
+    /// also read as mains. `on_ac_power` gates every battery recommendation
+    /// this module makes, so the failure mode was silence about a laptop's
+    /// power settings while it ran on battery.
+    pub on_ac_power: Option<bool>,
     /// Display brightness (0-100)
     pub display_brightness: Option<u8>,
     /// Auto-sleep timeout (seconds)
@@ -136,7 +144,7 @@ impl PowerProfileMonitor {
             cpu_freq: None,
             charge_policy: ChargePolicy::Unknown,
             inferred: None,
-            on_ac_power: true,
+            on_ac_power: None,
             display_brightness: None,
             sleep_timeout_secs: None,
             disk_standby_secs: None,
@@ -214,7 +222,7 @@ impl PowerProfileMonitor {
             // Boost analysis
             if freq.boost_enabled {
                 score = score.saturating_sub(5);
-                if !self.on_ac_power {
+                if self.on_ac_power == Some(false) {
                     recommendations.push(
                         "Consider disabling CPU boost on battery for better battery life".into(),
                     );
@@ -245,7 +253,7 @@ impl PowerProfileMonitor {
         }
 
         // Battery / AC analysis
-        if !self.on_ac_power {
+        if self.on_ac_power == Some(false) {
             match &self.active_profile {
                 PowerProfile::Performance => {
                     recommendations.push(
@@ -278,7 +286,7 @@ impl PowerProfileMonitor {
 
         // Display brightness
         if let Some(brightness) = self.display_brightness {
-            if brightness > 80 && !self.on_ac_power {
+            if brightness > 80 && self.on_ac_power == Some(false) {
                 recommendations.push(
                     "Display brightness is high on battery — consider reducing for power savings"
                         .into(),
@@ -420,7 +428,7 @@ impl PowerProfileMonitor {
                 if let Ok(ptype) = std::fs::read_to_string(path.join("type")) {
                     if ptype.trim() == "Mains" {
                         if let Ok(online) = std::fs::read_to_string(path.join("online")) {
-                            self.on_ac_power = online.trim() == "1";
+                            self.on_ac_power = Some(online.trim() == "1");
                         }
                     }
                 }
@@ -513,21 +521,24 @@ impl PowerProfileMonitor {
             }
         }
 
-        // AC power status
-        if let Ok(output) = std::process::Command::new("powershell")
-            .args([
-                "-NoProfile",
-                "-Command",
-                "(Get-CimInstance Win32_Battery).BatteryStatus",
-            ])
-            .output()
+        // AC power status.
+        //
+        // This spawned PowerShell for `(Get-CimInstance Win32_Battery).BatteryStatus`
+        // and set `on_ac_power = text != "1"`. A desktop has no battery and the
+        // query returns nothing, which is not "1"; a query that fails also
+        // returns nothing, which is also not "1". `GetSystemPowerStatus` asks
+        // the kernel directly and has a value for the third case:
+        // `ACLineStatus` is 0 offline, 1 online, 255 unknown.
         {
-            let text = String::from_utf8(output.stdout)
-                .unwrap_or_default()
-                .trim()
-                .to_string();
-            // 2 = AC, 1 = battery
-            self.on_ac_power = text != "1";
+            use windows::Win32::System::Power::{GetSystemPowerStatus, SYSTEM_POWER_STATUS};
+            let mut status = SYSTEM_POWER_STATUS::default();
+            if unsafe { GetSystemPowerStatus(&mut status) }.is_ok() {
+                self.on_ac_power = match status.ACLineStatus {
+                    0 => Some(false),
+                    1 => Some(true),
+                    _ => None,
+                };
+            }
         }
 
         // Brightness
@@ -603,7 +614,7 @@ impl PowerProfileMonitor {
             .output()
         {
             let text = String::from_utf8(output.stdout).unwrap_or_default();
-            self.on_ac_power = text.contains("AC Power");
+            self.on_ac_power = Some(text.contains("AC Power"));
         }
     }
 }
@@ -616,7 +627,7 @@ impl Default for PowerProfileMonitor {
             cpu_freq: None,
             charge_policy: ChargePolicy::Unknown,
             inferred: None,
-            on_ac_power: true,
+            on_ac_power: None,
             display_brightness: None,
             sleep_timeout_secs: None,
             disk_standby_secs: None,
@@ -658,7 +669,7 @@ mod tests {
             }),
             charge_policy: ChargePolicy::Full,
             inferred: None,
-            on_ac_power: false, // On battery with performance = bad
+            on_ac_power: Some(false), // On battery with performance = bad
             display_brightness: Some(100),
             sleep_timeout_secs: None,
             disk_standby_secs: None,
@@ -684,7 +695,7 @@ mod tests {
             }),
             charge_policy: ChargePolicy::Threshold(80),
             inferred: None,
-            on_ac_power: false,
+            on_ac_power: Some(false),
             display_brightness: Some(40),
             sleep_timeout_secs: Some(300),
             disk_standby_secs: Some(600),
