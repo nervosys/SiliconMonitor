@@ -101,9 +101,71 @@ Since the tag, on `master` and green on all three platforms:
 | `9332a38` | An id documented to be stable, built from enumeration order |
 | `c3391f0` | The health reader's own enumeration could not report a failure |
 | `4ed9145` | Boot mode asserted because it is usually right |
+| `HEAD` | 97 GB of swap in use, on a machine using 3.4 GB of it |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### 97 GB of swap in use, on a machine using 3.4 GB of it
+
+Found by dumping the `memory.*` rows and reading them:
+
+```
+memory.total       = 100547727360   (93.6 GB)
+memory.used        =  52803788800   (49.2 GB)
+memory.swap.total  = 154233028608  (143.6 GB)
+memory.swap.used   =  97254912000   (90.6 GB)
+```
+
+**Swap in use exceeding memory in use, on an idle desktop, is not a reading a
+machine can produce.** The actual figures, from `Win32_PageFileUsage`: 50 GB
+allocated, **3.4 GB** in use. Off by a factor of twenty-seven, and an agent
+asked "is this machine thrashing" would have said yes.
+
+The reader:
+
+```rust
+let total_pages = perf_info.CommitLimit as u64;
+let used_pages  = perf_info.CommitTotal as u64;
+SwapInfo { total: .., used: .., cached: None }
+```
+
+`CommitLimit` and `CommitTotal` are **commit accounting**, not pagefile
+accounting. The commit limit is RAM plus pagefile; the commit charge is every
+byte of private memory the system has promised, nearly all of it resident in RAM
+and never written to disk. The code renamed them `total_pages` and `used_pages`
+and stored them in a struct called `SwapInfo`, and from there nothing in the
+program could tell.
+
+The `MEMORYSTATUSEX` fallback under it had the same defect wearing a more
+convincing name: **`ullTotalPageFile` is documented as the commit limit, not the
+pagefile size.** A field whose name contains the word you are looking for is the
+easiest way to read the wrong quantity, and this is the second time this session
+— `DiskReadBytesPerSec` was the first, a rate stored in a field documented as a
+total.
+
+`Win32_PageFileUsage` reports the real thing and needs no elevation. This host
+now reports 50.0 GB total, 3.4 GB used.
+
+**The cost is real and worth stating.** That is a WMI round trip:
+`read_memory_stats` goes from effectively free to ~150 ms on the first call
+(COM initialisation) and 20–40 ms after. It is called from the agent state and
+the AI tool surface — request-driven, not a render loop — so that is affordable,
+and the physical-memory figures still come from the native call. Caching the WMI
+connection thread-locally would remove most of it and is not done here, because
+a cached COM object that goes stale fails permanently and this crate already has
+two hand-rolled COM connection strategies to get along with.
+
+**A workflow note that cost three rebuilds.** Writing a throwaway
+`examples/_probe.rs`, running it, then deleting it leaves cargo's fingerprints
+inconsistent, and the next `--all-targets` build fails with
+`can't find crate for simonlib` and `crate egui required to be available in rlib
+format`. Combined with a disk at 99% it looks exactly like the half-written
+cache from the earlier disk-full event. **Three gates in a row returned
+`TESTS=101 result-lines=0` with clippy printing nothing**, which is
+indistinguishable from success if only the exit code is read. Run
+`cargo clean -p silicon-monitor` after probing with a scratch example, before
+gating, and always count the `test result:` lines.
 
 ### Boot mode asserted because it is usually right
 

@@ -14,7 +14,6 @@ use crate::error::{Result, SimonError};
 use std::collections::HashMap;
 use std::mem;
 use std::sync::atomic::{AtomicU64, Ordering};
-use windows::Win32::System::ProcessStatus::{GetPerformanceInfo, PERFORMANCE_INFORMATION};
 use windows::Win32::System::SystemInformation::{
     GetSystemInfo, GlobalMemoryStatusEx, MEMORYSTATUSEX, SYSTEM_INFO,
 };
@@ -540,6 +539,40 @@ pub(crate) fn secure_boot_enabled() -> Option<bool> {
     .map(|v| v == 1)
 }
 
+/// Pagefile capacity and usage, from `Win32_PageFileUsage`.
+///
+/// `AllocatedBaseSize` and `CurrentUsage` are both in megabytes and describe
+/// the pagefile itself -- not the commit limit, which is what every native API
+/// on this platform offers and what this reader used to publish.
+///
+/// A machine can have several pagefiles, so the rows are summed. No pagefile at
+/// all is a real reading of zero; a query that fails is `None`.
+#[cfg(target_os = "windows")]
+fn read_pagefile_usage() -> Option<SwapInfo> {
+    use serde::Deserialize;
+    use wmi::{COMLibrary, WMIConnection};
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "PascalCase")]
+    struct PageFileUsage {
+        allocated_base_size: u32,
+        current_usage: u32,
+    }
+
+    let com = COMLibrary::new().ok()?;
+    let conn = WMIConnection::new(com).ok()?;
+    let rows: Vec<PageFileUsage> = conn
+        .raw_query("SELECT AllocatedBaseSize, CurrentUsage FROM Win32_PageFileUsage")
+        .ok()?;
+
+    let mb_to_kb = |mb: u32| u64::from(mb) * 1024;
+    Some(SwapInfo {
+        total: Some(rows.iter().map(|r| mb_to_kb(r.allocated_base_size)).sum()),
+        used: Some(rows.iter().map(|r| mb_to_kb(r.current_usage)).sum()),
+        cached: None,
+    })
+}
+
 /// Read memory statistics on Windows
 pub fn read_memory_stats() -> Result<MemoryStats> {
     let mut mem_status: MEMORYSTATUSEX = unsafe { mem::zeroed() };
@@ -550,30 +583,44 @@ pub fn read_memory_stats() -> Result<MemoryStats> {
             .map_err(|e| SimonError::System(format!("GlobalMemoryStatusEx failed: {}", e)))?;
     }
 
-    // Get performance info for page file (swap) details
-    let mut perf_info: PERFORMANCE_INFORMATION = unsafe { mem::zeroed() };
-    perf_info.cb = mem::size_of::<PERFORMANCE_INFORMATION>() as u32;
-
-    let swap_info = if unsafe { GetPerformanceInfo(&mut perf_info, perf_info.cb) }.is_ok() {
-        let page_size = perf_info.PageSize as u64;
-        let total_pages = perf_info.CommitLimit as u64;
-        let used_pages = perf_info.CommitTotal as u64;
-
-        SwapInfo {
-            total: Some((total_pages * page_size) / 1024), // Convert to KB
-            used: Some((used_pages * page_size) / 1024),
-            // Windows exposes no cached-swap figure. `None`, not zero: the
-            // quantity is unreported, not measured at nothing.
-            cached: None,
-        }
-    } else {
-        // Fallback using MEMORYSTATUSEX pagefile info
-        SwapInfo {
-            total: Some((mem_status.ullTotalPageFile - mem_status.ullTotalPhys) / 1024),
-            used: Some((mem_status.ullTotalPageFile - mem_status.ullAvailPageFile) / 1024),
-            cached: None,
-        }
-    };
+    // Pagefile usage.
+    //
+    // This used to come from `GetPerformanceInfo`:
+    //
+    // ```ignore
+    // let total_pages = perf_info.CommitLimit as u64;
+    // let used_pages  = perf_info.CommitTotal as u64;
+    // ```
+    //
+    // Those are **commit accounting**, not pagefile accounting. The commit
+    // limit is RAM plus pagefile, and the commit charge is every byte of
+    // private memory the system has promised -- most of which is resident in
+    // RAM and has never been written to disk. Renaming them `total_pages` and
+    // `used_pages` and storing them in `SwapInfo` made the numbers say
+    // something they do not mean. On the development machine:
+    //
+    // ```text
+    // reported:  swap total 154 GB   swap used 97 GB
+    // actual:    pagefile   50 GB    in use    3.4 GB
+    // ```
+    //
+    // 97 GB of swap in use on a host with 93.6 GB of RAM, 52.8 GB of it used,
+    // is not a plausible reading, and an agent asked whether the machine is
+    // thrashing would have said yes. The `MEMORYSTATUSEX` fallback below it
+    // had the same defect wearing a more convincing name:
+    // `ullTotalPageFile` is documented as the commit limit, not the pagefile.
+    //
+    // `Win32_PageFileUsage` reports the real figures and needs no elevation.
+    // It is a WMI round trip, which is why the physical-memory numbers above
+    // still come from the native call.
+    let swap_info = read_pagefile_usage().unwrap_or(SwapInfo {
+        // Not read. Better nothing than the commit charge wearing this name.
+        total: None,
+        used: None,
+        // Windows exposes no cached-swap figure. `None`, not zero: the
+        // quantity is unreported, not measured at nothing.
+        cached: None,
+    });
 
     let total_kb = mem_status.ullTotalPhys / 1024;
     let avail_kb = mem_status.ullAvailPhys / 1024;
