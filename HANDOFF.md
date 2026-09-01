@@ -100,7 +100,7 @@ Since the tag, on `master` and green on all three platforms:
 | `9a9b585` | A USB stick with no SMART, passing its SMART check |
 | `9332a38` | An id documented to be stable, built from enumeration order |
 | `c3391f0` | The health reader's own enumeration could not report a failure |
-| `HEAD` | Boot mode asserted because it is usually right |
+| `4ed9145` | Boot mode asserted because it is usually right |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
