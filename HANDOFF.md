@@ -71,9 +71,53 @@ Since the tag, on `master` and green on all three platforms:
 | `a015d58` | Every AMD CPU classified as Intel, by the word in "12-Core" |
 | `ad8dfff` | A CPUID family of 0, and a name still carrying its WMI padding |
 | `3935301` | `is_turbo` closed, and the guess above its known defect |
+| `HEAD` | Secure Boot read from a file's existence, not its value |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### Secure Boot from a file's existence, and hardening nobody checked
+
+`security_mitigations` is the fourth module off the callerless list, and the
+findings need separating by severity, because they are not equal.
+
+**Live, on Linux.** `detect_hardening` read Secure Boot as:
+
+```rust
+let secure_boot = Path::new(".../SecureBoot-8be4df61-...").exists();
+```
+
+The efivar is **present on every UEFI system whether Secure Boot is on or off** —
+its last byte carries the state. So any UEFI Linux machine reported Secure Boot
+enabled and took +3 on the posture score for it. `boot_config.rs` already reads
+the same variable correctly, one module over. Beside it, three `read_sysctl(..)
+.parse().unwrap_or(0) > 0` calls turned an absent tunable — older kernels lack
+some of these — into "hardening switched off", and `stack_protector: true`
+carried the comment *"Most modern kernels have this"*.
+
+**Latent, off Linux, and I nearly reported it as live.** The Windows and macOS
+branches assert `kptr_restrict`, `dmesg_restrict`, `unprivileged_bpf_disabled`
+and `stack_protector` as `true` — Linux kernel tunables with no equivalent
+there — and two of them add to the posture score. But
+`detect_vulnerabilities` already returns `UnsupportedPlatform` on every
+non-Linux target, so `new()` fails before `detect_hardening` is ever called and
+none of it reaches a user. The comment on that refusal is the best writing in
+the crate:
+
+> Returning an empty list meant `unmitigated()` reported zero, which reads as
+> "this machine has no unmitigated CPU vulnerabilities" when it means "nothing
+> was checked". Of every absence in this crate that one is the least acceptable
+> to guess at: **a reassuring security reading is acted on.**
+
+All of it is `Option` now, and the test that matters is not about today's
+behaviour: `a_platform_without_vulnerability_data_publishes_no_posture` fails
+the moment someone implements vulnerability detection for another platform,
+because the hardening branch beside it goes live in that same commit.
+
+**The general point.** A fabricated value behind an unreachable branch is not
+harmless — it is waiting for the branch to become reachable, and whoever makes
+that change will be thinking about vulnerabilities, not about four booleans
+twenty lines away. Latency is a property of today's call graph, not of the code.
 
 ### The first 7.0.0 item, closed
 

@@ -117,22 +117,40 @@ pub struct LsmStatus {
 pub struct KernelHardening {
     /// ASLR level (0=disabled, 1=partial, 2=full).
     pub aslr_level: u32,
-    /// Whether kernel pointer leak protection is enabled (kptr_restrict).
-    pub kptr_restrict: bool,
-    /// Whether dmesg is restricted to root.
-    pub dmesg_restrict: bool,
-    /// Whether unprivileged BPF is disabled.
-    pub unprivileged_bpf_disabled: bool,
+    /// Whether kernel pointer leak protection is enabled (`kptr_restrict`),
+    /// or `None` where the setting does not exist.
+    ///
+    /// These four are **Linux kernel tunables**. The Windows and macOS readers
+    /// asserted `true` for all of them, which is not a translation of the
+    /// mechanism onto those platforms — there is no `/proc/sys/kernel/
+    /// kptr_restrict` to be true. Two of them feed the posture score directly,
+    /// so the score was three points higher on Windows and macOS for hardening
+    /// nothing had checked.
+    pub kptr_restrict: Option<bool>,
+    /// Whether dmesg is restricted to root. See [`Self::kptr_restrict`].
+    pub dmesg_restrict: Option<bool>,
+    /// Whether unprivileged BPF is disabled. See [`Self::kptr_restrict`].
+    pub unprivileged_bpf_disabled: Option<bool>,
     /// Whether ptrace is restricted (Yama scope).
     pub ptrace_scope: u32,
     /// Whether kernel module loading is locked down.
     pub modules_locked: bool,
     /// Whether kernel lockdown is active.
     pub lockdown_mode: String,
-    /// Whether Secure Boot is enabled.
-    pub secure_boot: bool,
-    /// Stack protector enabled.
-    pub stack_protector: bool,
+    /// Whether Secure Boot is enabled, or `None` where it could not be read.
+    ///
+    /// The Windows reader shelled out to `Confirm-SecureBootUEFI`, which
+    /// **requires elevation**, and `unwrap_or(false)` turned an unelevated run
+    /// into "Secure Boot is off" — raising a medium-severity finding that may
+    /// be untrue. `afb377d` established that the state is readable unelevated
+    /// from `SYSTEM\CurrentControlSet\Control\SecureBoot\State`, and
+    /// `platform::windows::secure_boot_enabled` already does exactly that.
+    pub secure_boot: Option<bool>,
+    /// Stack protector enabled, or `None` where it was not read.
+    ///
+    /// Every platform wrote `true`; the Linux one under a comment reading
+    /// "Most modern kernels have this". Most is not this one.
+    pub stack_protector: Option<bool>,
 }
 
 /// Overall security posture score.
@@ -285,24 +303,33 @@ impl SecurityMitigationsMonitor {
                 remediation: "Set kernel.randomize_va_space = 2".into(),
             });
         }
-        if hardening.kptr_restrict {
+        // Only credit hardening that was actually observed. `Some(false)` and
+        // `None` both score nothing, but only the first is a finding.
+        if hardening.kptr_restrict == Some(true) {
             hard_score += 2;
         }
-        if hardening.dmesg_restrict {
+        if hardening.dmesg_restrict == Some(true) {
             hard_score += 1;
         }
         if hardening.ptrace_scope >= 1 {
             hard_score += 2;
         }
-        if hardening.secure_boot {
-            hard_score += 3;
-        } else {
-            findings.push(SecurityFinding {
+        match hardening.secure_boot {
+            Some(true) => hard_score += 3,
+            // Only report it off when it was read and is off. An unread state
+            // is not a security finding about the machine.
+            Some(false) => findings.push(SecurityFinding {
                 severity: "medium".into(),
                 title: "Secure Boot not enabled".into(),
                 description: "UEFI Secure Boot is not active.".into(),
                 remediation: "Enable Secure Boot in UEFI firmware settings.".into(),
-            });
+            }),
+            None => findings.push(SecurityFinding {
+                severity: "info".into(),
+                title: "Secure Boot state not read".into(),
+                description: "simon could not read the Secure Boot state on this platform.".into(),
+                remediation: "Check it in the UEFI firmware settings directly.".into(),
+            }),
         }
         score += hard_score as i32;
         components.push(("Kernel Hardening".into(), hard_score));
@@ -611,20 +638,23 @@ impl SecurityMitigationsMonitor {
             .parse::<u32>()
             .unwrap_or(0);
 
+        // An unreadable or absent sysctl is not a disabled setting: older
+        // kernels do not have all of these, and `unwrap_or(0)` reported every
+        // missing file as hardening switched off.
         let kptr = read_sysctl("/proc/sys/kernel/kptr_restrict")
             .parse::<u32>()
-            .unwrap_or(0)
-            > 0;
+            .ok()
+            .map(|v| v > 0);
 
         let dmesg = read_sysctl("/proc/sys/kernel/dmesg_restrict")
             .parse::<u32>()
-            .unwrap_or(0)
-            > 0;
+            .ok()
+            .map(|v| v > 0);
 
         let bpf = read_sysctl("/proc/sys/kernel/unprivileged_bpf_disabled")
             .parse::<u32>()
-            .unwrap_or(0)
-            > 0;
+            .ok()
+            .map(|v| v > 0);
 
         let ptrace = read_sysctl("/proc/sys/kernel/yama/ptrace_scope")
             .parse::<u32>()
@@ -633,10 +663,15 @@ impl SecurityMitigationsMonitor {
         let lockdown = read_sysctl("/sys/kernel/security/lockdown");
 
         // Secure boot detection
-        let secure_boot = std::path::Path::new(
+        // This tested only that the efivar *exists*, which it does on every
+        // UEFI system whether Secure Boot is on or off — so any UEFI Linux
+        // machine reported Secure Boot enabled. The variable's last byte
+        // carries the state, which `boot_config` already reads correctly.
+        let secure_boot = std::fs::read(
             "/sys/firmware/efi/efivars/SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c",
         )
-        .exists();
+        .ok()
+        .and_then(|data| data.last().map(|b| *b == 1));
 
         Ok(KernelHardening {
             aslr_level: aslr,
@@ -651,30 +686,29 @@ impl SecurityMitigationsMonitor {
                 lockdown
             },
             secure_boot,
-            stack_protector: true, // Most modern kernels have this
+            stack_protector: None, // Most modern kernels have this
         })
     }
 
     #[cfg(target_os = "windows")]
     fn detect_hardening() -> Result<KernelHardening, SimonError> {
-        // Check Secure Boot
-        let sb = std::process::Command::new("powershell")
-            .args(["-NoProfile", "-Command", "Confirm-SecureBootUEFI"])
-            .output()
-            .ok()
-            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_lowercase() == "true")
-            .unwrap_or(false);
+        // `Confirm-SecureBootUEFI` needs elevation and returned `false` for a
+        // permission error. The registry carries the same state unelevated.
+        let sb = crate::platform::windows::secure_boot_enabled();
 
         Ok(KernelHardening {
             aslr_level: 2, // Windows always has ASLR
-            kptr_restrict: true,
-            dmesg_restrict: true,
-            unprivileged_bpf_disabled: true,
+            // These four are Linux kernel tunables with no Windows equivalent.
+            // Asserting `true` credited the posture score for hardening that
+            // was never checked and does not exist in this form here.
+            kptr_restrict: None,
+            dmesg_restrict: None,
+            unprivileged_bpf_disabled: None,
             ptrace_scope: 0,
             modules_locked: false,
             lockdown_mode: "none".into(),
             secure_boot: sb,
-            stack_protector: true,
+            stack_protector: None,
         })
     }
 
@@ -682,14 +716,18 @@ impl SecurityMitigationsMonitor {
     fn detect_hardening() -> Result<KernelHardening, SimonError> {
         Ok(KernelHardening {
             aslr_level: 2, // macOS always has ASLR
-            kptr_restrict: true,
-            dmesg_restrict: true,
-            unprivileged_bpf_disabled: true,
+            // Linux tunables with no macOS equivalent; none of this is read.
+            kptr_restrict: None,
+            dmesg_restrict: None,
+            unprivileged_bpf_disabled: None,
             ptrace_scope: 1,
             modules_locked: false,
             lockdown_mode: "none".into(),
-            secure_boot: true, // Apple Silicon always has Secure Boot
-            stack_protector: true,
+            // "Apple Silicon always has Secure Boot" is not a reading, and this
+            // code runs on Intel Macs too, where it depends on the T2 chip and
+            // the user's Startup Security Utility setting.
+            secure_boot: None,
+            stack_protector: None,
         })
     }
 
@@ -697,14 +735,14 @@ impl SecurityMitigationsMonitor {
     fn detect_hardening() -> Result<KernelHardening, SimonError> {
         Ok(KernelHardening {
             aslr_level: 0,
-            kptr_restrict: false,
-            dmesg_restrict: false,
-            unprivileged_bpf_disabled: false,
+            kptr_restrict: None,
+            dmesg_restrict: None,
+            unprivileged_bpf_disabled: None,
             ptrace_scope: 0,
             modules_locked: false,
             lockdown_mode: "unknown".into(),
-            secure_boot: false,
-            stack_protector: false,
+            secure_boot: None,
+            stack_protector: None,
         })
     }
 }
@@ -716,14 +754,14 @@ impl Default for SecurityMitigationsMonitor {
             security_modules: Vec::new(),
             hardening: KernelHardening {
                 aslr_level: 0,
-                kptr_restrict: false,
-                dmesg_restrict: false,
-                unprivileged_bpf_disabled: false,
+                kptr_restrict: None,
+                dmesg_restrict: None,
+                unprivileged_bpf_disabled: None,
                 ptrace_scope: 0,
                 modules_locked: false,
                 lockdown_mode: "unknown".into(),
-                secure_boot: false,
-                stack_protector: false,
+                secure_boot: None,
+                stack_protector: None,
             },
             posture: SecurityPosture {
                 score: 0,
@@ -777,14 +815,14 @@ mod tests {
 
         let hardening = KernelHardening {
             aslr_level: 2,
-            kptr_restrict: true,
-            dmesg_restrict: true,
-            unprivileged_bpf_disabled: true,
+            kptr_restrict: None,
+            dmesg_restrict: None,
+            unprivileged_bpf_disabled: None,
             ptrace_scope: 1,
             modules_locked: false,
             lockdown_mode: "none".into(),
-            secure_boot: true,
-            stack_protector: true,
+            secure_boot: None,
+            stack_protector: None,
         };
 
         let posture = SecurityMitigationsMonitor::compute_posture(&vulns, &lsms, &hardening);
@@ -818,14 +856,14 @@ mod tests {
             security_modules: Vec::new(),
             hardening: KernelHardening {
                 aslr_level: 2,
-                kptr_restrict: false,
-                dmesg_restrict: false,
-                unprivileged_bpf_disabled: false,
+                kptr_restrict: None,
+                dmesg_restrict: None,
+                unprivileged_bpf_disabled: None,
                 ptrace_scope: 0,
                 modules_locked: false,
                 lockdown_mode: "none".into(),
-                secure_boot: false,
-                stack_protector: true,
+                secure_boot: None,
+                stack_protector: None,
             },
             posture: SecurityPosture {
                 score: 50,
@@ -856,5 +894,79 @@ mod tests {
         let json = serde_json::to_string(&finding).unwrap();
         assert!(json.contains("high"));
         let _: SecurityFinding = serde_json::from_str(&json).unwrap();
+    }
+
+    /// A platform that cannot read CPU vulnerabilities produces no report.
+    ///
+    /// `detect_vulnerabilities` returns `UnsupportedPlatform` off Linux, with
+    /// a comment worth keeping: *"a reassuring security reading is acted on"*.
+    /// That error is what makes `detect_hardening`'s non-Linux branches
+    /// unreachable — they asserted `kptr_restrict`, `dmesg_restrict`,
+    /// `unprivileged_bpf_disabled` and `stack_protector` as `true`, which are
+    /// Linux kernel tunables with no equivalent there, and two of them feed
+    /// the posture score.
+    ///
+    /// They are `None` now, but this test is the one that matters: **if
+    /// someone implements vulnerability detection for another platform, the
+    /// hardening branch beside it becomes live in the same commit.** This
+    /// fails then, which is the moment to look at it.
+    #[cfg(not(target_os = "linux"))]
+    #[test]
+    fn a_platform_without_vulnerability_data_publishes_no_posture() {
+        let built = SecurityMitigationsMonitor::new();
+        assert!(
+            built.is_err(),
+            concat!(
+                "this platform now produces a security posture. Check that ",
+                "detect_hardening does not assert Linux kernel tunables it ",
+                "cannot read -- two of them add to the score."
+            )
+        );
+    }
+
+    /// Secure Boot is read from the variable's value, not its existence.
+    ///
+    /// The Linux reader tested `Path::exists()` on the efivar, which is
+    /// present on every UEFI system whether Secure Boot is on or off, so any
+    /// UEFI machine reported it enabled. `boot_config` already read the last
+    /// byte correctly.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn secure_boot_is_read_from_the_variable_not_its_presence() {
+        let monitor = SecurityMitigationsMonitor::new().expect("a report on Linux");
+
+        let path = std::path::Path::new(
+            "/sys/firmware/efi/efivars/SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c",
+        );
+        if !path.exists() {
+            assert_eq!(
+                monitor.hardening.secure_boot, None,
+                "no efivar to read, so no state to report"
+            );
+            return;
+        }
+
+        // Present: the answer must match the byte, not the file's existence.
+        let expected = std::fs::read(path)
+            .ok()
+            .and_then(|d| d.last().map(|b| *b == 1));
+        assert_eq!(monitor.hardening.secure_boot, expected);
+    }
+
+    /// An unread Secure Boot state is not a Secure Boot finding.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn an_unread_secure_boot_state_is_not_a_medium_finding() {
+        let monitor = SecurityMitigationsMonitor::new().expect("a report on Linux");
+        if monitor.hardening.secure_boot.is_none() {
+            assert!(
+                !monitor
+                    .posture
+                    .findings
+                    .iter()
+                    .any(|f| f.title == "Secure Boot not enabled"),
+                "Secure Boot was not read, so it must not be reported as off"
+            );
+        }
     }
 }
