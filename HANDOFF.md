@@ -95,7 +95,7 @@ Since the tag, on `master` and green on all three platforms:
 | `c79d4c5` | Nine tests asserting a contract the readers no longer make |
 | `6fbf520` | A device's name read as the speed it negotiated |
 | `6f289bd` | Three displays where one exists, two of them graphics cards |
-| `HEAD` | Twelve audio endpoints where four exist, two facing backwards |
+| `4b004c7` | Twelve audio endpoints where four exist, two facing backwards |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
