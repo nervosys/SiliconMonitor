@@ -71,7 +71,7 @@ Since the tag, on `master` and green on all three platforms:
 | `a015d58` | Every AMD CPU classified as Intel, by the word in "12-Core" |
 | `ad8dfff` | A CPUID family of 0, and a name still carrying its WMI padding |
 | `3935301` | `is_turbo` closed, and the guess above its known defect |
-| `HEAD` | Secure Boot read from a file's existence, not its value |
+| `dd2f56a` | Secure Boot read from a file's existence, not its value |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
