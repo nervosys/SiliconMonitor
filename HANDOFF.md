@@ -97,7 +97,7 @@ Since the tag, on `master` and green on all three platforms:
 | `6f289bd` | Three displays where one exists, two of them graphics cards |
 | `4b004c7` | Twelve audio endpoints where four exist, two facing backwards |
 | `4410ea6` | Every NVMe device counted twice, once as its own controller |
-| `HEAD` | A USB stick with no SMART, passing its SMART check |
+| `9a9b585` | A USB stick with no SMART, passing its SMART check |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
