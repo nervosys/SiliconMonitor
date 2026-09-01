@@ -64,7 +64,7 @@ Since the tag, on `master` and green on all three platforms:
 | `49e40ef` | The same nominal-clock lie, in a second reader of the same API |
 | `eaf7e3f` | A fifth AdapterRAM reader, on the public API, still capped at 4GB |
 | `9bc2524` | NPU core counts guessed from a vendor guessed from a name |
-| `HEAD` | A doc comment that named the danger, ignored by the caller two lines away |
+| `b2e84af` | A doc comment that named the danger, ignored by the caller two lines away |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
