@@ -64,9 +64,43 @@ Since the tag, on `master` and green on all three platforms:
 | `49e40ef` | The same nominal-clock lie, in a second reader of the same API |
 | `eaf7e3f` | A fifth AdapterRAM reader, on the public API, still capped at 4GB |
 | `9bc2524` | NPU core counts guessed from a vendor guessed from a name |
+| `HEAD` | A doc comment that named the danger, ignored by the caller two lines away |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### A warning in a doc comment does not bind the caller
+
+The best-documented defect in the crate, and the documentation did not help.
+`silicon::apple::estimate_link_speed` carried this:
+
+> These are guesses keyed off the interface name, not measurements: `en0` is
+> assumed to be Wi-Fi 6 and anything else `en*`/`bridge*` gigabit Ethernet.
+> **Callers must not present the result as a read link rate.**
+
+Two lines below, the caller assigned it straight to `link_speed_mbps`. So a Mac
+reported a 1200 Mbps link for `en0` because the name starts with "en" — `en0` is
+not always Wi-Fi, and a 10GbE port is not the 1000 the next branch would give
+it.
+
+**A warning in a doc comment does not bind the caller; a type does.**
+`link_speed_mbps` is `Option<u32>` now and the function is gone. The same field
+was zero on Linux for a down interface and for the whole wireless path (*"Would
+need iwconfig/nl80211"*), and on Windows whenever `CurrentBandwidth` was absent.
+All `None`.
+
+That is the fourth kind of marker for this defect family, and the one that
+should be least reassuring:
+
+1. A comment admitting the code cannot determine something — the original grep.
+2. A consumer guarding `> 0` to undo a sentinel its source made.
+3. A field whose only purpose is to be a fallback (`base_frequency_mhz`).
+4. **A doc comment correctly forbidding exactly what the caller does.**
+
+Prose next to the code cannot enforce anything. Everything in this session that
+actually held — the `Option` migrations, the conformance suites, the
+`source_hygiene` and `plausibility` guards — works because it fails a build or a
+test, not because it tells the next reader what to avoid.
 
 ### Guesses admitted in comments, published as readings
 

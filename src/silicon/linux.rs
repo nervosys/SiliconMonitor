@@ -727,11 +727,14 @@ impl SiliconMonitor for LinuxSiliconMonitor {
                 }
 
                 // Read link speed (in Mbps)
+                // A down interface reports a negative speed, and an interface
+                // whose `speed` file cannot be read reports nothing. Neither is
+                // a link running at zero megabits.
                 let link_speed_mbps = std::fs::read_to_string(path.join("speed"))
                     .ok()
                     .and_then(|s| s.trim().parse::<i32>().ok())
-                    .filter(|&s| s > 0) // Negative values mean interface is down
-                    .unwrap_or(0) as u32;
+                    .filter(|&s| s > 0)
+                    .map(|s| s as u32);
 
                 // Read statistics
                 let _rx_bytes = std::fs::read_to_string(path.join("statistics/rx_bytes"))
@@ -819,7 +822,9 @@ impl SiliconMonitor for LinuxSiliconMonitor {
                     {
                         network_devices.push(NetworkSilicon {
                             interface: interface_name,
-                            link_speed_mbps: 0, // Would need iwconfig/nl80211
+                            // Needs iwconfig or nl80211, neither of which is
+                            // called here.
+                            link_speed_mbps: None,
                             rx_bandwidth_mbps: 0.0,
                             tx_bandwidth_mbps: 0.0,
                             packet_rate: 0,

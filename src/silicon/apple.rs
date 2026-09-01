@@ -452,7 +452,7 @@ impl SiliconMonitor for AppleSiliconMonitor {
                         let interface_type = classify_macos_interface(&current_iface);
                         networks.push(NetworkSilicon {
                             interface: interface_type,
-                            link_speed_mbps: estimate_link_speed(&current_iface),
+                            link_speed_mbps: None,
                             rx_bandwidth_mbps: 0.0,
                             tx_bandwidth_mbps: 0.0,
                             packet_rate: 0,
@@ -468,7 +468,7 @@ impl SiliconMonitor for AppleSiliconMonitor {
                 let interface_type = classify_macos_interface(&current_iface);
                 networks.push(NetworkSilicon {
                     interface: interface_type,
-                    link_speed_mbps: estimate_link_speed(&current_iface),
+                    link_speed_mbps: None,
                     rx_bandwidth_mbps: 0.0,
                     tx_bandwidth_mbps: 0.0,
                     packet_rate: 0,
@@ -531,21 +531,15 @@ fn classify_macos_interface(iface: &str) -> String {
     }
 }
 
-/// Estimate link speed for macOS interface
-///
-/// These are guesses keyed off the interface name, not measurements: `en0` is assumed
-/// to be Wi-Fi 6 and anything else `en*`/`bridge*` gigabit Ethernet. Callers must not
-/// present the result as a read link rate. Reading the real value means querying
-/// `IOKit` for the interface's active media type.
-fn estimate_link_speed(iface: &str) -> u32 {
-    if iface == "en0" {
-        1200 // WiFi 6 ~1.2 Gbps
-    } else if iface.starts_with("en") || iface.starts_with("bridge") {
-        1000 // Gigabit Ethernet
-    } else {
-        100
-    }
-}
+// `estimate_link_speed` was here, and its own doc comment said what was wrong
+// with it: "These are guesses keyed off the interface name, not measurements:
+// `en0` is assumed to be Wi-Fi 6 and anything else `en*`/`bridge*` gigabit
+// Ethernet. Callers must not present the result as a read link rate."
+//
+// The caller two lines away assigned it straight to `link_speed_mbps`. A
+// warning in a doc comment does not bind the caller; a type does. The field is
+// `Option<u32>` and reads `None` here until something calls `IOKit` for the
+// interface's active media type.
 
 #[cfg(test)]
 mod tests {

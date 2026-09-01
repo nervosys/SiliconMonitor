@@ -596,8 +596,13 @@ impl SiliconMonitor for WindowsSiliconMonitor {
                             let rx_mbps = perf.bytes_received_per_sec.unwrap_or(0) as f64 / (1024.0 * 1024.0);
                             let tx_mbps = perf.bytes_sent_per_sec.unwrap_or(0) as f64 / (1024.0 * 1024.0);
                             let packets = perf.packets_per_sec.unwrap_or(0);
-                            let bandwidth_bps = perf.current_bandwidth.unwrap_or(0);
-                            let link_speed_mbps = (bandwidth_bps / 1_000_000) as u32;
+                            // `CurrentBandwidth` absent is not a link at
+                            // zero megabits; the counter simply did not
+                            // report one for this interface.
+                            let link_speed_mbps = perf
+                                .current_bandwidth
+                                .filter(|b| *b > 0)
+                                .map(|b| (b / 1_000_000) as u32);
 
                             // Determine interface type from name
                             let interface = if name.contains("Wi-Fi") || name.contains("Wireless") || name.contains("WLAN") {

@@ -151,9 +151,12 @@ fn report<M: SiliconMonitor>(monitor: &M) -> Result<(), Box<dyn std::error::Erro
         Ok(networks) if !networks.is_empty() => {
             for net in &networks {
                 println!(
-                    "  {} ({} Mbps): RX {:.2} MB/s, TX {:.2} MB/s, {} pkt/s",
+                    "  {} ({}): RX {:.2} MB/s, TX {:.2} MB/s, {} pkt/s",
                     net.interface,
-                    net.link_speed_mbps,
+                    net.link_speed_mbps.map_or_else(
+                        || "link speed not read".to_string(),
+                        |m| format!("{m} Mbps")
+                    ),
                     net.rx_bandwidth_mbps,
                     net.tx_bandwidth_mbps,
                     net.packet_rate

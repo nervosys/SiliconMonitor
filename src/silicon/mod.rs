@@ -129,7 +129,15 @@ pub struct NetworkSilicon {
     /// Interface name (e.g., "WiFi", "Ethernet")
     pub interface: String,
     /// Link speed in Mbps
-    pub link_speed_mbps: u32,
+    /// Negotiated link speed in Mbps, where it was read.
+    ///
+    /// Never estimated. macOS filled this from `estimate_link_speed`, which
+    /// guessed from the interface *name* — `en0` became 1200 ("WiFi 6 ~1.2
+    /// Gbps"), any other `en*` or `bridge*` became 1000, everything else 100.
+    /// `en0` is not always WiFi and a 10GbE port is not 1000. Linux left it at
+    /// zero for a down interface and for the wireless path, under a comment
+    /// reading "Would need iwconfig/nl80211".
+    pub link_speed_mbps: Option<u32>,
     /// RX bandwidth in MB/s
     pub rx_bandwidth_mbps: f64,
     /// TX bandwidth in MB/s
