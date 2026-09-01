@@ -100,9 +100,54 @@ Since the tag, on `master` and green on all three platforms:
 | `9a9b585` | A USB stick with no SMART, passing its SMART check |
 | `9332a38` | An id documented to be stable, built from enumeration order |
 | `c3391f0` | The health reader's own enumeration could not report a failure |
+| `HEAD` | Boot mode asserted because it is usually right |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### Boot mode asserted because it is usually right
+
+The first line of `firmware::refresh_windows`:
+
+```rust
+self.boot_mode = BootMode::UEFI; // Modern Windows is almost always UEFI
+```
+
+The comment is true and it is not a reading. `board.firmware.boot_mode` is
+declared `Measured` and described as *"whether the machine booted UEFI or legacy
+BIOS — determines whether Secure Boot is even applicable"*, so **the one machine
+that cares about the answer is the one that boots legacy BIOS, and that is the
+machine being told UEFI.** "Almost always" is a statement about the population;
+the field is a statement about this host.
+
+`GetFirmwareType` answers it, needs no elevation, and **this crate already wraps
+it** — `platform::windows::firmware_type()`, called by `boot_config`, whose own
+comment reads *"claiming Legacy on a failed query is how the old code got it
+wrong"*. So the reasoning had already been worked out and applied in one module
+while the module next door assumed the opposite direction. That is the same
+shape as the `smart.passed` entry three below, and it is now frequent enough to
+state plainly: **when a fix lands, grep for the API rather than the symptom, and
+fix every caller in the same commit.** This file has said that since 5.x; it
+keeps being the thing that was not done.
+
+macOS asserted `UEFI` unconditionally too. Every Intel Mac boots EFI and none
+boots legacy BIOS, so the architecture settles it there — but **Apple silicon
+boots iBoot, which is neither**, and was being reported as UEFI. It is now UEFI
+on `x86_64` and `Unknown` elsewhere.
+
+Linux was already right: it reads `/sys/firmware/efi`.
+
+This host still reports `uefi`, now from `GetFirmwareType` instead of from an
+assumption that happened to hold.
+
+**What did not get done, and why it is recorded rather than half-landed.** The
+same commit was going to convert `firmware`'s enumeration to report its
+failures, like `smart` above. Its Windows reader interleaves four queries — two
+that add entries and two that only decorate them — and the edit got the brace
+bookkeeping wrong. I reverted it rather than push a reader I had stopped being
+able to read. **A module that resists a mechanical edit is telling you
+something**, and in this case it is that the four queries want separating before
+any of them can be made honest.
 
 ### The health reader's own enumeration could not report a failure
 
@@ -3302,7 +3347,11 @@ feature stayed broken through eight published versions.
    `usb`, `input`, `tpm`, `storage_controller`, `numa` and `printer` are
    converted; `codec` was examined and does not have the defect. Left: `audio`,
    `bluetooth`, `cpu_cache`, `display`, `firmware`, `os_info`,
-   `power_profile`. (`display` and `audio` had their Windows readers rewritten
+   `power_profile`. `firmware` is the awkward one: its Windows reader
+   interleaves four PowerShell queries, two that add entries and two that
+   only decorate them, and a mechanical conversion of it was attempted and
+   reverted. Separate the four before converting. (`display` and `audio` had
+   their Windows readers rewritten
    for a different defect since; their `refresh_<os>` signatures are untouched.
    `smart` is converted, and `linux` there is deliberately left swallowing —
    its subprocesses enrich a sysfs enumeration rather than being it.)

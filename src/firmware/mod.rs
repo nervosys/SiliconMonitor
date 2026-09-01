@@ -473,7 +473,18 @@ impl FirmwareInventory {
 
     #[cfg(target_os = "windows")]
     fn refresh_windows(&mut self) {
-        self.boot_mode = BootMode::UEFI; // Modern Windows is almost always UEFI
+        // `GetFirmwareType` answers this, and this crate already wraps it --
+        // `boot_config` calls the same helper and its comment says why:
+        // "claiming Legacy on a failed query is how the old code got it wrong".
+        // Here the assumption ran the other way, under the comment "modern
+        // Windows is almost always UEFI", which is true and is not a reading.
+        // A machine that boots legacy BIOS is exactly the machine an agent
+        // asking this question cares about, and it was the one being told UEFI.
+        self.boot_mode = match crate::platform::windows::firmware_type() {
+            Some(crate::boot_config::BootType::Uefi) => BootMode::UEFI,
+            Some(crate::boot_config::BootType::Legacy) => BootMode::Legacy,
+            _ => BootMode::Unknown,
+        };
 
         // BIOS information
         if let Ok(output) = std::process::Command::new("powershell")
@@ -590,7 +601,15 @@ impl FirmwareInventory {
 
     #[cfg(target_os = "macos")]
     fn refresh_macos(&mut self) {
-        self.boot_mode = BootMode::UEFI;
+        // Every Intel Mac boots EFI and none boots legacy BIOS, so the answer
+        // to "UEFI or legacy BIOS" is settled there by the architecture. Apple
+        // silicon boots iBoot, which is neither, and this used to answer UEFI
+        // for those too.
+        self.boot_mode = if cfg!(target_arch = "x86_64") {
+            BootMode::UEFI
+        } else {
+            BootMode::Unknown
+        };
 
         if let Ok(output) = std::process::Command::new("system_profiler")
             .args(["SPHardwareDataType"])
