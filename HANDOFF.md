@@ -99,9 +99,59 @@ Since the tag, on `master` and green on all three platforms:
 | `4410ea6` | Every NVMe device counted twice, once as its own controller |
 | `9a9b585` | A USB stick with no SMART, passing its SMART check |
 | `9332a38` | An id documented to be stable, built from enumeration order |
+| `HEAD` | The health reader's own enumeration could not report a failure |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### The health reader's own enumeration could not report a failure
+
+`smart` off the enumerator list. It is the one where the defect matters most and
+also the one where the three platforms need different treatment, which is the
+point of the entry.
+
+Windows enumerates *from* `Get-PhysicalDisk`, through the usual triple
+`if let Ok`. A failure produced an empty disk list, and **an empty disk list out
+of a health reader reads as "no drives to worry about"**. It now propagates.
+
+macOS enumerates from `smartctl --scan`, with `diskutil` as a fallback, and the
+two need opposite handling:
+
+* `smartctl` is **optional software**. Its absence is not a failure — there is
+  no SMART source, and `diskutil` still enumerates the drives. A `smartctl`
+  that *is* installed and exits non-zero is a real failure. Both were swallowed
+  together.
+* `diskutil` **ships with macOS**, so failing to run it is a failure, full stop.
+
+Linux is the third case and is deliberately left alone: it enumerates from
+sysfs and only *enriches* with `nvme` and `smartctl`, so a missing tool costs
+attributes rather than devices. That is the `codec` exemption from the entry
+this list started in, and it is the reason the list has to be worked one module
+at a time rather than swept.
+
+**Three modules, three correct answers, all of them "propagate the failure" at
+first glance.** The distinction is not whether a subprocess can fail — they all
+can — but whether the subprocess *is* the enumeration or an addition to it.
+That question is answerable by reading twenty lines, and it is not answerable by
+grep.
+
+Behaviour on this host is unchanged: four disks, all found.
+
+**And a process note, because it nearly went the other way.** The gate came
+back:
+
+```
+TESTS=101 result-lines=0
+```
+
+Exit 101, and **not one `test result:` line** — the truncated-run signature this
+file already warns about. The log said `can't find crate for simonlib` and
+`crate h2 required to be available in rlib format`: a build cache half-written
+when the disk filled up earlier. The clippy run just above it had also printed
+nothing, which looks exactly like success. `cargo clean -p silicon-monitor` and
+a real 20-minute rebuild produced the honest 15/15. **A gate that prints nothing
+is not a gate that passed**, which is the same sentence as everything else in
+this file, aimed at the tooling instead of the readers.
 
 ### An id documented to be stable, built from enumeration order
 
@@ -3248,12 +3298,15 @@ feature stayed broken through eight published versions.
 
 ## Open work
 
-1. **Eight enumerators still swallow their failures.** `camera`, `sensors`,
+1. **Seven enumerators still swallow their failures.** `camera`, `sensors`,
    `usb`, `input`, `tpm`, `storage_controller`, `numa` and `printer` are
    converted; `codec` was examined and does not have the defect. Left: `audio`,
-   `bluetooth`, `cpu_cache`, `display`, `firmware`, `os_info`, `power_profile`,
-   `smart`. (`display` and `audio` had their Windows readers rewritten for a
-   different defect since; their `refresh_<os>` signatures are untouched.) Each has a `refresh_<os>` returning `()` into a `refresh()` returning
+   `bluetooth`, `cpu_cache`, `display`, `firmware`, `os_info`,
+   `power_profile`. (`display` and `audio` had their Windows readers rewritten
+   for a different defect since; their `refresh_<os>` signatures are untouched.
+   `smart` is converted, and `linux` there is deliberately left swallowing —
+   its subprocesses enrich a sysfs enumeration rather than being it.)
+   Each has a `refresh_<os>` returning `()` into a `refresh()` returning
    `Result`, so each can report a machine as empty when the reader merely
    failed. Convert with `capture_json` / `capture`, one or two modules per
    commit, and run the module against this host afterwards — `sensors` only gave

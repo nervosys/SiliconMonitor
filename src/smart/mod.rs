@@ -174,17 +174,22 @@ impl SmartMonitor {
         Ok(monitor)
     }
 
+    /// Re-read every drive's SMART data.
+    ///
+    /// Returns `Err` when the enumeration failed, and `Ok` with an empty list
+    /// only when it succeeded and found nothing. The two are not the same
+    /// finding for a health reader, and until 6.0.0 they were the same value.
     pub fn refresh(&mut self) -> Result<(), SimonError> {
         self.disks.clear();
 
         #[cfg(target_os = "linux")]
-        self.refresh_linux();
+        self.refresh_linux()?;
 
         #[cfg(target_os = "windows")]
-        self.refresh_windows();
+        self.refresh_windows()?;
 
         #[cfg(target_os = "macos")]
-        self.refresh_macos();
+        self.refresh_macos()?;
 
         // Run inference on all collected disks
         for disk in &mut self.disks {
@@ -416,7 +421,7 @@ impl SmartMonitor {
     }
 
     #[cfg(target_os = "linux")]
-    fn refresh_linux(&mut self) {
+    fn refresh_linux(&mut self) -> Result<(), SimonError> {
         // NVMe drives from /sys/class/nvme
         let nvme_base = std::path::Path::new("/sys/class/nvme");
         if nvme_base.exists() {
@@ -558,6 +563,7 @@ impl SmartMonitor {
                 self.disks.push(disk);
             }
         }
+        Ok(())
     }
 
     #[cfg(target_os = "linux")]
@@ -616,10 +622,15 @@ impl SmartMonitor {
     }
 
     #[cfg(target_os = "windows")]
-    fn refresh_windows(&mut self) {
-        // Use Get-PhysicalDisk + Get-StorageReliabilityCounter
-        if let Ok(output) = std::process::Command::new("powershell")
-            .args([
+    fn refresh_windows(&mut self) -> Result<(), SimonError> {
+        // Use Get-PhysicalDisk + Get-StorageReliabilityCounter.
+        //
+        // This is the enumeration, not an enrichment: a failure here
+        // produced an empty disk list, and an empty disk list from a
+        // health reader reads as "no drives to worry about".
+        let json = crate::core::command::capture_json(
+            "powershell",
+            &[
                 "-NoProfile",
                 "-Command",
                 r#"
@@ -645,16 +656,15 @@ Get-PhysicalDisk | ForEach-Object {
     }
 } | ConvertTo-Json -Compress
 "#,
-            ])
-            .output()
+            ],
+        )?;
+        let Some(val) = json else {
+            return Ok(());
+        };
         {
-            if let Ok(text) = String::from_utf8(output.stdout) {
-                if let Ok(val) = serde_json::from_str::<serde_json::Value>(&text) {
-                    let items = match &val {
-                        serde_json::Value::Array(arr) => arr.clone(),
-                        obj @ serde_json::Value::Object(_) => vec![obj.clone()],
-                        _ => vec![],
-                    };
+            {
+                {
+                    let items = crate::core::command::json_items(&val);
                     for item in &items {
                         // Windows answers these separately: MediaType describes the
                         // storage medium ("SSD"), BusType the transport ("NVMe").
@@ -758,6 +768,7 @@ Get-PhysicalDisk | ForEach-Object {
                 }
             }
         }
+        Ok(())
     }
 
     /// Fill in whatever the drive's own SMART structure reports, for the drives
@@ -824,13 +835,32 @@ Get-PhysicalDisk | ForEach-Object {
     }
 
     #[cfg(target_os = "macos")]
-    fn refresh_macos(&mut self) {
-        // Try smartmontools
-        if let Ok(output) = std::process::Command::new("smartctl")
+    fn refresh_macos(&mut self) -> Result<(), SimonError> {
+        // Try smartmontools.
+        //
+        // `smartctl` is optional software, so its *absence* is not a failure --
+        // there is simply no SMART source, and `diskutil` below still
+        // enumerates the drives. A `smartctl` that is installed and exits
+        // non-zero is a different matter, and both used to be swallowed
+        // together into an empty disk list.
+        let scan = match std::process::Command::new("smartctl")
             .args(["--scan", "-j"])
             .output()
         {
-            if let Ok(text) = String::from_utf8(output.stdout) {
+            Ok(o) if o.status.success() => Some(o.stdout),
+            Ok(o) => {
+                return Err(SimonError::CommandFailed(format!(
+                    "smartctl --scan exited {}: {}",
+                    o.status,
+                    String::from_utf8_lossy(&o.stderr).trim()
+                )))
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+            Err(e) => return Err(SimonError::CommandFailed(format!("smartctl: {e}"))),
+        };
+
+        if let Some(stdout) = scan {
+            if let Ok(text) = String::from_utf8(stdout) {
                 if let Ok(val) = serde_json::from_str::<serde_json::Value>(&text) {
                     if let Some(devices) = val["devices"].as_array() {
                         for dev in devices {
@@ -908,14 +938,12 @@ Get-PhysicalDisk | ForEach-Object {
             }
         }
 
-        // Fallback: diskutil
+        // Fallback: diskutil. Unlike `smartctl` this ships with macOS, so a
+        // failure to run it is a failure, not an absent optional tool.
         if self.disks.is_empty() {
-            if let Ok(output) = std::process::Command::new("diskutil")
-                .args(["list", "-plist"])
-                .output()
             {
                 // Basic enumeration — just record device names
-                let text = String::from_utf8(output.stdout).unwrap_or_default();
+                let text = crate::core::command::capture("diskutil", &["list", "-plist"])?;
                 for line in text.lines() {
                     if line.contains("/dev/disk") {
                         let device = line.trim().to_string();
@@ -951,6 +979,7 @@ Get-PhysicalDisk | ForEach-Object {
                 }
             }
         }
+        Ok(())
     }
 }
 
@@ -976,10 +1005,26 @@ impl std::fmt::Display for DiskHealth {
 mod tests {
     use super::*;
 
+    /// Constructing the monitor either enumerates or says why it could not.
+    ///
+    /// See the identically-shaped tests in `camera`, `usb` and the rest: this
+    /// asserted `is_ok()`, which was true by construction while `refresh` could
+    /// not fail. A failure must carry a reason, because a reason is the whole
+    /// difference between "this machine has no drives" and "nobody looked" --
+    /// and for a health reader the second answer masquerading as the first is
+    /// the worst way to be wrong.
     #[test]
     fn test_smart_monitor_creation() {
-        let monitor = SmartMonitor::new();
-        assert!(monitor.is_ok());
+        match SmartMonitor::new() {
+            Ok(_monitor) => {}
+            Err(e) => {
+                let why = e.to_string();
+                assert!(
+                    why.len() > 10,
+                    "enumeration failed without saying why: {why:?}"
+                );
+            }
+        }
     }
 
     #[test]
