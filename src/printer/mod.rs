@@ -97,8 +97,16 @@ pub struct PrinterInfo {
     pub printer_type: PrinterType,
     /// Whether this is the default printer
     pub is_default: bool,
-    /// Whether the printer accepts new jobs
-    pub accepting_jobs: bool,
+    /// Whether the printer accepts new jobs.
+    ///
+    /// `None` on Windows. CUPS reports it directly -- `lpstat -a` says
+    /// "accepting requests" or "not accepting requests" -- and `Win32_Printer`
+    /// has no equivalent property. It used to be filled there with
+    /// `status != PrinterStatus::Offline`, which is the one derivation the
+    /// entity's own description rules out: "distinct from `status`: a stopped
+    /// queue may still accept jobs and hold them, which is the difference
+    /// between a delayed print and a rejected one".
+    pub accepting_jobs: Option<bool>,
     /// Whether the printer is shared over the network
     pub shared: bool,
     /// Whether the printer supports colour. `None` when the platform said
@@ -134,17 +142,21 @@ impl PrinterMonitor {
     }
 
     /// Refresh printer detection.
+    /// Re-enumerate printers.
+    ///
+    /// Returns `Err` when the enumeration failed, and `Ok` with an empty list
+    /// only when it succeeded and found nothing. See [`crate::core::command`].
     pub fn refresh(&mut self) -> Result<(), SimonError> {
         self.printers.clear();
 
         #[cfg(target_os = "linux")]
-        self.refresh_cups();
+        self.refresh_cups()?;
 
         #[cfg(target_os = "macos")]
-        self.refresh_cups();
+        self.refresh_cups()?;
 
         #[cfg(target_os = "windows")]
-        self.refresh_windows();
+        self.refresh_windows()?;
 
         Ok(())
     }
@@ -176,7 +188,7 @@ impl PrinterMonitor {
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
-    fn refresh_cups(&mut self) {
+    fn refresh_cups(&mut self) -> Result<(), SimonError> {
         // Get default printer
         let default_name = std::process::Command::new("lpstat")
             .args(["-d"])
@@ -186,14 +198,10 @@ impl PrinterMonitor {
             .and_then(|s| s.split(':').nth(1).map(|n| n.trim().to_string()))
             .unwrap_or_default();
 
-        // List printers with lpstat -p -l
-        let output = match std::process::Command::new("lpstat")
-            .args(["-p", "-l"])
-            .output()
-        {
-            Ok(o) => String::from_utf8(o.stdout).unwrap_or_default(),
-            Err(_) => return,
-        };
+        // List printers with lpstat -p -l. `lpstat` exits non-zero when the
+        // scheduler is not running, which is a different answer from a machine
+        // with no printers -- and `Err(_) => return` reported them the same.
+        let output = crate::core::command::capture("lpstat", &["-p", "-l"])?;
 
         // Parse devices
         let device_output = std::process::Command::new("lpstat")
@@ -257,7 +265,7 @@ impl PrinterMonitor {
                         status: current_status.clone(),
                         printer_type: PrinterType::Unknown,
                         is_default: current_name == default_name,
-                        accepting_jobs: accepting,
+                        accepting_jobs: Some(accepting),
                         shared: false,
                         // Not read on this path.
                         color: None,
@@ -310,7 +318,7 @@ impl PrinterMonitor {
                 status: current_status,
                 printer_type: PrinterType::Unknown,
                 is_default: current_name == default_name,
-                accepting_jobs: accepting,
+                accepting_jobs: Some(accepting),
                 shared: false,
                 // Not read on this path.
                 color: None,
@@ -319,6 +327,7 @@ impl PrinterMonitor {
                 location: String::new(),
             });
         }
+        Ok(())
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -346,23 +355,16 @@ impl PrinterMonitor {
     }
 
     #[cfg(target_os = "windows")]
-    fn refresh_windows(&mut self) {
-        let output = match std::process::Command::new("powershell")
-            .args(["-NoProfile", "-Command",
-                "Get-CimInstance Win32_Printer | Select-Object Name, DriverName, PortName, PrinterStatus, Comment, Location, Shared, Capabilities, Default, PrinterState, JobCountSinceLastReset, Network | ConvertTo-Json -Compress"])
-            .output()
-        {
-            Ok(o) => o,
-            Err(_) => return,
-        };
+    fn refresh_windows(&mut self) -> Result<(), SimonError> {
+        const QUERY: &str = "Get-CimInstance Win32_Printer | Select-Object Name, DriverName, PortName, PrinterStatus, Comment, Location, Shared, Capabilities, Default, PrinterState, JobCountSinceLastReset, Network | ConvertTo-Json -Compress";
 
-        let text = String::from_utf8(output.stdout).unwrap_or_default();
-        if let Ok(val) = serde_json::from_str::<serde_json::Value>(&text) {
-            let items = match &val {
-                serde_json::Value::Array(arr) => arr.clone(),
-                obj @ serde_json::Value::Object(_) => vec![obj.clone()],
-                _ => return,
-            };
+        let Some(val) =
+            crate::core::command::capture_json("powershell", &["-NoProfile", "-Command", QUERY])?
+        else {
+            return Ok(());
+        };
+        {
+            let items = crate::core::command::json_items(&val);
 
             for item in &items {
                 let name = item["Name"].as_str().unwrap_or("").to_string();
@@ -417,7 +419,7 @@ impl PrinterMonitor {
                     driver,
                     port,
                     connection,
-                    accepting_jobs: status != PrinterStatus::Offline,
+                    accepting_jobs: None,
                     status,
                     printer_type,
                     is_default,
@@ -429,6 +431,7 @@ impl PrinterMonitor {
                 });
             }
         }
+        Ok(())
     }
 
     #[cfg(target_os = "windows")]
@@ -525,7 +528,7 @@ mod tests {
             status: PrinterStatus::Idle,
             printer_type: PrinterType::Laser,
             is_default: true,
-            accepting_jobs: true,
+            accepting_jobs: Some(true),
             shared: false,
             color: Some(true),
             duplex: true,

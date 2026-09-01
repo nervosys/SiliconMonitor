@@ -3076,11 +3076,17 @@ fn resolve_printers(out: &mut Vec<Reading>) {
             serde_json::json!(p.is_default),
             None,
         ));
-        out.push(Reading::measured(
+        push_opt(
+            out,
             format!("{base}.accepting_jobs"),
-            serde_json::json!(p.accepting_jobs),
+            p.accepting_jobs.map(|a| serde_json::json!(a)),
             None,
-        ));
+            concat!(
+                "whether the queue takes new work is reported by CUPS and has ",
+                "no equivalent in Win32_Printer; deriving it from the printer ",
+                "status is the one thing this field exists not to do"
+            ),
+        );
         push_opt(
             out,
             format!("{base}.color"),

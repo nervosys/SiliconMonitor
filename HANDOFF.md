@@ -89,9 +89,58 @@ Since the tag, on `master` and green on all three platforms:
 | `7fde63e` | A green gate that could not see the defect it shipped |
 | `0106d6c` | The same field, right on two platforms and invented on the third |
 | `bde8726` | Sockets counted as NUMA nodes, memory divided evenly between them |
+| `HEAD` | A field derived from the one thing it exists not to be derived from |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### A field derived from the one thing it exists not to be derived from
+
+`printer`, next off the swallow list, and the field it carries is the cleanest
+example yet of a pattern this session has now hit five times.
+
+The entity:
+
+> Whether the queue is taking new work. **Distinct from `status`**: a stopped
+> queue may still accept jobs and hold them, which is the difference between a
+> delayed print and a rejected one.
+
+The Windows reader:
+
+```rust
+accepting_jobs: status != PrinterStatus::Offline,
+```
+
+**Derived from `status`.** The description does not merely fail to describe the
+code — it states the exact derivation that is wrong and explains why, one file
+away from the line that performs it. CUPS reports the real thing (`lpstat -a`
+prints "accepting requests"), `Win32_Printer` has no equivalent property, and
+the reader filled the gap by computing the forbidden thing rather than leaving
+it empty.
+
+On this machine the consequence is visible without any special case:
+
+```
+Brother MFC-L2900DWXL Printer    status=Unknown  accepting=None   (was: true)
+```
+
+The WMI status mapping is careful — `PrinterStatus` values 1 and 2 map to
+`Unknown` rather than being guessed at. So for this printer the crate knew it did
+not know the status, and **still published a confident `accepting_jobs: true`,
+because `Unknown != Offline`.** A negative comparison against an enum turns
+every unrecognised value into the affirmative case; that is the same defect as
+`_ => AudioState::Active` two entries down, written as an inequality instead of
+a match arm. **Any `x != Enum::Bad` used as a health check has this shape.**
+
+Worth adding to the greps at the bottom of this file:
+
+```bash
+grep -rnE "!= [A-Za-z]+::(Offline|Unknown|Error|Failed|Disabled)" src/ --include=*.rs
+```
+
+`refresh_cups` had the swallow too — `Err(_) => return` on `lpstat`, which exits
+non-zero when the scheduler is not running. A machine whose print scheduler is
+down and a machine with no printers reported the same empty list.
 
 ### Sockets counted as NUMA nodes, memory divided evenly between them
 
@@ -2634,10 +2683,10 @@ feature stayed broken through eight published versions.
 
 ## Open work
 
-1. **Eight enumerators still swallow their failures.** `camera`, `sensors`,
-   `usb`, `input`, `tpm`, `storage_controller` and `numa` are converted; `codec`
-   was examined and does not have the defect. Left: `audio`, `bluetooth`,
-   `cpu_cache`, `display`, `firmware`, `os_info`, `power_profile`, `printer`,
+1. **Seven enumerators still swallow their failures.** `camera`, `sensors`,
+   `usb`, `input`, `tpm`, `storage_controller`, `numa` and `printer` are
+   converted; `codec` was examined and does not have the defect. Left: `audio`,
+   `bluetooth`, `cpu_cache`, `display`, `firmware`, `os_info`, `power_profile`,
    `smart`. Each has a `refresh_<os>` returning `()` into a `refresh()` returning
    `Result`, so each can report a machine as empty when the reader merely
    failed. Convert with `capture_json` / `capture`, one or two modules per

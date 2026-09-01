@@ -1549,7 +1549,10 @@ impl Ontology {
             K::Measurement,
             None,
             P::Measured,
-            false,
+            // Nullable since 6.0.0: only CUPS reports it. The id is built
+            // with `format!`, so the static nullability check cannot see
+            // this one either.
+            true,
             "Whether the queue is taking new work. Distinct from `status`: a \
              stopped queue may still accept jobs and hold them, which is the \
              difference between a delayed print and a rejected one.",
