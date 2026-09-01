@@ -62,7 +62,7 @@ Since the tag, on `master` and green on all three platforms:
 | `f34f72c` | "No engines detected" on a platform with no engine reader |
 | `916bf08` | A sentinel introduced by an earlier fix in this same session |
 | `49e40ef` | The same nominal-clock lie, in a second reader of the same API |
-| `HEAD` | A fifth AdapterRAM reader, on the public API, still capped at 4GB |
+| `eaf7e3f` | A fifth AdapterRAM reader, on the public API, still capped at 4GB |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
