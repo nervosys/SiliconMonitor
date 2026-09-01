@@ -69,7 +69,7 @@ Since the tag, on `master` and green on all three platforms:
 | `b16feec` | A link's capacity published as the traffic on it |
 | `1c018b8` | A typical NVLink count reported as this board's |
 | `a015d58` | Every AMD CPU classified as Intel, by the word in "12-Core" |
-| `HEAD` | A CPUID family of 0, and a name still carrying its WMI padding |
+| `ad8dfff` | A CPUID family of 0, and a name still carrying its WMI padding |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
