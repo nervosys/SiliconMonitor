@@ -84,9 +84,97 @@ Since the tag, on `master` and green on all three platforms:
 | `3485fbb` | "This machine has no TPM", published as a measurement |
 | `a053f16` | Measured boot reported off, on a host where it is on |
 | `e913250` | SIP read as Secure Boot, and advice from an unread flag |
+| `HEAD` | Fifteen codecs, one frame rate: a constant with a derivation |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### Fifteen codecs, one frame rate: a constant with a derivation
+
+This file has recommended a detection technique since 5.x and nobody had run it:
+**group the readings by entity family and flag a family whose instances all
+report the same value.** Thirty lines against a live snapshot:
+
+```
+board.audio.{n}.state          x12 = "Active"
+board.input.{n}.interface      x6  = "USB"
+gpu.codec.{n}.max_fps          x15 = 60
+usb.{addr}.speed               x6  = "super"
+system.printer.{n}.status      x3  = "Idle"
+disk.{n}.smart.passed          x4  = true
+...
+```
+
+Not every uniform family is a defect — four healthy disks really do all pass
+SMART. But **a family with fifteen members and one value is a constant that has
+learned to wear a per-instance name**, and three of these were.
+
+**`gpu.codec.{n}.max_fps` is the sharpest thing found this session.** The entity:
+
+```rust
+P::Derived,
+"Frames per second at the maximum resolution. An estimate in every case ...
+ no driver reports a frame rate, so this is arithmetic over the engine
+ generation.",
+).derived(&["gpu.codec.{n}.codec", "gpu.codec.{n}.max_resolution"])
+```
+
+The reader: `max_fps: 60,` at all twelve construction sites. **There is no
+arithmetic.** The entity does not merely carry a wrong value — it declares a
+computation, and names the two inputs that computation consumes, and neither
+input is read, and the output cannot vary. `max_resolution` *does* vary across
+those fifteen rows, which is the proof: a value derived from something that
+varies cannot be constant. 60 is not even a safe floor — no engine does 8K60 on
+every codec.
+
+And in front of it, one more unreachable guard:
+
+```rust
+match c.max_fps {
+    0 => out.push(Reading::unavailable(..)),   // never taken
+    fps => out.push(Reading::derived(..)),
+}
+```
+
+That is the fourth `== 0` guard this session standing in front of a reader that
+cannot produce zero. **`Derived` is a weaker claim than `Measured` and it is
+still a claim**: it says a calculation happened. It now resolves absent, and the
+entity says why.
+
+**`board.audio.{n}.state`** was `AudioState::Active` literal on Linux and macOS.
+Windows genuinely read something — and read the wrong thing:
+`Win32_SoundDevice.Status` is Device-Manager health, while the entity is
+described as endpoint state, "active, disabled, unplugged, not present". Its
+match handled three of WMI's eleven status values and sent the rest, `Unknown`
+and `Pred Fail` included, to `_ => Active`. `Degraded` was mapped to `Idle`,
+which is an activity state and not a health one. Now `OK` and `Error` map, and
+everything else is absent. (The real endpoint state is a `DeviceState` DWORD
+under `MMDevices\Audio`, readable unelevated; noted for whoever reworks that
+enumeration.)
+
+**`board.input.{n}.interface`** reported `USB` for any device id containing
+`hid`, under a comment that already said so: *"a bare `HID` instance names the
+device class, not the transport — this reports USB for both, which is a guess."*
+The comment was right and the code did it anyway; that is the fourth time this
+session. Now only a `USB` in the instance path counts, and `Unknown` resolves
+absent through the guard `push_str_as` already had.
+
+After, on this machine — the input family is no longer uniform, which is the
+point:
+
+```
+board.input.0.interface = "USB"     board.input.2.interface = absent
+board.input.1.interface = "USB"     board.input.3.interface = absent
+gpu.codec.*.max_fps     = absent x15
+board.audio.*.state     = "active" x12   (all twelve really do report Status=OK)
+```
+
+**Worth keeping.** The audio row is the useful one: its published value did not
+change at all. What changed is that it is now a reading rather than a coincidence
+— and on a host where one endpoint reported `Pred Fail`, the old code would have
+printed the same word. *A uniform family is not proof of a defect and a correct
+value is not proof of a reading; the question is always whether any input could
+have made the output different.*
 
 ### SIP read as Secure Boot, and advice from an unread flag
 

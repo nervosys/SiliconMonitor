@@ -32,7 +32,23 @@ pub struct AudioDevice {
     pub id: String,
     pub name: String,
     pub device_type: AudioDeviceType,
-    pub state: AudioState,
+    /// Endpoint state, where the platform reports one.
+    ///
+    /// `None` where it was not established, which was not previously
+    /// expressible. Linux and macOS set the literal `AudioState::Active` at
+    /// every construction site. Windows really does read something -- but it
+    /// reads `Win32_SoundDevice.Status`, which is Device-Manager health, while
+    /// this entity is described as "endpoint state as the platform reports
+    /// it: active, disabled, unplugged, not present". Those are different
+    /// properties, and the match had a `_ => Active` arm that turned the eight
+    /// WMI status values it did not handle -- `Unknown` and `Pred Fail` among
+    /// them -- into the healthiest one.
+    ///
+    /// The real endpoint state is a `DeviceState` DWORD under
+    /// `HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\MMDevices\\Audio`
+    /// (1 active, 2 disabled, 4 not present, 8 unplugged), readable without
+    /// elevation; this reader does not go through that enumeration.
+    pub state: Option<AudioState>,
     pub is_default: bool,
     pub is_output: bool,
     pub is_enabled: bool,
@@ -271,11 +287,13 @@ impl AudioMonitor {
                                 false
                             };
 
+                            // `Degraded` used to map to `Idle`, which is an
+                            // activity state and not a health one, and every
+                            // other value fell through to `Active`.
                             let state = match status {
-                                "OK" => AudioState::Active,
-                                "Degraded" => AudioState::Idle,
-                                "Error" => AudioState::Unavailable,
-                                _ => AudioState::Active,
+                                "OK" => Some(AudioState::Active),
+                                "Error" => Some(AudioState::Unavailable),
+                                _ => None,
                             };
 
                             self.devices.push(AudioDevice {
@@ -356,7 +374,7 @@ impl AudioMonitor {
                             id: format!("hw:{}", card_num),
                             name: full_name,
                             device_type,
-                            state: AudioState::Active,
+                            state: None,
                             is_default: card_num == 0,
                             is_output,
                             is_enabled: true,
@@ -444,7 +462,7 @@ impl AudioMonitor {
                                 id: format!("audio{}", idx),
                                 name: name.to_string(),
                                 device_type,
-                                state: AudioState::Active,
+                                state: None,
                                 is_default: has_output || has_input,
                                 is_output: has_output || (!has_input),
                                 is_enabled: true,
@@ -579,7 +597,7 @@ mod tests {
             id: "test".to_string(),
             name: "Test Device".to_string(),
             device_type: AudioDeviceType::Output,
-            state: AudioState::Active,
+            state: Some(AudioState::Active),
             is_default: true,
             is_output: true,
             is_enabled: true,

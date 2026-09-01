@@ -96,8 +96,14 @@ pub struct CodecCapability {
     pub max_resolution: MaxResolution,
     /// Maximum bit depth
     pub max_bit_depth: BitDepth,
-    /// Maximum FPS at max resolution (estimated)
-    pub max_fps: u32,
+    /// Maximum FPS at the maximum resolution.
+    ///
+    /// `None` on every path this crate has, and that is the honest value. The
+    /// field held a literal `60` at all twelve construction sites while the
+    /// ontology declared it `Derived` *from* `codec` and `max_resolution` --
+    /// arithmetic that does not exist. 60 is also not a frame rate an 8K HEVC
+    /// engine reaches, so the constant was not even a safe floor.
+    pub max_fps: Option<u32>,
     /// Hardware engine name (e.g., "NVENC", "NVDEC", "VCE", "QuickSync")
     pub engine: String,
     /// How this capability was determined
@@ -395,7 +401,7 @@ impl CodecMonitor {
                 direction: dir,
                 max_resolution: res,
                 max_bit_depth: depth,
-                max_fps: 60,
+                max_fps: None,
                 engine: "NVENC/NVDEC".into(),
                 source: CapabilitySource::Inferred,
                 confidence: 0.85,
@@ -410,7 +416,7 @@ impl CodecMonitor {
                 direction: CodecDirection::Both,
                 max_resolution: MaxResolution::UHD8K,
                 max_bit_depth: BitDepth::Bit10,
-                max_fps: 60,
+                max_fps: None,
                 engine: "NVENC/NVDEC".into(),
                 source: CapabilitySource::Inferred,
                 confidence: 0.9,
@@ -422,7 +428,7 @@ impl CodecMonitor {
                 direction: CodecDirection::Decode,
                 max_resolution: MaxResolution::UHD8K,
                 max_bit_depth: BitDepth::Bit10,
-                max_fps: 60,
+                max_fps: None,
                 engine: "NVDEC".into(),
                 source: CapabilitySource::Inferred,
                 confidence: 0.85,
@@ -464,7 +470,7 @@ impl CodecMonitor {
                 direction: dir,
                 max_resolution: res,
                 max_bit_depth: depth,
-                max_fps: 60,
+                max_fps: None,
                 engine: "VCN".into(),
                 source: CapabilitySource::Inferred,
                 confidence: 0.8,
@@ -478,7 +484,7 @@ impl CodecMonitor {
                 direction: CodecDirection::Both,
                 max_resolution: MaxResolution::UHD8K,
                 max_bit_depth: BitDepth::Bit10,
-                max_fps: 60,
+                max_fps: None,
                 engine: "VCN 4.0".into(),
                 source: CapabilitySource::Inferred,
                 confidence: 0.85,
@@ -490,7 +496,7 @@ impl CodecMonitor {
                 direction: CodecDirection::Decode,
                 max_resolution: MaxResolution::UHD8K,
                 max_bit_depth: BitDepth::Bit10,
-                max_fps: 60,
+                max_fps: None,
                 engine: "VCN 3.0".into(),
                 source: CapabilitySource::Inferred,
                 confidence: 0.8,
@@ -529,7 +535,7 @@ impl CodecMonitor {
                 direction: dir,
                 max_resolution: res,
                 max_bit_depth: depth,
-                max_fps: 60,
+                max_fps: None,
                 engine: "Quick Sync".into(),
                 source: CapabilitySource::Inferred,
                 confidence: 0.8,
@@ -543,7 +549,7 @@ impl CodecMonitor {
                 direction: CodecDirection::Both,
                 max_resolution: MaxResolution::UHD8K,
                 max_bit_depth: BitDepth::Bit10,
-                max_fps: 60,
+                max_fps: None,
                 engine: "Xe Media Engine".into(),
                 source: CapabilitySource::Inferred,
                 confidence: 0.85,
@@ -586,7 +592,7 @@ impl CodecMonitor {
                 direction: dir,
                 max_resolution: res,
                 max_bit_depth: depth,
-                max_fps: 60,
+                max_fps: None,
                 engine: "Apple Media Engine".into(),
                 source: CapabilitySource::Inferred,
                 confidence: 0.9,
@@ -606,7 +612,7 @@ impl CodecMonitor {
                 direction: CodecDirection::Decode,
                 max_resolution: MaxResolution::UHD8K,
                 max_bit_depth: BitDepth::Bit10,
-                max_fps: 60,
+                max_fps: None,
                 engine: "Apple Media Engine".into(),
                 source: CapabilitySource::Inferred,
                 confidence: 0.85,
@@ -751,7 +757,7 @@ impl CodecMonitor {
                     } else {
                         BitDepth::Bit8
                     },
-                    max_fps: 60,
+                    max_fps: None,
                     engine: "VA-API".into(),
                     source: CapabilitySource::DirectQuery,
                     confidence: 1.0,
@@ -867,7 +873,7 @@ mod tests {
             direction: CodecDirection::Decode,
             max_resolution: MaxResolution::UHD8K,
             max_bit_depth: BitDepth::Bit10,
-            max_fps: 60,
+            max_fps: Some(60),
             engine: "NVDEC".into(),
             source: CapabilitySource::Inferred,
             confidence: 0.85,

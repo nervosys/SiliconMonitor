@@ -2573,21 +2573,21 @@ fn resolve_codecs(out: &mut Vec<Reading>) {
             )),
         }
 
-        // Derived even on a queried row: no driver reports a frame rate, so
-        // this figure is arithmetic over the engine generation whatever the
-        // rest of the row came from.
-        match c.max_fps {
-            0 => out.push(Reading::unavailable(
-                format!("{base}.max_fps"),
-                Some(Unit::Count),
-                "no frame rate estimate is held for this engine",
-            )),
-            fps => out.push(Reading::derived(
-                format!("{base}.max_fps"),
-                serde_json::json!(fps),
-                Some(Unit::Count),
-            )),
-        }
+        // The comment that used to sit here said this figure was "arithmetic
+        // over the engine generation". There was no arithmetic: `max_fps` was
+        // the literal 60 at every construction site, so the `0 =>` arm that
+        // guarded it was unreachable and the entity's declared derivation from
+        // `codec` and `max_resolution` described a computation that did not
+        // exist. Nothing fills the field now, and the entity is declared
+        // `Unavailable` to match; a reader that learns a real frame rate has to
+        // re-declare it, with the inputs it actually consumes.
+        push_opt(
+            out,
+            format!("{base}.max_fps"),
+            c.max_fps.map(|fps| serde_json::json!(fps)),
+            Some(Unit::Count),
+            "no driver reports a frame rate and this crate does not estimate one",
+        );
         // The reader's confidence is a 0.0-1.0 fraction and the entity declares
         // a percentage, so it is scaled here rather than at the consumer, where
         // a 1.0 would read as one percent.
@@ -2675,7 +2675,14 @@ fn resolve_audio(out: &mut Vec<Reading>) {
             format!("{base}.direction"),
             &format!("{:?}", d.device_type),
         );
-        push_id(out, format!("{base}.state"), &format!("{:?}", d.state));
+        push_opt(
+            out,
+            format!("{base}.state"),
+            d.state
+                .map(|s| serde_json::json!(format!("{s:?}").to_lowercase())),
+            Some(Unit::Identifier),
+            "the platform did not report an endpoint state for this device",
+        );
         out.push(Reading::measured(
             format!("{base}.default"),
             serde_json::json!(d.is_default),

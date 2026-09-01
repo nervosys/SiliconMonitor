@@ -1824,14 +1824,20 @@ impl Ontology {
             D::Gpu,
             K::Limit,
             Some(U::Count),
-            P::Derived,
+            // Declared `Unavailable`, not `Derived`: a `Derived` entity has
+            // to name the inputs it is computed from, and this one named two
+            // it never read.
+            P::Unavailable,
             true,
-            "Frames per second at the maximum resolution. An estimate in every \
-             case, including where the capability itself was queried directly - \
-             no driver reports a frame rate, so this is arithmetic over the \
-             engine generation.",
-        )
-        .derived(&["gpu.codec.{n}.codec", "gpu.codec.{n}.max_resolution"]));
+            concat!(
+                "Frames per second at the maximum resolution. No driver ",
+                "reports a frame rate and this crate does not compute one, ",
+                "so this always resolves absent. The description here used ",
+                "to say the figure was arithmetic over the engine ",
+                "generation, and the entity declared inputs to match; the ",
+                "reader held a literal 60 at every construction site."
+            ),
+        ));
         add(Entity::new(
             "gpu.codec.{n}.confidence",
             D::Gpu,

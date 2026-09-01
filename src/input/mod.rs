@@ -395,12 +395,13 @@ impl InputMonitor {
                     .unwrap_or("Unknown Keyboard")
                     .to_string();
                 let device_id = item["DeviceID"].as_str().unwrap_or("").to_string();
-                // NOTE: a bare `HID\` instance names the device class, not the
-                // transport — it may be Bluetooth or I2C rather than USB. This
-                // reports USB for both, which is a guess for the non-USB cases.
-                let iface = if device_id.to_lowercase().contains("usb")
-                    || device_id.to_lowercase().contains("hid")
-                {
+                // A bare `HID\` instance names the device class, not the
+                // transport -- it may be Bluetooth or I2C rather than USB. The
+                // note that used to sit here said exactly that and the code
+                // reported USB anyway. Only a `USB` in the instance path is
+                // evidence of USB; `Unknown` resolves to an absent reading,
+                // which is what a guess is worth.
+                let iface = if device_id.to_lowercase().contains("usb") {
                     InputInterface::USB
                 } else if device_id.contains("PS2") || device_id.contains("ACPI") {
                     InputInterface::PS2
@@ -445,9 +446,9 @@ impl InputMonitor {
                     InputDeviceType::Mouse
                 };
                 let device_id = item["DeviceID"].as_str().unwrap_or("").to_string();
-                let iface = if device_id.to_lowercase().contains("usb")
-                    || device_id.to_lowercase().contains("hid")
-                {
+                // See the note on the keyboard branch above: `HID` is a
+                // device class, not a transport.
+                let iface = if device_id.to_lowercase().contains("usb") {
                     InputInterface::USB
                 } else if device_id.contains("PS2") || device_id.contains("ACPI") {
                     InputInterface::PS2
