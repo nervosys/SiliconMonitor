@@ -101,7 +101,7 @@ Since the tag, on `master` and green on all three platforms:
 | `9332a38` | An id documented to be stable, built from enumeration order |
 | `c3391f0` | The health reader's own enumeration could not report a failure |
 | `4ed9145` | Boot mode asserted because it is usually right |
-| `HEAD` | 97 GB of swap in use, on a machine using 3.4 GB of it |
+| `15a60ab` | 97 GB of swap in use, on a machine using 3.4 GB of it |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
