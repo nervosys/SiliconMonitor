@@ -125,9 +125,44 @@ Since the tag, on `master` and green on all three platforms:
 | `5796371` | The instance in the metric name, and a rate called a total |
 | `15ea71e` | Doing the thing the previous commit deferred |
 | `a50b77d` | The sentinel put back at the point of use |
+| `HEAD` | Two auth flags that decide nothing, and the probe that found them |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### Two auth flags that decide nothing, and the probe that found them
+
+Auditing the REST surface the way the tool catalogue was audited: drive it
+directly and read what comes back. It refused everything.
+
+```rust
+let cfg = ApiConfig { require_auth: false, allow_anonymous_read: true, ..Default::default() };
+// -> memory: ERR Permission denied: Invalid API key
+```
+
+Both flags are **inert**. `ObservabilityApi::new` keeps only `config.keys`, and
+every method looks its caller up in that map, so `require_auth = false` does not
+disable authentication.
+
+**The behaviour is correct and was already understood.** `ServerConfig` carries
+its own `allow_anonymous`, `http_server` sets it as
+`config.api_key.is_none()`, and a comment on that field says outright that
+`ObservabilityApi::new` "drops `require_auth` / `allow_anonymous_read`. So the
+flag has to live here to reach the gate at all." The gate is the right place —
+it is what sees a request carrying no key.
+
+What was wrong is that `http_server` still assigns both dead fields in both
+branches, forty lines from the comment explaining they are dropped. Read on its
+own, that block is a configuration of access control; it is a no-op. The fields
+now say **"Not consulted"** in their own doc comments, which is where someone
+setting them will look, and the assignments say what actually decides the
+question.
+
+**Worth keeping: the direction of the failure.** These flags fail *closed* — a
+`require_auth = false` that keeps requiring auth denies access it was told to
+permit, which is the safe way round and is why nobody noticed. A flag that fails
+closed is invisible in production and still a lie in the source, and the next
+person to add a flag beside it will assume the neighbours work.
 
 ### The sentinel put back at the point of use
 

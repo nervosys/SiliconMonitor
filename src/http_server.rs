@@ -106,6 +106,10 @@ impl HttpServer {
         let mut api_config = ApiConfig::default();
         match config.api_key {
             Some(ref key) => {
+                // Neither field is consulted -- see their docs. The gate
+                // above decides anonymous access via `allow_anonymous`, which
+                // is already `false` when a key is configured. These record
+                // intent and nothing else.
                 api_config.require_auth = true;
                 api_config.allow_anonymous_read = false;
                 api_config
@@ -117,6 +121,9 @@ impl HttpServer {
                 // sound because binding defaults to loopback — a local user can read
                 // this telemetry by running simon directly anyway. Callers exposing
                 // the server on a routable address are expected to supply a key.
+                // As above: inert. What actually permits the keyless read
+                // is `allow_anonymous: config.api_key.is_none()` on the
+                // `ServerConfig` built above.
                 api_config.require_auth = false;
                 api_config.allow_anonymous_read = true;
             }

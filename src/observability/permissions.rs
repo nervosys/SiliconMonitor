@@ -689,9 +689,20 @@ pub struct ApiConfig {
     pub port: u16,
     /// Require authentication
     #[serde(default = "default_true")]
+    /// **Not consulted.** `ObservabilityApi::new` keeps only `keys`, and
+    /// every API method looks its caller up in that map, so setting this to
+    /// `false` does not disable authentication -- a keyless request is still
+    /// refused with `InvalidKey`.
+    ///
+    /// Anonymous access is decided one layer out, at the request gate, by
+    /// `ServerConfig::allow_anonymous`. That is the right place for it: the
+    /// gate is what sees a request with no key at all. This field is kept
+    /// because it is public API and because `http_server` sets it as
+    /// documentation of intent, but it decides nothing.
     pub require_auth: bool,
     /// Allow unauthenticated read-only access
     #[serde(default)]
+    /// **Not consulted.** See [`Self::require_auth`].
     pub allow_anonymous_read: bool,
     /// API keys
     #[serde(default)]
