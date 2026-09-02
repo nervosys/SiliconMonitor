@@ -127,7 +127,7 @@ Since the tag, on `master` and green on all three platforms:
 | `a50b77d` | The sentinel put back at the point of use |
 | `d4c4281` | Two auth flags that decide nothing, and the probe that found them |
 | `69f1766` | The last unaudited surface, and a fix that never reached the screen |
-| `HEAD` | A contract that was right for a loop and wrong for everything else |
+| `fc1667e` | A contract that was right for a loop and wrong for everything else |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
