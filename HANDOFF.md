@@ -111,7 +111,7 @@ Since the tag, on `master` and green on all three platforms:
 | `e456c53` | A class guessed from the device's name, when it declares one |
 | `44612d8` | The last misleading absence, and a deliberate refusal to implement |
 | `68c9ff0` | Every measurement, checked for whether it actually moves |
-| `HEAD` | Zero hertz and zero swap, handed to an agent as facts |
+| `8ed7e71` | Zero hertz and zero swap, handed to an agent as facts |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
