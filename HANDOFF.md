@@ -120,7 +120,7 @@ Since the tag, on `master` and green on all three platforms:
 | `4685c52` | A guard for the regression, and nearly a test that proved nothing |
 | `db94a7b` | The two pairings the guard did not cover, and why one is separate |
 | `a3c8415` | A metrics endpoint Prometheus would reject in full |
-| `HEAD` | Dashboards querying names nothing published, and three wrong tests |
+| `74b635d` | Dashboards querying names nothing published, and three wrong tests |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
