@@ -515,16 +515,29 @@ pub struct ProcessMetrics {
 /// System load metrics
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SystemLoadMetrics {
-    /// 1-minute load average
-    pub load_1: f64,
-    /// 5-minute load average
-    pub load_5: f64,
-    /// 15-minute load average
-    pub load_15: f64,
-    /// Number of running processes
-    pub running_processes: u32,
-    /// Total processes
-    pub total_processes: u32,
+    /// 1-minute load average, or `None` where the platform has no such figure.
+    ///
+    /// Load average is a Unix quantity: a decaying average of the number of
+    /// tasks runnable or in uninterruptible sleep. Windows has no equivalent
+    /// and publishes nothing that can be converted into one.
+    ///
+    /// It said `f64`, and the Windows arm filled all three from instantaneous
+    /// CPU utilisation -- `(usage / 100) * cores`, assigned to the 1, 5 and 15
+    /// minute figures alike. That is not a load average by any reading. It
+    /// cannot exceed the core count, so the queue depth that makes the metric
+    /// worth having is exactly what it cannot express; it has no history, so
+    /// the three windows that distinguish a spike from a trend were identical;
+    /// and it counts busy CPUs rather than waiting tasks, so a machine wedged
+    /// on I/O -- the case load average exists to expose -- read as idle.
+    pub load_1: Option<f64>,
+    /// 5-minute load average. See [`Self::load_1`].
+    pub load_5: Option<f64>,
+    /// 15-minute load average. See [`Self::load_1`].
+    pub load_15: Option<f64>,
+    /// Processes in the running state, or `None` where unreported.
+    pub running_processes: Option<u32>,
+    /// Total processes, or `None` where unreported.
+    pub total_processes: Option<u32>,
 }
 
 /// Alert context

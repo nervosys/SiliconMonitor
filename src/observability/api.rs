@@ -1291,19 +1291,17 @@ impl ObservabilityApi {
             if let Ok(content) = std::fs::read_to_string("/proc/loadavg") {
                 let parts: Vec<&str> = content.split_whitespace().collect();
                 if parts.len() >= 5 {
-                    let load_1 = parts[0].parse::<f64>().unwrap_or(0.0);
-                    let load_5 = parts[1].parse::<f64>().unwrap_or(0.0);
-                    let load_15 = parts[2].parse::<f64>().unwrap_or(0.0);
+                    // A field that does not parse is absent, not zero. A
+                    // load average of 0.00 is a specific claim about an idle
+                    // machine, and `/proc/loadavg` failing to parse says
+                    // nothing about how busy the machine is.
+                    let load_1 = parts[0].parse::<f64>().ok();
+                    let load_5 = parts[1].parse::<f64>().ok();
+                    let load_15 = parts[2].parse::<f64>().ok();
                     // parts[3] is "running/total" processes
                     let proc_parts: Vec<&str> = parts[3].split('/').collect();
-                    let running = proc_parts
-                        .first()
-                        .and_then(|s| s.parse::<u32>().ok())
-                        .unwrap_or(0);
-                    let total = proc_parts
-                        .get(1)
-                        .and_then(|s| s.parse::<u32>().ok())
-                        .unwrap_or(0);
+                    let running = proc_parts.first().and_then(|s| s.parse::<u32>().ok());
+                    let total = proc_parts.get(1).and_then(|s| s.parse::<u32>().ok());
                     return Some(SystemLoadMetrics {
                         load_1,
                         load_5,
@@ -1316,19 +1314,19 @@ impl ObservabilityApi {
         }
         #[cfg(target_os = "windows")]
         {
-            // Windows doesn't have load averages; approximate from CPU utilization
-            use crate::platform::windows;
-            if let Ok(stats) = windows::read_cpu_stats() {
-                let usage = 100.0 - stats.total.idle;
-                let cores = stats.cores.len() as f64;
-                // Approximate load average as (usage% / 100) * core_count
-                let load = (usage as f64 / 100.0) * cores;
+            // Windows has no load average, and this used to synthesise one:
+            // `(usage / 100) * cores` from a single CPU reading, assigned to all
+            // three windows. See `SystemLoadMetrics::load_1` for why that figure
+            // is not a load average and cannot be made into one. It is absent.
+            //
+            // The process count is a real reading and is reported.
+            if let Ok(stats) = crate::system_stats::SystemStats::new() {
                 return Some(SystemLoadMetrics {
-                    load_1: load,
-                    load_5: load,
-                    load_15: load,
-                    running_processes: 0,
-                    total_processes: 0,
+                    load_1: None,
+                    load_5: None,
+                    load_15: None,
+                    running_processes: stats.running_processes,
+                    total_processes: stats.total_processes,
                 });
             }
         }
