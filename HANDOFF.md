@@ -127,9 +127,49 @@ Since the tag, on `master` and green on all three platforms:
 | `a50b77d` | The sentinel put back at the point of use |
 | `d4c4281` | Two auth flags that decide nothing, and the probe that found them |
 | `69f1766` | The last unaudited surface, and a fix that never reached the screen |
+| `HEAD` | A contract that was right for a loop and wrong for everything else |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### A contract that was right for a loop and wrong for everything else
+
+Having just fixed the CLI's USB output, the same question about the line above
+it. `simon cli cpu` said:
+
+```
+Clock: not read — Windows reports the nominal clock, not the current one
+```
+
+on a machine whose cores were sitting at 5 GHz, hours after the per-core clock
+was implemented and measured at 4732–5322 MHz.
+
+**The cause was the contract I designed for it.** The PDH reader primed on the
+first call and returned `None` so that the *second* would have an interval to
+difference against. That is correct for a monitoring loop — and wrong for
+everything else, because **a one-shot process only ever makes a first call.**
+The CLI, one ontology snapshot, one agent tool call: all of them got the priming
+return, forever. I wrote "the first call after opening returns nothing" as
+though it were a caveat, and it was a defect for every caller that is not a loop.
+
+The interval is now primed when the query opens — one collection, a 120 ms
+sleep, and every call from the first onward works. It costs 120 ms once per
+process, on the first read of a CPU frequency and never again.
+
+```
+before: Clock: not read — Windows reports the nominal clock, not the current one
+after:  Clock: 5265 MHz (max 4400 MHz)
+```
+
+**Worth keeping.** The measurement was right, the reader was right, and the
+*shape of the API* threw the answer away for most callers. A contract that says
+"call me twice" is a defect wearing documentation, and it was invisible in the
+place I verified it — a loop — which is exactly where it works.
+
+**And a machine note.** `clippy-driver` crashed with `STATUS_STACK_BUFFER_OVERRUN`
+during this entry, which reads exactly like a compiler bug. The disk was at
+**2.0 GB free**. It is the third time this session that a tooling failure with a
+confident-looking error message was really this volume being full.
 
 ### The last unaudited surface, and a fix that never reached the screen
 
