@@ -383,39 +383,67 @@ impl HttpServer {
                 // A device whose query failed this tick publishes nothing rather than
                 // a zero, so the dashboard shows a gap instead of a false reading.
                 let Some(gpu) = gpu.as_ref() else { continue };
-                let g = |name: &str| format!("simon_gpu_{i}_{name}");
+                // The index goes in a label, not in the metric name.
+                //
+                // This recorded `simon_gpu_0_utilization_percent`, and every
+                // bundled dashboard queries
+                // `simon_gpu_utilization_percent{gpu="0"}` -- so the panels
+                // could never match, whatever the values were. Encoding an
+                // instance in the name also defeats aggregation: `sum by (gpu)`
+                // has nothing to group on when each card is a different metric.
+                let index = i.to_string();
+                let gpu_label: &[(&str, &str)] = &[("gpu", index.as_str())];
+                let put = |name: &str, value: f64| {
+                    collector.record_with_labels(name, value, gpu_label);
+                };
 
-                collector.record(&g("utilization_percent"), gpu.utilization as f64);
-                collector.record(&g("memory_used_bytes"), gpu.memory.used as f64);
-                collector.record(&g("memory_total_bytes"), gpu.memory.total as f64);
+                put("simon_gpu_utilization_percent", gpu.utilization as f64);
+                put("simon_gpu_memory_used_bytes", gpu.memory.used as f64);
+                put("simon_gpu_memory_total_bytes", gpu.memory.total as f64);
 
                 if let Some(temp) = gpu.thermal.temperature {
-                    collector.record(&g("temperature_celsius"), temp as f64);
+                    put("simon_gpu_temperature_celsius", temp as f64);
                 }
                 if let Some(power) = gpu.power.draw {
-                    collector.record(&g("power_watts"), power as f64 / 1000.0);
+                    put("simon_gpu_power_watts", power as f64 / 1000.0);
                 }
                 if let Some(fan) = gpu.thermal.fan_speed {
-                    collector.record(&g("fan_speed_percent"), fan as f64);
+                    put("simon_gpu_fan_speed_percent", fan as f64);
                 }
                 if let Some(clock) = gpu.clocks.graphics {
-                    collector.record(&g("clock_graphics_mhz"), clock as f64);
+                    put("simon_gpu_clock_graphics_mhz", clock as f64);
                 }
                 if let Some(clock) = gpu.clocks.memory {
-                    collector.record(&g("clock_memory_mhz"), clock as f64);
+                    put("simon_gpu_clock_memory_mhz", clock as f64);
                 }
             }
 
-            for (i, disk) in snap.disks.iter().enumerate() {
-                collector.record(&format!("simon_disk_{i}_read_bytes_total"), disk.read_rate);
-                collector.record(
-                    &format!("simon_disk_{i}_write_bytes_total"),
+            for disk in &snap.disks {
+                // The device goes in a label, for the reason above.
+                //
+                // And these are **rates**, which were recorded under
+                // `..._bytes_total`. `DiskSnapshot` carries `read_rate` and
+                // `write_rate` and no cumulative counter at all, so the name
+                // promised a monotonic total and delivered bytes per second --
+                // `rate()` over that in a dashboard is meaningless. The
+                // cumulative figures exist, but only on the `PrometheusExporter`
+                // path, which reads `io_stats` directly.
+                let device: &[(&str, &str)] = &[("device", disk.name.as_str())];
+                collector.record_with_labels(
+                    "simon_disk_read_bytes_per_sec",
+                    disk.read_rate,
+                    device,
+                );
+                collector.record_with_labels(
+                    "simon_disk_write_bytes_per_sec",
                     disk.write_rate,
+                    device,
                 );
                 if disk.total > 0 {
-                    collector.record(
-                        &format!("simon_disk_{i}_usage_percent"),
+                    collector.record_with_labels(
+                        "simon_disk_usage_percent",
                         (disk.used as f64 / disk.total as f64) * 100.0,
+                        device,
                     );
                 }
             }

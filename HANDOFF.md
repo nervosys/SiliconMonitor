@@ -122,9 +122,47 @@ Since the tag, on `master` and green on all three platforms:
 | `a3c8415` | A metrics endpoint Prometheus would reject in full |
 | `74b635d` | Dashboards querying names nothing published, and three wrong tests |
 | `d4da86c` | Two Prometheus renderers, and the server serves the worse one |
+| `HEAD` | The instance in the metric name, and a rate called a total |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### The instance in the metric name, and a rate called a total
+
+The entry below said the server's collection loop recorded only whole-machine
+metrics because `MetricCollector` mangled labels. Having fixed the mangling, the
+loop turned out to record GPU and disk metrics after all — just unusably.
+
+```rust
+let g = |name: &str| format!("simon_gpu_{i}_{name}");
+collector.record(&g("utilization_percent"), ...);
+collector.record(&format!("simon_disk_{i}_read_bytes_total"), disk.read_rate);
+```
+
+**The instance was baked into the metric name.** Every bundled dashboard queries
+`simon_gpu_utilization_percent{gpu="0"}`, so the panels could never match
+whatever the values were. It also defeats aggregation outright: `sum by (gpu)`
+has nothing to group on when each card is a different metric name.
+
+And `simon_disk_{i}_read_bytes_total` was fed `disk.read_rate`. **A rate under a
+`_total` name** — `DiskSnapshot` carries `read_rate` and `write_rate` and no
+cumulative counter at all, so `rate()` over that series in a dashboard computes
+the rate of a rate. That is the third appearance of this exact confusion in this
+session, after `DiskReadBytesPerSec` stored in a field documented as a total and
+the commit-charge-as-swap reading. It is now
+`simon_disk_read_bytes_per_sec{device="..."}`, which is what the number is.
+
+Both are labelled now. The cumulative disk totals the dashboards want exist only
+on the `PrometheusExporter` path, which reads `io_stats` directly — one more
+reason the endpoint should serve that exporter, which is the open-work item the
+entry below opened.
+
+**A limit worth stating.** This was verified by compiling, by grepping that no
+metric name still carries an index, and by the label round-trip test on the
+renderer. It was **not** verified by scraping a running server: the recording
+lives inline in an async loop that needs a live pipeline, and I did not stand one
+up. Factoring that loop body into a function taking a `Snapshot` would make it
+testable, and is worth doing by whoever next touches it.
 
 ### Two Prometheus renderers, and the server serves the worse one
 
