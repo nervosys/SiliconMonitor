@@ -117,9 +117,46 @@ Since the tag, on `master` and green on all three platforms:
 | `25bcca8` | A 16 MB drive reported as sizeless, by integer division |
 | `9686675` | A regression I introduced, found by the sweep that follows the fix |
 | `cc4e347` | The zero left behind when a field stopped being the identity |
+| `HEAD` | A guard for the regression, and nearly a test that proved nothing |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### A guard for the regression, and nearly a test that proved nothing
+
+`tests/ai_tool_surface.rs` already guards two things the sweep would otherwise
+have to find by hand: absence *words* like `"Unknown"` in tool output, and tools
+advertised in the catalogue with no dispatch arm. It did not guard the contract
+the regression two entries below broke — **an identifier a listing hands out
+must work in the matching details tool**. That is the thing an agent relies on
+without being told: call the list, take an id from a row, ask for detail on it.
+
+`an_id_from_a_listing_resolves_in_its_details_tool` now checks four pairings —
+USB, displays, disks, network interfaces — and fails with the specific pairing
+named. A listing that is empty on the machine running the test is skipped rather
+than failed, because no USB devices is a legitimate state for a container and
+this is a test about self-consistency, not about hardware.
+
+**The part worth recording is that it nearly did not test anything.** Written,
+run, green — and green proves nothing on its own, so the next step was to break
+the code deliberately and watch it fail. It did not fail. The "regression" I had
+introduced to challenge it had landed in `get_bluetooth_devices`, because that
+is the first function in the file matching the pattern I edited, and the USB
+listing was untouched. **A green test against unmodified code.**
+
+Breaking the right function produced what was wanted:
+
+```
+an_id_from_a_listing_resolves_in_its_details_tool --- FAILED
+  "get_usb_devices advertised address=\"BROKEN_usb_root_hub30_9_eba7ce_0_0\",
+   and get_usb_device_details cannot resolve it"
+```
+
+Two entries below, the finding was a test that asserted a fabricated zero and so
+converted a defect into a requirement. This is the same lesson approached from
+the other side: **a test you have never seen fail is not yet evidence, and
+confirming it fails means confirming you broke the thing it watches.** I checked
+the first, nearly skipped the second, and the second was where the mistake was.
 
 ### The zero left behind when a field stopped being the identity
 

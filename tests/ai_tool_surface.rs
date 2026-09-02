@@ -141,3 +141,105 @@ fn every_advertised_tool_is_dispatchable() {
         "advertised in the catalogue but not wired into `call_tool`: {unreachable:#?}"
     );
 }
+
+/// An identifier a listing hands out must work in the matching details tool.
+///
+/// This is the contract an agent relies on without being told: call the list,
+/// take an id from a row, ask for detail on it. Nothing enforced it, and it was
+/// silently false for USB after the device id scheme moved to the platform
+/// device path — `get_usb_device_details` still looked devices up by
+/// `bus_number` and `port_number`, which the Windows reader had stopped
+/// filling. Thirty-nine devices collapsed to **one** addressable pair, so every
+/// device but the first became unreachable through the tool while the listing
+/// went on advertising them all.
+///
+/// A pairing whose listing is empty on this machine is skipped rather than
+/// failed: no USB devices is a legitimate state for a container, and this test
+/// is about self-consistency, not about the hardware present.
+#[test]
+fn an_id_from_a_listing_resolves_in_its_details_tool() {
+    // (listing tool, path to the array, field holding the id, details tool,
+    //  parameter name the details tool expects)
+    let pairs: [(&str, &[&str], &str, &str, &str); 4] = [
+        (
+            "get_usb_devices",
+            &[],
+            "address",
+            "get_usb_device_details",
+            "address",
+        ),
+        (
+            "get_display_list",
+            &["displays"],
+            "id",
+            "get_display_details",
+            "display_id",
+        ),
+        (
+            "get_disk_list",
+            &[],
+            "name",
+            "get_disk_details",
+            "disk_name",
+        ),
+        (
+            "get_network_interfaces",
+            &[],
+            "name",
+            "get_interface_details",
+            "interface_name",
+        ),
+    ];
+
+    let mut api = api();
+    let mut broken: Vec<String> = Vec::new();
+
+    for (list_tool, path, id_field, detail_tool, param) in pairs {
+        let Ok(listed) = api.call_tool(list_tool, serde_json::json!({})) else {
+            continue;
+        };
+        let Ok(v) = serde_json::to_value(&listed) else {
+            continue;
+        };
+        let mut node = match v.get("data") {
+            Some(d) => d.clone(),
+            None => continue,
+        };
+        for step in path {
+            node = node.get(step).cloned().unwrap_or(Value::Null);
+        }
+        let Some(rows) = node.as_array() else {
+            continue;
+        };
+
+        for row in rows {
+            let Some(id) = row.get(id_field).and_then(Value::as_str) else {
+                broken.push(format!(
+                    "{list_tool} returned a row with no `{id_field}`, so nothing \
+                     can be asked about it: {row}"
+                ));
+                continue;
+            };
+            let Ok(detail) = api.call_tool(detail_tool, serde_json::json!({ param: id })) else {
+                broken.push(format!("{detail_tool}({param}={id:?}) could not be called"));
+                continue;
+            };
+            let ok = serde_json::to_value(&detail)
+                .ok()
+                .and_then(|d| d.get("success").and_then(Value::as_bool))
+                .unwrap_or(false);
+            if !ok {
+                broken.push(format!(
+                    "{list_tool} advertised {id_field}={id:?}, and \
+                     {detail_tool} cannot resolve it"
+                ));
+            }
+        }
+    }
+
+    assert!(
+        broken.is_empty(),
+        "a listing handed out identifiers its own details tool rejects. An agent \
+         following the catalogue has no other way to name these things: {broken:#?}"
+    );
+}
