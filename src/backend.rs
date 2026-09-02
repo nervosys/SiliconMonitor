@@ -194,11 +194,14 @@ pub struct NetworkState {
     /// Bytes transmitted
     pub tx_bytes: u64,
 
-    /// Receive rate (bytes/sec)
-    pub rx_rate: f64,
+    /// Receive rate in bytes/sec, or `None` until a second sample.
+    ///
+    /// A rate is a difference between two readings, and the first read of an
+    /// interface has nothing to difference against.
+    pub rx_rate: Option<f64>,
 
-    /// Transmit rate (bytes/sec)
-    pub tx_rate: f64,
+    /// Transmit rate in bytes/sec. See [`Self::rx_rate`].
+    pub tx_rate: Option<f64>,
 }
 
 /// Process state for AI context
@@ -1122,8 +1125,42 @@ impl MonitoringBackend {
     // === Full System State ===
 
     /// Get complete system state snapshot for AI context or export
+    /// Collect everything the backend can see.
+    ///
+    /// `state.network` was declared, exported, serialised by
+    /// `simon cli all --format json`, and **never populated** -- it came back
+    /// `[]` on a host with twenty interfaces, while every other section of the
+    /// same document was filled. `NetworkState` was therefore a public type no
+    /// code constructed, which is why its rate fields still held the bare `f64`
+    /// that the rest of the crate had moved away from.
     pub fn get_full_system_state(&self) -> FullSystemState {
         let mut state = FullSystemState::empty();
+
+        // Network state.
+        //
+        // A fresh monitor rather than `self.network_monitor`: keeping rate
+        // baselines needs `&mut` and this method takes `&self`. The rates are
+        // therefore `None` here by construction, which is the honest answer for
+        // a one-shot dump and is why they are `Option` -- a caller wanting real
+        // throughput holds a monitor and samples it twice.
+        if let Ok(mut monitor) = crate::network_monitor::NetworkMonitor::new() {
+            if let Ok(interfaces) = monitor.interfaces() {
+                state.network = interfaces
+                    .iter()
+                    .map(|iface| {
+                        let rate = monitor.bandwidth_rate(&iface.name, iface);
+                        NetworkState {
+                            name: iface.name.clone(),
+                            is_up: iface.is_up,
+                            rx_bytes: iface.rx_bytes,
+                            tx_bytes: iface.tx_bytes,
+                            rx_rate: rate.map(|(rx, _)| rx),
+                            tx_rate: rate.map(|(_, tx)| tx),
+                        }
+                    })
+                    .collect();
+            }
+        }
 
         // CPU state
         if let Some(ref cpu) = self.cpu_stats {
