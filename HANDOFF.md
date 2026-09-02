@@ -124,9 +124,53 @@ Since the tag, on `master` and green on all three platforms:
 | `d4da86c` | Two Prometheus renderers, and the server serves the worse one |
 | `5796371` | The instance in the metric name, and a rate called a total |
 | `15ea71e` | Doing the thing the previous commit deferred |
+| `HEAD` | The sentinel put back at the point of use |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### The sentinel put back at the point of use
+
+`SwapInfo::used` became `Option` in `15a60ab` so that an unread pagefile stays
+distinguishable from an empty one. Then:
+
+```rust
+collector.record("simon_swap_used_bytes", mem.swap.used_or_zero() as f64 * 1024.0);
+```
+
+**The absence is reconstructed as a zero at the point where a machine reads
+it.** `simon_swap_used_bytes 0` is the sentence "nothing is paged out", and the
+JSON tools said the same in four more places. Fixing a type does not fix the
+call sites; it only makes them say what they are doing.
+
+There are 49 `_or_zero()` calls, and **most are correct** — the helper's own doc
+says it "exists so that choosing not to is visible at the call site", and the
+CLI display paths guard with `if total_or_zero() > 0`, which reads "was swap
+reported and non-empty". `main.rs` even carries a comment noting the guard. So
+this was not a sweep: it was the handful where an unguarded sentinel reaches a
+machine.
+
+* the Prometheus gauge — now emitted only when the pagefile was read
+* `tool_get_memory_status` and `tool_get_swap_status`, on both the Linux and
+  Windows branches — now `null`, matching the macOS branch fixed in `8ed7e71`
+* `SystemSummary::swap_total_mb` / `swap_used_mb` — now `Option<u64>`
+
+Verified on this host: swap total 51186 MB, used 1792 MB, `cached_kb: null`. The
+totals match the real pagefile, and the one quantity Windows does not report
+says so.
+
+**Worth keeping.** Every one of these was written *after* the `Option` existed,
+by someone reaching for the helper that makes the compiler stop complaining.
+**A type that can express absence only helps where callers are willing to carry
+it**, and `_or_zero()` is precisely the shape of an escape hatch that gets used
+by reflex. The doc comment anticipating that is why the guarded uses are fine
+and these five were not.
+
+**A machine note.** The disk hit **literally zero bytes free** during this
+entry, which crashed `rustc` with no diagnostic — an exit code and an empty
+error, which reads exactly like a compiler bug. `cargo clean -p` recovered it.
+`target/` is 20 GB of a 3.7 TB drive, so this is not the build cache's doing;
+it is worth someone looking at what is filling that volume.
 
 ### Doing the thing the previous commit deferred
 

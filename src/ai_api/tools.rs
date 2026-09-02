@@ -1477,12 +1477,18 @@ impl AiDataApi {
                         (stats.ram.used as f64 / stats.ram.total as f64) * 100.0
                     } else { 0.0 },
                 },
+                // `null`, not `0`. `SwapInfo` carries `Option` since 15a60ab
+                // precisely so an unread pagefile is distinguishable from an
+                // empty one, and `used_or_zero()` throws that away at the point
+                // where an agent reads it. A zero here is the sentence "nothing
+                // is paged out", which is a measurement nobody took.
                 "swap": {
-                    "total_mb": stats.swap.total_or_zero() / 1024,
-                    "used_mb": stats.swap.used_or_zero() / 1024,
-                    "usage_percent": if stats.swap.total_or_zero() > 0 {
-                        (stats.swap.used_or_zero() as f64 / stats.swap.total_or_zero() as f64) * 100.0
-                    } else { 0.0 },
+                    "total_mb": stats.swap.total.map(|v| v / 1024),
+                    "used_mb": stats.swap.used.map(|v| v / 1024),
+                    "usage_percent": match (stats.swap.total, stats.swap.used) {
+                        (Some(t), Some(u)) if t > 0 => json!(u as f64 / t as f64 * 100.0),
+                        _ => serde_json::Value::Null,
+                    },
                 }
             }))
         }
@@ -1502,12 +1508,18 @@ impl AiDataApi {
                         (stats.ram.used as f64 / stats.ram.total as f64) * 100.0
                     } else { 0.0 },
                 },
+                // `null`, not `0`. `SwapInfo` carries `Option` since 15a60ab
+                // precisely so an unread pagefile is distinguishable from an
+                // empty one, and `used_or_zero()` throws that away at the point
+                // where an agent reads it. A zero here is the sentence "nothing
+                // is paged out", which is a measurement nobody took.
                 "swap": {
-                    "total_mb": stats.swap.total_or_zero() / 1024,
-                    "used_mb": stats.swap.used_or_zero() / 1024,
-                    "usage_percent": if stats.swap.total_or_zero() > 0 {
-                        (stats.swap.used_or_zero() as f64 / stats.swap.total_or_zero() as f64) * 100.0
-                    } else { 0.0 },
+                    "total_mb": stats.swap.total.map(|v| v / 1024),
+                    "used_mb": stats.swap.used.map(|v| v / 1024),
+                    "usage_percent": match (stats.swap.total, stats.swap.used) {
+                        (Some(t), Some(u)) if t > 0 => json!(u as f64 / t as f64 * 100.0),
+                        _ => serde_json::Value::Null,
+                    },
                 }
             }))
         }
@@ -1662,11 +1674,14 @@ impl AiDataApi {
                 "total_kb": stats.swap.total,
                 "used_kb": stats.swap.used,
                 "cached_kb": stats.swap.cached,
-                "total_mb": stats.swap.total_or_zero() / 1024,
-                "used_mb": stats.swap.used_or_zero() / 1024,
-                "usage_percent": if stats.swap.total_or_zero() > 0 {
-                    (stats.swap.used_or_zero() as f64 / stats.swap.total_or_zero() as f64) * 100.0
-                } else { 0.0 },
+                // See the memory tool: absent rather than zero, because an
+                // unread pagefile is not an idle one.
+                "total_mb": stats.swap.total.map(|v| v / 1024),
+                "used_mb": stats.swap.used.map(|v| v / 1024),
+                "usage_percent": match (stats.swap.total, stats.swap.used) {
+                    (Some(t), Some(u)) if t > 0 => json!(u as f64 / t as f64 * 100.0),
+                    _ => serde_json::Value::Null,
+                },
             }))
         }
 
@@ -1680,11 +1695,14 @@ impl AiDataApi {
                 "total_kb": stats.swap.total,
                 "used_kb": stats.swap.used,
                 "cached_kb": stats.swap.cached,
-                "total_mb": stats.swap.total_or_zero() / 1024,
-                "used_mb": stats.swap.used_or_zero() / 1024,
-                "usage_percent": if stats.swap.total_or_zero() > 0 {
-                    (stats.swap.used_or_zero() as f64 / stats.swap.total_or_zero() as f64) * 100.0
-                } else { 0.0 },
+                // See the memory tool: absent rather than zero, because an
+                // unread pagefile is not an idle one.
+                "total_mb": stats.swap.total.map(|v| v / 1024),
+                "used_mb": stats.swap.used.map(|v| v / 1024),
+                "usage_percent": match (stats.swap.total, stats.swap.used) {
+                    (Some(t), Some(u)) if t > 0 => json!(u as f64 / t as f64 * 100.0),
+                    _ => serde_json::Value::Null,
+                },
             }))
         }
 

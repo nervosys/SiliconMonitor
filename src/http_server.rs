@@ -385,10 +385,12 @@ impl HttpServer {
             let total = mem.ram.total as f64 * 1024.0;
             collector.record("simon_memory_used_bytes", used);
             collector.record("simon_memory_total_bytes", total);
-            collector.record(
-                "simon_swap_used_bytes",
-                mem.swap.used_or_zero() as f64 * 1024.0,
-            );
+            // Recorded only when the pagefile was actually read. A swap
+            // gauge of zero states that nothing is paged out, which is a
+            // measurement; `used_or_zero()` manufactured it from an absence.
+            if let Some(used) = mem.swap.used {
+                collector.record("simon_swap_used_bytes", used as f64 * 1024.0);
+            }
             if total > 0.0 {
                 collector.record("simon_memory_usage_percent", (used / total) * 100.0);
             }

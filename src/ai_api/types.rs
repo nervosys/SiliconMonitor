@@ -99,9 +99,14 @@ pub struct MemorySummary {
     /// Cached RAM in MB, or `None` where the platform reports none.
     pub cached_mb: Option<u64>,
     /// Total swap in MB
-    pub swap_total_mb: u64,
+    /// Total swap in MB, or `None` where the platform did not report it.
+    ///
+    /// Was `u64` filled by `total_or_zero()`, so a machine whose pagefile could
+    /// not be read was described to an agent as a machine with no swap.
+    pub swap_total_mb: Option<u64>,
     /// Used swap in MB
-    pub swap_used_mb: u64,
+    /// Swap in use, in MB. See [`Self::swap_total_mb`].
+    pub swap_used_mb: Option<u64>,
     /// Memory usage percentage
     pub usage_percent: f32,
 }
