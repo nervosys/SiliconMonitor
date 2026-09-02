@@ -125,7 +125,7 @@ Since the tag, on `master` and green on all three platforms:
 | `5796371` | The instance in the metric name, and a rate called a total |
 | `15ea71e` | Doing the thing the previous commit deferred |
 | `a50b77d` | The sentinel put back at the point of use |
-| `HEAD` | Two auth flags that decide nothing, and the probe that found them |
+| `d4c4281` | Two auth flags that decide nothing, and the probe that found them |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
