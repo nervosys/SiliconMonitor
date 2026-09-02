@@ -522,11 +522,11 @@ impl AiDataApi {
             if let Ok(interfaces) = net_mon.active_interfaces() {
                 summary.active_network_interfaces = interfaces.len();
                 for iface in interfaces {
-                    let (rx_rate, tx_rate) = net_mon.bandwidth_rate(&iface.name, &iface);
+                    let rate = net_mon.bandwidth_rate(&iface.name, &iface);
                     summary.network_interfaces.push(NetworkSummary {
                         name: iface.name.clone(),
-                        rx_bytes_per_sec: rx_rate as u64,
-                        tx_bytes_per_sec: tx_rate as u64,
+                        rx_bytes_per_sec: rate.map(|(rx, _)| rx as u64),
+                        tx_bytes_per_sec: rate.map(|(_, tx)| tx as u64),
                         rx_total_mb: (iface.rx_bytes / 1024 / 1024),
                         tx_total_mb: (iface.tx_bytes / 1024 / 1024),
                         is_up: iface.is_up,

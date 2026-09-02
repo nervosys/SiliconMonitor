@@ -100,10 +100,16 @@ fn main() -> Result<()> {
             );
 
             for iface in &active_ifaces {
-                let (rx_rate, tx_rate) = monitor.bandwidth_rate(&iface.name, iface);
+                // `None` on the first pass: a rate needs two samples, and
+                // this is the first. The loop below samples again.
+                let rate = monitor.bandwidth_rate(&iface.name, iface);
 
-                let rx_rate_str = format_bandwidth(rx_rate);
-                let tx_rate_str = format_bandwidth(tx_rate);
+                let fmt = |r: Option<f64>| match r {
+                    Some(v) => format_bandwidth(v),
+                    None => "—".to_string(),
+                };
+                let rx_rate_str = fmt(rate.map(|(rx, _)| rx));
+                let tx_rate_str = fmt(rate.map(|(_, tx)| tx));
 
                 let speed = if let Some(s) = iface.speed_mbps {
                     format!("{} Mbps", s)

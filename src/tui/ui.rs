@@ -1161,11 +1161,15 @@ fn draw_network_bar(f: &mut Frame, app: &App, area: Rect) {
     let mut active_ifaces: Vec<_> = net_info
         .interfaces
         .iter()
-        .filter(|i| i.is_up && (i.rx_rate > 0.0 || i.tx_rate > 0.0))
+        .filter(|i| {
+            // An interface with no established rate is not known to be idle,
+            // so it is not filtered out for being idle.
+            i.is_up && (i.rx_rate.unwrap_or(0.0) > 0.0 || i.tx_rate.unwrap_or(0.0) > 0.0)
+        })
         .collect();
     active_ifaces.sort_by(|a, b| {
-        let a_total = a.rx_rate + a.tx_rate;
-        let b_total = b.rx_rate + b.tx_rate;
+        let a_total = a.rx_rate.unwrap_or(0.0) + a.tx_rate.unwrap_or(0.0);
+        let b_total = b.rx_rate.unwrap_or(0.0) + b.tx_rate.unwrap_or(0.0);
         b_total
             .partial_cmp(&a_total)
             .unwrap_or(std::cmp::Ordering::Equal)
@@ -1214,7 +1218,8 @@ fn draw_network_bar(f: &mut Frame, app: &App, area: Rect) {
 
     // Calculate a visual gauge based on activity (normalize to something reasonable)
     // Use logarithmic scale for better visualization
-    let max_rate = (net_info.total_rx_rate + net_info.total_tx_rate).max(1.0);
+    let max_rate =
+        (net_info.total_rx_rate.unwrap_or(0.0) + net_info.total_tx_rate.unwrap_or(0.0)).max(1.0);
     let gauge_percent = ((max_rate.log10() + 3.0) * 10.0).clamp(0.0, 100.0) as u16;
 
     // Color based on activity (network-class colors: cyan/teal family)
@@ -1237,7 +1242,15 @@ fn draw_network_bar(f: &mut Frame, app: &App, area: Rect) {
 }
 
 /// Format bandwidth to human-readable with auto unit (B/s, KB/s, MB/s, GB/s)
-fn format_bandwidth(bytes_per_sec: f64) -> String {
+/// Render a rate, or an em dash where there is not one yet.
+///
+/// A rate needs two samples; the first refresh after start-up has one. This
+/// used to take a bare `f64` and the absent case arrived as `0.0`, so the
+/// interface list opened claiming every link was idle.
+fn format_bandwidth(bytes_per_sec: Option<f64>) -> String {
+    let Some(bytes_per_sec) = bytes_per_sec else {
+        return "—".to_string();
+    };
     const KB: f64 = 1024.0;
     const MB: f64 = KB * 1024.0;
     const GB: f64 = MB * 1024.0;

@@ -19,7 +19,7 @@ const DEFAULT_MAX_SIZE: u64 = 100 * 1024 * 1024;
 const MAGIC_BYTES: &[u8; 8] = b"SIMONDB\0";
 
 /// Current database version
-const DB_VERSION: u32 = 4;
+const DB_VERSION: u32 = 5;
 
 /// Size of the database header
 const HEADER_SIZE: u64 = 128;
@@ -136,10 +136,18 @@ pub struct SystemSnapshot {
     /// GPU power draw in milliwatts, one entry per GPU. `None` where the
     /// driver publishes no power telemetry.
     pub gpu_power_mw: Vec<Option<u32>>,
-    /// Network RX rate (bytes/sec)
-    pub net_rx_bps: u64,
-    /// Network TX rate (bytes/sec)
-    pub net_tx_bps: u64,
+    /// Network RX rate (bytes/sec), or `None` where no rate was established.
+    ///
+    /// A rate is a difference between two samples, so the first tick after
+    /// start-up has none. This was a bare `u64` fed from a reader that returned
+    /// `0.0` whenever it had nothing to difference against -- and it always had
+    /// nothing, because the baseline was overwritten immediately before the
+    /// subtraction. Every row recorded here before 6.0.0 holds a zero that
+    /// means "not measured", which is the distinction the per-process
+    /// `net_rx_bps` beside it already preserved.
+    pub net_rx_bps: Option<u64>,
+    /// Network TX rate (bytes/sec). See [`Self::net_rx_bps`].
+    pub net_tx_bps: Option<u64>,
     /// Process snapshots (top N by resource usage)
     pub processes: Vec<ProcessSnapshot>,
 }
@@ -271,6 +279,12 @@ impl TimeSeriesDb {
             )));
         }
         if header.version < DB_VERSION {
+            // Version 5 changed `net_rx_bps` and `net_tx_bps` from `u64` to
+            // `Option<u64>`. Every value stored under 4 and earlier is a zero
+            // produced by a reader that could never compute a rate -- the
+            // baseline was overwritten before the subtraction -- so those rows
+            // record "no traffic" for networks that were busy.
+            //
             // Version 4 changed what `swap_used` and `swap_total` mean on
             // Windows. They held `CommitLimit` and `CommitTotal` -- the
             // system's commit accounting, most of which is resident in RAM and
@@ -288,11 +302,13 @@ impl TimeSeriesDb {
                 concat!(
                     "Database version {} predates version {}. Older files ",
                     "record an unreadable GPU figure as zero rather than as ",
-                    "absent (before 3), and Windows swap as the system commit ",
-                    "charge rather than pagefile usage (before 4). Neither can ",
-                    "be converted, because a stored number does not say which ",
-                    "definition produced it. Record to a new file, or delete ",
-                    "this one with `simon record clear`.",
+                    "absent (before 3), Windows swap as the system commit ",
+                    "charge rather than pagefile usage (before 4), and network ",
+                    "rates as zero on every row because the reader could not ",
+                    "compute one (before 5). None can be converted, because a ",
+                    "stored number does not say which definition produced it. ",
+                    "Record to a new file, or delete this one with ",
+                    "`simon record clear`.",
                 ),
                 header.version, DB_VERSION
             )));
@@ -734,8 +750,8 @@ mod tests {
             gpu_memory_used: vec![Some(1024), Some(0), None],
             gpu_temperature: vec![Some(61.0), Some(0.0), None],
             gpu_power_mw: vec![Some(150_000), Some(0), None],
-            net_rx_bps: 1,
-            net_tx_bps: 2,
+            net_rx_bps: Some(1),
+            net_tx_bps: Some(2),
             processes: vec![ProcessSnapshot {
                 pid: 1,
                 name: "p".to_string(),

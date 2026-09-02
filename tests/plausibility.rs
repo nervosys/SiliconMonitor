@@ -379,15 +379,18 @@ fn network_rates_are_non_negative() {
 
     for iface in &snap.network {
         assert!(!iface.name.is_empty(), "an interface has no name");
+        // A rate is absent until a second sample establishes it; what must
+        // never happen is a negative one.
         assert!(
-            iface.rx_rate >= 0.0 && iface.tx_rate >= 0.0,
-            "interface {} reports a negative rate (rx {}, tx {})",
+            iface.rx_rate.unwrap_or(0.0) >= 0.0 && iface.tx_rate.unwrap_or(0.0) >= 0.0,
+            "interface {} reports a negative rate (rx {:?}, tx {:?})",
             iface.name,
             iface.rx_rate,
             iface.tx_rate
         );
         assert!(
-            iface.rx_rate.is_finite() && iface.tx_rate.is_finite(),
+            iface.rx_rate.map(f64::is_finite).unwrap_or(true)
+                && iface.tx_rate.map(f64::is_finite).unwrap_or(true),
             "interface {} reports a non-finite rate",
             iface.name
         );

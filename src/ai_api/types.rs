@@ -111,9 +111,16 @@ pub struct NetworkSummary {
     /// Interface name
     pub name: String,
     /// Receive rate in bytes/sec
-    pub rx_bytes_per_sec: u64,
+    /// Receive rate, or `None` until a second sample establishes one.
+    ///
+    /// A rate is a difference between two readings. This was a bare
+    /// number and the first reading reported `0`, which says the link
+    /// is idle -- and because the baseline was overwritten before the
+    /// subtraction, every reading was the first reading.
+    pub rx_bytes_per_sec: Option<u64>,
     /// Transmit rate in bytes/sec
-    pub tx_bytes_per_sec: u64,
+    /// Transmit rate. See [`Self::rx_bytes_per_sec`].
+    pub tx_bytes_per_sec: Option<u64>,
     /// Total received in MB
     pub rx_total_mb: u64,
     /// Total transmitted in MB

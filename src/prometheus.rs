@@ -516,8 +516,18 @@ impl PrometheusExporter {
                         iface.rx_bytes as f64,
                     ));
 
-                    // Use gauges for current rates
-                    let (rx_rate, tx_rate) = monitor.bandwidth_rate(&iface.name, iface);
+                    // Use gauges for current rates.
+                    //
+                    // Emitted only once there is a rate to emit. A gauge states
+                    // that the value is currently this, so exporting `0` for an
+                    // interface whose rate has not been established publishes an
+                    // idle link as a fact; Prometheus already treats an absent
+                    // series as "not reported", which is what is true. The first
+                    // scrape after start-up has no baseline and omits these two.
+                    let Some((rx_rate, tx_rate)) = monitor.bandwidth_rate(&iface.name, iface)
+                    else {
+                        continue;
+                    };
                     self.add(MetricFamily::gauge_with_labels(
                         &self.prefixed("network_rx_bytes_per_sec"),
                         "Network receive rate in bytes per second",

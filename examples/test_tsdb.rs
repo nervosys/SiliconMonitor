@@ -41,8 +41,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             // absent column as well as a present one.
             gpu_temperature: vec![Some(65.0 + (i as f32)), None],
             gpu_power_mw: vec![Some(150_000 + (i as u32 * 1000)), None],
-            net_rx_bps: 1_000_000 + (i as u64 * 100_000),
-            net_tx_bps: 500_000 + (i as u64 * 50_000),
+            net_rx_bps: Some(1_000_000 + (i as u64 * 100_000)),
+            net_tx_bps: Some(500_000 + (i as u64 * 50_000)),
             processes: vec![ProcessSnapshot {
                 pid: 1234,
                 name: "test_process".to_string(),
@@ -113,8 +113,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             (s.memory_used as f64 / s.memory_total as f64) * 100.0,
             util,
             temp,
-            format_size(s.net_rx_bps),
-            format_size(s.net_tx_bps)
+            s.net_rx_bps.map(format_size).unwrap_or_else(|| "—".into()),
+            s.net_tx_bps.map(format_size).unwrap_or_else(|| "—".into())
         );
     }
 

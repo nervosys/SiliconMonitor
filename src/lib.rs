@@ -80,12 +80,15 @@
 //!
 //! // Get all active interfaces
 //! for iface in monitor.active_interfaces()? {
-//!     let (rx_rate, tx_rate) = monitor.bandwidth_rate(&iface.name, &iface);
-//!     println!("{}: ↓{:.2} MB/s ↑{:.2} MB/s",
-//!         iface.name,
-//!         rx_rate / 1_000_000.0,
-//!         tx_rate / 1_000_000.0
-//!     );
+//!     // `None` on the first call for an interface: a rate is a difference
+//!     // between two samples, and this is the first.
+//!     if let Some((rx_rate, tx_rate)) = monitor.bandwidth_rate(&iface.name, &iface) {
+//!         println!("{}: ↓{:.2} MB/s ↑{:.2} MB/s",
+//!             iface.name,
+//!             rx_rate / 1_000_000.0,
+//!             tx_rate / 1_000_000.0
+//!         );
+//!     }
 //! }
 //! # Ok(())
 //! # }

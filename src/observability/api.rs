@@ -1212,11 +1212,11 @@ impl ObservabilityApi {
         if let Ok(mut monitor) = NetworkMonitor::new() {
             if let Ok(ifaces) = monitor.interfaces() {
                 for iface in &ifaces {
-                    let (rx_rate, tx_rate) = monitor.bandwidth_rate(&iface.name, iface);
+                    let rate = monitor.bandwidth_rate(&iface.name, iface);
                     result.push(NetworkMetrics {
                         interface: iface.name.clone(),
-                        rx_bps: rx_rate,
-                        tx_bps: tx_rate,
+                        rx_bps: rate.map(|(rx, _)| rx),
+                        tx_bps: rate.map(|(_, tx)| tx),
                         rx_bytes_total: iface.rx_bytes,
                         tx_bytes_total: iface.tx_bytes,
                         rx_packets: iface.rx_packets,

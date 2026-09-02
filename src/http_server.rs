@@ -420,8 +420,14 @@ impl HttpServer {
                 }
             }
 
-            collector.record("simon_network_rx_bytes_total", snap.total_rx_rate());
-            collector.record("simon_network_tx_bytes_total", snap.total_tx_rate());
+            // Recorded only once a rate exists. A metrics collector that is
+            // handed `0` cannot tell it apart from a quiet network.
+            if let Some(rx) = snap.total_rx_rate() {
+                collector.record("simon_network_rx_bytes_total", rx);
+            }
+            if let Some(tx) = snap.total_tx_rate() {
+                collector.record("simon_network_tx_bytes_total", tx);
+            }
             collector.record("simon_process_count", snap.processes.len() as f64);
 
             if let Some(ref stats) = snap.system_stats {

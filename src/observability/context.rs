@@ -469,10 +469,14 @@ pub struct DiskMetrics {
 pub struct NetworkMetrics {
     /// Interface name
     pub interface: String,
-    /// Received bytes per second
-    pub rx_bps: f64,
-    /// Transmitted bytes per second
-    pub tx_bps: f64,
+    /// Received bytes per second, or `None` until a second sample.
+    ///
+    /// A rate is a difference between two readings; the first reading has
+    /// nothing to difference against. This was a bare `f64` reporting `0.0`,
+    /// which states the link is idle.
+    pub rx_bps: Option<f64>,
+    /// Transmitted bytes per second. See [`Self::rx_bps`].
+    pub tx_bps: Option<f64>,
     /// Total received bytes
     pub rx_bytes_total: u64,
     /// Total transmitted bytes

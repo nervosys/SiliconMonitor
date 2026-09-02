@@ -112,9 +112,65 @@ Since the tag, on `master` and green on all three platforms:
 | `44612d8` | The last misleading absence, and a deliberate refusal to implement |
 | `68c9ff0` | Every measurement, checked for whether it actually moves |
 | `8ed7e71` | Zero hertz and zero swap, handed to an agent as facts |
+| `HEAD` | Every network rate in the crate was zero, on every platform |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### Every network rate in the crate was zero, on every platform
+
+Found by calling all 52 agent tools and reading the JSON. `get_network_bandwidth`
+returned `rx_bytes_per_sec: 0.0` for all eleven interfaces — and again on the
+second call, and the third, on a machine that was pushing to git throughout.
+
+```rust
+pub fn interfaces(&mut self) -> Result<Vec<NetworkInterfaceInfo>> {
+    let interfaces = Self::enumerate_interfaces()?;
+    self.update_prev_stats(&interfaces);   // <- baseline := the values
+    Ok(interfaces)                         //    about to be returned
+}
+```
+
+Every caller fetches interfaces and then asks for a rate. Fetching **overwrites
+the baseline with the values it is about to hand you**, so `bandwidth_rate`
+computes `current - current`. The answer is exactly zero, always, on every
+platform, and it looks like a quiet network rather than a broken subtraction.
+
+`bandwidth_rate` also returned `(0.0, 0.0)` when it had no baseline at all, so
+even the ordering fix alone would have kept a fabricated zero on the first
+sample. It returns `Option` now: the first call for an interface records a
+sample and reports nothing, the same contract as the PDH per-core clock reader
+and for the same reason.
+
+**Seven call sites, and the reach is the point:** the agent tools, the
+observability API, the Prometheus exporter, the pipeline that feeds both
+frontends, the TUI, the GUI, and the CSV export. `network_rx_bytes_per_sec` has
+been exported to Prometheus as a hard zero for the life of that exporter.
+Each site now says absence in its own idiom — `null` in JSON, an omitted series
+in Prometheus (an absent series already means "not reported"), an em dash in
+both frontends, an empty CSV field, and a skipped sample in the history graphs
+rather than a trough that never happened.
+
+**`DB_VERSION` goes to 5.** `SystemSnapshot::net_rx_bps` was a `u64` fed from
+this reader, so every recorded row holds a zero that means "not measured" — the
+distinction the per-process `net_rx_bps` beside it already preserved as
+`Option<u64>`. That is the second version bump today and the reason is the same
+as the first: the layout still parses, which is exactly why a reader cannot be
+allowed to mix the two definitions silently.
+
+Before and after, same machine, four consecutive calls:
+
+```
+before: 11 interfaces, 11 reporting exactly 0.0, forever
+after:  call 1 -> 11 null (priming)
+        calls 2-4 -> 2 interfaces with real traffic, 9 genuinely idle
+```
+
+**A test pinned the defect in place.** `test_bandwidth_rate_no_prev` asserted
+`rx == 0.0 && tx == 0.0` — it existed to confirm the fabrication, and it passed
+for the entire life of the bug. It now asserts `None`, and a second test checks
+that a real second sample produces a real rate. **A test that encodes the wrong
+answer is worse than no test: it converts a defect into a requirement.**
 
 ### Zero hertz and zero swap, handed to an agent as facts
 

@@ -133,7 +133,10 @@ pub struct SiliconMonitorApp {
     network_tx_history: VecDeque<f32>,
 
     // Network rate tracking (bytes/sec)
-    network_rates: std::collections::HashMap<String, (f64, f64)>,
+    /// Per-interface receive and transmit rates, each absent until a second
+    /// sample establishes it. These were bare `f64`s and an unestablished rate
+    /// arrived as `0.0`, which the tab drew as an idle link.
+    network_rates: std::collections::HashMap<String, (Option<f64>, Option<f64>)>,
 
     // Timing
     #[allow(dead_code)]
@@ -1064,12 +1067,19 @@ impl SiliconMonitorApp {
         // The previous code charted `(cumulative_bytes / 1MB) % 10000`, which is a
         // sawtooth of a running total rather than a throughput series. These are now
         // actual rates in MB/s, matching the axis label.
-        self.network_rx_history.pop_front();
-        self.network_rx_history
-            .push_back((snapshot.total_rx_rate() / 1024.0 / 1024.0) as f32);
-        self.network_tx_history.pop_front();
-        self.network_tx_history
-            .push_back((snapshot.total_tx_rate() / 1024.0 / 1024.0) as f32);
+        // A tick with no established rate advances neither series: popping and
+        // pushing a zero would draw a trough that did not happen, and popping
+        // without pushing would shrink a fixed-width history.
+        if let Some(rx) = snapshot.total_rx_rate() {
+            self.network_rx_history.pop_front();
+            self.network_rx_history
+                .push_back((rx / 1024.0 / 1024.0) as f32);
+        }
+        if let Some(tx) = snapshot.total_tx_rate() {
+            self.network_tx_history.pop_front();
+            self.network_tx_history
+                .push_back((tx / 1024.0 / 1024.0) as f32);
+        }
 
         self.network_rates.clear();
         for iface in &snapshot.network {
@@ -3516,8 +3526,9 @@ impl SiliconMonitorApp {
             ui.add(SectionHeader::new(&t).icon("🌐"));
 
             // Show total bandwidth rates at the top
-            let total_rx_rate: f64 = rates.values().map(|(rx, _)| rx).sum();
-            let total_tx_rate: f64 = rates.values().map(|(_, tx)| tx).sum();
+            // Summed over the interfaces that have a rate.
+            let total_rx_rate: f64 = rates.values().filter_map(|(rx, _)| *rx).sum();
+            let total_tx_rate: f64 = rates.values().filter_map(|(_, tx)| *tx).sum();
 
             ui.horizontal(|ui| {
                 ui.add_space(20.0);
@@ -3577,7 +3588,12 @@ impl SiliconMonitorApp {
 
                         // Get bandwidth rates for this interface
                         let (rx_rate, tx_rate) =
-                            rates.get(&iface.name).copied().unwrap_or((0.0, 0.0));
+                            rates.get(&iface.name).copied().unwrap_or((None, None));
+                        // An em dash where no rate has been established yet.
+                        let fmt = |r: Option<f64>| match r {
+                            Some(v) => format!("{}/s", format_bytes(v)),
+                            None => "—".to_string(),
+                        };
 
                         ui.add(SectionHeader::new(&iface.name).icon("📡"));
 
@@ -3586,12 +3602,12 @@ impl SiliconMonitorApp {
                             ui.add_space(20.0);
                             ui.label(RichText::new("Rate:").color(CyberColors::TEXT_MUTED));
                             ui.label(
-                                RichText::new(format!("↓ {}/s", format_bytes(rx_rate)))
+                                RichText::new(format!("↓ {}", fmt(rx_rate)))
                                     .color(CyberColors::NEON_GREEN)
                                     .monospace(),
                             );
                             ui.label(
-                                RichText::new(format!("↑ {}/s", format_bytes(tx_rate)))
+                                RichText::new(format!("↑ {}", fmt(tx_rate)))
                                     .color(CyberColors::NEON_ORANGE)
                                     .monospace(),
                             );

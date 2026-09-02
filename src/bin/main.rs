@@ -3083,8 +3083,11 @@ fn handle_record_command(action: &RecordSubcommand) -> Result<(), Box<dyn std::e
                     })
                     .collect();
 
-                let net_rx_bps = state.total_rx_rate() as u64;
-                let net_tx_bps = state.total_tx_rate() as u64;
+                // `None` until a rate exists, rather than `0`: a recording
+                // that starts with a zero teaches whoever reads it back that the
+                // network was idle at that moment.
+                let net_rx_bps = state.total_rx_rate().map(|r| r as u64);
+                let net_tx_bps = state.total_tx_rate().map(|r| r as u64);
 
                 let snapshot = SystemSnapshot {
                     timestamp,
@@ -3357,8 +3360,10 @@ fn handle_record_command(action: &RecordSubcommand) -> Result<(), Box<dyn std::e
                         s.memory_total,
                         s.swap_used,
                         s.swap_total,
-                        s.net_rx_bps,
-                        s.net_tx_bps
+                        // An empty CSV field, which every reader treats as
+                        // missing. `0` would be read as a measurement.
+                        s.net_rx_bps.map(|v| v.to_string()).unwrap_or_default(),
+                        s.net_tx_bps.map(|v| v.to_string()).unwrap_or_default()
                     )?;
                 }
             } else {

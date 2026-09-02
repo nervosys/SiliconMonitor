@@ -69,12 +69,15 @@
 //! let interfaces = monitor.interfaces()?;
 //! for iface in interfaces {
 //!     if iface.is_active() {
-//!         let (rx_rate, tx_rate) = monitor.bandwidth_rate(&iface.name, &iface);
-//!         println!("{}: ↓{:.2} MB/s ↑{:.2} MB/s",
-//!             iface.name,
-//!             rx_rate / 1_000_000.0,
-//!             tx_rate / 1_000_000.0
-//!         );
+//!         // `None` on the first call for an interface: a rate needs two
+//!         // samples, and one call is one sample.
+//!         if let Some((rx_rate, tx_rate)) = monitor.bandwidth_rate(&iface.name, &iface) {
+//!             println!("{}: ↓{:.2} MB/s ↑{:.2} MB/s",
+//!                 iface.name,
+//!                 rx_rate / 1_000_000.0,
+//!                 tx_rate / 1_000_000.0
+//!             );
+//!         }
 //!     }
 //! }
 //! # Ok(())
@@ -265,11 +268,21 @@ impl NetworkMonitor {
         })
     }
 
-    /// Get all network interfaces
+    /// Get all network interfaces.
+    ///
+    /// This used to record the counters it returned as the baseline for
+    /// [`Self::bandwidth_rate`], which made every rate in the crate exactly
+    /// zero: a caller fetches interfaces, the baseline is overwritten with the
+    /// values just fetched, and the rate is then computed as those values minus
+    /// themselves. Seven call sites did that -- the agent tools, the
+    /// observability API, the Prometheus exporter and the pipeline -- so
+    /// `rx_bytes_per_sec` was `0.0` on every interface of every machine, and
+    /// looked like an idle network rather than a broken subtraction.
+    ///
+    /// The baseline now belongs to `bandwidth_rate`, which is the only thing
+    /// that reads it.
     pub fn interfaces(&mut self) -> Result<Vec<NetworkInterfaceInfo>> {
-        let interfaces = Self::enumerate_interfaces()?;
-        self.update_prev_stats(&interfaces);
-        Ok(interfaces)
+        Self::enumerate_interfaces()
     }
 
     /// Get only active (up and running) interfaces
@@ -288,18 +301,35 @@ impl NetworkMonitor {
     }
 
     /// Calculate bandwidth rates (bytes/sec) for an interface
-    pub fn bandwidth_rate(&self, name: &str, current: &NetworkInterfaceInfo) -> (f64, f64) {
-        if let Some(prev) = self.prev_stats.get(name) {
-            let elapsed = prev.prev_time.elapsed().as_secs_f64();
-            if elapsed > 0.0 {
-                let rx_rate =
-                    (current.rx_bytes.saturating_sub(prev.prev_rx_bytes)) as f64 / elapsed;
-                let tx_rate =
-                    (current.tx_bytes.saturating_sub(prev.prev_tx_bytes)) as f64 / elapsed;
-                return (rx_rate, tx_rate);
-            }
+    pub fn bandwidth_rate(
+        &mut self,
+        name: &str,
+        current: &NetworkInterfaceInfo,
+    ) -> Option<(f64, f64)> {
+        let now = std::time::Instant::now();
+        let previous = self.prev_stats.insert(
+            name.to_string(),
+            BandwidthStats {
+                prev_rx_bytes: current.rx_bytes,
+                prev_tx_bytes: current.tx_bytes,
+                prev_time: now,
+            },
+        );
+        self.last_update = now;
+
+        // A rate needs two samples. The first call for an interface records one
+        // and reports nothing -- the same contract as the PDH per-core clock
+        // reader and for the same reason. This used to return `(0.0, 0.0)`,
+        // which is a claim that the interface carried no traffic.
+        let prev = previous?;
+        let elapsed = now.duration_since(prev.prev_time).as_secs_f64();
+        if elapsed <= 0.0 {
+            return None;
         }
-        (0.0, 0.0)
+        Some((
+            current.rx_bytes.saturating_sub(prev.prev_rx_bytes) as f64 / elapsed,
+            current.tx_bytes.saturating_sub(prev.prev_tx_bytes) as f64 / elapsed,
+        ))
     }
 
     /// Get interface count
@@ -310,22 +340,6 @@ impl NetworkMonitor {
     /// Get active interface count
     pub fn active_interface_count(&mut self) -> Result<usize> {
         Ok(self.active_interfaces()?.len())
-    }
-
-    /// Update previous statistics for bandwidth calculation
-    fn update_prev_stats(&mut self, interfaces: &[NetworkInterfaceInfo]) {
-        let now = std::time::Instant::now();
-        for iface in interfaces {
-            self.prev_stats.insert(
-                iface.name.clone(),
-                BandwidthStats {
-                    prev_rx_bytes: iface.rx_bytes,
-                    prev_tx_bytes: iface.tx_bytes,
-                    prev_time: now,
-                },
-            );
-        }
-        self.last_update = now;
     }
 
     // Platform-specific interface enumeration
@@ -1091,15 +1105,44 @@ mod tests {
         assert_eq!(iface.tx_mb(), 0.0);
     }
 
+    /// The first sample for an interface has no rate, and says so.
+    ///
+    /// This asserted `rx == 0.0 && tx == 0.0`, which is what the function used
+    /// to fabricate when it had nothing to difference against. A test that
+    /// pins a wrong answer is worse than no test: this one passed for the
+    /// entire life of the defect.
     #[test]
     fn test_bandwidth_rate_no_prev() {
-        let monitor = NetworkMonitor {
+        let mut monitor = NetworkMonitor {
             prev_stats: HashMap::new(),
             last_update: std::time::Instant::now(),
         };
         let iface = make_test_iface();
-        let (rx, tx) = monitor.bandwidth_rate("eth0", &iface);
-        assert_eq!(rx, 0.0);
-        assert_eq!(tx, 0.0);
+        assert_eq!(monitor.bandwidth_rate("eth0", &iface), None);
+    }
+
+    /// A second sample produces a rate, and it reflects the bytes between them.
+    #[test]
+    fn test_bandwidth_rate_uses_the_previous_sample() {
+        let mut monitor = NetworkMonitor {
+            prev_stats: HashMap::new(),
+            last_update: std::time::Instant::now(),
+        };
+        let mut iface = make_test_iface();
+        iface.rx_bytes = 1_000;
+        iface.tx_bytes = 2_000;
+        assert_eq!(monitor.bandwidth_rate("eth0", &iface), None);
+
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        iface.rx_bytes = 3_000;
+        iface.tx_bytes = 2_000;
+        let (rx, tx) = monitor
+            .bandwidth_rate("eth0", &iface)
+            .expect("a second sample has something to difference against");
+        // 2000 bytes over ~50ms is on the order of 40 KB/s; the exact figure
+        // depends on scheduling, so this asserts the sign and the scale rather
+        // than a number the test cannot control.
+        assert!(rx > 0.0, "rx should reflect the 2000 new bytes, got {rx}");
+        assert_eq!(tx, 0.0, "tx counters did not move, so the rate is zero");
     }
 }

@@ -117,9 +117,16 @@ pub struct NetSnapshot {
     /// Cumulative bytes transmitted.
     pub tx_bytes: u64,
     /// Receive rate in bytes/sec.
-    pub rx_rate: f64,
+    /// Receive rate, or `None` until a second sample establishes one.
+    ///
+    /// A rate is a difference between two readings. This was a bare
+    /// number and the first reading reported `0`, which says the link
+    /// is idle -- and because the baseline was overwritten before the
+    /// subtraction, every reading was the first reading.
+    pub rx_rate: Option<f64>,
     /// Transmit rate in bytes/sec.
-    pub tx_rate: f64,
+    /// Transmit rate. See [`Self::rx_rate`].
+    pub tx_rate: Option<f64>,
     /// Link speed in Mbps, if known.
     pub speed_mbps: Option<u32>,
 }
@@ -259,13 +266,21 @@ impl Snapshot {
     }
 
     /// Aggregate receive rate across all interfaces, in bytes/sec.
-    pub fn total_rx_rate(&self) -> f64 {
-        self.network.iter().map(|n| n.rx_rate).sum()
+    /// Receive rate summed over the interfaces that have one.
+    ///
+    /// `None` while no interface has established a rate yet, rather than `0.0`:
+    /// a total over nothing measured is not a measurement of nothing.
+    pub fn total_rx_rate(&self) -> Option<f64> {
+        let rates: Vec<f64> = self.network.iter().filter_map(|n| n.rx_rate).collect();
+        (!rates.is_empty()).then(|| rates.iter().sum())
     }
 
-    /// Aggregate transmit rate across all interfaces, in bytes/sec.
-    pub fn total_tx_rate(&self) -> f64 {
-        self.network.iter().map(|n| n.tx_rate).sum()
+    /// Aggregate transmit rate across the interfaces that have one.
+    ///
+    /// `None` while none has been established. See [`Self::total_rx_rate`].
+    pub fn total_tx_rate(&self) -> Option<f64> {
+        let rates: Vec<f64> = self.network.iter().filter_map(|n| n.tx_rate).collect();
+        (!rates.is_empty()).then(|| rates.iter().sum())
     }
 }
 
@@ -722,10 +737,26 @@ fn collect_once(
             }
         }
     }
-    let rx_total: f64 = network.iter().map(|n| n.rx_rate).sum();
-    let tx_total: f64 = network.iter().map(|n| n.tx_rate).sum();
-    push_capped(&mut histories.net_rx, rx_total as f32, cap);
-    push_capped(&mut histories.net_tx, tx_total as f32, cap);
+    // Summed over the interfaces that have a rate. The history graph needs a
+    // number per tick and the first tick after start-up has none -- pushing `0`
+    // there draws a trough that never happened, so that sample is skipped and
+    // the line starts one tick later.
+    let rx_rates: Vec<f64> = network.iter().filter_map(|n| n.rx_rate).collect();
+    let tx_rates: Vec<f64> = network.iter().filter_map(|n| n.tx_rate).collect();
+    if !rx_rates.is_empty() {
+        push_capped(
+            &mut histories.net_rx,
+            rx_rates.iter().sum::<f64>() as f32,
+            cap,
+        );
+    }
+    if !tx_rates.is_empty() {
+        push_capped(
+            &mut histories.net_tx,
+            tx_rates.iter().sum::<f64>() as f32,
+            cap,
+        );
+    }
 
     Snapshot {
         generation,
@@ -851,14 +882,14 @@ fn collect_network(monitor: Option<&mut NetworkMonitor>) -> Vec<NetSnapshot> {
         .iter()
         .filter(|i| !is_virtual(&i.name) && i.is_active())
         .map(|i| {
-            let (rx_rate, tx_rate) = monitor.bandwidth_rate(&i.name, i);
+            let rate = monitor.bandwidth_rate(&i.name, i);
             NetSnapshot {
                 name: i.name.clone(),
                 is_up: i.is_up,
                 rx_bytes: i.rx_bytes,
                 tx_bytes: i.tx_bytes,
-                rx_rate,
-                tx_rate,
+                rx_rate: rate.map(|(rx, _)| rx),
+                tx_rate: rate.map(|(_, tx)| tx),
                 speed_mbps: i.speed_mbps,
             }
         })
@@ -870,14 +901,14 @@ fn collect_network(monitor: Option<&mut NetworkMonitor>) -> Vec<NetSnapshot> {
             .iter()
             .filter(|i| !i.name.starts_with("lo") && !i.name.contains("Loopback") && i.is_active())
             .map(|i| {
-                let (rx_rate, tx_rate) = monitor.bandwidth_rate(&i.name, i);
+                let rate = monitor.bandwidth_rate(&i.name, i);
                 NetSnapshot {
                     name: i.name.clone(),
                     is_up: i.is_up,
                     rx_bytes: i.rx_bytes,
                     tx_bytes: i.tx_bytes,
-                    rx_rate,
-                    tx_rate,
+                    rx_rate: rate.map(|(rx, _)| rx),
+                    tx_rate: rate.map(|(_, tx)| tx),
                     speed_mbps: i.speed_mbps,
                 }
             })
@@ -1057,20 +1088,49 @@ mod tests {
         let snap = Snapshot {
             network: vec![
                 NetSnapshot {
-                    rx_rate: 1.5,
-                    tx_rate: 0.5,
+                    rx_rate: Some(1.5),
+                    tx_rate: Some(0.5),
                     ..Default::default()
                 },
                 NetSnapshot {
-                    rx_rate: 2.5,
-                    tx_rate: 1.5,
+                    rx_rate: Some(2.5),
+                    tx_rate: Some(1.5),
                     ..Default::default()
                 },
             ],
             ..Default::default()
         };
-        assert_eq!(snap.total_rx_rate(), 4.0);
-        assert_eq!(snap.total_tx_rate(), 2.0);
+        assert_eq!(snap.total_rx_rate(), Some(4.0));
+        assert_eq!(snap.total_tx_rate(), Some(2.0));
+    }
+
+    /// An interface with no established rate contributes nothing, and a
+    /// snapshot where none has one totals to an absence rather than to zero.
+    #[test]
+    fn snapshot_totals_skip_interfaces_with_no_rate_yet() {
+        let partial = Snapshot {
+            network: vec![
+                NetSnapshot {
+                    rx_rate: Some(3.0),
+                    tx_rate: None,
+                    ..Default::default()
+                },
+                NetSnapshot {
+                    rx_rate: None,
+                    tx_rate: None,
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        assert_eq!(partial.total_rx_rate(), Some(3.0));
+        assert_eq!(partial.total_tx_rate(), None);
+
+        let none_yet = Snapshot {
+            network: vec![NetSnapshot::default()],
+            ..Default::default()
+        };
+        assert_eq!(none_yet.total_rx_rate(), None);
     }
 
     #[test]

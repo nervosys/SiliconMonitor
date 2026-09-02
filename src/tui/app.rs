@@ -850,9 +850,11 @@ pub struct NetworkInterfaceInfo {
     /// Total bytes transmitted
     pub tx_bytes: u64,
     /// Receive rate (bytes/sec)
-    pub rx_rate: f64,
+    /// Receive rate, or `None` until a second sample establishes one.
+    pub rx_rate: Option<f64>,
     /// Transmit rate (bytes/sec)
-    pub tx_rate: f64,
+    /// Transmit rate. See [`Self::rx_rate`].
+    pub tx_rate: Option<f64>,
     /// Link speed in Mbps (if available)
     pub speed_mbps: Option<u32>,
 }
@@ -863,9 +865,9 @@ pub struct NetworkInfo {
     /// All network interfaces
     pub interfaces: Vec<NetworkInterfaceInfo>,
     /// Total RX rate across all interfaces (bytes/sec)
-    pub total_rx_rate: f64,
+    pub total_rx_rate: Option<f64>,
     /// Total TX rate across all interfaces (bytes/sec)
-    pub total_tx_rate: f64,
+    pub total_tx_rate: Option<f64>,
     /// Total bytes received
     pub total_rx_bytes: u64,
     /// Total bytes transmitted
@@ -1685,11 +1687,15 @@ impl App {
             total_tx_rate,
         };
 
-        // History is stored in KB/s for a readable vertical scale.
-        self.network_rx_history
-            .push_back((total_rx_rate / 1024.0) as u64);
-        self.network_tx_history
-            .push_back((total_tx_rate / 1024.0) as u64);
+        // History is stored in KB/s for a readable vertical scale. A tick
+        // with no established rate is skipped rather than pushed as zero: the
+        // graph would otherwise open with a trough that never happened.
+        if let Some(rx) = total_rx_rate {
+            self.network_rx_history.push_back((rx / 1024.0) as u64);
+        }
+        if let Some(tx) = total_tx_rate {
+            self.network_tx_history.push_back((tx / 1024.0) as u64);
+        }
         if self.network_rx_history.len() > MAX_HISTORY {
             self.network_rx_history.pop_front();
         }

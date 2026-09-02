@@ -1907,13 +1907,18 @@ impl AiDataApi {
             .iter()
             .filter(|i| interface_name.map(|name| i.name == name).unwrap_or(true))
             .map(|i| {
-                let (rx_rate, tx_rate) = net_mon.bandwidth_rate(&i.name, i);
+                // `null` on the first call for an interface: a rate needs two
+                // samples. This used to report `0.0`, which reads as an idle
+                // link rather than as an unanswered question -- and because the
+                // baseline was overwritten before the subtraction, it reported
+                // `0.0` on every call, forever.
+                let rate = net_mon.bandwidth_rate(&i.name, i);
                 json!({
                     "name": i.name,
-                    "rx_bytes_per_sec": rx_rate,
-                    "tx_bytes_per_sec": tx_rate,
-                    "rx_mbps": rx_rate / 1_000_000.0 * 8.0,
-                    "tx_mbps": tx_rate / 1_000_000.0 * 8.0,
+                    "rx_bytes_per_sec": rate.map(|(rx, _)| rx),
+                    "tx_bytes_per_sec": rate.map(|(_, tx)| tx),
+                    "rx_mbps": rate.map(|(rx, _)| rx / 1_000_000.0 * 8.0),
+                    "tx_mbps": rate.map(|(_, tx)| tx / 1_000_000.0 * 8.0),
                 })
             })
             .collect();
@@ -1941,7 +1946,8 @@ impl AiDataApi {
                 SimonError::InvalidArgument(format!("Interface {} not found", interface_name))
             })?;
 
-        let (rx_rate, tx_rate) = net_mon.bandwidth_rate(&iface.name, &iface);
+        // See `tool_get_network_bandwidth`: absent until a second sample.
+        let rate = net_mon.bandwidth_rate(&iface.name, &iface);
 
         Ok(json!({
             "name": iface.name,
@@ -1955,8 +1961,8 @@ impl AiDataApi {
             "tx_errors": iface.tx_errors,
             "rx_drops": iface.rx_drops,
             "tx_drops": iface.tx_drops,
-            "rx_rate_bytes_sec": rx_rate,
-            "tx_rate_bytes_sec": tx_rate,
+            "rx_rate_bytes_sec": rate.map(|(rx, _)| rx),
+            "tx_rate_bytes_sec": rate.map(|(_, tx)| tx),
         }))
     }
 
