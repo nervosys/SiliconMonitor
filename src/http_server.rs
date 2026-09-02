@@ -470,6 +470,26 @@ impl HttpServer {
             }
         }
 
+        // Cumulative per-device byte counters, which the bundled dashboards
+        // query and the served endpoint could not publish until the pipeline
+        // carried them. Labelled by physical device rather than by mount:
+        // `DiskSnapshot` is per filesystem and these are per drive, and on
+        // Windows the two do not map onto each other without a partition table
+        // nobody has written. See `DiskIoSnapshot`.
+        for io in &snap.disk_io {
+            let device = &[("device", io.device.as_str())];
+            collector.record_with_labels(
+                "simon_disk_read_bytes_total",
+                io.read_bytes as f64,
+                device,
+            );
+            collector.record_with_labels(
+                "simon_disk_write_bytes_total",
+                io.write_bytes as f64,
+                device,
+            );
+        }
+
         // `_total` is a counter, and these carry the cumulative byte counts.
         //
         // They used to carry `total_rx_rate()` -- a bytes/sec figure, summed
@@ -631,10 +651,37 @@ mod snapshot_recording_tests {
             !text.contains("simon_disk_0_"),
             "an index belongs in a label, not in the metric name: {text}"
         );
+        // A `_total` may be published only from a genuine cumulative counter,
+        // and now there is one: `Snapshot::disk_io`. This snapshot's `disks`
+        // carry rates and no counters, so nothing may claim a total from them.
         assert!(
             !text.contains("simon_disk_read_bytes_total"),
-            "DiskSnapshot carries no cumulative counter, so nothing here may \
-             claim to be a total: {text}"
+            "the counters come from `disk_io`, which this snapshot leaves \
+             empty, so no total may appear: {text}"
+        );
+    }
+
+    /// The cumulative counters are published from `disk_io`, per device.
+    ///
+    /// They are keyed by physical drive while `disks` is keyed by filesystem,
+    /// which is why they travel in a separate list -- see `DiskIoSnapshot`.
+    #[test]
+    fn cumulative_disk_counters_are_published_per_device() {
+        let mut snap = Snapshot::default();
+        snap.disk_io = vec![crate::pipeline::DiskIoSnapshot {
+            device: "PhysicalDrive0".into(),
+            read_bytes: 8_111_574_792_192,
+            write_bytes: 5_613_750_109_184,
+        }];
+
+        let text = rendered(&snap);
+        assert!(
+            text.contains("simon_disk_read_bytes_total{device=\"PhysicalDrive0\"} 8111574792192"),
+            "a cumulative counter needs its device label and its full value: {text}"
+        );
+        assert!(
+            text.contains("simon_disk_write_bytes_total{device=\"PhysicalDrive0\"} 5613750109184"),
+            "the write counter had no counterpart: {text}"
         );
     }
 

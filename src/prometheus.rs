@@ -620,6 +620,11 @@ impl PrometheusExporter {
     }
 
     fn collect_disk_metrics(&mut self) {
+        // One batched read for the whole machine rather than a WMI connection
+        // per disk inside the loop: 9.9 ms against 8.0 s on a four-drive host,
+        // paid on every scrape. See `crate::disk::all_io_counters`.
+        let io_counters = crate::disk::all_io_counters();
+
         if let Ok(disks) = crate::disk::enumerate_disks() {
             for disk in &disks {
                 if let Ok(filesystems) = disk.filesystem_info() {
@@ -662,7 +667,7 @@ impl PrometheusExporter {
                 // reader to `Win32_PerfRawData_*` so that they are genuinely
                 // cumulative rather than the instantaneous rates the class name
                 // suggests -- so `rate()` over them in a dashboard is correct.
-                if let Ok(io) = disk.io_stats() {
+                if let Some(io) = io_counters.get(disk.name()) {
                     let mut labels = BTreeMap::new();
                     labels.insert("device".into(), disk.name().to_string());
                     self.add(MetricFamily::counter_with_labels(

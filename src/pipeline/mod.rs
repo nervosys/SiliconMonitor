@@ -116,6 +116,28 @@ pub struct DiskSnapshot {
     pub write_rate: Option<f64>,
 }
 
+/// Cumulative I/O counters for one physical device.
+///
+/// Kept separate from [`DiskSnapshot`] rather than folded into it, because the
+/// two are keyed differently and joining them is its own problem.
+/// `DiskSnapshot` is per filesystem — a drive letter or mount point — and these
+/// counters are per physical drive; on Windows one physical drive can carry
+/// several letters and one letter can span drives, so attributing a device
+/// counter to a mount point needs a partition map nobody has written.
+///
+/// Publishing them under their own device label sidesteps that entirely, and is
+/// what the metric means anyway: `simon_disk_read_bytes_total{device="..."}` is
+/// a property of the hardware, not of a mount.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct DiskIoSnapshot {
+    /// Device name, e.g. `PhysicalDrive0` or `nvme0n1`.
+    pub device: String,
+    /// Bytes read from this device since boot.
+    pub read_bytes: u64,
+    /// Bytes written to this device since boot.
+    pub write_bytes: u64,
+}
+
 /// A network interface row with computed bandwidth rates.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct NetSnapshot {
@@ -251,6 +273,8 @@ pub struct Snapshot {
     pub connections: Vec<ConnectionInfo>,
     /// Mounted disks.
     pub disks: Vec<DiskSnapshot>,
+    /// Cumulative I/O counters, per physical device. See [`DiskIoSnapshot`].
+    pub disk_io: Vec<DiskIoSnapshot>,
     /// Active network interfaces.
     pub network: Vec<NetSnapshot>,
     /// Load average / vmstat style system counters.
@@ -506,6 +530,7 @@ fn collector_loop(
     let mut histories = Histories::default();
     let mut generation: u64 = 0;
     let mut cached_disks: Vec<DiskSnapshot> = Vec::new();
+    let mut cached_disk_io: Vec<DiskIoSnapshot> = Vec::new();
     // Carried between ticks so a decimated stage keeps its last reading rather than
     // publishing an empty table on the ticks it does not run.
     let mut cached_processes: Vec<ProcessMonitorInfo> = Vec::new();
@@ -535,6 +560,7 @@ fn collector_loop(
         &config,
         &mut histories,
         &mut cached_disks,
+        &mut cached_disk_io,
         &mut cached_processes,
         &mut cached_connections,
         &[],
@@ -586,6 +612,7 @@ fn collector_loop(
             &config,
             &mut histories,
             &mut cached_disks,
+            &mut cached_disk_io,
             &mut cached_processes,
             &mut cached_connections,
             &gpu_static,
@@ -640,6 +667,7 @@ fn collect_once(
     config: &CollectorConfig,
     histories: &mut Histories,
     cached_disks: &mut Vec<DiskSnapshot>,
+    cached_disk_io: &mut Vec<DiskIoSnapshot>,
     cached_processes: &mut Vec<ProcessMonitorInfo>,
     cached_connections: &mut Vec<ConnectionInfo>,
     gpu_static: &[GpuStaticInfo],
@@ -678,7 +706,7 @@ fn collect_once(
             }));
             let disk_h = scope.spawn(timed(move || {
                 if refresh_disks {
-                    Some(collect_disks())
+                    Some((collect_disks(), collect_disk_io()))
                 } else {
                     None
                 }
@@ -712,8 +740,9 @@ fn collect_once(
     let network = net_list.0;
     let system_stats = sys_stats.0;
 
-    if let Some(fresh) = disk_list.0 {
-        *cached_disks = fresh;
+    if let Some((fresh_disks, fresh_io)) = disk_list.0 {
+        *cached_disks = fresh_disks;
+        *cached_disk_io = fresh_io;
     }
     if let Some(fresh) = process_list.0 {
         *cached_processes = fresh;
@@ -784,6 +813,7 @@ fn collect_once(
         processes,
         connections,
         disks: cached_disks.clone(),
+        disk_io: cached_disk_io.clone(),
         network,
         system_stats,
         histories: histories.clone(),
@@ -926,6 +956,31 @@ fn collect_network(monitor: Option<&mut NetworkMonitor>) -> Vec<NetSnapshot> {
             .collect();
     }
 
+    out
+}
+
+/// Cumulative per-device I/O counters.
+///
+/// One batched read rather than a call per disk. On Windows each `io_stats`
+/// opens its own WMI connection, which measured 8.0 s across four drives
+/// against 9.9 ms for the batch -- see `crate::disk::all_io_counters`. That cost
+/// is why the Windows `collect_disks` takes the capacity-only `logical_drives`
+/// path and why these counters were missing from the snapshot at all, which left
+/// `simon_disk_read_bytes_total` unpublishable on the served endpoint.
+///
+/// Runs on the disk cadence (every 10 ticks by default), in the same stage.
+fn collect_disk_io() -> Vec<DiskIoSnapshot> {
+    let mut out: Vec<DiskIoSnapshot> = crate::disk::all_io_counters()
+        .into_iter()
+        .map(|(device, io)| DiskIoSnapshot {
+            device,
+            read_bytes: io.read_bytes,
+            write_bytes: io.write_bytes,
+        })
+        .collect();
+    // A map iterates in whatever order it likes; a snapshot should not shuffle
+    // its rows between ticks.
+    out.sort_by(|a, b| a.device.cmp(&b.device));
     out
 }
 

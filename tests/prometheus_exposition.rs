@@ -292,10 +292,6 @@ fn the_served_endpoint_publishes_every_dashboard_metric() {
         // exporter gets this by calling `hwmon::read_cpu_temperatures` directly,
         // which the recorder must not do.
         "simon_cpu_temperature_celsius",
-        // Need cumulative byte counters. `DiskSnapshot` carries rates only, and
-        // a rate cannot be turned into a total after the fact.
-        "simon_disk_read_bytes_total",
-        "simon_disk_write_bytes_total",
     ];
 
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));

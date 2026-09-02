@@ -124,56 +124,99 @@ impl WindowsDisk {
     /// `read_time_ms`, `write_time_ms` and `queue_depth` were hardcoded
     /// `Some(0)` while this very class published all three.
     fn read_io_counters(&self) -> Result<DiskIoStats, Error> {
-        use serde::Deserialize;
-
-        #[derive(Deserialize, Debug)]
-        #[serde(rename_all = "PascalCase")]
-        #[allow(dead_code)]
-        struct DiskPerf {
-            name: String,
-            disk_read_bytes_per_sec: u64,
-            disk_write_bytes_per_sec: u64,
-            disk_reads_per_sec: u64,
-            disk_writes_per_sec: u64,
-            percent_disk_read_time: u64,
-            percent_disk_write_time: u64,
-            current_disk_queue_length: u32,
-        }
-
-        // Use robust WMI connection
-        let wmi_con = create_wmi_connection()?;
-
         // The instance name is the physical index, optionally followed by a
         // space and the drive letters: "0 C:", "1 E:", "2".
         let index = self.name.replace("PhysicalDrive", "");
-        let query = format!(
-            "SELECT Name, DiskReadBytesPerSec, DiskWriteBytesPerSec, DiskReadsPerSec,              DiskWritesPerSec, PercentDiskReadTime, PercentDiskWriteTime,              CurrentDiskQueueLength FROM Win32_PerfRawData_PerfDisk_PhysicalDisk              WHERE Name = '{index}' OR Name LIKE '{index} %'"
-        );
+        let query =
+            format!("{DISK_PERF_SELECT} WHERE Name = \'{index}\' OR Name LIKE \'{index} %\'");
 
-        let perfs: Vec<DiskPerf> = wmi_con.raw_query(&query).unwrap_or_default();
+        let perfs: Vec<DiskPerf> = create_wmi_connection()?
+            .raw_query(&query)
+            .unwrap_or_default();
         let Some(perf) = perfs.first() else {
             return Err(Error::QueryFailed(format!(
-                "no PhysicalDisk performance instance named '{index}'"
+                "no PhysicalDisk performance instance named \'{index}\'"
             )));
         };
+        Ok(perf.to_io_stats())
+    }
+}
 
-        Ok(DiskIoStats {
-            read_bytes: perf.disk_read_bytes_per_sec,
-            write_bytes: perf.disk_write_bytes_per_sec,
-            read_ops: perf.disk_reads_per_sec,
-            write_ops: perf.disk_writes_per_sec,
+/// One row of `Win32_PerfRawData_PerfDisk_PhysicalDisk`.
+#[derive(serde::Deserialize, Debug)]
+#[serde(rename_all = "PascalCase")]
+#[allow(dead_code)]
+struct DiskPerf {
+    name: String,
+    disk_read_bytes_per_sec: u64,
+    disk_write_bytes_per_sec: u64,
+    disk_reads_per_sec: u64,
+    disk_writes_per_sec: u64,
+    percent_disk_read_time: u64,
+    percent_disk_write_time: u64,
+    current_disk_queue_length: u32,
+}
+
+const DISK_PERF_SELECT: &str = "SELECT Name, DiskReadBytesPerSec, DiskWriteBytesPerSec, \
+     DiskReadsPerSec, DiskWritesPerSec, PercentDiskReadTime, PercentDiskWriteTime, \
+     CurrentDiskQueueLength FROM Win32_PerfRawData_PerfDisk_PhysicalDisk";
+
+impl DiskPerf {
+    fn to_io_stats(&self) -> DiskIoStats {
+        DiskIoStats {
+            read_bytes: self.disk_read_bytes_per_sec,
+            write_bytes: self.disk_write_bytes_per_sec,
+            read_ops: self.disk_reads_per_sec,
+            write_ops: self.disk_writes_per_sec,
             // The two timers are PERF_PRECISION_100NS_TIMER: the raw value is
             // busy time in 100-nanosecond units.
-            read_time_ms: Some(perf.percent_disk_read_time / 10_000),
-            write_time_ms: Some(perf.percent_disk_write_time / 10_000),
-            queue_depth: Some(perf.current_disk_queue_length),
+            read_time_ms: Some(self.percent_disk_read_time / 10_000),
+            write_time_ms: Some(self.percent_disk_write_time / 10_000),
+            queue_depth: Some(self.current_disk_queue_length),
             // Both need two samples to difference; one call has nothing to
             // difference against.
             avg_latency_us: None,
             read_throughput: None,
             write_throughput: None,
-        })
+        }
     }
+
+    /// The physical drive index this instance belongs to, from names shaped
+    /// `"0 C:"`, `"1 E:"` or `"2"`. `_Total` and anything unparseable is None.
+    fn physical_index(&self) -> Option<u32> {
+        self.name
+            .split_whitespace()
+            .next()
+            .and_then(|first| first.parse().ok())
+    }
+}
+
+/// Every physical drive's cumulative I/O counters, in one query.
+///
+/// `read_io_counters` opens a WMI connection and runs a filtered query *per
+/// disk*, and the connection is what costs: four drives on this machine measured
+/// 772 ms in total, ~193 ms each, against 0.5 ms for the capacity-only path.
+/// Both the Prometheus exporter and the pipeline want counters for every drive
+/// at once, and paying for one connection instead of N takes that to a single
+/// round trip.
+///
+/// Keyed by `PhysicalDriveN` to match [`DiskInfo::name`], so a caller can join
+/// against an enumeration without re-deriving the index.
+pub fn all_io_counters() -> Result<std::collections::HashMap<String, DiskIoStats>, Error> {
+    let perfs: Vec<DiskPerf> = create_wmi_connection()?
+        .raw_query(DISK_PERF_SELECT)
+        .unwrap_or_default();
+
+    Ok(perfs
+        .iter()
+        .filter_map(|perf| {
+            // No `_Total`: it is the sum over every drive, and attributing that
+            // to any one of them is the defect this reader was fixed for once
+            // already.
+            let index = perf.physical_index()?;
+            Some((format!("PhysicalDrive{index}"), perf.to_io_stats()))
+        })
+        .collect())
 }
 
 impl WindowsDisk {
