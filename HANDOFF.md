@@ -133,9 +133,60 @@ Since the tag, on `master` and green on all three platforms:
 | `ed4ec44` | A section of the state document that was never filled in |
 | `5a8bcee` | 26 public types the crate declares and never produces |
 | `3656368` | Six uncalled readers that answered zero for unknown |
+| `495e2ba` | Two renderers covering for each other, and a test that vouched for itself |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### Two renderers covering for each other, and a test that vouched for itself
+
+Open-work item 1 had asked for this and given the reason: the dashboard guard
+accepted a name published by *either* renderer, so a gap in only one of them was
+invisible. Splitting it per publisher turned up more than the item predicted.
+
+| Publisher | Coverage | Missing |
+| --- | --- | --- |
+| Served endpoint (`http_server.rs`) | 21/24 | `cpu_temperature_celsius`, `disk_read_bytes_total`, `disk_write_bytes_total` |
+| Library exporter (`prometheus.rs`) | 20/24 | `cpu_frequency_mhz`, `load_average_1m`, `load_average_5m`, `process_count` |
+
+Combined, that reads 24/24. Neither publisher is complete, their gaps do not
+overlap at all, and each was silently covering the other's — while only one of
+them is reachable over HTTP. `/api/v1/metrics/prometheus` serves
+`MetricCollector`, filled by `record_snapshot`; a name that only
+`PrometheusExporter` knows is not on the wire, however green the test was.
+
+The library exporter's four are the more embarrassing half, because they are not
+snapshot limitations. `PrometheusExporter` collects from the system directly and
+could read every one of them. They are simply metrics nobody taught it, and no
+test ever asked.
+
+**And the split found the comment-satisfies-the-test hole a second time, wearing
+a better disguise.** The first version of this guard searched raw source and
+passed while the defect was live, because the comment explaining the defect
+contained the name. Comments have been stripped ever since. But `http_server.rs`
+contains this, in a test:
+
+```rust
+assert!(!text.contains("simon_disk_read_bytes_total"));
+```
+
+— an assertion pinning that the name is *not* published. A source search read the
+string literal as a publisher, so the metric counted as covered on the strength
+of a test asserting it was missing. The served endpoint measured 22/24 until
+`#[cfg(test)]` modules were stripped too, at which point it read the true 21/24.
+
+Each publisher's gaps are now pinned as an exact list, and the check fails in
+**both** directions: a new gap fails, and so does closing one without pruning the
+entry. Sabotage-verified each way. That second direction is not decoration — an
+exemption list nobody prunes stops describing anything, and this file has already
+carried one coverage figure that was stale for several commits before I re-measured
+it.
+
+**"The output is not published anywhere" and "no code publishes it" are different
+questions, and so are "the name appears in this file" and "this file emits it".**
+Every wrong version of this test has been a wrong answer to which question was
+being asked. Source text answers the second pair only after everything that is
+not publishing code — prose *and* tests — has been taken out of it.
 
 ### Six uncalled readers that answered zero for unknown
 
@@ -4801,19 +4852,25 @@ feature stayed broken through eight published versions.
 
 ## Open work
 
-1. **The Prometheus endpoint is missing 3 of the 24 dashboard metrics.**
-   Measured, not estimated: `record_snapshot` emits 21 of the names `grafana/`
-   queries. The three it cannot are limited by the pipeline `Snapshot`:
-   `simon_cpu_temperature_celsius` needs a CPU temperature that `CpuStats` does
-   not carry (the exporter reads `hwmon` directly, which the recorder must not
-   do — being pure over a `Snapshot` is what makes it testable), and
-   `simon_disk_read_bytes_total` / `write_bytes_total` need cumulative counters
-   that `DiskSnapshot` does not have, only rates. Both wants are the same shape:
-   put the reading in the snapshot, then record it.
+1. **Seven dashboard metrics are unpublished, across two renderers.** The
+   guard is split per publisher as of `495e2ba` and each gap is pinned by name
+   in `tests/prometheus_exposition.rs`, so closing one fails the test until the
+   entry is pruned. Measured, not estimated:
 
-   Separately, `every_dashboard_metric_is_published_somewhere` accepts a name
-   published by *either* renderer, so it cannot see a gap that exists only in
-   the served one. Splitting it per publisher would.
+   **Served endpoint (`http_server.rs`), 21/24.** All three are limited by the
+   pipeline `Snapshot` rather than by the recorder, which is deliberately pure
+   over a `Snapshot` — that purity is what makes it testable, so it must not go
+   read a sensor itself. `simon_cpu_temperature_celsius` needs a CPU temperature
+   `CpuStats` does not carry; `simon_disk_read_bytes_total` and
+   `write_bytes_total` need cumulative counters `DiskSnapshot` does not have,
+   and a rate cannot be turned back into a total. Both are the same shape of
+   work: put the reading in the snapshot, then record it.
+
+   **Library exporter (`prometheus.rs`), 20/24.** `simon_cpu_frequency_mhz`,
+   `simon_load_average_1m`, `simon_load_average_5m`, `simon_process_count`.
+   These are *not* blocked on anything — `PrometheusExporter` collects from the
+   system directly and could read all four today. They are metrics nobody taught
+   it, and until the split nobody asked. This is the cheaper half of the item.
 2. **USB negotiated speed is unimplemented on Windows, and obtainable.**
    `usb.{addr}.speed` is absent on every device. It is not a PnP property; it
    comes from `IOCTL_USB_GET_NODE_CONNECTION_INFORMATION_EX` against the parent
