@@ -105,44 +105,22 @@ fn no_two_samples_share_a_name_and_labels() {
 // duplicate samples, and `no_two_samples_share_a_name_and_labels` above
 // catches that exactly, with no heuristic and no exemptions.
 
-/// Every metric the bundled Grafana dashboards query must be published.
+/// Metric names the bundled Grafana dashboards query.
 ///
 /// `grafana/` ships three dashboards, and they are a contract: a panel querying
 /// a name nothing exports renders empty against a live server, which looks like
-/// broken hardware rather than a broken dashboard. `http_server.rs` records
-/// that this whole class of failure already happened once — the names lacked
-/// the `simon_` prefix and all three dashboards were blank — and nothing
-/// prevented it recurring. Six queried names were unpublished when this was
-/// written, including `simon_gpu_clock_graphics_mhz`, which the exporter
-/// published as `simon_gpu_clock_core_mhz`: the same number under a name no
-/// dashboard asks for.
-///
-/// **Two earlier versions of this test were wrong, in opposite directions.**
-///
-/// The first searched the publishers' source text and passed while the defect
-/// was restored, because the comment explaining the defect contained the name
-/// it was looking for. A test a comment can satisfy is not a test.
-///
-/// The second searched the rendered output, and flagged
-/// `simon_cpu_temperature_celsius` on a machine whose CPU exposes no readable
-/// sensor — a hardware absence, not a missing metric. Output cannot distinguish
-/// "the exporter does not know this name" from "it knows it and had nothing to
-/// report", and only the first is a defect.
-///
-/// So: the source, with comments stripped. That is exactly the question worth
-/// asking — does the code contain a publisher for this name — and neither prose
-/// nor an absent sensor can answer it for us.
-#[test]
-fn every_dashboard_metric_is_published_somewhere() {
-    use std::collections::BTreeSet;
-
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+/// broken hardware rather than a broken dashboard. `http_server.rs` records that
+/// this whole class of failure already happened once — the names lacked the
+/// `simon_` prefix and all three dashboards were blank — and nothing prevented
+/// it recurring. Six queried names were unpublished when the first version of
+/// this check was written, including `simon_gpu_clock_graphics_mhz`, which the
+/// exporter published as `simon_gpu_clock_core_mhz`: the same number under a
+/// name no dashboard asks for.
+fn dashboard_metrics(root: &std::path::Path) -> std::collections::BTreeSet<String> {
+    let mut queried = std::collections::BTreeSet::new();
     let Ok(entries) = std::fs::read_dir(root.join("grafana")) else {
-        eprintln!("skipping: no grafana/ directory");
-        return;
+        return queried;
     };
-
-    let mut queried: BTreeSet<String> = BTreeSet::new();
     for entry in entries.flatten() {
         let path = entry.path();
         if path.extension().and_then(|e| e.to_str()) != Some("json") {
@@ -160,43 +138,188 @@ fn every_dashboard_metric_is_published_somewhere() {
             );
         }
     }
-    assert!(
-        !queried.is_empty(),
-        "no metric names found in grafana/, so this test checks nothing"
-    );
+    queried
+}
 
-    // Both publishers, with every `//` comment removed so that documentation
-    // mentioning a name cannot stand in for code emitting it.
-    let mut code = String::new();
-    for file in ["src/prometheus.rs", "src/http_server.rs"] {
-        let Ok(text) = std::fs::read_to_string(root.join(file)) else {
-            continue;
+/// A publisher's source with everything that is not publishing code removed.
+///
+/// **Two things have to come out, and each was learned from a wrong version of
+/// this test.**
+///
+/// Comments, because the first version searched raw source and passed while the
+/// defect was restored: the comment explaining the defect contained the name it
+/// was looking for. A test a comment can satisfy is not a test.
+///
+/// And `#[cfg(test)]` modules, because splitting this check found the same hole
+/// again in a new place. `http_server.rs` contains
+/// `assert!(!text.contains("simon_disk_read_bytes_total"))` — a test pinning
+/// that the name is *not* published — and a plain source search read that string
+/// literal as a publisher. The metric counted as covered on the strength of a
+/// test asserting it was missing.
+fn publishing_code(path: &std::path::Path) -> String {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return String::new();
+    };
+
+    let mut code = String::with_capacity(text.len());
+    for line in text.lines() {
+        let without_comment = match line.find("//") {
+            Some(at) => &line[..at],
+            None => line,
         };
-        for line in text.lines() {
-            let without_comment = match line.find("//") {
-                Some(at) => &line[..at],
-                None => line,
-            };
-            code.push_str(without_comment);
-            code.push('\n');
-        }
+        code.push_str(without_comment);
+        code.push('\n');
     }
 
-    let missing: Vec<&String> = queried
+    // Drop each `#[cfg(test)] mod ... { ... }` by matching its braces.
+    let mut out = String::with_capacity(code.len());
+    let mut rest = code.as_str();
+    while let Some(at) = rest.find("#[cfg(test)]") {
+        out.push_str(&rest[..at]);
+        let after = &rest[at..];
+        let Some(open) = after.find('{') else {
+            break;
+        };
+        let mut depth = 0usize;
+        let mut close = None;
+        for (i, c) in after[open..].char_indices() {
+            match c {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        close = Some(open + i + 1);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        match close {
+            Some(end) => rest = &after[end..],
+            None => {
+                rest = "";
+                break;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Which dashboard metrics a publisher does not emit.
+fn unpublished_by(root: &std::path::Path, files: &[&str]) -> Vec<String> {
+    let code: String = files
         .iter()
+        .map(|f| publishing_code(&root.join(f)))
+        .collect();
+
+    dashboard_metrics(root)
+        .into_iter()
         .filter(|name| {
             // Emitted either as the full name or through `prefixed("...")`,
             // which prepends `simon_`.
             let bare = name.strip_prefix("simon_").unwrap_or(name);
             !code.contains(&format!("\"{name}\"")) && !code.contains(&format!("\"{bare}\""))
         })
-        .collect();
+        .collect()
+}
 
+/// Assert a publisher's gaps are exactly `known`, no more and no fewer.
+///
+/// The second half matters as much as the first. An exemption list that is
+/// allowed to go stale stops describing anything: a gap that gets closed but
+/// stays listed makes the test quietly weaker, and this crate has already once
+/// quoted a coverage figure that had been out of date for several commits.
+/// Closing a gap must therefore fail here until the entry is removed.
+fn assert_gaps_are_exactly(publisher: &str, missing: &[String], known: &[&str]) {
+    let missing: std::collections::BTreeSet<&str> = missing.iter().map(String::as_str).collect();
+    let known: std::collections::BTreeSet<&str> = known.iter().copied().collect();
+
+    let unexpected: Vec<&&str> = missing.difference(&known).collect();
+    assert!(
+        unexpected.is_empty(),
+        "{publisher} does not publish {unexpected:#?}, which the bundled \
+         dashboards query. Those panels render empty against a live server."
+    );
+
+    let closed: Vec<&&str> = known.difference(&missing).collect();
+    assert!(
+        closed.is_empty(),
+        "{publisher} now publishes {closed:#?}, which are still listed as known \
+         gaps. Remove them from the list — an exemption nobody prunes is how \
+         this check gets quietly weaker."
+    );
+}
+
+/// Every dashboard metric has a publisher *somewhere* in the crate.
+#[test]
+fn every_dashboard_metric_is_published_somewhere() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    assert!(
+        !dashboard_metrics(root).is_empty(),
+        "no metric names found in grafana/, so this test checks nothing"
+    );
+
+    let missing = unpublished_by(root, &["src/prometheus.rs", "src/http_server.rs"]);
     assert!(
         missing.is_empty(),
         "the bundled dashboards query metrics no publisher emits, so those \
          panels render empty against a live server: {missing:#?}"
     );
+}
+
+/// The endpoint the server actually serves must publish them.
+///
+/// This is the check that matters, and until it was split out of the one above
+/// it did not exist. There are two publishers, they have *different* gaps, and a
+/// test accepting either one covered every gap in both: `prometheus.rs` supplies
+/// the four names `http_server.rs` misses and `http_server.rs` supplies the two
+/// that `prometheus.rs` misses, so the combined check read 24/24 while neither
+/// publisher was complete and only one of them is reachable over HTTP.
+///
+/// `/api/v1/metrics/prometheus` serves `MetricCollector`, filled by
+/// `record_snapshot`. A name only `PrometheusExporter` knows is not on the wire.
+#[test]
+fn the_served_endpoint_publishes_every_dashboard_metric() {
+    // Gaps in the served endpoint, each limited by the pipeline `Snapshot`
+    // rather than by the recorder. `record_snapshot` is deliberately pure over a
+    // `Snapshot` — that purity is what makes it testable — so it cannot go read
+    // a sensor the snapshot does not carry. Closing these means putting the
+    // reading in the snapshot first.
+    const KNOWN_GAPS: &[&str] = &[
+        // Needs a CPU temperature. `CpuStats` carries none, and the library
+        // exporter gets this by calling `hwmon::read_cpu_temperatures` directly,
+        // which the recorder must not do.
+        "simon_cpu_temperature_celsius",
+        // Need cumulative byte counters. `DiskSnapshot` carries rates only, and
+        // a rate cannot be turned into a total after the fact.
+        "simon_disk_read_bytes_total",
+        "simon_disk_write_bytes_total",
+    ];
+
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let missing = unpublished_by(root, &["src/http_server.rs"]);
+    assert_gaps_are_exactly("the served endpoint", &missing, KNOWN_GAPS);
+}
+
+/// And so must the library exporter, which has its own, different gaps.
+#[test]
+fn the_library_exporter_publishes_every_dashboard_metric() {
+    // These four are not snapshot limitations — `PrometheusExporter` collects
+    // from the system directly and could read every one of them. They are simply
+    // metrics it was never taught, and the combined check never asked, because
+    // `http_server.rs` publishes all four.
+    const KNOWN_GAPS: &[&str] = &[
+        "simon_cpu_frequency_mhz",
+        "simon_load_average_1m",
+        "simon_load_average_5m",
+        "simon_process_count",
+    ];
+
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let missing = unpublished_by(root, &["src/prometheus.rs"]);
+    assert_gaps_are_exactly("the library exporter", &missing, KNOWN_GAPS);
 }
 
 /// The other Prometheus renderer — the one the HTTP server actually serves.
