@@ -113,7 +113,7 @@ Since the tag, on `master` and green on all three platforms:
 | `68c9ff0` | Every measurement, checked for whether it actually moves |
 | `8ed7e71` | Zero hertz and zero swap, handed to an agent as facts |
 | `e425908` | Every network rate in the crate was zero, on every platform |
-| `HEAD` | Two fabricated zeros next to the comment explaining why zero is wrong |
+| `17dd4fa` | Two fabricated zeros next to the comment explaining why zero is wrong |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
