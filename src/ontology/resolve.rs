@@ -1126,7 +1126,12 @@ fn resolve_usb(out: &mut Vec<Reading>) {
             UsbDeviceClass::Unknown => out.push(Reading::unavailable(
                 format!("{base}.class"),
                 Some(Unit::Identifier),
-                "the device class descriptor was not readable",
+                concat!(
+                    "this device declares no class of its own: its device ",
+                    "descriptor says the class is defined per interface, and ",
+                    "no interface class or hub identifier was recorded for it. ",
+                    "Composite parents and virtual devices are the usual case"
+                ),
             )),
             c => push_id(
                 out,

@@ -108,9 +108,57 @@ Since the tag, on `master` and green on all three platforms:
 | `3197ee0` | A flat battery that was never read, and the test that caught me |
 | `066e373` | An invariant the ontology states and this machine breaks |
 | `cab0c34` | Auditing every absolute claim in the ontology against the machine |
+| `HEAD` | A class guessed from the device's name, when it declares one |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### A class guessed from the device's name, when it declares one
+
+The audit below said the next thing to check was every absence *reason*, not
+just the ones phrased as absolutes. There are 40 distinct reasons in a snapshot.
+Most are specific and true. Four attribute to "the platform" what might be "we
+do not read it", and they were worth testing one by one:
+
+* `pci.{addr}.numa_node`, absent on all 64 devices — **accurate**. Windows
+  exposes no NUMA property on these devices at all.
+* `usb.{addr}.class`, absent on 22 of 39, reason *"the device class descriptor
+  was not readable"* — **false**, and the trail led somewhere better.
+
+The class was not being read from a descriptor at all. It came from
+`classify_usb_device(name, description)`, which matched substrings of the
+device's *display name*: `"hub"` meant Hub, `"disk"` meant MassStorage,
+`"camera"` meant Video. **That is the same shape as the USB speed heuristic
+removed earlier in this file** — what a device is *called* standing in for what
+it *declares* — and it fails in both directions without saying so.
+
+Windows records the real thing in `Win32_PnPEntity.CompatibleID`, in two forms
+that answer different questions:
+
+* `USB\DevClass_08&...` is `bDeviceClass` from the device descriptor.
+  **`DevClass_00` is not "unknown"**: the specification uses it to say the class
+  lives in the interface descriptors, and every one of this machine's 39 devices
+  reports `00`, which is ordinary for modern hardware. A first implementation
+  that read only this form scored **0 of 39** and looked like a regression.
+* `USB\COMPAT_VID_046d&Class_03&...` is the *interface* class, which is the one
+  that answers "what is this". 20 devices carry one. (`DevClass_` ends in the
+  same five characters as `Class_`, so the second form must be matched on
+  `&Class_`.)
+* Hubs carry neither and get a dedicated compatible id instead —
+  `USB\ROOT_HUB30`, `USB\USB20_HUB`. That is the bus driver declaring what the
+  device is in a structured identifier, which is not the same thing as finding
+  "hub" in a display name.
+
+Together: **24 of 39 devices now report a class, every one from a
+declaration.** The APC UPS reads `Hid`, which is correct and which no name match
+produces; the AURA LED controller reads `Vendor`; the serial adapter and both
+NDIS devices read `Communication`.
+
+**A near-miss worth recording.** Deleting the dead heuristic left its
+`#[cfg(target_os = "windows")]` attribute behind, where it attached to the next
+function and gave `read_usb_attr` two mutually exclusive cfgs. **The Windows
+build never noticed** — only Linux calls that function. The cross-target check
+in the gate caught it, which is the entire reason that check exists.
 
 ### Auditing every absolute claim in the ontology against the machine
 

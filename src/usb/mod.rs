@@ -77,6 +77,91 @@ pub struct UsbDevice {
     pub speed: UsbSpeed,
 }
 
+/// Map a USB base-class byte to the class this crate reports.
+///
+/// `0x00` is not "unknown": the specification says the class is declared per
+/// interface rather than for the device, which is what every composite device
+/// reports. There is no variant for that distinction, so it stays `Unknown` and
+/// the resolver's absence reason says which of the two it is.
+fn class_from_code(code: u8) -> UsbDeviceClass {
+    match code {
+        0x01 => UsbDeviceClass::Audio,
+        0x02 => UsbDeviceClass::Communication,
+        0x03 => UsbDeviceClass::Hid,
+        0x07 => UsbDeviceClass::Printer,
+        0x08 => UsbDeviceClass::MassStorage,
+        0x09 => UsbDeviceClass::Hub,
+        0x0e => UsbDeviceClass::Video,
+        0xe0 => UsbDeviceClass::Wireless,
+        0xff => UsbDeviceClass::Vendor,
+        _ => UsbDeviceClass::Unknown,
+    }
+}
+
+/// The USB class Windows records in a device's compatible ids.
+///
+/// Two forms appear there and they answer different questions:
+///
+/// * `USB\DevClass_08&SubClass_06&Prot_50` is `bDeviceClass` from the *device*
+///   descriptor. `DevClass_00` is not "unknown" -- the specification uses it to
+///   say the class is declared per interface, and on this development machine
+///   **every one of the 39 devices reports 00**, which is ordinary for modern
+///   hardware.
+/// * `USB\COMPAT_VID_046d&Class_03&SubClass_01&Prot_01` is the *interface*
+///   class, and it is the one that actually answers "what is this" -- `03` for
+///   a keyboard, `0e` for a camera, `02` for a serial adapter. 20 of the 39
+///   carry one.
+///
+/// A non-zero device class wins because the device declared it about itself;
+/// otherwise the interface class is used. Note that `DevClass_` ends in the
+/// same five characters as `Class_`, so the interface form is matched on
+/// `&Class_` rather than on `Class_`.
+///
+/// This replaced `classify_usb_device`, which matched substrings of the
+/// device's *name*: "hub" meant Hub, "disk" meant MassStorage, "camera" meant
+/// Video. That is the same shape as the speed heuristic removed in this file --
+/// what a device is called standing in for what it declares.
+#[cfg(target_os = "windows")]
+fn class_from_compatible_ids(ids: &[String]) -> Option<UsbDeviceClass> {
+    fn code_after(haystack: &str, marker: &str) -> Option<u8> {
+        let rest = haystack.split(marker).nth(1)?;
+        let hex: String = rest.chars().take_while(|c| c.is_ascii_hexdigit()).collect();
+        (!hex.is_empty())
+            .then(|| u8::from_str_radix(&hex, 16).ok())
+            .flatten()
+    }
+
+    let upper: Vec<String> = ids.iter().map(|i| i.to_uppercase()).collect();
+
+    // The device's own declaration, when it makes one.
+    for id in &upper {
+        if let Some(code) = code_after(id, "DEVCLASS_") {
+            if code != 0 {
+                return Some(class_from_code(code));
+            }
+        }
+    }
+    // Otherwise what the interface says it does.
+    for id in &upper {
+        if let Some(code) = code_after(id, "&CLASS_") {
+            if code != 0 {
+                return Some(class_from_code(code));
+            }
+        }
+    }
+    // Hubs carry neither form. Windows gives them a dedicated compatible id
+    // instead -- `USB\ROOT_HUB30`, `USB\USB30_HUB`, `USB\USB20_HUB`. That is the
+    // bus driver declaring what the device is, in a structured identifier, and
+    // is not the same thing as finding "hub" in a display name.
+    if upper
+        .iter()
+        .any(|id| id.contains("ROOT_HUB") || id.ends_with("_HUB"))
+    {
+        return Some(UsbDeviceClass::Hub);
+    }
+    None
+}
+
 /// Fold a platform device path into something usable as one id segment.
 ///
 /// Lowercased, with every character that is not alphanumeric collapsed to `_`,
@@ -185,18 +270,11 @@ impl UsbMonitor {
                         _ => UsbSpeed::Unknown,
                     };
                     let class_code = read_usb_attr(&path, "bDeviceClass");
-                    let class = match class_code {
-                        0x01 => UsbDeviceClass::Audio,
-                        0x02 => UsbDeviceClass::Communication,
-                        0x03 => UsbDeviceClass::Hid,
-                        0x07 => UsbDeviceClass::Printer,
-                        0x08 => UsbDeviceClass::MassStorage,
-                        0x09 => UsbDeviceClass::Hub,
-                        0x0e => UsbDeviceClass::Video,
-                        0xe0 => UsbDeviceClass::Wireless,
-                        0xff => UsbDeviceClass::Vendor,
-                        _ => UsbDeviceClass::Unknown,
-                    };
+                    // `bDeviceClass` is one byte; a sysfs value that does not
+                    // fit one is a failed parse, not a class.
+                    let class = u8::try_from(class_code)
+                        .map(class_from_code)
+                        .unwrap_or(UsbDeviceClass::Unknown);
                     let parts: Vec<&str> = name.split('-').collect();
                     let bus_number = parts.first().and_then(|s| s.parse().ok()).unwrap_or(0);
                     let port_number = parts
@@ -392,8 +470,16 @@ impl UsbMonitor {
 
         // Use PowerShell to query WMI for USB devices
         let output = Command::new("powershell")
-            .args(["-NoProfile", "-Command",
-                "Get-CimInstance Win32_PnPEntity | Where-Object { $_.PNPDeviceID -like 'USB*' } | Select-Object Name, Manufacturer, PNPDeviceID, Description, Status | ConvertTo-Json -Compress"])
+            .args([
+                "-NoProfile",
+                "-Command",
+                concat!(
+                    "Get-CimInstance Win32_PnPEntity | ",
+                    "Where-Object { $_.PNPDeviceID -like 'USB*' } | ",
+                    "Select-Object Name, Manufacturer, PNPDeviceID, Description, ",
+                    "Status, CompatibleID | ConvertTo-Json -Compress"
+                ),
+            ])
             .output()
             .map_err(|e| crate::error::SimonError::Other(format!("WMI query failed: {}", e)))?;
 
@@ -418,8 +504,27 @@ impl UsbMonitor {
                     // Parse VID/PID from PNPDeviceID like "USB\VID_046D&PID_C52B\..."
                     let (vid, pid) = parse_vid_pid(pnp_id);
 
-                    // Determine device class from name/description
-                    let class = classify_usb_device(name, description.unwrap_or(""));
+                    // The class byte from the device's own descriptor, as
+                    // Windows recorded it in the compatible ids.
+                    //
+                    // This was `classify_usb_device(name, description)`, which
+                    // matched substrings: "hub" meant Hub, "disk" meant
+                    // MassStorage, "camera" meant Video. That is the same shape
+                    // as the speed heuristic removed below -- a guess from what
+                    // a device is *called* standing in for what it *declares*
+                    // -- and it is wrong in both directions, silently. A
+                    // descriptor byte is available and is not a guess.
+                    let compatible: Vec<String> = item
+                        .get("CompatibleID")
+                        .and_then(|v| v.as_array())
+                        .map(|a| {
+                            a.iter()
+                                .filter_map(|v| v.as_str().map(str::to_string))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    let class =
+                        class_from_compatible_ids(&compatible).unwrap_or(UsbDeviceClass::Unknown);
 
                     // Not read on Windows.
                     //
@@ -554,41 +659,6 @@ fn parse_vid_pid(pnp_id: &str) -> (Option<u16>, Option<u16>) {
         .find("PID_")
         .and_then(|i| u16::from_str_radix(&upper[i + 4..][..4.min(upper.len() - i - 4)], 16).ok());
     (vid, pid)
-}
-
-#[cfg(target_os = "windows")]
-fn classify_usb_device(name: &str, description: &str) -> UsbDeviceClass {
-    let combined = format!("{} {}", name, description).to_lowercase();
-    if combined.contains("hub") {
-        UsbDeviceClass::Hub
-    } else if combined.contains("keyboard")
-        || combined.contains("hid")
-        || combined.contains("mouse")
-        || combined.contains("pointing")
-    {
-        UsbDeviceClass::Hid
-    } else if combined.contains("mass storage") || combined.contains("disk") {
-        UsbDeviceClass::MassStorage
-    } else if combined.contains("audio") || combined.contains("sound") {
-        UsbDeviceClass::Audio
-    } else if combined.contains("video")
-        || combined.contains("camera")
-        || combined.contains("webcam")
-    {
-        UsbDeviceClass::Video
-    } else if combined.contains("printer") {
-        UsbDeviceClass::Printer
-    } else if combined.contains("wireless")
-        || combined.contains("bluetooth")
-        || combined.contains("wifi")
-    {
-        UsbDeviceClass::Wireless
-    } else if combined.contains("serial") || combined.contains("modem") || combined.contains("comm")
-    {
-        UsbDeviceClass::Communication
-    } else {
-        UsbDeviceClass::Unknown
-    }
 }
 
 #[cfg(target_os = "linux")]
