@@ -126,9 +126,51 @@ Since the tag, on `master` and green on all three platforms:
 | `15ea71e` | Doing the thing the previous commit deferred |
 | `a50b77d` | The sentinel put back at the point of use |
 | `d4c4281` | Two auth flags that decide nothing, and the probe that found them |
+| `HEAD` | The last unaudited surface, and a fix that never reached the screen |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### The last unaudited surface, and a fix that never reached the screen
+
+Running every `simon cli` subcommand and reading the output — the one surface
+this session had not driven. **It is in good shape**, and the entries in this
+file are visible in it:
+
+```
+Clock: not read — Windows reports the nominal clock, not the current one (max 4400 MHz)
+disk.0.temperature   this device exposes no thermal sensor
+Master Volume: not read — simon has no mixer binding on this platform
+```
+
+Two defects, both in presentation rather than reading.
+
+**`simon cli usb` printed `(Unknown)` for every device** — and that was the
+*speed*, rendered as an enum variant name. `UsbSpeed::Unknown` means the
+negotiated speed is not read on Windows, which the entry four below documents at
+length; printed as `Unknown` it looks like a property of the device. It now says
+`speed not read`.
+
+**And the class was not printed at all.** `e456c53` taught the reader to get a
+real class for 24 of this machine's 39 USB devices, from the descriptor and the
+hub identifiers — and the CLI, the surface a person actually looks at, went on
+showing nothing:
+
+```
+before: [046d:c548] Logitech USB Input Device (Unknown)
+after:  [046d:c548] Logitech USB Input Device (Hid, speed not read)
+        [17ef:4839] Lenovo 510 IR Camera        (Video, speed not read)
+```
+
+`simon cli audio` printed `- Some(Active)`: `{:?}` on an `Option`, showing the
+consumer the wrapper. Now `Active`, or `state not read`.
+
+**Worth keeping: a reader fix is not finished when the reader is fixed.** The
+USB class work went into the ontology, the agent tools and the JSON surface, and
+stopped one layer short of the screen — because those were the surfaces being
+audited that day. **The question "who displays this?" belongs beside "what else
+stores this?"**, and both are cheap greps that this session has now been caught
+skipping twice.
 
 ### Two auth flags that decide nothing, and the probe that found them
 

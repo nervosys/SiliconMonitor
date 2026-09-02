@@ -1155,10 +1155,14 @@ fn handle_cli_command(
                         None => println!("  Muted: not read"),
                     }
                     for device in monitor.devices() {
-                        println!(
-                            "  {} ({:?}) - {:?}",
-                            device.name, device.device_type, device.state
-                        );
+                        // `{:?}` on an `Option` prints `Some(Active)`, which
+                        // shows the wrapper to the user. The state is either
+                        // known or it is not.
+                        let state = match &device.state {
+                            Some(s) => format!("{s:?}"),
+                            None => "state not read".to_string(),
+                        };
+                        println!("  {} ({:?}) - {}", device.name, device.device_type, state);
                     }
                 }
                 Ok(())
@@ -1281,7 +1285,23 @@ fn handle_cli_command(
                                 p.map_or("----".to_string(), |p| format!("{p:04x}"))
                             ),
                         };
-                        println!("  {} {} ({:?})", ids, name, device.speed);
+                        // The class, which the device declares and which 24 of
+                        // this machine's 39 USB nodes report -- it was not shown
+                        // at all. And the speed, which is not read on Windows:
+                        // printing `Unknown` shows an enum variant where the
+                        // honest answer is that nobody asked. See the absence
+                        // reason on `usb.{addr}.speed`.
+                        let class = match device.class {
+                            simonlib::usb::UsbDeviceClass::Unknown => {
+                                "class undeclared".to_string()
+                            }
+                            ref c => format!("{c:?}"),
+                        };
+                        let speed = match device.speed {
+                            simonlib::usb::UsbSpeed::Unknown => "speed not read".to_string(),
+                            ref s => format!("{s:?}"),
+                        };
+                        println!("  {ids} {name} ({class}, {speed})");
                     }
                 }
                 Ok(())
