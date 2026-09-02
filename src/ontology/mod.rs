@@ -429,7 +429,14 @@ impl Ontology {
             Some(U::Megahertz),
             P::Measured,
             true,
-            "Current core clock. Null when the platform reports no per-core clock.",
+            concat!(
+                "Current core clock. Null when the platform reports no per-core ",
+                "clock. Provenance varies by platform and each reading carries ",
+                "its own: Linux reads `scaling_cur_freq` and is measured, while ",
+                "Windows has no unprivileged API for a current clock and ",
+                "multiplies the nominal maximum by the kernel's delivered ",
+                "performance counter, which is derived."
+            ),
         ));
         add(Entity::new(
             "cpu.core.{n}.frequency.min",

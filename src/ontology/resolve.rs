@@ -424,6 +424,19 @@ fn resolve_cpu(out: &mut Vec<Reading>) {
         // `current` is an `Option` now; the `> 0` guard stays because a reader
         // could still produce a zero and it would mean the same thing.
         match &core.frequency {
+            // Windows has no unprivileged API that reports a current clock, so
+            // it multiplies the nominal maximum by the kernel's delivered
+            // performance figure. That product is per-core and real, and it is
+            // not a direct reading -- publishing it as `Measured` would put a
+            // specification behind a measurement's provenance, which is the
+            // thing the reader below it was rewritten to stop doing.
+            Some(f) if f.current.is_some_and(|c| c > 0) && f.current_is_derived => {
+                out.push(Reading::derived(
+                    format!("{base}.frequency"),
+                    serde_json::json!(f.current),
+                    Some(Unit::Megahertz),
+                ))
+            }
             Some(f) if f.current.is_some_and(|c| c > 0) => out.push(Reading::measured(
                 format!("{base}.frequency"),
                 serde_json::json!(f.current),

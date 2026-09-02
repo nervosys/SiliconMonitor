@@ -242,6 +242,10 @@ fn read_cpu_frequency(cpu_path: &str) -> Result<CpuFrequency> {
     let max_path = format!("{}/cpufreq/scaling_max_freq", cpu_path);
 
     Ok(CpuFrequency {
+        // `scaling_cur_freq` is a clock the kernel reports, not a nominal
+        // scaled by a ratio, so this is a measurement. See the Windows reader,
+        // where it is not.
+        current_is_derived: false,
         current: Some(read_file_u32(&cur_path)? / 1000), // Convert kHz to MHz
         min: Some(read_file_u32(&min_path)? / 1000),
         max: Some(read_file_u32(&max_path)? / 1000),

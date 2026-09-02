@@ -18,6 +18,17 @@ pub struct CpuFrequency {
     /// implausible rather than plausible — but it was still a number where
     /// there was no reading.
     pub current: Option<u32>,
+    /// Whether [`Self::current`] was measured or computed.
+    ///
+    /// Linux reads `scaling_cur_freq`, which is a clock. Windows has no
+    /// unprivileged API that reports one -- `CallNtPowerInformation` returns
+    /// the nominal figure for every core -- so it multiplies the nominal
+    /// maximum by `% Processor Performance`, which the kernel derives from
+    /// APERF and MPERF. That product is a real per-core number and it is not a
+    /// direct reading, and the resolver publishes it as `Derived` on the
+    /// strength of this flag rather than letting one entity's provenance mean
+    /// two different things on two platforms.
+    pub current_is_derived: bool,
     /// Minimum frequency in MHz, or `None`. No Win32 API reports one.
     pub min: Option<u32>,
     /// Maximum frequency in MHz, or `None` where it was not read.

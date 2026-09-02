@@ -104,9 +104,55 @@ Since the tag, on `master` and green on all three platforms:
 | `15a60ab` | 97 GB of swap in use, on a machine using 3.4 GB of it |
 | `5bd14aa` | The last six enumerators, and what the list was really for |
 | `7fcddde` | The last swallow, a real USB key, and a swap series that changed meaning |
+| `HEAD` | Per-core clocks, from the counter that was named three fixes ago |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### Per-core clocks, from the counter that was named three fixes ago
+
+`cpu.core.{n}.frequency` was absent on every Windows machine, and the reader
+said exactly why and exactly what would fix it:
+
+> Reporting the real per-core clock needs `PdhGetFormattedCounterArrayW` over
+> `% Processor Performance`, which is two samples with an interval between
+> them — see HANDOFF.
+
+That is now done, and the note was right about the obstacle. `CurrentMhz` from
+`CallNtPowerInformation` is the nominal clock — 4400 on all 24 logical
+processors, idle and loaded — so the reader correctly reported nothing rather
+than publishing a specification behind a measurement's provenance. But
+`% Processor Performance` is a **rate**, and a rate needs two collections
+separated in time. A single call can only get one by sleeping, and sleeping in a
+monitor's refresh path is not acceptable.
+
+So the query is opened once and kept in a `OnceLock<Option<Mutex<..>>>`, and
+each call collects against the previous call's collection. **The first call of
+the process returns nothing** — which is the contract the NPU utilization reader
+already has, for the same reason. Verified in that order:
+
+```
+call 1:      0/24 cores report a frequency   (priming, as designed)
+call 2:     24 cores, 4732-5322 MHz
+under load: 24 cores, 4763-5332 MHz
+```
+
+Real per-core spread, boosting well past the 4400 nominal — the 9900X doing what
+it actually does, where the field was empty before.
+
+**The provenance needed a decision.** The value is a specification maximum
+multiplied by a measured ratio, which is not a measurement. Linux reads
+`scaling_cur_freq`, which is. Rather than let one entity's declared provenance
+mean two different things on two platforms, `CpuFrequency` carries
+`current_is_derived` and the resolver publishes `Reading::derived` or
+`Reading::measured` from it. The entity description now says so outright.
+
+**Worth keeping.** The note that made this possible was written by the commit
+that *removed* the wrong value. It named the API, the counter, and the reason
+the obvious implementation would not work — so the work resumed from where it
+had stopped rather than from the symptom. **A deferral is only useful if it
+records what the next person needs; "TODO: per-core frequency" would have cost
+a day of rediscovery.**
 
 ### The last swallow, a real USB key, and a series that changed meaning
 
@@ -3520,22 +3566,7 @@ feature stayed broken through eight published versions.
    Ti dates to 2020 because it matches the RTX 30 series rule, and the Ti shipped
    in 2022. `infer_gpu_year` and the TDP tables were not audited.
 
-2. **Per-core CPU frequency is unreported on Windows, and could be reported.**
-   `CallNtPowerInformation` returns `CurrentMhz == MaxMhz` whatever the cores are
-   doing, so `cpu.core.{n}.frequency` now declines rather than publishing the
-   nominal clock as a measurement. The real figure is
-   `\Processor Information(*)\% Processor Performance` multiplied by the nominal
-   clock, which is what Task Manager shows: on this machine the cores read
-   105–119% of nominal while the API insisted on 4400 for all 24.
-
-   It needs `PdhGetFormattedCounterArrayW` for the wildcard instance, and it is a
-   rate counter, so it wants **two collections with an interval between them** —
-   which is why this was not simply done: it puts a sleep in the snapshot path,
-   and `snapshot` currently returns without one. `src/hwmon/cpu_temp.rs` has the
-   single-value PDH pattern to copy. The provenance would be `Derived` from the
-   counter and the nominal clock, not `Measured`.
-
-3. **The Windows ATA SMART path has never met a SATA drive.** 3.3.0 reads the
+2. **The Windows ATA SMART path has never met a SATA drive.** 3.3.0 reads the
    attribute table unelevated through `IOCTL_STORAGE_PREDICT_FAILURE`, and the
    parse in `src/disk/ata_smart.rs` is tested only against buffers this project
    built. This machine has three NVMe drives and a USB gadget; on all four the
@@ -3566,7 +3597,7 @@ feature stayed broken through eight published versions.
    property of its `CTL_CODE`, and is worth reading off the definition before
    planning around it.
 
-4. **macOS GPU, power and temperature are still unimplemented.** CPU (per-core,
+3. **macOS GPU, power and temperature are still unimplemented.** CPU (per-core,
    with nice time), memory, swap, uptime and board info work — `Simon::cpu()`,
    `memory()`, `uptime()`. `Simon::snapshot()` still fails, because it requires
    every reader. Power and temperature need `powermetrics`, which requires root,
@@ -3591,7 +3622,7 @@ feature stayed broken through eight published versions.
    the `vm_stat` used/free split is a judgement about which pages count as in
    use, which a conformance test cannot check.
 
-5. **The Linux SMART/NVMe paths have executed exactly once**, in CI on
+4. **The Linux SMART/NVMe paths have executed exactly once**, in CI on
    `33ee241` — 733 tests, 0 failures. No one has run them against real Linux
    hardware. The sysfs paths (`/sys/class/nvme/<ctrl>/{model,serial,firmware_rev,cntlid}`)
    are documented kernel ABI, but tests are not a substitute for a drive.
@@ -3604,7 +3635,7 @@ feature stayed broken through eight published versions.
    what remains to benefit is USB storage — and every Linux machine, where a
    sweep spawns `smartctl` once per drive and the old shape was quadratic.
 
-6. **The ontology names ~232 entities; the library has ~88 subsystem modules.**
+5. **The ontology names ~232 entities; the library has ~88 subsystem modules.**
    The running list of which clusters exist, which readers answer on which
    machine, and what is left is under **plan item F** below — it is kept in one
    place rather than two, because the last time it lived in both they disagreed.
@@ -3659,7 +3690,7 @@ feature stayed broken through eight published versions.
    sizes, AER capability, ARI and ATS support, SR-IOV — are readable by the same
    two calls with a different pid, if anyone wants them.
 
-7. **`simon tune`'s policy table covers five settings, and its game detection is
+6. **`simon tune`'s policy table covers five settings, and its game detection is
    a name table.** Both are deliberate first cuts, and both are where the feature
    grows.
 
@@ -3680,7 +3711,7 @@ feature stayed broken through eight published versions.
    from a model. `tuning::tests::a_recommendation_never_proposes_a_value_the_driver_did_not_offer`
    is the test that keeps it true. A model may classify; it may not pick numbers.
 
-8. **The Dewey port was tried across 4.0.0–4.0.4 and withdrawn in 5.0.0.**
+7. **The Dewey port was tried across 4.0.0–4.0.4 and withdrawn in 5.0.0.**
    `src/gui/` is the egui application again — `app.rs`, `widgets.rs`, `theme.rs`,
    `profile_tab.rs`, `headless.rs`, `mod.rs`, restored from `927ffaa^`. The
    `deweygui` dependency, the `dewey-gui` feature and `simonlib::gui_dewey` are
@@ -3725,7 +3756,7 @@ feature stayed broken through eight published versions.
    name is the whole defect — every call site was written by someone who
    reasonably believed `new()` constructs a thing from the system.
 
-9. **Verify with `--lib --tests` when the disk is tight.** `cargo test
+8. **Verify with `--lib --tests` when the disk is tight.** `cargo test
    --all-features` links every example. That is affordable again now the duplicate
    egui is gone, but if it ever fails with `link.exe` 1318, the split is
    `cargo test --all-features --lib --tests` for execution plus
@@ -3733,7 +3764,7 @@ feature stayed broken through eight published versions.
    Note `--lib --tests` skips doc-tests; run those before a release.
 
 
-10. **Two Dewey bugs found during the port, recorded because they are real
+9. **Two Dewey bugs found during the port, recorded because they are real
    and unfixed — but no longer reachable from this crate.** Neither affects simon
    now that `deweygui` is gone. Both are for whoever works on Dewey itself, or
    for anyone who reconsiders open work 9.
@@ -3757,7 +3788,7 @@ feature stayed broken through eight published versions.
    three `eprintln!` calls in `resize`, the surface-acquire error arm and the
    frame-area computation in `render`, driven by `ShowWindow(hwnd, 3)`.
 
-11. **Applied settings are reversible; the tuning loop is not yet closed.**
+10. **Applied settings are reversible; the tuning loop is not yet closed.**
    `ApplyHandler::read_current()` reads a setting before it is written,
    `ApplyOutcome.previous` carries what was overwritten, `revert_setting()` puts
    it back through the same confirmed and audit-logged path, and

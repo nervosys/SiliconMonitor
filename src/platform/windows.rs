@@ -40,6 +40,10 @@ pub fn read_cpu_stats() -> Result<CpuStats> {
     // per call and assigned per core rather than broadcast from core 0.
     let model = get_cpu_model_name();
     let power = query_processor_power(cpu_count);
+    // Delivered performance per core, for the machines where `CurrentMhz` is
+    // the nominal clock -- which is all of them on Windows 10 and later. `None`
+    // on the first call of the process: a rate needs two collections.
+    let delivered = crate::platform::windows_pdh::processor_performance_percent();
 
     // Real per-processor times. Falls back to `None` if the query fails, which
     // consumers render as "unavailable" — deliberately not the system average.
@@ -62,7 +66,7 @@ pub fn read_cpu_stats() -> Result<CpuStats> {
             id: cpu_id,
             online: true,
             governor: "windows".to_string(),
-            frequency: get_cpu_frequency(power.as_ref(), cpu_id),
+            frequency: get_cpu_frequency(power.as_ref(), cpu_id, delivered.as_ref()),
             user: core_user,
             nice: Some(0.0), // Windows doesn't have nice
             system: core_system,
@@ -374,26 +378,42 @@ fn query_processor_power(cpu_count: usize) -> Option<Vec<ProcessorPowerInformati
 /// Windows machine, and it passed every conformance test because nothing checks
 /// whether a value that claims to be current ever changes.
 ///
-/// This does suppress the genuine case of a core sitting exactly at nominal. That
-/// trade is deliberate: the two are indistinguishable through this API, and an
-/// absence that is occasionally too cautious is worth more than a number that is
-/// wrong on every boosting core. Reporting the real per-core clock needs
-/// `PdhGetFormattedCounterArrayW` over `% Processor Performance`, which is two
-/// samples with an interval between them — see HANDOFF.
+/// That suppression is no longer the end of it. `% Processor Performance` is
+/// what Task Manager reads, the kernel derives it from APERF and MPERF, and it
+/// does vary per core -- 60% to 124% of nominal on this machine, a real
+/// 2.6-5.4 GHz spread. [`crate::platform::windows_pdh`] keeps a PDH query open
+/// so the two samples a rate needs are consecutive *calls* rather than a sleep
+/// inside one, and the nominal maximum times that percentage is reported as the
+/// current clock -- flagged `current_is_derived`, because a specification
+/// multiplied by a measurement is not a measurement.
 fn get_cpu_frequency(
     power: Option<&Vec<ProcessorPowerInformation>>,
     index: usize,
+    delivered: Option<&Vec<Option<f64>>>,
 ) -> Option<CpuFrequency> {
     let entry = power?.get(index)?;
     if entry.current_mhz == 0 && entry.max_mhz == 0 {
         return None;
     }
+
+    // The nominal maximum scaled by delivered performance. Only used when
+    // `CurrentMhz` gave nothing, so a platform that does report a real current
+    // clock keeps it.
+    let derived = delivered
+        .and_then(|d| d.get(index).copied().flatten())
+        .filter(|pct| *pct > 0.0)
+        .map(|pct| (f64::from(entry.max_mhz) * pct / 100.0).round() as u32);
+
+    let measured = (entry.current_mhz != entry.max_mhz).then_some(entry.current_mhz);
+    let current_is_derived = measured.is_none() && derived.is_some();
+
     Some(CpuFrequency {
+        current_is_derived,
         // CallNtPowerInformation returns the nominal clock, not the current
         // one: when it equals the maximum for every core, nothing was measured.
         // This used to say `0` and rely on each consumer reading that as an
         // absence. Only the ontology resolver did.
-        current: (entry.current_mhz != entry.max_mhz).then_some(entry.current_mhz),
+        current: measured.or(derived),
         // No Win32 API reports a minimum operating frequency; leaving it at the
         // measured current would claim a floor that was never read.
         min: None,
@@ -1310,7 +1330,8 @@ mod tests {
         // The case this fixes: 4400/4400 on all 24 cores of a 9900X that was
         // actually boosting past 5GHz.
         let power = vec![entry(4400, 4400)];
-        let f = get_cpu_frequency(Some(&power), 0).expect("max is known, so a row is returned");
+        let f =
+            get_cpu_frequency(Some(&power), 0, None).expect("max is known, so a row is returned");
         assert_eq!(
             f.current, None,
             "the nominal clock reported as current is not a reading"
@@ -1319,12 +1340,12 @@ mod tests {
 
         // A genuine current reading below the maximum survives untouched.
         let power = vec![entry(3200, 4400)];
-        let f = get_cpu_frequency(Some(&power), 0).expect("a real reading");
+        let f = get_cpu_frequency(Some(&power), 0, None).expect("a real reading");
         assert_eq!(f.current, Some(3200));
 
         // Nothing known at all stays absent rather than becoming a zero.
         let power = vec![entry(0, 0)];
-        assert!(get_cpu_frequency(Some(&power), 0).is_none());
+        assert!(get_cpu_frequency(Some(&power), 0, None).is_none());
     }
     use super::*;
 
