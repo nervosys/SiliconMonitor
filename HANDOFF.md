@@ -128,9 +128,45 @@ Since the tag, on `master` and green on all three platforms:
 | `d4c4281` | Two auth flags that decide nothing, and the probe that found them |
 | `69f1766` | The last unaudited surface, and a fix that never reached the screen |
 | `fc1667e` | A contract that was right for a loop and wrong for everything else |
+| `HEAD` | Checking my own open-work item, which was already stale |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### Checking my own open-work item, which was already stale
+
+The open-work entry opened by `d4da86c` says the Prometheus endpoint serves
+**10 of the 24** metrics the dashboards query. That was true when written. Then
+`5796371` moved the recorder to labels, which was done for a different reason —
+`simon_gpu_0_utilization_percent` could never match
+`simon_gpu_utilization_percent{gpu="0"}` — and in doing so it made most of those
+names matchable.
+
+Measured rather than assumed: **20 of 24**. The item had been wrong for two
+commits, and I wrote both of them.
+
+`simon_uptime_seconds` turned out to be one line: `SystemStats::uptime_seconds`
+sits in the same struct the recorder was already reading for the load average.
+**21 of 24.**
+
+The last three are genuinely blocked by what a `Snapshot` carries:
+
+* `simon_cpu_temperature_celsius` — no CPU temperature on `CpuStats`; the
+  exporter reads `hwmon::read_cpu_temperatures` directly, which the recorder
+  cannot do without becoming impure and untestable again.
+* `simon_disk_read_bytes_total` / `write_bytes_total` — `DiskSnapshot` carries
+  `read_rate` and `write_rate` and no cumulative counter. Publishing a rate
+  under a `_total` name is what `5796371` removed; adding the counters means
+  adding them to the pipeline snapshot.
+
+A coverage test now records this in the code, and asserts on the names a
+synthetic snapshot genuinely carries data for.
+
+**Worth keeping: an open-work item is a claim, and claims go stale.** This one
+was measured once, written down, and then invalidated by the next commit but
+one — by me, without noticing, because I was looking at labels rather than at
+coverage. **Re-measuring before quoting a number costs one command; quoting a
+stale one sends the next person to fix something already fixed.**
 
 ### A contract that was right for a loop and wrong for everything else
 
@@ -4557,18 +4593,19 @@ feature stayed broken through eight published versions.
 
 ## Open work
 
-1. **The Prometheus endpoint serves 10 of the 24 metrics the dashboards query.**
-   `/api/v1/metrics/prometheus` renders `MetricCollector`, populated by
-   `http_server::metric_collection_loop`, which records only whole-machine
-   values. `PrometheusExporter` knows all 30 names and is referenced by nothing.
-   The blocker was that `MetricCollector` mangled labels into its storage key;
-   that is fixed, so the loop can now record per-GPU and per-disk series through
-   `record_with_labels`. Do it in the loop, not the handler: a synchronous full
-   export costs 1.4-2.6 s, most of it the profile inspector. Whoever does this
-   should also tighten `every_dashboard_metric_is_published_somewhere`, which
-   currently accepts a name published by *either* renderer and so cannot see
-   this gap.
+1. **The Prometheus endpoint is missing 3 of the 24 dashboard metrics.**
+   Measured, not estimated: `record_snapshot` emits 21 of the names `grafana/`
+   queries. The three it cannot are limited by the pipeline `Snapshot`:
+   `simon_cpu_temperature_celsius` needs a CPU temperature that `CpuStats` does
+   not carry (the exporter reads `hwmon` directly, which the recorder must not
+   do — being pure over a `Snapshot` is what makes it testable), and
+   `simon_disk_read_bytes_total` / `write_bytes_total` need cumulative counters
+   that `DiskSnapshot` does not have, only rates. Both wants are the same shape:
+   put the reading in the snapshot, then record it.
 
+   Separately, `every_dashboard_metric_is_published_somewhere` accepts a name
+   published by *either* renderer, so it cannot see a gap that exists only in
+   the served one. Splitting it per publisher would.
 2. **USB negotiated speed is unimplemented on Windows, and obtainable.**
    `usb.{addr}.speed` is absent on every device. It is not a PnP property; it
    comes from `IOCTL_USB_GET_NODE_CONNECTION_INFORMATION_EX` against the parent

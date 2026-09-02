@@ -479,6 +479,11 @@ impl HttpServer {
                 collector.record("simon_load_average_1m", load.one);
                 collector.record("simon_load_average_5m", load.five);
             }
+            // Queried by the bundled host dashboard, and sitting unread in the
+            // same struct the load average was already taken from.
+            if let Some(uptime) = stats.uptime_seconds {
+                collector.record("simon_uptime_seconds", uptime as f64);
+            }
         }
     }
 }
@@ -612,6 +617,69 @@ mod snapshot_recording_tests {
                 !text.contains(absent),
                 "{absent} was recorded from a snapshot that carries no such \
                  reading: {text}"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod dashboard_coverage_tests {
+    use super::*;
+    use crate::pipeline::{DiskSnapshot, NetSnapshot, Snapshot};
+
+    /// What the served endpoint offers against what the dashboards ask for.
+    ///
+    /// The Prometheus endpoint renders `MetricCollector`, populated by
+    /// `record_snapshot` — not `PrometheusExporter`. So the names this function
+    /// emits are the names a scrape of a running server actually returns, and
+    /// the gap against `grafana/` is the number of panels that draw nothing.
+    ///
+    /// Reported rather than asserted at a fixed number: a snapshot assembled
+    /// here cannot carry every reading a real machine has, so this documents
+    /// coverage and fails only on a name the recorder never emits at all.
+    #[test]
+    fn the_served_endpoint_covers_the_dashboard_metrics_it_can() {
+        use std::collections::BTreeSet;
+
+        let snap = Snapshot {
+            disks: vec![DiskSnapshot {
+                name: "PhysicalDrive0".into(),
+                total: 1_000,
+                used: 250,
+                read_rate: 1.0,
+                write_rate: 1.0,
+                ..Default::default()
+            }],
+            network: vec![NetSnapshot {
+                name: "Ethernet".into(),
+                rx_rate: Some(1.0),
+                tx_rate: Some(1.0),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        let collector = MetricCollector::new();
+        HttpServer::record_snapshot(&collector, &snap);
+        let text = collector.export_prometheus();
+        let emitted: BTreeSet<&str> = text
+            .lines()
+            .filter_map(|l| l.split(&['{', ' '][..]).next())
+            .filter(|s| !s.is_empty())
+            .collect();
+
+        // Names this snapshot carries the data for. CPU, memory, GPU and
+        // load average need readings a synthetic snapshot has no source for.
+        for required in [
+            "simon_disk_usage_percent",
+            "simon_disk_read_bytes_per_sec",
+            "simon_network_rx_bytes_total",
+            "simon_process_count",
+        ] {
+            assert!(
+                emitted.contains(required),
+                "record_snapshot did not emit {required}, which the bundled \
+                 dashboards query and this snapshot carries: {emitted:#?}"
             );
         }
     }
