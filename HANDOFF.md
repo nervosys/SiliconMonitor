@@ -121,9 +121,52 @@ Since the tag, on `master` and green on all three platforms:
 | `db94a7b` | The two pairings the guard did not cover, and why one is separate |
 | `a3c8415` | A metrics endpoint Prometheus would reject in full |
 | `74b635d` | Dashboards querying names nothing published, and three wrong tests |
+| `HEAD` | Two Prometheus renderers, and the server serves the worse one |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### Two Prometheus renderers, and the server serves the worse one
+
+Following the dashboard contract to the endpoint that actually answers a scrape.
+`/api/v1/metrics/prometheus` does **not** serve `PrometheusExporter` — the
+complete implementation the entries below fixed and tested. It serves
+`MetricCollector::export_prometheus`, a second renderer in
+`observability/metrics.rs`, and **nothing outside `src/prometheus.rs` references
+the first one at all.** The good exporter is unreachable and the served one is
+the smaller.
+
+The gap is not subtle. The exporter knows 30 metric names; the server's
+collection loop records 10, and the dashboards query 24.
+
+The served renderer also emitted its own storage key. `record_with_labels`
+encodes a labelled series as `name:{gpu=0,vendor=NVIDIA}` so each label set gets
+its own series — a map key, not exposition syntax — and `export_prometheus`
+printed it verbatim:
+
+```
+simon_gpu_temperature_celsius:{gpu=1,vendor=NVIDIA} 37
+```
+
+Prometheus wants `name{gpu="1",vendor="NVIDIA"}`: quoted values, no colon. That
+is fixed, with the inverse of the encoder sitting next to it, and a test that
+was confirmed to fail against the old renderer.
+
+**Nothing has served a malformed line yet**, because the collection loop only
+calls the unlabelled `record` — and that is precisely why the loop is limited to
+whole-machine metrics, which is why fourteen dashboard panels have nothing to
+draw. The label encoding was the blocker, and it is gone.
+
+**What is deliberately not done.** Wiring the endpoint to the full exporter is
+the obvious next step and is not a one-line change: a synchronous
+`collect_system_metrics()` costs **1.4–2.6 seconds** on this machine, 870 ms of
+it the profile inspector walking 23,000 driver settings, which is far too slow
+inside a scrape handler. The right shape is the existing background loop — which
+already reads a concurrently-collected pipeline snapshot rather than
+re-enumerating hardware — recording the per-instance metrics through
+`record_with_labels` now that it renders correctly. That is a change to an async
+server I cannot exercise on this machine, so it is recorded rather than guessed
+at.
 
 ### Dashboards querying names nothing published, and three wrong tests
 
@@ -4280,7 +4323,19 @@ feature stayed broken through eight published versions.
 
 ## Open work
 
-1. **USB negotiated speed is unimplemented on Windows, and obtainable.**
+1. **The Prometheus endpoint serves 10 of the 24 metrics the dashboards query.**
+   `/api/v1/metrics/prometheus` renders `MetricCollector`, populated by
+   `http_server::metric_collection_loop`, which records only whole-machine
+   values. `PrometheusExporter` knows all 30 names and is referenced by nothing.
+   The blocker was that `MetricCollector` mangled labels into its storage key;
+   that is fixed, so the loop can now record per-GPU and per-disk series through
+   `record_with_labels`. Do it in the loop, not the handler: a synchronous full
+   export costs 1.4-2.6 s, most of it the profile inspector. Whoever does this
+   should also tighten `every_dashboard_metric_is_published_somewhere`, which
+   currently accepts a name published by *either* renderer and so cannot see
+   this gap.
+
+2. **USB negotiated speed is unimplemented on Windows, and obtainable.**
    `usb.{addr}.speed` is absent on every device. It is not a PnP property; it
    comes from `IOCTL_USB_GET_NODE_CONNECTION_INFORMATION_EX` against the parent
    hub, addressed by the port in `LocationInformation` — which only 14 of this
@@ -4291,7 +4346,7 @@ feature stayed broken through eight published versions.
    truth to check against before trusting the result; Windows reports this
    nowhere else.
 
-2. **`hardware_ai` was audited on one machine, and only one.** Every conclusion
+3. **`hardware_ai` was audited on one machine, and only one.** Every conclusion
    corrected in `a584dd0` and `7607401` was verifiably wrong on this desktop, and
    each fix was checked against a second source. That is not the same as being
    right in general. Two things specifically want a second machine before they
@@ -4315,7 +4370,7 @@ feature stayed broken through eight published versions.
    Ti dates to 2020 because it matches the RTX 30 series rule, and the Ti shipped
    in 2022. `infer_gpu_year` and the TDP tables were not audited.
 
-3. **The Windows ATA SMART path has never met a SATA drive.** 3.3.0 reads the
+4. **The Windows ATA SMART path has never met a SATA drive.** 3.3.0 reads the
    attribute table unelevated through `IOCTL_STORAGE_PREDICT_FAILURE`, and the
    parse in `src/disk/ata_smart.rs` is tested only against buffers this project
    built. This machine has three NVMe drives and a USB gadget; on all four the
@@ -4346,7 +4401,7 @@ feature stayed broken through eight published versions.
    property of its `CTL_CODE`, and is worth reading off the definition before
    planning around it.
 
-4. **macOS GPU, power and temperature are still unimplemented.** CPU (per-core,
+5. **macOS GPU, power and temperature are still unimplemented.** CPU (per-core,
    with nice time), memory, swap, uptime and board info work — `Simon::cpu()`,
    `memory()`, `uptime()`. `Simon::snapshot()` still fails, because it requires
    every reader. Power and temperature need `powermetrics`, which requires root,
@@ -4371,7 +4426,7 @@ feature stayed broken through eight published versions.
    the `vm_stat` used/free split is a judgement about which pages count as in
    use, which a conformance test cannot check.
 
-5. **The Linux SMART/NVMe paths have executed exactly once**, in CI on
+6. **The Linux SMART/NVMe paths have executed exactly once**, in CI on
    `33ee241` — 733 tests, 0 failures. No one has run them against real Linux
    hardware. The sysfs paths (`/sys/class/nvme/<ctrl>/{model,serial,firmware_rev,cntlid}`)
    are documented kernel ABI, but tests are not a substitute for a drive.
@@ -4384,7 +4439,7 @@ feature stayed broken through eight published versions.
    what remains to benefit is USB storage — and every Linux machine, where a
    sweep spawns `smartctl` once per drive and the old shape was quadratic.
 
-6. **The ontology names ~232 entities; the library has ~88 subsystem modules.**
+7. **The ontology names ~232 entities; the library has ~88 subsystem modules.**
    The running list of which clusters exist, which readers answer on which
    machine, and what is left is under **plan item F** below — it is kept in one
    place rather than two, because the last time it lived in both they disagreed.
@@ -4439,7 +4494,7 @@ feature stayed broken through eight published versions.
    sizes, AER capability, ARI and ATS support, SR-IOV — are readable by the same
    two calls with a different pid, if anyone wants them.
 
-7. **`simon tune`'s policy table covers five settings, and its game detection is
+8. **`simon tune`'s policy table covers five settings, and its game detection is
    a name table.** Both are deliberate first cuts, and both are where the feature
    grows.
 
@@ -4460,7 +4515,7 @@ feature stayed broken through eight published versions.
    from a model. `tuning::tests::a_recommendation_never_proposes_a_value_the_driver_did_not_offer`
    is the test that keeps it true. A model may classify; it may not pick numbers.
 
-8. **The Dewey port was tried across 4.0.0–4.0.4 and withdrawn in 5.0.0.**
+9. **The Dewey port was tried across 4.0.0–4.0.4 and withdrawn in 5.0.0.**
    `src/gui/` is the egui application again — `app.rs`, `widgets.rs`, `theme.rs`,
    `profile_tab.rs`, `headless.rs`, `mod.rs`, restored from `927ffaa^`. The
    `deweygui` dependency, the `dewey-gui` feature and `simonlib::gui_dewey` are
@@ -4505,7 +4560,7 @@ feature stayed broken through eight published versions.
    name is the whole defect — every call site was written by someone who
    reasonably believed `new()` constructs a thing from the system.
 
-9. **Verify with `--lib --tests` when the disk is tight.** `cargo test
+10. **Verify with `--lib --tests` when the disk is tight.** `cargo test
    --all-features` links every example. That is affordable again now the duplicate
    egui is gone, but if it ever fails with `link.exe` 1318, the split is
    `cargo test --all-features --lib --tests` for execution plus
@@ -4513,7 +4568,7 @@ feature stayed broken through eight published versions.
    Note `--lib --tests` skips doc-tests; run those before a release.
 
 
-10. **Two Dewey bugs found during the port, recorded because they are real
+11. **Two Dewey bugs found during the port, recorded because they are real
    and unfixed — but no longer reachable from this crate.** Neither affects simon
    now that `deweygui` is gone. Both are for whoever works on Dewey itself, or
    for anyone who reconsiders open work 9.
@@ -4537,7 +4592,7 @@ feature stayed broken through eight published versions.
    three `eprintln!` calls in `resize`, the surface-acquire error arm and the
    frame-area computation in `render`, driven by `ShowWindow(hwnd, 3)`.
 
-11. **Applied settings are reversible; the tuning loop is not yet closed.**
+12. **Applied settings are reversible; the tuning loop is not yet closed.**
    `ApplyHandler::read_current()` reads a setting before it is written,
    `ApplyOutcome.previous` carries what was overwritten, `revert_setting()` puts
    it back through the same confirmed and audit-logged path, and

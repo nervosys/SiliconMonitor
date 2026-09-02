@@ -393,16 +393,32 @@ impl MetricCollector {
             .unwrap_or_default()
     }
 
-    /// Export metrics in Prometheus format
+    /// Export metrics in Prometheus text exposition format.
+    ///
+    /// This is what `/api/v1/metrics/prometheus` serves, so it is the output a
+    /// real scrape sees -- and it emitted the storage key verbatim.
+    /// `record_with_labels` encodes a labelled series as
+    /// `name:{gpu=0,vendor=NVIDIA}`, which is a lookup key and not a metric:
+    /// Prometheus wants `name{gpu="0",vendor="NVIDIA"}`, with the values quoted
+    /// and no colon. Nothing calls `record_with_labels` on the serving path
+    /// today, so no malformed line has been served yet -- but the encoding is
+    /// the reason the collection loop can only record whole-machine metrics,
+    /// and that is why the bundled dashboards see ten of the twenty-four names
+    /// they query.
     pub fn export_prometheus(&self) -> String {
         let mut output = String::new();
 
         if let Ok(metrics) = self.metrics.read() {
-            for (name, series) in metrics.iter() {
-                if let Some(value) = series.latest() {
-                    // Convert metric name to Prometheus format
-                    let prom_name = name.replace(['.', '-'], "_");
-                    output.push_str(&format!("{} {}\n", prom_name, value));
+            for (key, series) in metrics.iter() {
+                let Some(value) = series.latest() else {
+                    continue;
+                };
+                let (name, labels) = split_label_key(key);
+                let prom_name = name.replace(['.', '-'], "_");
+                if labels.is_empty() {
+                    output.push_str(&format!("{prom_name} {value}\n"));
+                } else {
+                    output.push_str(&format!("{prom_name}{{{labels}}} {value}\n"));
                 }
             }
         }
@@ -499,4 +515,44 @@ pub struct SystemMetricSnapshot {
     pub load_15: f64,
     pub uptime_seconds: u64,
     pub process_count: u32,
+}
+
+/// Split a storage key back into a metric name and Prometheus label syntax.
+///
+/// [`MetricCollector::record_with_labels`] joins labels into the key as
+/// `name:{k=v,k=v}` so that each label set gets its own time series. That form
+/// is a map key, not exposition syntax, so rendering needs the inverse: the
+/// values get quoted and escaped, and the colon goes away.
+///
+/// A key with no label section comes back unchanged with an empty label string.
+fn split_label_key(key: &str) -> (&str, String) {
+    let Some((name, rest)) = key.split_once(":{") else {
+        return (key, String::new());
+    };
+    let Some(inner) = rest.strip_suffix('}') else {
+        // Not the shape `record_with_labels` produces; treat the whole thing as
+        // a name rather than guess at where the labels end.
+        return (key, String::new());
+    };
+
+    let rendered: Vec<String> = inner
+        .split(',')
+        .filter(|pair| !pair.is_empty())
+        .map(|pair| match pair.split_once('=') {
+            Some((k, v)) => format!("{}=\"{}\"", k, escape_label(v)),
+            // A label with no `=` cannot be rendered as a pair; name it so the
+            // value is not silently dropped.
+            None => format!("malformed=\"{}\"", escape_label(pair)),
+        })
+        .collect();
+
+    (name, rendered.join(","))
+}
+
+/// Escape a label value for the exposition format.
+fn escape_label(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
 }

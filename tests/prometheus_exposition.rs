@@ -198,3 +198,47 @@ fn every_dashboard_metric_is_published_somewhere() {
          panels render empty against a live server: {missing:#?}"
     );
 }
+
+/// The other Prometheus renderer — the one the HTTP server actually serves.
+///
+/// `/api/v1/metrics/prometheus` does not serve `PrometheusExporter`. It serves
+/// `MetricCollector::export_prometheus`, a second implementation, and nothing
+/// outside `src/prometheus.rs` referenced the first one at all: the complete,
+/// correctly formatted exporter was unreachable and the served renderer was the
+/// smaller one.
+///
+/// `record_with_labels` encodes a labelled series into its storage key as
+/// `name:{gpu=0}` — a map key, not exposition syntax. Rendered verbatim that is
+/// invalid: Prometheus needs `name{gpu="0"}`, quoted and without the colon.
+#[test]
+fn the_served_renderer_emits_valid_label_syntax() {
+    use simonlib::observability::MetricCollector;
+
+    let collector = MetricCollector::new();
+    collector.record("simon_uptime_seconds", 1234.0);
+    collector.record_with_labels("simon_gpu_temperature_celsius", 42.0, &[("gpu", "0")]);
+    collector.record_with_labels(
+        "simon_gpu_temperature_celsius",
+        37.0,
+        &[("gpu", "1"), ("vendor", "NVIDIA")],
+    );
+
+    let text = collector.export_prometheus();
+
+    assert!(
+        !text.contains(":{"),
+        "the storage key leaked into the exposition, which no scraper parses: {text}"
+    );
+    assert!(
+        text.contains("simon_gpu_temperature_celsius{gpu=\"0\"} 42"),
+        "a single label should render as gpu=\"0\": {text}"
+    );
+    assert!(
+        text.contains("simon_gpu_temperature_celsius{gpu=\"1\",vendor=\"NVIDIA\"} 37"),
+        "several labels should render comma-separated and quoted: {text}"
+    );
+    assert!(
+        text.contains("simon_uptime_seconds 1234"),
+        "an unlabelled series should render unchanged: {text}"
+    );
+}
