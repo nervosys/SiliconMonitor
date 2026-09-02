@@ -112,7 +112,7 @@ Since the tag, on `master` and green on all three platforms:
 | `44612d8` | The last misleading absence, and a deliberate refusal to implement |
 | `68c9ff0` | Every measurement, checked for whether it actually moves |
 | `8ed7e71` | Zero hertz and zero swap, handed to an agent as facts |
-| `HEAD` | Every network rate in the crate was zero, on every platform |
+| `e425908` | Every network rate in the crate was zero, on every platform |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
