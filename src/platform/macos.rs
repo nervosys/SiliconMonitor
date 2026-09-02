@@ -464,8 +464,9 @@ pub fn read_memory_stats() -> crate::error::Result<crate::core::memory::MemorySt
             free: vm.free_bytes() / 1024,
             // macOS keeps no buffer pool distinct from the file cache, so zero
             // here is a fact about the platform rather than a missing reading.
-            buffers: 0,
-            cached: vm.cached_bytes() / 1024,
+            // No macOS equivalent of the Linux "Buffers" line.
+            buffers: None,
+            cached: Some(vm.cached_bytes() / 1024),
             // macOS has shared memory and simon does not read it, so `None`.
             // This was a zero until 6.0.0, which read as a measurement of none.
             shared: None,

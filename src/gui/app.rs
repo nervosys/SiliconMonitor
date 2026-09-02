@@ -3047,12 +3047,19 @@ impl SiliconMonitorApp {
                 let total_mb = mem.ram.total as f64 / 1024.0;
                 let used_mb = mem.ram.used as f64 / 1024.0;
                 let free_mb = mem.ram.free as f64 / 1024.0;
-                let buffers_mb = mem.ram.buffers as f64 / 1024.0;
-                let cached_mb = mem.ram.cached as f64 / 1024.0;
-                // Displayed as zero when unreported, which is most platforms.
-                let shared_mb = mem.ram.shared.unwrap_or(0) as f64 / 1024.0;
-                // Available = free + buffers + cached (like free -h)
-                let available_mb = free_mb + buffers_mb + cached_mb;
+                // Absent on platforms that publish no such figure -- Windows
+                // and macOS have no "buffers" at all. The cards below show an
+                // em dash for those rather than a plausible `0`.
+                let buffers_mb = mem.ram.buffers.map(|v| v as f64 / 1024.0);
+                let cached_mb = mem.ram.cached.map(|v| v as f64 / 1024.0);
+                let shared_mb = mem.ram.shared.map(|v| v as f64 / 1024.0);
+                let card = |v: Option<f64>| match v {
+                    Some(x) => format!("{x:.0}"),
+                    None => "—".to_string(),
+                };
+                // Available = free + buffers + cached (like `free -h`), over
+                // whichever of the two this platform reports.
+                let available_mb = free_mb + buffers_mb.unwrap_or(0.0) + cached_mb.unwrap_or(0.0);
 
                 ui.add(SectionHeader::new("Physical Memory").icon("💾"));
 
@@ -3097,7 +3104,7 @@ impl SiliconMonitorApp {
                             .color(CyberColors::THRESHOLD_OK),
                     );
                     ui.add(
-                        MetricCard::new("Shared", format!("{:.0}", shared_mb))
+                        MetricCard::new("Shared", card(shared_mb))
                             .unit("MB")
                             .color(CyberColors::NEON_PURPLE),
                     );
@@ -3107,12 +3114,12 @@ impl SiliconMonitorApp {
 
                 ui.horizontal(|ui| {
                     ui.add(
-                        MetricCard::new("Buffers", format!("{:.0}", buffers_mb))
+                        MetricCard::new("Buffers", card(buffers_mb))
                             .unit("MB")
                             .color(CyberColors::NEON_ORANGE),
                     );
                     ui.add(
-                        MetricCard::new("Cached", format!("{:.0}", cached_mb))
+                        MetricCard::new("Cached", card(cached_mb))
                             .unit("MB")
                             .color(CyberColors::NEON_YELLOW),
                     );
@@ -3134,9 +3141,14 @@ impl SiliconMonitorApp {
                     ui.label(RichText::new("Memory Map: ").color(CyberColors::TEXT_PRIMARY));
                     // Show proportional bar
                     if total_mb > 0.0 {
-                        let used_pct = (used_mb - buffers_mb - cached_mb).max(0.0) / total_mb;
-                        let buffers_pct = buffers_mb / total_mb;
-                        let cached_pct = cached_mb / total_mb;
+                        // The bar segments an unreported quantity at zero
+                        // width, which is what "not shown" looks like in a
+                        // stacked bar -- it is not a claim about the value.
+                        let buffers_bar = buffers_mb.unwrap_or(0.0);
+                        let cached_bar = cached_mb.unwrap_or(0.0);
+                        let used_pct = (used_mb - buffers_bar - cached_bar).max(0.0) / total_mb;
+                        let buffers_pct = buffers_bar / total_mb;
+                        let cached_pct = cached_bar / total_mb;
                         let free_pct = free_mb / total_mb;
 
                         let _bar_width = ui.available_width() - 100.0;

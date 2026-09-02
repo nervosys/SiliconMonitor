@@ -26,8 +26,8 @@ fn parse_ram_info(meminfo: &str) -> Result<RamInfo> {
         total: 0,
         used: 0,
         free: 0,
-        buffers: 0,
-        cached: 0,
+        buffers: None,
+        cached: None,
         shared: None,
         lfb: None,
     };
@@ -63,8 +63,8 @@ fn parse_ram_info(meminfo: &str) -> Result<RamInfo> {
 
     ram.total = mem_total;
     ram.free = mem_free;
-    ram.buffers = buffers;
-    ram.cached = cached + s_reclaimable;
+    ram.buffers = Some(buffers);
+    ram.cached = Some(cached + s_reclaimable);
     // Linux does report this, via Shmem in /proc/meminfo.
     ram.shared = Some(shmem);
     ram.used = mem_total.saturating_sub(mem_available);

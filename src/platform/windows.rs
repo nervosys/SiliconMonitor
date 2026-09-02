@@ -14,6 +14,7 @@ use crate::error::{Result, SimonError};
 use std::collections::HashMap;
 use std::mem;
 use std::sync::atomic::{AtomicU64, Ordering};
+use windows::Win32::System::ProcessStatus::{GetPerformanceInfo, PERFORMANCE_INFORMATION};
 use windows::Win32::System::SystemInformation::{
     GetSystemInfo, GlobalMemoryStatusEx, MEMORYSTATUSEX, SYSTEM_INFO,
 };
@@ -642,6 +643,23 @@ pub fn read_memory_stats() -> Result<MemoryStats> {
         cached: None,
     });
 
+    // The system file cache, in KB. `GetPerformanceInfo` reports it in pages.
+    //
+    // This call used to sit here computing swap from `CommitLimit` and
+    // `CommitTotal`, which are commit accounting and not pagefile accounting;
+    // that reading was wrong and was removed. `SystemCache` is a different
+    // field of the same struct and is exactly what it says, so the call comes
+    // back for the one quantity it does answer.
+    let system_cache_kb = {
+        let mut perf: PERFORMANCE_INFORMATION = unsafe { mem::zeroed() };
+        perf.cb = mem::size_of::<PERFORMANCE_INFORMATION>() as u32;
+        if unsafe { GetPerformanceInfo(&mut perf, perf.cb) }.is_ok() {
+            Some((perf.SystemCache as u64).saturating_mul(perf.PageSize as u64) / 1024)
+        } else {
+            None
+        }
+    };
+
     let total_kb = mem_status.ullTotalPhys / 1024;
     let avail_kb = mem_status.ullAvailPhys / 1024;
     let used_kb = total_kb - avail_kb;
@@ -651,8 +669,21 @@ pub fn read_memory_stats() -> Result<MemoryStats> {
             total: total_kb,
             used: used_kb,
             free: avail_kb,
-            buffers: 0, // Windows doesn't expose this separately
-            cached: 0,  // Could use GetPerformanceInfo for SystemCache
+            // Windows has no "buffers" figure at all -- it is a Linux
+            // `/proc/meminfo` line -- so this is an absence, not a zero.
+            buffers: None,
+            // The system file cache, in pages, which is where Task Manager's
+            // "Cached" figure comes from.
+            //
+            // Do not "correct" this to perfmon's `\Memory\Cache Bytes`. They
+            // are different quantities and differ by fifty-fold: on this host
+            // `SystemCache` reads 52.1 GB while `Cache Bytes` reads 1.0 GB,
+            // because the first counts every cached page (standby 48.5 GB plus
+            // modified 0.4 GB plus resident 1.0 GB) and the second counts only
+            // the cache's own resident working set. The 52 GB figure is the one
+            // that corresponds to Linux's `Cached` line, which is what this
+            // field means.
+            cached: system_cache_kb,
             // Not read on Windows. `None` rather than a zero that reads like a
             // measurement of no shared memory.
             shared: None,

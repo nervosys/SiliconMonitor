@@ -11,10 +11,21 @@ pub struct RamInfo {
     pub used: u64,
     /// Free RAM in KB
     pub free: u64,
-    /// Buffered RAM in KB
-    pub buffers: u64,
-    /// Cached RAM in KB
-    pub cached: u64,
+    /// Buffered RAM in KB, or `None` where the platform has no such figure.
+    ///
+    /// "Buffers" is a Linux `/proc/meminfo` notion. Windows and macOS have no
+    /// equivalent, and both reported `0` -- a measurement of no buffered
+    /// memory, on systems where the quantity does not exist.
+    pub buffers: Option<u64>,
+    /// Cached RAM in KB, or `None` where it was not read.
+    ///
+    /// Windows does have this: `GetPerformanceInfo` reports `SystemCache` in
+    /// pages, which is what Task Manager's "Cached" figure comes from. It was
+    /// `0` under a comment reading "Could use GetPerformanceInfo for
+    /// SystemCache" -- an admission that the number was not measured, sitting
+    /// two lines above `shared: None`, which had already been fixed for exactly
+    /// this reason.
+    pub cached: Option<u64>,
     /// Shared RAM in KB (GPU shared on Jetson). `None` when the platform does
     /// not report it — which is most of them, and was a fabricated zero until
     /// 6.0.0.
@@ -128,8 +139,8 @@ impl MemoryStats {
                 total: 0,
                 used: 0,
                 free: 0,
-                buffers: 0,
-                cached: 0,
+                buffers: None,
+                cached: None,
                 shared: None,
                 lfb: None,
             },

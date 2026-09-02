@@ -96,7 +96,8 @@ pub struct MemorySummary {
     /// Free RAM in MB
     pub free_mb: u64,
     /// Cached RAM in MB
-    pub cached_mb: u64,
+    /// Cached RAM in MB, or `None` where the platform reports none.
+    pub cached_mb: Option<u64>,
     /// Total swap in MB
     pub swap_total_mb: u64,
     /// Used swap in MB

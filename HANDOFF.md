@@ -113,9 +113,54 @@ Since the tag, on `master` and green on all three platforms:
 | `68c9ff0` | Every measurement, checked for whether it actually moves |
 | `8ed7e71` | Zero hertz and zero swap, handed to an agent as facts |
 | `e425908` | Every network rate in the crate was zero, on every platform |
+| `HEAD` | Two fabricated zeros next to the comment explaining why zero is wrong |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### Two fabricated zeros next to the comment explaining why zero is wrong
+
+`get_memory_breakdown` answered `buffers_kb: 0, cached_kb: 0, shared_kb: null`
+— three sibling fields, one of them honest. The reader:
+
+```rust
+buffers: 0, // Windows doesn't expose this separately
+cached: 0,  // Could use GetPerformanceInfo for SystemCache
+// Not read on Windows. `None` rather than a zero that reads like a
+// measurement of no shared memory.
+shared: None,
+```
+
+**`shared` was fixed in 6.0.0 with a comment stating exactly why a zero is
+wrong, and the two lines immediately above it kept theirs** — under comments
+that admit, in as many words, that neither number was measured. This is the
+"fix applied where the defect was seen, not where it is" pattern in its most
+literal possible form: adjacent lines, same struct, same commit's blast radius,
+and the reasoning already written down one line below.
+
+Both are `Option` now, and the two answers differ:
+
+* **`buffers` is `None` on Windows and macOS.** "Buffers" is a Linux
+  `/proc/meminfo` line; neither other platform has the concept, so there is no
+  figure rather than a figure of zero.
+* **`cached` is now read on Windows**, from `GetPerformanceInfo`'s
+  `SystemCache`. The comment was right that it was available; nobody had done
+  it. **52.1 GB on this host, where the field previously said 0.**
+
+**And a trap, checked before trusting the number.** `SystemCache` reads 52.1 GB
+while perfmon's `\Memory\Cache Bytes` reads **1.0 GB** on the same machine at
+the same moment. They are different quantities: the first counts every cached
+page (standby 48.5 GB + modified 0.4 GB + resident 1.0 GB, which is Task
+Manager's "Cached"), the second counts only the cache's own resident working
+set. The 52 GB figure is the one that corresponds to Linux's `Cached` line,
+which is what the field means. That is now in a comment saying *do not "correct"
+this to `Cache Bytes`* — because a fifty-fold discrepancy against a
+plausible-looking counter is exactly the kind of thing a future reader fixes in
+the wrong direction.
+
+The observability layer had been converting the sentinel back with
+`if stats.ram.cached > 0 { Some(..) } else { None }`, which also erased a
+genuine zero. That reconstruction is gone; the absence is carried in the type.
 
 ### Every network rate in the crate was zero, on every platform
 

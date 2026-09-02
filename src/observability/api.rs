@@ -1149,8 +1149,8 @@ impl ObservabilityApi {
                     used_mb: stats.ram.used / 1024,
                     free_mb: stats.ram.free / 1024,
                     total_mb: stats.ram.total / 1024,
-                    cached_mb: Some(stats.ram.cached / 1024),
-                    buffers_mb: Some(stats.ram.buffers / 1024),
+                    cached_mb: stats.ram.cached.map(|v| v / 1024),
+                    buffers_mb: stats.ram.buffers.map(|v| v / 1024),
                     swap_used_mb: stats.swap.used_or_zero() / 1024,
                     swap_total_mb: stats.swap.total_or_zero() / 1024,
                 });
@@ -1164,16 +1164,11 @@ impl ObservabilityApi {
                     used_mb: stats.ram.used / 1024,
                     free_mb: stats.ram.free / 1024,
                     total_mb: stats.ram.total / 1024,
-                    cached_mb: if stats.ram.cached > 0 {
-                        Some(stats.ram.cached / 1024)
-                    } else {
-                        None
-                    },
-                    buffers_mb: if stats.ram.buffers > 0 {
-                        Some(stats.ram.buffers / 1024)
-                    } else {
-                        None
-                    },
+                    // These were `u64` sentinels that this layer converted
+                    // back to `None` with `> 0` -- which also erased a genuine
+                    // zero. The absence is carried in the type now.
+                    cached_mb: stats.ram.cached.map(|v| v / 1024),
+                    buffers_mb: stats.ram.buffers.map(|v| v / 1024),
                     swap_used_mb: stats.swap.used_or_zero() / 1024,
                     swap_total_mb: stats.swap.total_or_zero() / 1024,
                 });

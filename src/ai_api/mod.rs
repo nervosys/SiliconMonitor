@@ -544,7 +544,7 @@ impl AiDataApi {
                     total_mb: (mem.ram.total / 1024),
                     used_mb: (mem.ram.used / 1024),
                     free_mb: (mem.ram.free / 1024),
-                    cached_mb: (mem.ram.cached / 1024),
+                    cached_mb: mem.ram.cached.map(|v| v / 1024),
                     swap_total_mb: (mem.swap.total_or_zero() / 1024),
                     swap_used_mb: (mem.swap.used_or_zero() / 1024),
                     usage_percent: if mem.ram.total > 0 {

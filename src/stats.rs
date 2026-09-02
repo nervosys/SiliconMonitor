@@ -656,9 +656,10 @@ mod macos_stats {
                 total: total / 1024,
                 used: vm.used_bytes() / 1024,
                 free: vm.free_bytes() / 1024,
-                // macOS has no buffer cache distinct from the file cache.
-                buffers: 0,
-                cached: vm.cached_bytes() / 1024,
+                // macOS has no buffer cache distinct from the file cache, so
+                // there is no figure to report rather than a figure of zero.
+                buffers: None,
+                cached: Some(vm.cached_bytes() / 1024),
                 // Not read here.
                 shared: None,
                 lfb: None,

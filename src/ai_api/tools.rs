@@ -1566,8 +1566,8 @@ impl AiDataApi {
                 "total_mb": stats.ram.total / 1024,
                 "used_mb": stats.ram.used / 1024,
                 "free_mb": stats.ram.free / 1024,
-                "buffers_mb": stats.ram.buffers / 1024,
-                "cached_mb": stats.ram.cached / 1024,
+                "buffers_mb": stats.ram.buffers.map(|v| v / 1024),
+                "cached_mb": stats.ram.cached.map(|v| v / 1024),
             }))
         }
 
@@ -1587,8 +1587,8 @@ impl AiDataApi {
                 "total_mb": stats.ram.total / 1024,
                 "used_mb": stats.ram.used / 1024,
                 "free_mb": stats.ram.free / 1024,
-                "buffers_mb": stats.ram.buffers / 1024,
-                "cached_mb": stats.ram.cached / 1024,
+                "buffers_mb": stats.ram.buffers.map(|v| v / 1024),
+                "cached_mb": stats.ram.cached.map(|v| v / 1024),
             }))
         }
 
