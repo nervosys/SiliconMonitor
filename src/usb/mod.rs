@@ -52,15 +52,25 @@ pub struct UsbDevice {
     /// changes only when *this* device's position or identity changes -- which
     /// is the point.
     pub address: String,
-    /// The bus this device is attached to.
-    pub bus_number: u8,
+    /// The bus this device is attached to, where the platform reports one.
+    ///
+    /// `None` on Windows: `Win32_PnPEntity` gives no bus number, and this was
+    /// filled with `0` for every device -- the sentinel this crate spends its
+    /// time removing, sitting in a public field. Linux parses it from the sysfs
+    /// name and macOS from the `Location ID`, so both report a real one.
+    pub bus_number: Option<u8>,
     /// The port on that bus, where the platform reports one.
     ///
-    /// No longer part of the id -- see [`Self::address`]. Windows does not fill
-    /// this: `Win32_PnPEntity` gives no bus or port, and the hub and port in
-    /// the registry's `LocationInformation` are absent for two thirds of the
-    /// nodes it enumerates.
-    pub port_number: u8,
+    /// No longer part of the id -- see [`Self::address`]. `None` on Windows:
+    /// `Win32_PnPEntity` gives no port, and the hub and port in the registry's
+    /// `LocationInformation` are absent for two thirds of the nodes it
+    /// enumerates.
+    ///
+    /// A `0` here used to be indistinguishable from port zero, and
+    /// `get_usb_device_details` looked devices up by this field -- so when the
+    /// id scheme moved and Windows stopped filling it, 39 devices collapsed to
+    /// one addressable pair. The type says it now.
+    pub port_number: Option<u8>,
     /// USB vendor id, or `None` for an entry that has none — a root hub's
     /// PnP id is `USB\ROOT_HUB30\...` with no `VID_` at all. This was `u16`
     /// and a missing id parsed to zero, so `simon cli usb` printed
@@ -276,12 +286,11 @@ impl UsbMonitor {
                         .map(class_from_code)
                         .unwrap_or(UsbDeviceClass::Unknown);
                     let parts: Vec<&str> = name.split('-').collect();
-                    let bus_number = parts.first().and_then(|s| s.parse().ok()).unwrap_or(0);
+                    let bus_number = parts.first().and_then(|s| s.parse().ok());
                     let port_number = parts
                         .get(1)
                         .and_then(|s| s.split('.').next())
-                        .and_then(|s| s.parse().ok())
-                        .unwrap_or(0);
+                        .and_then(|s| s.parse().ok());
                     self.devices.push(UsbDevice {
                         // `1-4.2` -- the bus, the root port and the chain of
                         // hub ports below it. Exactly the device's position.
@@ -333,8 +342,8 @@ impl UsbMonitor {
         // The raw `Location ID`, kept for the device address. It encodes the
         // controller and the port chain, which is what makes it stable.
         let mut current_location = String::new();
-        let mut bus_number: u8 = 0;
-        let mut port_number: u8 = 0;
+        let mut bus_number: Option<u8> = None;
+        let mut port_number: Option<u8> = None;
         let mut device_idx: u8 = 0;
 
         for line in stdout.lines() {
@@ -421,8 +430,8 @@ impl UsbMonitor {
                             .and_then(|s| s.split_whitespace().next())
                         {
                             if let Ok(loc) = u32::from_str_radix(hex, 16) {
-                                bus_number = ((loc >> 24) & 0xFF) as u8;
-                                port_number = ((loc >> 20) & 0xF) as u8;
+                                bus_number = Some(((loc >> 24) & 0xFF) as u8);
+                                port_number = Some(((loc >> 20) & 0xF) as u8);
                             }
                         }
                     }
@@ -560,8 +569,9 @@ impl UsbMonitor {
                         // for every node this query returns, including the
                         // interfaces that share a parent's location.
                         address: normalise_address(pnp_id),
-                        bus_number: 0,
-                        port_number: 0,
+                        // Not reported by this query. See the field docs.
+                        bus_number: None,
+                        port_number: None,
                         vendor_id: vid,
                         product_id: pid,
                         manufacturer: manufacturer.map(|s| s.to_string()),
@@ -618,8 +628,8 @@ impl UsbMonitor {
                             // enumeration above reads, wrapped in a CIM
                             // reference.
                             address: normalise_address(dep),
-                            bus_number: 0,
-                            port_number: 0,
+                            bus_number: None,
+                            port_number: None,
                             vendor_id: vid,
                             product_id: pid,
                             manufacturer: None,
@@ -783,8 +793,8 @@ mod tests {
     fn test_usb_device_serialization() {
         let device = UsbDevice {
             address: "1_4_2".into(),
-            bus_number: 1,
-            port_number: 2,
+            bus_number: Some(1),
+            port_number: Some(2),
             vendor_id: Some(0x1234),
             product_id: Some(0x5678),
             manufacturer: Some("Test Manufacturer".to_string()),

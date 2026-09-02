@@ -71,7 +71,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         println!("  Class: {:?}", device.class);
         println!("  Speed: {}", speed_str);
-        println!("  Bus/Port: {}/{}", device.bus_number, device.port_number);
+        // The address is the stable key and is always present; bus and port
+        // are reported only where the platform gives them, which on Windows is
+        // nowhere. They printed "0/0" for every device before this was an
+        // `Option`.
+        println!("  Address: {}", device.address);
+        let slot = |v: Option<u8>| match v {
+            Some(x) => x.to_string(),
+            None => "-".to_string(),
+        };
+        println!(
+            "  Bus/Port: {}/{}",
+            slot(device.bus_number),
+            slot(device.port_number)
+        );
         println!();
     }
 

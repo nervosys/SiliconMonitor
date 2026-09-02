@@ -116,9 +116,40 @@ Since the tag, on `master` and green on all three platforms:
 | `17dd4fa` | Two fabricated zeros next to the comment explaining why zero is wrong |
 | `25bcca8` | A 16 MB drive reported as sizeless, by integer division |
 | `9686675` | A regression I introduced, found by the sweep that follows the fix |
+| `HEAD` | The zero left behind when a field stopped being the identity |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### The zero left behind when a field stopped being the identity
+
+Following the entry below to its end. The regression there was that
+`get_usb_device_details` keyed on `bus_number` and `port_number` after the
+Windows reader stopped filling them. Fixing the lookup left the cause in place:
+**two public fields holding `0` on Windows, meaning "not reported"** — the exact
+sentinel this session exists to remove, sitting in the type that the sweep had
+just proved consumers trust.
+
+Both are `Option<u8>` now. Windows reports neither, so both are `None`; Linux
+parses them out of the sysfs name and macOS out of the `Location ID`, so both
+report real ones there.
+
+The compiler then found the consumer I would not have looked for: the shipped
+`examples/usb_monitor.rs` prints
+
+```
+  Bus/Port: 0/0
+```
+
+for every device on Windows, and had done since the reader was written. It now
+prints the address — the key that is always present and is what the details tool
+wants — with a dash for each of bus and port where the platform gives none.
+
+**Worth keeping: a lookup and a display are the same defect wearing different
+clothes.** The lookup collapsed 39 devices into one and was found by a sweep;
+the display showed `0/0` to every user of that example and would never have
+failed anything. Changing the type caught both, because a type is the only one
+of the three — comment, test, type — that every consumer has to answer to.
 
 ### A regression I introduced, found by the sweep that follows the fix
 
