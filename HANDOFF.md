@@ -107,7 +107,7 @@ Since the tag, on `master` and green on all three platforms:
 | `2276c9c` | Per-core clocks, from the counter that was named three fixes ago |
 | `3197ee0` | A flat battery that was never read, and the test that caught me |
 | `066e373` | An invariant the ontology states and this machine breaks |
-| `HEAD` | Auditing every absolute claim in the ontology against the machine |
+| `cab0c34` | Auditing every absolute claim in the ontology against the machine |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
