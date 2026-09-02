@@ -105,7 +105,7 @@ Since the tag, on `master` and green on all three platforms:
 | `5bd14aa` | The last six enumerators, and what the list was really for |
 | `7fcddde` | The last swallow, a real USB key, and a swap series that changed meaning |
 | `2276c9c` | Per-core clocks, from the counter that was named three fixes ago |
-| `HEAD` | A flat battery that was never read, and the test that caught me |
+| `3197ee0` | A flat battery that was never read, and the test that caught me |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
