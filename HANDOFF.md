@@ -121,7 +121,7 @@ Since the tag, on `master` and green on all three platforms:
 | `db94a7b` | The two pairings the guard did not cover, and why one is separate |
 | `a3c8415` | A metrics endpoint Prometheus would reject in full |
 | `74b635d` | Dashboards querying names nothing published, and three wrong tests |
-| `HEAD` | Two Prometheus renderers, and the server serves the worse one |
+| `d4da86c` | Two Prometheus renderers, and the server serves the worse one |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
