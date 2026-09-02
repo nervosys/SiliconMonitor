@@ -348,124 +348,128 @@ impl HttpServer {
         let snapshots = pipeline.handle();
 
         loop {
-            let snap = snapshots.latest();
-
-            if let Some(ref cpu) = snap.cpu {
-                collector.record("simon_cpu_usage_percent", (100.0 - cpu.total.idle) as f64);
-                // Omit the series rather than record 0 MHz, the same way the
-                // Prometheus exporter omits an absent GPU temperature.
-                if let Some(mhz) = cpu
-                    .cores
-                    .first()
-                    .and_then(|c| c.frequency.as_ref())
-                    .and_then(|f| f.current)
-                {
-                    collector.record("simon_cpu_frequency_mhz", mhz as f64);
-                }
-            }
-
-            if let Some(ref mem) = snap.memory {
-                // Platform collectors report kilobytes; the dashboards plot bytes.
-                let used = mem.ram.used as f64 * 1024.0;
-                let total = mem.ram.total as f64 * 1024.0;
-                collector.record("simon_memory_used_bytes", used);
-                collector.record("simon_memory_total_bytes", total);
-                collector.record(
-                    "simon_swap_used_bytes",
-                    mem.swap.used_or_zero() as f64 * 1024.0,
-                );
-                if total > 0.0 {
-                    collector.record("simon_memory_usage_percent", (used / total) * 100.0);
-                }
-            }
-
-            for (i, gpu) in snap.gpu_dynamic.iter().enumerate() {
-                // A device whose query failed this tick publishes nothing rather than
-                // a zero, so the dashboard shows a gap instead of a false reading.
-                let Some(gpu) = gpu.as_ref() else { continue };
-                // The index goes in a label, not in the metric name.
-                //
-                // This recorded `simon_gpu_0_utilization_percent`, and every
-                // bundled dashboard queries
-                // `simon_gpu_utilization_percent{gpu="0"}` -- so the panels
-                // could never match, whatever the values were. Encoding an
-                // instance in the name also defeats aggregation: `sum by (gpu)`
-                // has nothing to group on when each card is a different metric.
-                let index = i.to_string();
-                let gpu_label: &[(&str, &str)] = &[("gpu", index.as_str())];
-                let put = |name: &str, value: f64| {
-                    collector.record_with_labels(name, value, gpu_label);
-                };
-
-                put("simon_gpu_utilization_percent", gpu.utilization as f64);
-                put("simon_gpu_memory_used_bytes", gpu.memory.used as f64);
-                put("simon_gpu_memory_total_bytes", gpu.memory.total as f64);
-
-                if let Some(temp) = gpu.thermal.temperature {
-                    put("simon_gpu_temperature_celsius", temp as f64);
-                }
-                if let Some(power) = gpu.power.draw {
-                    put("simon_gpu_power_watts", power as f64 / 1000.0);
-                }
-                if let Some(fan) = gpu.thermal.fan_speed {
-                    put("simon_gpu_fan_speed_percent", fan as f64);
-                }
-                if let Some(clock) = gpu.clocks.graphics {
-                    put("simon_gpu_clock_graphics_mhz", clock as f64);
-                }
-                if let Some(clock) = gpu.clocks.memory {
-                    put("simon_gpu_clock_memory_mhz", clock as f64);
-                }
-            }
-
-            for disk in &snap.disks {
-                // The device goes in a label, for the reason above.
-                //
-                // And these are **rates**, which were recorded under
-                // `..._bytes_total`. `DiskSnapshot` carries `read_rate` and
-                // `write_rate` and no cumulative counter at all, so the name
-                // promised a monotonic total and delivered bytes per second --
-                // `rate()` over that in a dashboard is meaningless. The
-                // cumulative figures exist, but only on the `PrometheusExporter`
-                // path, which reads `io_stats` directly.
-                let device: &[(&str, &str)] = &[("device", disk.name.as_str())];
-                collector.record_with_labels(
-                    "simon_disk_read_bytes_per_sec",
-                    disk.read_rate,
-                    device,
-                );
-                collector.record_with_labels(
-                    "simon_disk_write_bytes_per_sec",
-                    disk.write_rate,
-                    device,
-                );
-                if disk.total > 0 {
-                    collector.record_with_labels(
-                        "simon_disk_usage_percent",
-                        (disk.used as f64 / disk.total as f64) * 100.0,
-                        device,
-                    );
-                }
-            }
-
-            // Recorded only once a rate exists. A metrics collector that is
-            // handed `0` cannot tell it apart from a quiet network.
-            if let Some(rx) = snap.total_rx_rate() {
-                collector.record("simon_network_rx_bytes_total", rx);
-            }
-            if let Some(tx) = snap.total_tx_rate() {
-                collector.record("simon_network_tx_bytes_total", tx);
-            }
-            collector.record("simon_process_count", snap.processes.len() as f64);
-
-            if let Some(ref stats) = snap.system_stats {
-                if let Some(ref load) = stats.load_average {
-                    collector.record("simon_load_average_1m", load.one);
-                    collector.record("simon_load_average_5m", load.five);
-                }
-            }
-
+            Self::record_snapshot(&collector, &snapshots.latest());
             tokio::time::sleep(tokio::time::Duration::from_secs(interval_secs)).await;
+        }
+    }
+
+    /// Record one pipeline snapshot into the metric collector.
+    ///
+    /// Split out of `metric_collection_loop` so that it can be tested. The
+    /// loop needs a live pipeline and a tokio runtime, so for as long as this
+    /// logic lived inside it the only way to check a metric name or a label
+    /// was to read the code -- which is how the instance ended up baked into
+    /// the name (`simon_gpu_0_utilization_percent`) and a rate ended up under
+    /// a `_total` name, both for the life of the endpoint.
+    ///
+    /// Takes a plain `&Snapshot`, which `Default` can construct, so a test
+    /// can assert on exactly the metrics one snapshot produces.
+    pub(crate) fn record_snapshot(collector: &MetricCollector, snap: &crate::pipeline::Snapshot) {
+        if let Some(ref cpu) = snap.cpu {
+            collector.record("simon_cpu_usage_percent", (100.0 - cpu.total.idle) as f64);
+            // Omit the series rather than record 0 MHz, the same way the
+            // Prometheus exporter omits an absent GPU temperature.
+            if let Some(mhz) = cpu
+                .cores
+                .first()
+                .and_then(|c| c.frequency.as_ref())
+                .and_then(|f| f.current)
+            {
+                collector.record("simon_cpu_frequency_mhz", mhz as f64);
+            }
+        }
+
+        if let Some(ref mem) = snap.memory {
+            // Platform collectors report kilobytes; the dashboards plot bytes.
+            let used = mem.ram.used as f64 * 1024.0;
+            let total = mem.ram.total as f64 * 1024.0;
+            collector.record("simon_memory_used_bytes", used);
+            collector.record("simon_memory_total_bytes", total);
+            collector.record(
+                "simon_swap_used_bytes",
+                mem.swap.used_or_zero() as f64 * 1024.0,
+            );
+            if total > 0.0 {
+                collector.record("simon_memory_usage_percent", (used / total) * 100.0);
+            }
+        }
+
+        for (i, gpu) in snap.gpu_dynamic.iter().enumerate() {
+            // A device whose query failed this tick publishes nothing rather than
+            // a zero, so the dashboard shows a gap instead of a false reading.
+            let Some(gpu) = gpu.as_ref() else { continue };
+            // The index goes in a label, not in the metric name.
+            //
+            // This recorded `simon_gpu_0_utilization_percent`, and every
+            // bundled dashboard queries
+            // `simon_gpu_utilization_percent{gpu="0"}` -- so the panels
+            // could never match, whatever the values were. Encoding an
+            // instance in the name also defeats aggregation: `sum by (gpu)`
+            // has nothing to group on when each card is a different metric.
+            let index = i.to_string();
+            let gpu_label: &[(&str, &str)] = &[("gpu", index.as_str())];
+            let put = |name: &str, value: f64| {
+                collector.record_with_labels(name, value, gpu_label);
+            };
+
+            put("simon_gpu_utilization_percent", gpu.utilization as f64);
+            put("simon_gpu_memory_used_bytes", gpu.memory.used as f64);
+            put("simon_gpu_memory_total_bytes", gpu.memory.total as f64);
+
+            if let Some(temp) = gpu.thermal.temperature {
+                put("simon_gpu_temperature_celsius", temp as f64);
+            }
+            if let Some(power) = gpu.power.draw {
+                put("simon_gpu_power_watts", power as f64 / 1000.0);
+            }
+            if let Some(fan) = gpu.thermal.fan_speed {
+                put("simon_gpu_fan_speed_percent", fan as f64);
+            }
+            if let Some(clock) = gpu.clocks.graphics {
+                put("simon_gpu_clock_graphics_mhz", clock as f64);
+            }
+            if let Some(clock) = gpu.clocks.memory {
+                put("simon_gpu_clock_memory_mhz", clock as f64);
+            }
+        }
+
+        for disk in &snap.disks {
+            // The device goes in a label, for the reason above.
+            //
+            // And these are **rates**, which were recorded under
+            // `..._bytes_total`. `DiskSnapshot` carries `read_rate` and
+            // `write_rate` and no cumulative counter at all, so the name
+            // promised a monotonic total and delivered bytes per second --
+            // `rate()` over that in a dashboard is meaningless. The
+            // cumulative figures exist, but only on the `PrometheusExporter`
+            // path, which reads `io_stats` directly.
+            let device: &[(&str, &str)] = &[("device", disk.name.as_str())];
+            collector.record_with_labels("simon_disk_read_bytes_per_sec", disk.read_rate, device);
+            collector.record_with_labels("simon_disk_write_bytes_per_sec", disk.write_rate, device);
+            if disk.total > 0 {
+                collector.record_with_labels(
+                    "simon_disk_usage_percent",
+                    (disk.used as f64 / disk.total as f64) * 100.0,
+                    device,
+                );
+            }
+        }
+
+        // Recorded only once a rate exists. A metrics collector that is
+        // handed `0` cannot tell it apart from a quiet network.
+        if let Some(rx) = snap.total_rx_rate() {
+            collector.record("simon_network_rx_bytes_total", rx);
+        }
+        if let Some(tx) = snap.total_tx_rate() {
+            collector.record("simon_network_tx_bytes_total", tx);
+        }
+        collector.record("simon_process_count", snap.processes.len() as f64);
+
+        if let Some(ref stats) = snap.system_stats {
+            if let Some(ref load) = stats.load_average {
+                collector.record("simon_load_average_1m", load.one);
+                collector.record("simon_load_average_5m", load.five);
+            }
         }
     }
 }
@@ -527,5 +531,79 @@ mod tests {
         assert_eq!(status_text(200), "OK");
         assert_eq!(status_text(404), "Not Found");
         assert_eq!(status_text(500), "Internal Server Error");
+    }
+}
+
+#[cfg(test)]
+mod snapshot_recording_tests {
+    use super::*;
+    use crate::pipeline::{DiskSnapshot, Snapshot};
+
+    /// Every metric a snapshot produces, with its labels, from one place.
+    ///
+    /// `record_snapshot` was inline in an async loop needing a live pipeline, so
+    /// nothing about the names it emits could be asserted. Two defects lived
+    /// there for the life of the endpoint as a result: the instance was baked
+    /// into the metric name, so `simon_gpu_utilization_percent{gpu="0"}` — what
+    /// every bundled dashboard queries — never matched anything, and a disk
+    /// *rate* was recorded under a `_total` name.
+    fn rendered(snap: &Snapshot) -> String {
+        let collector = MetricCollector::new();
+        HttpServer::record_snapshot(&collector, snap);
+        collector.export_prometheus()
+    }
+
+    #[test]
+    fn disk_metrics_carry_a_device_label_and_a_rate_is_named_as_one() {
+        let snap = Snapshot {
+            disks: vec![DiskSnapshot {
+                name: "PhysicalDrive0".into(),
+                total: 1_000,
+                used: 250,
+                read_rate: 4096.0,
+                write_rate: 512.0,
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        let text = rendered(&snap);
+
+        assert!(
+            text.contains("simon_disk_read_bytes_per_sec{device=\"PhysicalDrive0\"} 4096"),
+            "a per-device rate needs a device label and a rate's name: {text}"
+        );
+        assert!(
+            text.contains("simon_disk_usage_percent{device=\"PhysicalDrive0\"} 25"),
+            "usage should be labelled and computed from used/total: {text}"
+        );
+        assert!(
+            !text.contains("simon_disk_0_"),
+            "an index belongs in a label, not in the metric name: {text}"
+        );
+        assert!(
+            !text.contains("simon_disk_read_bytes_total"),
+            "DiskSnapshot carries no cumulative counter, so nothing here may \
+             claim to be a total: {text}"
+        );
+    }
+
+    /// A snapshot with nothing in it records nothing, rather than zeros.
+    #[test]
+    fn an_empty_snapshot_records_only_what_it_knows() {
+        let text = rendered(&Snapshot::default());
+
+        for absent in [
+            "simon_cpu_usage_percent",
+            "simon_memory_used_bytes",
+            "simon_gpu_utilization_percent",
+            "simon_network_rx_bytes_total",
+        ] {
+            assert!(
+                !text.contains(absent),
+                "{absent} was recorded from a snapshot that carries no such \
+                 reading: {text}"
+            );
+        }
     }
 }

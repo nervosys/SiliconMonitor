@@ -123,9 +123,44 @@ Since the tag, on `master` and green on all three platforms:
 | `74b635d` | Dashboards querying names nothing published, and three wrong tests |
 | `d4da86c` | Two Prometheus renderers, and the server serves the worse one |
 | `5796371` | The instance in the metric name, and a rate called a total |
+| `HEAD` | Doing the thing the previous commit deferred |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### Doing the thing the previous commit deferred
+
+The entry below ends: *"Factoring that loop body into a function taking a
+`Snapshot` would make it testable, and is worth doing by whoever next touches
+it."* I was the one next touching it, and deferring a two-hour job to an
+imaginary successor is how the defects in that same entry survived as long as
+they did.
+
+`metric_collection_loop` is now four lines around
+`HttpServer::record_snapshot(&collector, &snapshots.latest())`, and
+`record_snapshot` takes a plain `&Snapshot`, which `Default` constructs. The
+loop still needs a live pipeline and a tokio runtime; the part that decides
+metric names and labels no longer does.
+
+Two tests came straight out of that:
+
+* a snapshot with one disk must render
+  `simon_disk_read_bytes_per_sec{device="PhysicalDrive0"}` — labelled, and named
+  as the rate it is — and must contain neither `simon_disk_0_` nor anything
+  claiming to be a `_total`, since `DiskSnapshot` carries no cumulative counter.
+* an empty snapshot records nothing rather than zeros.
+
+Both were confirmed by restoring the old `simon_disk_0_read_bytes_total` form
+and watching the first fail.
+
+**What this really bought.** The two defects in the entry below — the instance
+in the name, the rate called a total — were not subtle, and they survived for
+the life of the endpoint. Not because they were hard to see, but because
+**nothing could look at them without standing up a server**. The code was
+correct-looking in review and unobservable in a test, and that combination is
+where this kind of thing lives. Moving eighty lines out of an `async fn` changed
+nothing about behaviour and changed everything about whether the next mistake
+gets caught.
 
 ### The instance in the metric name, and a rate called a total
 
