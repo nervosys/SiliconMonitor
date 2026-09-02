@@ -116,7 +116,7 @@ Since the tag, on `master` and green on all three platforms:
 | `17dd4fa` | Two fabricated zeros next to the comment explaining why zero is wrong |
 | `25bcca8` | A 16 MB drive reported as sizeless, by integer division |
 | `9686675` | A regression I introduced, found by the sweep that follows the fix |
-| `HEAD` | The zero left behind when a field stopped being the identity |
+| `cc4e347` | The zero left behind when a field stopped being the identity |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
