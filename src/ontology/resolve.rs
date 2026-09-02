@@ -1143,7 +1143,14 @@ fn resolve_usb(out: &mut Vec<Reading>) {
             UsbSpeed::Unknown => out.push(Reading::unavailable(
                 format!("{base}.speed"),
                 Some(Unit::Identifier),
-                "the platform did not report a negotiated bus speed",
+                concat!(
+                    "this reader does not ask for the negotiated speed. On ",
+                    "Windows it is not a device property -- it comes from ",
+                    "IOCTL_USB_GET_NODE_CONNECTION_INFORMATION_EX against the ",
+                    "parent hub, addressed by the port number in the device's ",
+                    "LocationInformation, which only some devices carry. It is ",
+                    "obtainable and unimplemented, not unavailable"
+                ),
             )),
             s => push_id(
                 out,

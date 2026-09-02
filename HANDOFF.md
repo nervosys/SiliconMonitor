@@ -109,9 +109,47 @@ Since the tag, on `master` and green on all three platforms:
 | `066e373` | An invariant the ontology states and this machine breaks |
 | `cab0c34` | Auditing every absolute claim in the ontology against the machine |
 | `e456c53` | A class guessed from the device's name, when it declares one |
+| `HEAD` | The last misleading absence, and a deliberate refusal to implement |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### The last misleading absence, and a deliberate refusal to implement
+
+The fourth and last suspicious absence reason from the audit two entries below:
+`usb.{addr}.speed`, absent on all 39 devices, blamed on *"the platform did not
+report a negotiated bus speed"*.
+
+Checked it properly. Windows exposes no speed among a USB device's PnP
+properties — `Get-PnpDeviceProperty` returns `Address`,
+`ReportedDeviceIdsHash`, `BusReportedDeviceDesc` and nothing about speed. So the
+reason is not false in the way `usb.{addr}.class` was. **But it is still
+misleading**, because the value is obtainable: it comes from
+`IOCTL_USB_GET_NODE_CONNECTION_INFORMATION_EX` issued against the *parent hub*,
+addressed by the port number in the device's `LocationInformation`. The reason
+now says exactly that, ending "it is obtainable and unimplemented, not
+unavailable".
+
+**I did not implement it, and the reasoning is the point of this entry.** It
+needs unsafe FFI: opening hub handles, a device-to-parent-hub traversal, an
+IOCTL, and a struct parse. Only 14 of this machine's 39 devices carry the
+`Port_#.Hub_#` location that addresses the call. And there is no ground truth
+available to check the result against — Windows reports negotiated speed nowhere
+else, which is the entire reason the IOCTL exists — so the only available
+verification is *"do these numbers look plausible"*.
+
+**That is the exact standard this session has spent thirty commits removing
+from this crate.** A name heuristic that classified USB devices, a nominal clock
+published as a current one, commit charge published as swap: every one of them
+looked plausible. Writing unsafe code whose correctness I could only assess by
+squinting at it would be the same mistake in a new place, and shipping it would
+be worse than the honest absence that is there now.
+
+So the field stays absent, the reason now names the API, the addressing scheme
+and the obstacle, and the next person starts from there rather than from the
+symptom. **`2276c9c` exists because `f5a54ee` wrote a note like this instead of
+guessing — a deferral that records what the next person needs is worth more than
+an implementation nobody can check.**
 
 ### A class guessed from the device's name, when it declares one
 
@@ -3761,7 +3799,18 @@ feature stayed broken through eight published versions.
 
 ## Open work
 
-1. **`hardware_ai` was audited on one machine, and only one.** Every conclusion
+1. **USB negotiated speed is unimplemented on Windows, and obtainable.**
+   `usb.{addr}.speed` is absent on every device. It is not a PnP property; it
+   comes from `IOCTL_USB_GET_NODE_CONNECTION_INFORMATION_EX` against the parent
+   hub, addressed by the port in `LocationInformation` — which only 14 of this
+   machine's 39 devices carry, so the other 25 need the parent traversal solved
+   first. The entity is worth filling: it documents that "a super-speed device
+   on a high-speed port reports high, which is how a wrong cable shows", and
+   that diagnosis is unavailable today. Whoever does it should find a ground
+   truth to check against before trusting the result; Windows reports this
+   nowhere else.
+
+2. **`hardware_ai` was audited on one machine, and only one.** Every conclusion
    corrected in `a584dd0` and `7607401` was verifiably wrong on this desktop, and
    each fix was checked against a second source. That is not the same as being
    right in general. Two things specifically want a second machine before they
@@ -3785,7 +3834,7 @@ feature stayed broken through eight published versions.
    Ti dates to 2020 because it matches the RTX 30 series rule, and the Ti shipped
    in 2022. `infer_gpu_year` and the TDP tables were not audited.
 
-2. **The Windows ATA SMART path has never met a SATA drive.** 3.3.0 reads the
+3. **The Windows ATA SMART path has never met a SATA drive.** 3.3.0 reads the
    attribute table unelevated through `IOCTL_STORAGE_PREDICT_FAILURE`, and the
    parse in `src/disk/ata_smart.rs` is tested only against buffers this project
    built. This machine has three NVMe drives and a USB gadget; on all four the
@@ -3816,7 +3865,7 @@ feature stayed broken through eight published versions.
    property of its `CTL_CODE`, and is worth reading off the definition before
    planning around it.
 
-3. **macOS GPU, power and temperature are still unimplemented.** CPU (per-core,
+4. **macOS GPU, power and temperature are still unimplemented.** CPU (per-core,
    with nice time), memory, swap, uptime and board info work — `Simon::cpu()`,
    `memory()`, `uptime()`. `Simon::snapshot()` still fails, because it requires
    every reader. Power and temperature need `powermetrics`, which requires root,
@@ -3841,7 +3890,7 @@ feature stayed broken through eight published versions.
    the `vm_stat` used/free split is a judgement about which pages count as in
    use, which a conformance test cannot check.
 
-4. **The Linux SMART/NVMe paths have executed exactly once**, in CI on
+5. **The Linux SMART/NVMe paths have executed exactly once**, in CI on
    `33ee241` — 733 tests, 0 failures. No one has run them against real Linux
    hardware. The sysfs paths (`/sys/class/nvme/<ctrl>/{model,serial,firmware_rev,cntlid}`)
    are documented kernel ABI, but tests are not a substitute for a drive.
@@ -3854,7 +3903,7 @@ feature stayed broken through eight published versions.
    what remains to benefit is USB storage — and every Linux machine, where a
    sweep spawns `smartctl` once per drive and the old shape was quadratic.
 
-5. **The ontology names ~232 entities; the library has ~88 subsystem modules.**
+6. **The ontology names ~232 entities; the library has ~88 subsystem modules.**
    The running list of which clusters exist, which readers answer on which
    machine, and what is left is under **plan item F** below — it is kept in one
    place rather than two, because the last time it lived in both they disagreed.
@@ -3909,7 +3958,7 @@ feature stayed broken through eight published versions.
    sizes, AER capability, ARI and ATS support, SR-IOV — are readable by the same
    two calls with a different pid, if anyone wants them.
 
-6. **`simon tune`'s policy table covers five settings, and its game detection is
+7. **`simon tune`'s policy table covers five settings, and its game detection is
    a name table.** Both are deliberate first cuts, and both are where the feature
    grows.
 
@@ -3930,7 +3979,7 @@ feature stayed broken through eight published versions.
    from a model. `tuning::tests::a_recommendation_never_proposes_a_value_the_driver_did_not_offer`
    is the test that keeps it true. A model may classify; it may not pick numbers.
 
-7. **The Dewey port was tried across 4.0.0–4.0.4 and withdrawn in 5.0.0.**
+8. **The Dewey port was tried across 4.0.0–4.0.4 and withdrawn in 5.0.0.**
    `src/gui/` is the egui application again — `app.rs`, `widgets.rs`, `theme.rs`,
    `profile_tab.rs`, `headless.rs`, `mod.rs`, restored from `927ffaa^`. The
    `deweygui` dependency, the `dewey-gui` feature and `simonlib::gui_dewey` are
@@ -3975,7 +4024,7 @@ feature stayed broken through eight published versions.
    name is the whole defect — every call site was written by someone who
    reasonably believed `new()` constructs a thing from the system.
 
-8. **Verify with `--lib --tests` when the disk is tight.** `cargo test
+9. **Verify with `--lib --tests` when the disk is tight.** `cargo test
    --all-features` links every example. That is affordable again now the duplicate
    egui is gone, but if it ever fails with `link.exe` 1318, the split is
    `cargo test --all-features --lib --tests` for execution plus
@@ -3983,7 +4032,7 @@ feature stayed broken through eight published versions.
    Note `--lib --tests` skips doc-tests; run those before a release.
 
 
-9. **Two Dewey bugs found during the port, recorded because they are real
+10. **Two Dewey bugs found during the port, recorded because they are real
    and unfixed — but no longer reachable from this crate.** Neither affects simon
    now that `deweygui` is gone. Both are for whoever works on Dewey itself, or
    for anyone who reconsiders open work 9.
@@ -4007,7 +4056,7 @@ feature stayed broken through eight published versions.
    three `eprintln!` calls in `resize`, the surface-acquire error arm and the
    frame-area computation in `render`, driven by `ShowWindow(hwnd, 3)`.
 
-10. **Applied settings are reversible; the tuning loop is not yet closed.**
+11. **Applied settings are reversible; the tuning loop is not yet closed.**
    `ApplyHandler::read_current()` reads a setting before it is written,
    `ApplyOutcome.previous` carries what was overwritten, `revert_setting()` puts
    it back through the same confirmed and audit-logged path, and
