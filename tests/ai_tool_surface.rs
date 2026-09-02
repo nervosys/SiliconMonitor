@@ -160,7 +160,7 @@ fn every_advertised_tool_is_dispatchable() {
 fn an_id_from_a_listing_resolves_in_its_details_tool() {
     // (listing tool, path to the array, field holding the id, details tool,
     //  parameter name the details tool expects)
-    let pairs: [(&str, &[&str], &str, &str, &str); 4] = [
+    let pairs: [(&str, &[&str], &str, &str, &str); 5] = [
         (
             "get_usb_devices",
             &[],
@@ -189,6 +189,8 @@ fn an_id_from_a_listing_resolves_in_its_details_tool() {
             "get_interface_details",
             "interface_name",
         ),
+        // The listing calls it `index`; the details tool wants `gpu_index`.
+        ("get_gpu_list", &[], "index", "get_gpu_details", "gpu_index"),
     ];
 
     let mut api = api();
@@ -213,15 +215,18 @@ fn an_id_from_a_listing_resolves_in_its_details_tool() {
         };
 
         for row in rows {
-            let Some(id) = row.get(id_field).and_then(Value::as_str) else {
+            // An id is a string for some listings and a number for others --
+            // `get_gpu_list` numbers its rows -- and both must pass through
+            // unchanged, because the details tool parses what it is given.
+            let Some(id) = row.get(id_field).filter(|v| v.is_string() || v.is_number()) else {
                 broken.push(format!(
-                    "{list_tool} returned a row with no `{id_field}`, so nothing \
-                     can be asked about it: {row}"
+                    "{list_tool} returned a row with no usable `{id_field}`, so \
+                     nothing can be asked about it: {row}"
                 ));
                 continue;
             };
             let Ok(detail) = api.call_tool(detail_tool, serde_json::json!({ param: id })) else {
-                broken.push(format!("{detail_tool}({param}={id:?}) could not be called"));
+                broken.push(format!("{detail_tool}({param}={id}) could not be called"));
                 continue;
             };
             let ok = serde_json::to_value(&detail)
@@ -230,7 +235,7 @@ fn an_id_from_a_listing_resolves_in_its_details_tool() {
                 .unwrap_or(false);
             if !ok {
                 broken.push(format!(
-                    "{list_tool} advertised {id_field}={id:?}, and \
+                    "{list_tool} advertised {id_field}={id}, and \
                      {detail_tool} cannot resolve it"
                 ));
             }
@@ -241,5 +246,30 @@ fn an_id_from_a_listing_resolves_in_its_details_tool() {
         broken.is_empty(),
         "a listing handed out identifiers its own details tool rejects. An agent \
          following the catalogue has no other way to name these things: {broken:#?}"
+    );
+}
+
+/// The process listing is excluded from the pairing table above on purpose.
+///
+/// A pid is the one identifier that can stop being valid between the call that
+/// hands it out and the call that uses it, so a table-driven check over every
+/// row would fail whenever a listed process exited -- and a flaky test teaches
+/// people to ignore it. This asserts the same contract against the one pid
+/// guaranteed to still exist: the test's own.
+#[test]
+fn the_process_details_tool_resolves_a_live_pid() {
+    let mut api = api();
+    let pid = std::process::id();
+
+    let result = api
+        .call_tool("get_process_details", serde_json::json!({ "pid": pid }))
+        .expect("get_process_details is dispatchable");
+    let v = serde_json::to_value(&result).expect("a tool result serialises");
+
+    assert_eq!(
+        v.get("success").and_then(Value::as_bool),
+        Some(true),
+        "get_process_details could not resolve the running test's own pid, \
+         which is the one process it can be certain exists: {v}"
     );
 }

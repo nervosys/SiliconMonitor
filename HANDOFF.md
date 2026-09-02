@@ -118,9 +118,44 @@ Since the tag, on `master` and green on all three platforms:
 | `9686675` | A regression I introduced, found by the sweep that follows the fix |
 | `cc4e347` | The zero left behind when a field stopped being the identity |
 | `4685c52` | A guard for the regression, and nearly a test that proved nothing |
+| `HEAD` | The two pairings the guard did not cover, and why one is separate |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### The two pairings the guard did not cover, and why one is separate
+
+The round-trip guard below shipped with four pairings. The catalogue has six
+list-to-details relationships, so the two it missed were worth adding rather
+than leaving for the next sweep to rediscover by hand.
+
+**GPU**, added to the table. It exposed an assumption in the guard itself: the
+first version read ids with `Value::as_str`, and `get_gpu_list` numbers its rows.
+So the id extraction now accepts a string *or* a number and passes it through
+unchanged, because the details tool parses whatever it is handed. Also worth
+knowing when reading the table: the listing calls the field `index` and the
+details tool wants `gpu_index`.
+
+**Processes, deliberately not in the table.** A pid is the one identifier that
+can stop being valid between the call that hands it out and the call that uses
+it. A table-driven check over every listed process would fail whenever one
+exited — and a flaky test teaches people to ignore it, which is worse than not
+having it. `the_process_details_tool_resolves_a_live_pid` asserts the same
+contract against the one pid guaranteed to still exist: the test's own.
+
+**Both were confirmed by breaking them.** Renaming the GPU listing's `index`
+field produced
+
+```
+"get_gpu_list returned a row with no usable `index`, so nothing can be asked
+ about it: {"index_BROKEN":0,"name":"NVIDIA GeForce RTX 3090 Ti",...}"
+```
+
+and the restore was checked by grepping the sabotage back to zero occurrences
+before gating. That is now twice in two commits that this step earned its
+keep — the first time it revealed the test was watching nothing, this time it
+confirmed the extension works on a numeric id path the original could not have
+handled.
 
 ### A guard for the regression, and nearly a test that proved nothing
 
