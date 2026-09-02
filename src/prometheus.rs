@@ -239,6 +239,8 @@ impl PrometheusExporter {
         self.collect_gpu_metrics();
         self.collect_disk_metrics();
         self.collect_network_metrics();
+        self.collect_cpu_temperature_metrics();
+        self.collect_uptime_metrics();
         self.collect_profile_metrics();
     }
 
@@ -404,6 +406,55 @@ impl PrometheusExporter {
                     (mem.ram.used as f64 / mem.ram.total as f64) * 100.0,
                 ));
             }
+            // `swap_used_bytes` is queried by the bundled host dashboard and was
+            // never published. It is `Option` since 15a60ab -- emitted only when
+            // the pagefile was actually read, because a swap gauge of zero is a
+            // claim that nothing is paged out.
+            if let Some(used) = mem.swap.used {
+                self.add(MetricFamily::gauge(
+                    &self.prefixed("swap_used_bytes"),
+                    "Swap or pagefile bytes in use",
+                    // `SwapInfo` is in KB; the metric name says bytes.
+                    (used * 1024) as f64,
+                ));
+            }
+        }
+    }
+
+    /// CPU temperature, which the bundled dashboards query and nothing
+    /// published.
+    ///
+    /// `hwmon::read_cpu_temperatures` returns one reading per sensor the
+    /// platform exposes, and each carries its own label so several packages or
+    /// cores do not collide into one series. Nothing is emitted where no sensor
+    /// is readable -- on Windows that is the ordinary case without a signed
+    /// kernel driver, and `read_cpu_temperatures` returns an empty list there
+    /// rather than a zero, so the loop simply does not run.
+    fn collect_cpu_temperature_metrics(&mut self) {
+        for sensor in crate::hwmon::read_cpu_temperatures() {
+            let celsius = sensor.value;
+            let mut labels = BTreeMap::new();
+            labels.insert("sensor".into(), sensor.name.clone());
+            self.add(MetricFamily::gauge_with_labels(
+                &self.prefixed("cpu_temperature_celsius"),
+                "CPU temperature in degrees Celsius",
+                celsius as f64,
+                labels,
+            ));
+        }
+    }
+
+    /// Uptime, which the bundled dashboards query and nothing published.
+    ///
+    /// `stats::uptime` has had a platform implementation on all three targets
+    /// the whole time; no exporter had called it.
+    fn collect_uptime_metrics(&mut self) {
+        if let Ok(uptime) = crate::stats::uptime() {
+            self.add(MetricFamily::gauge(
+                &self.prefixed("uptime_seconds"),
+                "Seconds since boot",
+                uptime.as_secs() as f64,
+            ));
         }
     }
 
@@ -474,8 +525,15 @@ impl PrometheusExporter {
                     // Clocks
                     if let Some(graphics) = info.dynamic_info.clocks.graphics {
                         self.add(MetricFamily::gauge_with_labels(
-                            &self.prefixed("gpu_clock_core_mhz"),
-                            "GPU core clock in MHz",
+                            // `graphics`, not `core`. NVML calls this the
+                            // graphics clock, the ontology publishes it as
+                            // `gpu.{n}.clocks.graphics`, and every bundled
+                            // Grafana dashboard queries
+                            // `simon_gpu_clock_graphics_mhz` -- so the one name
+                            // that matched nothing was this one, and the panel
+                            // was empty against a live server.
+                            &self.prefixed("gpu_clock_graphics_mhz"),
+                            "GPU graphics clock in MHz",
                             graphics as f64,
                             base_labels.clone(),
                         ));
@@ -539,6 +597,28 @@ impl PrometheusExporter {
                             ));
                         }
                     }
+                }
+
+                // Cumulative I/O, queried by the bundled dashboards and never
+                // published. These are counters -- `ae625ab` moved the Windows
+                // reader to `Win32_PerfRawData_*` so that they are genuinely
+                // cumulative rather than the instantaneous rates the class name
+                // suggests -- so `rate()` over them in a dashboard is correct.
+                if let Ok(io) = disk.io_stats() {
+                    let mut labels = BTreeMap::new();
+                    labels.insert("device".into(), disk.name().to_string());
+                    self.add(MetricFamily::counter_with_labels(
+                        &self.prefixed("disk_read_bytes_total"),
+                        "Total bytes read from this device since boot",
+                        io.read_bytes as f64,
+                        labels.clone(),
+                    ));
+                    self.add(MetricFamily::counter_with_labels(
+                        &self.prefixed("disk_write_bytes_total"),
+                        "Total bytes written to this device since boot",
+                        io.write_bytes as f64,
+                        labels.clone(),
+                    ));
                 }
             }
         }

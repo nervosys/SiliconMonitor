@@ -120,9 +120,49 @@ Since the tag, on `master` and green on all three platforms:
 | `4685c52` | A guard for the regression, and nearly a test that proved nothing |
 | `db94a7b` | The two pairings the guard did not cover, and why one is separate |
 | `a3c8415` | A metrics endpoint Prometheus would reject in full |
+| `HEAD` | Dashboards querying names nothing published, and three wrong tests |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### Dashboards querying names nothing published, and three wrong tests
+
+`grafana/` ships three dashboards, and they are a contract nobody was checking.
+Comparing the 24 metric names they query against what the two publishers emit:
+**six were published by neither**, so those panels render empty against a live
+server — which looks like broken hardware rather than a broken dashboard.
+`http_server.rs` already documents this exact class happening once before, when
+the names lacked the `simon_` prefix and all three dashboards were blank.
+
+* `simon_gpu_clock_graphics_mhz` — the exporter published the same number as
+  `simon_gpu_clock_core_mhz`. NVML calls it the graphics clock and the ontology
+  publishes `gpu.{n}.clocks.graphics`, so `core` was the one name in the crate
+  that matched nothing. Renamed.
+* `simon_swap_used_bytes`, `simon_uptime_seconds`, `simon_cpu_temperature_celsius`,
+  `simon_disk_read_bytes_total`, `simon_disk_write_bytes_total` — all quantities
+  the crate already collects and none of them published. Added.
+
+**The guard took three attempts and each failure is the useful part.**
+
+1. **Searched the publishers' source text.** Passed while the defect was
+   restored, because the comment explaining the defect contained the name it
+   was looking for. **A test a comment can satisfy is not a test.**
+2. **Searched the rendered output.** Now flagged
+   `simon_cpu_temperature_celsius` on a machine whose CPU exposes no readable
+   sensor. Output cannot distinguish "the exporter does not know this name"
+   from "it knows it and had nothing to report", and only the first is a defect.
+3. **Searched the source with comments stripped.** That is the question actually
+   worth asking — does the code contain a publisher for this name — and neither
+   prose nor an absent sensor can answer it. Verified by restoring the `core`
+   rename and watching it fail.
+
+**A test was also deleted.** The per-instance-label check from the entry below
+demanded an exemption for every legitimately whole-machine metric:
+`simon_gpu_count`, then `simon_swap_used_bytes`, then `simon_uptime_seconds` —
+three in one sitting, none a defect. **A test that needs a growing allowlist to
+stay green has stopped testing an invariant and started describing the current
+output.** The failure it existed to catch produces duplicate samples, and
+`no_two_samples_share_a_name_and_labels` catches that exactly, with no heuristic.
 
 ### A metrics endpoint Prometheus would reject in full
 
