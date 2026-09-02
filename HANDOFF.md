@@ -126,7 +126,7 @@ Since the tag, on `master` and green on all three platforms:
 | `15ea71e` | Doing the thing the previous commit deferred |
 | `a50b77d` | The sentinel put back at the point of use |
 | `d4c4281` | Two auth flags that decide nothing, and the probe that found them |
-| `HEAD` | The last unaudited surface, and a fix that never reached the screen |
+| `69f1766` | The last unaudited surface, and a fix that never reached the screen |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
