@@ -128,7 +128,7 @@ Since the tag, on `master` and green on all three platforms:
 | `d4c4281` | Two auth flags that decide nothing, and the probe that found them |
 | `69f1766` | The last unaudited surface, and a fix that never reached the screen |
 | `fc1667e` | A contract that was right for a loop and wrong for everything else |
-| `HEAD` | Checking my own open-work item, which was already stale |
+| `86fc72c` | Checking my own open-work item, which was already stale |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
