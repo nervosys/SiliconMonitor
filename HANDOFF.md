@@ -114,7 +114,7 @@ Since the tag, on `master` and green on all three platforms:
 | `8ed7e71` | Zero hertz and zero swap, handed to an agent as facts |
 | `e425908` | Every network rate in the crate was zero, on every platform |
 | `17dd4fa` | Two fabricated zeros next to the comment explaining why zero is wrong |
-| `HEAD` | A 16 MB drive reported as sizeless, by integer division |
+| `25bcca8` | A 16 MB drive reported as sizeless, by integer division |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
