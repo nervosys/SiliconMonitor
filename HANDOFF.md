@@ -124,7 +124,7 @@ Since the tag, on `master` and green on all three platforms:
 | `d4da86c` | Two Prometheus renderers, and the server serves the worse one |
 | `5796371` | The instance in the metric name, and a rate called a total |
 | `15ea71e` | Doing the thing the previous commit deferred |
-| `HEAD` | The sentinel put back at the point of use |
+| `a50b77d` | The sentinel put back at the point of use |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
