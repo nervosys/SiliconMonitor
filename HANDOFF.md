@@ -129,7 +129,7 @@ Since the tag, on `master` and green on all three platforms:
 | `69f1766` | The last unaudited surface, and a fix that never reached the screen |
 | `fc1667e` | A contract that was right for a loop and wrong for everything else |
 | `86fc72c` | Checking my own open-work item, which was already stale |
-| `HEAD` | Disk throughput, zero on every platform, drawn on three surfaces |
+| `f64f5ea` | Disk throughput, zero on every platform, drawn on three surfaces |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
