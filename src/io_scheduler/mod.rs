@@ -108,33 +108,48 @@ pub struct BlockDeviceIo {
 }
 
 impl BlockDeviceIo {
-    /// Estimated read IOPS from stats.
-    pub fn read_iops_from_stats(&self) -> f64 {
-        if self.stats.read_time_ms > 0 {
-            self.stats.reads_completed as f64 / (self.stats.read_time_ms as f64 / 1000.0)
-        } else {
-            0.0
+    /// Read operations per second of time the device spent reading, over the
+    /// whole of its uptime. `None` when it has not spent any.
+    ///
+    /// **Two things this is not.** It is not a current rate: `/sys/block/*/stat`
+    /// gives counters cumulative since boot, so this is a lifetime average and
+    /// will barely move under a burst of load. A caller wanting current IOPS
+    /// must read [`IoStats`] twice and difference it. And the denominator is
+    /// time *spent* reading rather than elapsed time, so the figure is IOPS
+    /// while busy, which on a mostly-idle device is far above its IOPS.
+    ///
+    /// `None` rather than the `0.0` this returned before, because
+    /// `read_time_ms == 0` has two meanings and neither is "this device does
+    /// zero reads per second": either it has genuinely never served a read, or
+    /// the counters were never populated -- which is every platform but Linux,
+    /// where [`IoStats`] is constructed with zeros.
+    pub fn read_iops_from_stats(&self) -> Option<f64> {
+        if self.stats.read_time_ms == 0 {
+            return None;
         }
+        Some(self.stats.reads_completed as f64 / (self.stats.read_time_ms as f64 / 1000.0))
     }
 
-    /// Estimated write IOPS from stats.
-    pub fn write_iops_from_stats(&self) -> f64 {
-        if self.stats.write_time_ms > 0 {
-            self.stats.writes_completed as f64 / (self.stats.write_time_ms as f64 / 1000.0)
-        } else {
-            0.0
+    /// Write operations per second of time spent writing. See
+    /// [`Self::read_iops_from_stats`] for what this figure is and is not.
+    pub fn write_iops_from_stats(&self) -> Option<f64> {
+        if self.stats.write_time_ms == 0 {
+            return None;
         }
+        Some(self.stats.writes_completed as f64 / (self.stats.write_time_ms as f64 / 1000.0))
     }
 
-    /// Read throughput in MB/s (from stats).
-    pub fn read_throughput_mbs(&self) -> f64 {
-        if self.stats.read_time_ms > 0 {
+    /// Read throughput in MB/s over time spent reading. See
+    /// [`Self::read_iops_from_stats`] for what this figure is and is not.
+    pub fn read_throughput_mbs(&self) -> Option<f64> {
+        if self.stats.read_time_ms == 0 {
+            return None;
+        }
+        Some(
             (self.stats.sectors_read as f64 * 512.0)
                 / (self.stats.read_time_ms as f64 / 1000.0)
-                / 1_000_000.0
-        } else {
-            0.0
-        }
+                / 1_000_000.0,
+        )
     }
 
     /// Whether the scheduler is optimal for this device type, or `None` when

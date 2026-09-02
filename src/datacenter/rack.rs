@@ -84,22 +84,32 @@ impl RackInfo {
         }
     }
 
-    /// Power utilization as percentage
-    pub fn power_utilization(&self) -> f64 {
-        if self.max_power_watts > 0.0 {
-            (self.total_power_watts / self.max_power_watts) * 100.0
-        } else {
-            0.0
+    /// Draw as a percentage of the rack's power budget, or `None` when no
+    /// budget has been configured.
+    ///
+    /// Both of these returned `0.0` for the unconfigured case, which reads as
+    /// "this rack is drawing nothing" — the most reassuring possible answer to
+    /// a question nobody supplied the inputs for. `max_power_watts` defaults to
+    /// `0.0` in the builder precisely because it is not knowable without being
+    /// told, so the unconfigured case is the common one.
+    pub fn power_utilization(&self) -> Option<f64> {
+        if self.max_power_watts <= 0.0 {
+            return None;
         }
+        Some((self.total_power_watts / self.max_power_watts) * 100.0)
     }
 
-    /// Space utilization as percentage
-    pub fn space_utilization(&self) -> f64 {
-        if self.total_units > 0 {
-            (self.used_units as f64 / self.total_units as f64) * 100.0
-        } else {
-            0.0
+    /// Occupied units as a percentage of the rack's height, or `None` when the
+    /// height is zero. See [`Self::power_utilization`].
+    ///
+    /// Note that the builder's default height is 42U, the standard full rack,
+    /// so a caller who never set one gets a percentage against an assumed size
+    /// rather than `None`.
+    pub fn space_utilization(&self) -> Option<f64> {
+        if self.total_units == 0 {
+            return None;
         }
+        Some((self.used_units as f64 / self.total_units as f64) * 100.0)
     }
 
     /// Detect from environment variables

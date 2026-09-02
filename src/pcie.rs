@@ -14,13 +14,15 @@
 //! for dev in &devices {
 //!     println!("{} [{:04x}:{:04x}]", dev.name, dev.vendor_id, dev.device_id);
 //!     println!("  BDF: {}", dev.bdf);
-//!     println!("  Link: Gen{} x{} ({:.1} GB/s max)",
-//!         dev.current_link_speed.gen_number(),
-//!         dev.current_link_width,
-//!         dev.max_bandwidth_gbps(),
-//!     );
-//!     if let Some(ref cap) = dev.max_link_speed {
-//!         println!("  Capable: Gen{} x{}", cap.gen_number(), dev.max_link_width);
+//!     // A link speed sysfs did not give us reads as `None`, not as Gen0.
+//!     match (dev.current_link_speed.gen_number(), dev.max_bandwidth_gbps()) {
+//!         (Some(gen), Some(bw)) => println!(
+//!             "  Link: Gen{} x{} ({:.1} GB/s max)", gen, dev.current_link_width, bw
+//!         ),
+//!         _ => println!("  Link: speed not read, x{}", dev.current_link_width),
+//!     }
+//!     if let Some(gen) = dev.max_link_speed.and_then(|s| s.gen_number()) {
+//!         println!("  Capable: Gen{} x{}", gen, dev.max_link_width);
 //!     }
 //! }
 //! # Ok(())
@@ -49,44 +51,54 @@ pub enum PcieLinkSpeed {
 }
 
 impl PcieLinkSpeed {
-    /// Get the generation number (1–6)
-    pub fn gen_number(&self) -> u8 {
+    /// Generation number (1-6), or `None` for a link whose speed was not read.
+    ///
+    /// `Unknown` used to answer `0`, and there is no PCIe Gen0. All three
+    /// lookups on this enum did it, and because `Unknown` is what `from_sysfs`
+    /// returns for anything it fails to parse, each one turned an unreadable
+    /// link into a specific, wrong, low reading.
+    pub fn gen_number(&self) -> Option<u8> {
         match self {
-            Self::Gen1 => 1,
-            Self::Gen2 => 2,
-            Self::Gen3 => 3,
-            Self::Gen4 => 4,
-            Self::Gen5 => 5,
-            Self::Gen6 => 6,
-            Self::Unknown => 0,
+            Self::Gen1 => Some(1),
+            Self::Gen2 => Some(2),
+            Self::Gen3 => Some(3),
+            Self::Gen4 => Some(4),
+            Self::Gen5 => Some(5),
+            Self::Gen6 => Some(6),
+            Self::Unknown => None,
         }
     }
 
-    /// Transfer rate in GT/s (gigatransfers per second)
-    pub fn transfer_rate_gts(&self) -> f64 {
+    /// Transfer rate in GT/s (gigatransfers per second). See [`Self::gen_number`].
+    pub fn transfer_rate_gts(&self) -> Option<f64> {
         match self {
-            Self::Gen1 => 2.5,
-            Self::Gen2 => 5.0,
-            Self::Gen3 => 8.0,
-            Self::Gen4 => 16.0,
-            Self::Gen5 => 32.0,
-            Self::Gen6 => 64.0,
-            Self::Unknown => 0.0,
+            Self::Gen1 => Some(2.5),
+            Self::Gen2 => Some(5.0),
+            Self::Gen3 => Some(8.0),
+            Self::Gen4 => Some(16.0),
+            Self::Gen5 => Some(32.0),
+            Self::Gen6 => Some(64.0),
+            Self::Unknown => None,
         }
     }
 
-    /// Per-lane bandwidth in GB/s (after 8b/10b or 128b/130b encoding overhead)
-    pub fn per_lane_gbps(&self) -> f64 {
+    /// Per-lane bandwidth in GB/s, after 8b/10b or 128b/130b encoding overhead.
+    ///
+    /// See [`Self::gen_number`]. This one did the most damage: it feeds
+    /// [`PcieDevice::max_bandwidth_gbps`], which is summed across every device
+    /// into an aggregate figure, so a link of unknown speed contributed 0 GB/s
+    /// to a total presented as the bus's bandwidth.
+    pub fn per_lane_gbps(&self) -> Option<f64> {
         match self {
             // Gen1/2: 8b/10b encoding (20% overhead)
-            Self::Gen1 => 0.25, // 2.5 GT/s * 8/10 / 8
-            Self::Gen2 => 0.5,  // 5.0 GT/s * 8/10 / 8
+            Self::Gen1 => Some(0.25), // 2.5 GT/s * 8/10 / 8
+            Self::Gen2 => Some(0.5),  // 5.0 GT/s * 8/10 / 8
             // Gen3+: 128b/130b encoding (~1.5% overhead)
-            Self::Gen3 => 0.985, // ~1 GB/s per lane
-            Self::Gen4 => 1.969, // ~2 GB/s per lane
-            Self::Gen5 => 3.938, // ~4 GB/s per lane
-            Self::Gen6 => 7.877, // ~8 GB/s per lane (PAM4)
-            Self::Unknown => 0.0,
+            Self::Gen3 => Some(0.985), // ~1 GB/s per lane
+            Self::Gen4 => Some(1.969), // ~2 GB/s per lane
+            Self::Gen5 => Some(3.938), // ~4 GB/s per lane
+            Self::Gen6 => Some(7.877), // ~8 GB/s per lane (PAM4)
+            Self::Unknown => None,
         }
     }
 
@@ -228,25 +240,43 @@ pub struct PcieDevice {
 }
 
 impl PcieDevice {
-    /// Maximum bandwidth in GB/s based on current link speed and width
-    pub fn max_bandwidth_gbps(&self) -> f64 {
-        self.current_link_speed.per_lane_gbps() * self.current_link_width as f64
+    /// Bandwidth in GB/s at the current link speed and width, or `None` when
+    /// the speed was not read.
+    pub fn max_bandwidth_gbps(&self) -> Option<f64> {
+        Some(self.current_link_speed.per_lane_gbps()? * self.current_link_width as f64)
     }
 
-    /// Maximum bandwidth in GB/s based on device capability
-    pub fn capable_bandwidth_gbps(&self) -> f64 {
+    /// Bandwidth in GB/s the device is capable of. See [`Self::max_bandwidth_gbps`].
+    pub fn capable_bandwidth_gbps(&self) -> Option<f64> {
         let speed = self.max_link_speed.unwrap_or(self.current_link_speed);
-        speed.per_lane_gbps() * self.max_link_width as f64
+        Some(speed.per_lane_gbps()? * self.max_link_width as f64)
     }
 
-    /// Whether the link is running below its maximum capability
-    pub fn is_downgraded(&self) -> bool {
-        if let Some(max_speed) = &self.max_link_speed {
-            if max_speed.gen_number() > self.current_link_speed.gen_number() {
-                return true;
-            }
+    /// Whether the link is running below its maximum capability, or `None` when
+    /// there is not enough read to say.
+    ///
+    /// This returned `bool` and compared generation numbers in which `Unknown`
+    /// was `0`, so it got the answer wrong in both directions. A device whose
+    /// *maximum* speed was unreadable compared as Gen0 and so never looked
+    /// downgraded; a device whose *current* speed was unreadable compared as
+    /// Gen0 against a known maximum and was reported as degraded -- an alarm
+    /// raised about a link nobody measured.
+    ///
+    /// Width is the cheaper signal and still settles it alone: a link narrower
+    /// than its maximum is downgraded whatever the speeds turn out to be. Only
+    /// when width says no does the speed comparison matter, and that needs both
+    /// speeds.
+    pub fn is_downgraded(&self) -> Option<bool> {
+        if self.current_link_width < self.max_link_width {
+            return Some(true);
         }
-        self.current_link_width < self.max_link_width
+        match &self.max_link_speed {
+            Some(max_speed) => {
+                Some(max_speed.gen_number()? > self.current_link_speed.gen_number()?)
+            }
+            // No maximum to compare against, and width is at its full value.
+            None => Some(false),
+        }
     }
 
     /// Whether this is a GPU device
@@ -289,11 +319,17 @@ impl PcieMonitor {
             .collect())
     }
 
-    /// Get devices with downgraded PCIe links (running below max capability)
+    /// Devices known to be running below their maximum capability.
+    ///
+    /// A device whose link speed was not readable is left out rather than
+    /// included: this list is what a caller acts on, and putting an unmeasured
+    /// link in it is the alarm described on [`PcieDevice::is_downgraded`].
+    /// `enumerate()` still returns those devices, so a caller who wants to see
+    /// them can filter for `is_downgraded() == None`.
     pub fn downgraded_devices() -> Result<Vec<PcieDevice>, crate::error::SimonError> {
         Ok(Self::enumerate()?
             .into_iter()
-            .filter(|d| d.is_downgraded())
+            .filter(|d| d.is_downgraded() == Some(true))
             .collect())
     }
 
@@ -457,30 +493,51 @@ pub struct PcieBandwidthSummary {
     pub total_devices: usize,
     /// Number of GPU devices
     pub gpu_devices: usize,
-    /// Number of devices running below max capability
+    /// Number of devices known to be running below max capability.
     pub downgraded_devices: usize,
-    /// Total aggregate bandwidth (GB/s)
-    pub total_bandwidth_gbps: f64,
-    /// Highest PCIe generation found
-    pub max_generation: u8,
+    /// Devices whose link speed was not readable.
+    ///
+    /// These are excluded from [`Self::total_bandwidth_gbps`] and from
+    /// [`Self::downgraded_devices`] rather than counted as zero and as healthy.
+    /// A non-zero value here is how a reader knows the other two are partial.
+    pub unreadable_devices: usize,
+    /// Aggregate bandwidth in GB/s over the devices whose speed was read, or
+    /// `None` if none of them were.
+    pub total_bandwidth_gbps: Option<f64>,
+    /// Highest PCIe generation found, or `None` if no link speed was read.
+    pub max_generation: Option<u8>,
 }
 
 impl PcieBandwidthSummary {
     /// Generate a summary from a list of devices
     pub fn from_devices(devices: &[PcieDevice]) -> Self {
         let gpu_count = devices.iter().filter(|d| d.is_gpu()).count();
-        let downgraded = devices.iter().filter(|d| d.is_downgraded()).count();
-        let total_bw: f64 = devices.iter().map(|d| d.max_bandwidth_gbps()).sum();
+        let downgraded = devices
+            .iter()
+            .filter(|d| d.is_downgraded() == Some(true))
+            .count();
+
+        let bandwidths: Vec<f64> = devices
+            .iter()
+            .filter_map(|d| d.max_bandwidth_gbps())
+            .collect();
+        let unreadable = devices.len() - bandwidths.len();
+        let total_bw = if bandwidths.is_empty() {
+            None
+        } else {
+            Some(bandwidths.iter().sum())
+        };
+
         let max_gen = devices
             .iter()
-            .map(|d| d.current_link_speed.gen_number())
-            .max()
-            .unwrap_or(0);
+            .filter_map(|d| d.current_link_speed.gen_number())
+            .max();
 
         Self {
             total_devices: devices.len(),
             gpu_devices: gpu_count,
             downgraded_devices: downgraded,
+            unreadable_devices: unreadable,
             total_bandwidth_gbps: total_bw,
             max_generation: max_gen,
         }
@@ -495,8 +552,8 @@ mod tests {
     fn test_link_speed_gen3() {
         let speed = PcieLinkSpeed::from_sysfs("8.0 GT/s PCIe");
         assert_eq!(speed, PcieLinkSpeed::Gen3);
-        assert_eq!(speed.gen_number(), 3);
-        assert!((speed.per_lane_gbps() - 0.985).abs() < 0.01);
+        assert_eq!(speed.gen_number(), Some(3));
+        assert!((speed.per_lane_gbps().unwrap() - 0.985).abs() < 0.01);
     }
 
     #[test]
@@ -525,8 +582,8 @@ mod tests {
             power_state: Some("D0".into()),
         };
         // Gen4 x16 should be ~31.5 GB/s
-        assert!(dev.max_bandwidth_gbps() > 30.0);
-        assert!(!dev.is_downgraded());
+        assert!(dev.max_bandwidth_gbps().unwrap() > 30.0);
+        assert_eq!(dev.is_downgraded(), Some(false));
     }
 
     #[test]
@@ -548,7 +605,7 @@ mod tests {
             subsystem: None,
             power_state: None,
         };
-        assert!(dev.is_downgraded());
+        assert_eq!(dev.is_downgraded(), Some(true));
     }
 
     #[test]
@@ -580,6 +637,47 @@ mod tests {
         let summary = PcieBandwidthSummary::from_devices(&devices);
         assert_eq!(summary.gpu_devices, 1);
         assert_eq!(summary.downgraded_devices, 0);
-        assert_eq!(summary.max_generation, 4);
+        assert_eq!(summary.unreadable_devices, 0);
+        assert_eq!(summary.max_generation, Some(4));
+    }
+
+    /// A device whose link speed did not parse must not read as a healthy Gen0
+    /// contributing 0 GB/s.
+    #[test]
+    fn an_unread_link_speed_is_absent_rather_than_zero() {
+        let unknown = PcieLinkSpeed::from_sysfs("something the kernel did not give us");
+        assert_eq!(unknown, PcieLinkSpeed::Unknown);
+        assert_eq!(unknown.gen_number(), None);
+        assert_eq!(unknown.transfer_rate_gts(), None);
+        assert_eq!(unknown.per_lane_gbps(), None);
+
+        let dev = PcieDevice {
+            bdf: "0000:02:00.0".into(),
+            vendor_id: 0x8086,
+            device_id: 0x1234,
+            device_class: PcieDeviceClass::VgaCompatible,
+            name: "Unreadable link".into(),
+            vendor_name: "Intel".into(),
+            numa_node: 0,
+            iommu_group: None,
+            current_link_speed: PcieLinkSpeed::Unknown,
+            max_link_speed: Some(PcieLinkSpeed::Gen4),
+            current_link_width: 16,
+            max_link_width: 16,
+            driver: None,
+            subsystem: None,
+            power_state: None,
+        };
+        assert_eq!(dev.max_bandwidth_gbps(), None);
+        // Not `Some(true)`: comparing Gen0 against Gen4 used to raise a
+        // degradation alarm about a link that was never measured.
+        assert_eq!(dev.is_downgraded(), None);
+
+        let summary = PcieBandwidthSummary::from_devices(&[dev]);
+        assert_eq!(summary.total_devices, 1);
+        assert_eq!(summary.unreadable_devices, 1);
+        assert_eq!(summary.downgraded_devices, 0);
+        assert_eq!(summary.total_bandwidth_gbps, None);
+        assert_eq!(summary.max_generation, None);
     }
 }
