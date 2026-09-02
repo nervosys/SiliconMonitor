@@ -620,10 +620,21 @@ pub fn get_all_tool_definitions() -> Vec<ToolDefinition> {
     });
     tools.push(ToolDefinition {
         name: "get_usb_device_details".to_string(),
-        description: "Get detailed information about a specific USB device.".to_string(),
-        parameters: json!({"type": "object", "properties": {"bus": {"type": "integer", "description": "USB bus number"}, "address": {"type": "integer", "description": "Device address on bus"}}, "required": ["bus", "address"]}),
+        description: concat!(
+            "Get detailed information about a specific USB device, addressed ",
+            "by the `address` field from `get_usb_devices`."
+        )
+        .to_string(),
+        // Was `bus` and `address` as integers. Bus and port do not identify a
+        // device -- on Windows every device reports bus 0 port 0 -- so the
+        // catalogue was telling agents to ask a question that could only ever
+        // return the first device.
+        parameters: json!({"type": "object", "properties": {"address": {"type": "string", "description": "Device address, as returned in the `address` field of get_usb_devices"}}, "required": ["address"]}),
         category: ToolCategory::Usb,
-        example: Some("get_usb_device_details()".to_string()),
+        example: Some(
+            "get_usb_device_details(address=\"usb_vid_046d_pid_c548_mi_01_9_24c94812_0_0001\")"
+                .to_string(),
+        ),
     });
 
     // `get_historical_data` and `compare_metrics` were advertised here with full
@@ -2540,7 +2551,7 @@ impl AiDataApi {
             .and_then(|v| v.as_str())
             .unwrap_or("all");
         let monitor = UsbMonitor::new().map_err(|e| SimonError::HardwareError(e.to_string()))?;
-        let devices: Vec<_> = monitor.devices().iter().filter(|d| class_filter == "all" || matches!((&d.class, class_filter), (UsbDeviceClass::Audio, "audio") | (UsbDeviceClass::Hid, "hid") | (UsbDeviceClass::MassStorage, "storage") | (UsbDeviceClass::Hub, "hub") | (UsbDeviceClass::Video, "video"))).map(|d| json!({"bus": d.bus_number, "port": d.port_number, "vendor_id": d.vendor_id.map(|v| format!("{v:04x}")), "product_id": d.product_id.map(|p| format!("{p:04x}")), "vendor_name": d.manufacturer, "product_name": d.product, "class": format!("{:?}", d.class), "speed": format!("{:?}", d.speed)})).collect();
+        let devices: Vec<_> = monitor.devices().iter().filter(|d| class_filter == "all" || matches!((&d.class, class_filter), (UsbDeviceClass::Audio, "audio") | (UsbDeviceClass::Hid, "hid") | (UsbDeviceClass::MassStorage, "storage") | (UsbDeviceClass::Hub, "hub") | (UsbDeviceClass::Video, "video"))).map(|d| json!({"address": d.address, "vendor_id": d.vendor_id.map(|v| format!("{v:04x}")), "product_id": d.product_id.map(|p| format!("{p:04x}")), "vendor_name": d.manufacturer, "product_name": d.product, "class": format!("{:?}", d.class), "speed": format!("{:?}", d.speed)})).collect();
         Ok(json!(devices))
     }
     pub(crate) fn tool_get_usb_device_details(
@@ -2548,29 +2559,42 @@ impl AiDataApi {
         params: serde_json::Value,
     ) -> Result<serde_json::Value> {
         use crate::usb::UsbMonitor;
-        let bus = params
-            .get("bus")
-            .and_then(|v| v.as_u64())
-            .ok_or_else(|| SimonError::InvalidArgument("bus required".to_string()))?
-            as u8;
+
+        // Addressed by `UsbDevice::address`, the same string the ontology uses
+        // for `usb.{addr}` and the same one `get_usb_devices` returns.
+        //
+        // This took a `bus` and an `address` and matched them against
+        // `bus_number` and `port_number`. When the id scheme moved to the
+        // platform device path, the Windows reader stopped filling those two --
+        // they are `0` and `0` for every device it enumerates -- and this
+        // lookup silently collapsed: **39 devices, one distinct (bus, port)
+        // pair**, so the tool could only ever return whichever device came
+        // first and every other one on the machine became unreachable.
+        //
+        // I introduced that when I changed the id scheme, having written the
+        // note two commits earlier that says to ask "what else stores this?"
+        // after a reader change. Asking it of `bus_number` would have found
+        // this immediately.
         let address = params
             .get("address")
-            .and_then(|v| v.as_u64())
-            .ok_or_else(|| SimonError::InvalidArgument("address required".to_string()))?
-            as u8;
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| {
+                SimonError::InvalidArgument(
+                    "address required: the device address from get_usb_devices, \
+                     e.g. \"usb_vid_046d_pid_c548_mi_01_9_24c94812_0_0001\""
+                        .to_string(),
+                )
+            })?;
         let monitor = UsbMonitor::new().map_err(|e| SimonError::HardwareError(e.to_string()))?;
         let device = monitor
             .devices()
             .iter()
-            .find(|d| d.bus_number == bus && d.port_number == address)
+            .find(|d| d.address == address)
             .ok_or_else(|| {
-                SimonError::DeviceNotFound(format!(
-                    "USB device at bus {} address {} not found",
-                    bus, address
-                ))
+                SimonError::DeviceNotFound(format!("no USB device with address {address}"))
             })?;
         Ok(
-            json!({"bus": device.bus_number, "port": device.port_number, "vendor_id": device.vendor_id.map(|v| format!("{v:04x}")), "product_id": device.product_id.map(|p| format!("{p:04x}")), "vendor_name": device.manufacturer, "product_name": device.product, "class": format!("{:?}", device.class), "speed": format!("{:?}", device.speed)}),
+            json!({"address": device.address, "vendor_id": device.vendor_id.map(|v| format!("{v:04x}")), "product_id": device.product_id.map(|p| format!("{p:04x}")), "vendor_name": device.manufacturer, "product_name": device.product, "class": format!("{:?}", device.class), "speed": format!("{:?}", device.speed)}),
         )
     }
 

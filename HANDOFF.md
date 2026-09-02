@@ -115,9 +115,56 @@ Since the tag, on `master` and green on all three platforms:
 | `e425908` | Every network rate in the crate was zero, on every platform |
 | `17dd4fa` | Two fabricated zeros next to the comment explaining why zero is wrong |
 | `25bcca8` | A 16 MB drive reported as sizeless, by integer division |
+| `HEAD` | A regression I introduced, found by the sweep that follows the fix |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### A regression I introduced, found by the sweep that follows the fix
+
+The tool sweep had only called each tool with `{}`, so the eight that need
+arguments returned "X is required" before any reader ran. Calling them with real
+values — a drive name, a pid, an interface, a search pattern, both a valid and a
+deliberately invalid one each — found the untested half behaving well.
+
+Except one, and it was mine.
+
+`get_usb_device_details` finds a device by `bus_number == bus && port_number ==
+address`. When the id scheme moved to the platform device path, the Windows
+reader stopped filling those fields — they are `0` and `0` for every device it
+enumerates. So:
+
+```
+39 devices -> 1 distinct (bus, port) pair
+```
+
+**The tool could only ever return whichever device came first, and every other
+USB device on the machine became unreachable through it.** `get_usb_devices` was
+also still advertising `bus` and `port`, so an agent following the catalogue
+would ask a question that cannot be answered.
+
+Both now use `address`, the same key the ontology uses for `usb.{addr}`, and the
+tool definition says so with a worked example. **39 of 39 advertised addresses
+resolve**, which is the property that was silently false.
+
+**What makes this worth its own entry: I wrote the rule and then broke it.** Two
+commits earlier this file says, in as many words, "the question *what else
+stores this?* is worth asking after every reader fix, not only after the ones
+that look structural". I changed what identifies a USB device and did not ask it
+of `bus_number`. One grep would have found the call site.
+
+The sweep that caught it is the same one that found the original defects, run
+again after the change. **A verification pass is not finished when the fix
+lands; the fix is a change like any other and deserves the pass that found the
+bug.**
+
+Two things checked and cleared while here: displays round-trip correctly
+(`get_display_list` hands out `\.\DISPLAY1` and `get_display_details` accepts
+it — my first probe passed an integer, which is my error and not the code's),
+and `search_processes` with no matches returns `match_count: 0` with
+`success: true`, which is right: a search that found nothing succeeded.
+`apply_profile_setting` was deliberately not exercised, because it changes real
+system settings.
 
 ### A 16 MB drive reported as sizeless, by integer division
 
