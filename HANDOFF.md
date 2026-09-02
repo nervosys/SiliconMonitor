@@ -105,9 +105,52 @@ Since the tag, on `master` and green on all three platforms:
 | `5bd14aa` | The last six enumerators, and what the list was really for |
 | `7fcddde` | The last swallow, a real USB key, and a swap series that changed meaning |
 | `2276c9c` | Per-core clocks, from the counter that was named three fixes ago |
+| `HEAD` | A flat battery that was never read, and the test that caught me |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### A flat battery that was never read, and the test that caught me
+
+`BatteryInfo::charge_percent` was `f32`, and `battery/mod.rs` built it with
+`supply.capacity_percent.unwrap_or(0)` over an `Option<u8>` that `power_supply`
+had modelled correctly. The resolver then pushed it as `Reading::measured` with
+no guard, so **`power.battery.percentage` resolved 0% as a measurement** on a
+laptop whose gauge could not be read.
+
+Zero is not a neutral wrong answer for this field. It means "about to shut
+down". An agent asked whether it could start a long job would have said no. It
+is `Option<f32>` now, `push_opt` in the resolver, and the TUI prints
+"charge unread" rather than "0%".
+
+**And then the interesting part.** Running the gate, a conformance test failed:
+
+```
+a_reading_never_resolves_weaker_than_its_entity_declares ... FAILED
+```
+
+Not the battery — the **per-core frequency from the entry above**. When I added
+it I reasoned that "the entity declares Measured, Windows now publishes Derived,
+nothing enforces entity-versus-reading provenance so a mismatch is honest at the
+reading level". **That was wrong, and this crate has a test for it**, whose
+assertion says exactly what to do instead:
+
+> the declaration should carry the weakest provenance its rows can have
+
+So `cpu.core.{n}.frequency` is declared `Derived` — the weakest any platform
+produces — and Linux over-delivers `Measured`, which the test allows on purpose
+and documents why. A `Derived` entity must name inputs that exist, which
+required publishing `cpu.core.{n}.frequency.max`: the rated maximum the Windows
+reader was already multiplying and then discarding.
+
+**Two things worth keeping.** First, the failure was **order-dependent**: the
+PDH query is process-global, so the test passed alone (its `snapshot()` primed
+the counter and got nothing) and failed beside its siblings (something else had
+primed it). It would have been easy to rerun it in isolation, see green, and
+conclude the suite was flaky. Second, and worse: **I had explicitly considered
+this rule, guessed it was unenforced, and shipped on the guess.** The check took
+one grep. When you find yourself reasoning about whether an invariant is
+enforced, go and look.
 
 ### Per-core clocks, from the counter that was named three fixes ago
 
@@ -3953,22 +3996,10 @@ it uncovers are, and there are always more than expected. Item 1 turned up five.
 
 **It has recurred, and this is the 7.0.0 list.**
 
-4. **`BatteryInfo::charge_percent` reports 0% when the charge was not read.**
-   *This one is live and is the first to fix.* `power_supply.rs` models it
-   correctly as `Option<u8>` — its own doc comment demonstrates
-   `if let Some(capacity) = supply.capacity_percent` — and `battery/mod.rs:102`
-   discards that with `unwrap_or(0)` into an `f32` field that cannot say "not
-   read". The ontology then publishes it: `resolve.rs` pushes `charge_percent`
-   as `Reading::measured` with no guard, so `power.battery.percentage` resolves
-   **0% as a measurement** on a laptop whose capacity is unreadable.
-
-   0% is not a neutral wrong answer. It means "about to shut down", and an agent
-   acting on it would defer work or warn a user. Wants `Option<f32>` on
-   `BatteryInfo` and a `push_opt` in the resolver; both are breaking, which is
-   the only reason it is here rather than fixed. **No non-breaking mitigation
-   exists** — the `Option` is destroyed at construction, so nothing downstream
-   can recover it.
-
+4. ~~**`BatteryInfo::charge_percent` reports 0% when the charge was not read.**~~
+   **Done in 6.0.0.** `Option<f32>`, `push_opt` in the resolver, and the TUI
+   prints "charge unread". Fixing it turned up a provenance bug in an unrelated
+   entry — see the entry near the top of this file.
 5. ~~**`cpufreq::is_turbo` returns `bool` where it means "cannot tell".**~~
    **Done.** `Option<bool>`, and the ">95% of max" guess removed with it — that
    branch was the one this entry under-described, and the one that fires on most

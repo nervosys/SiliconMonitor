@@ -31,7 +31,16 @@ pub struct BatteryInfo {
     pub model: Option<String>,
     pub technology: Option<String>,
     pub serial_number: Option<String>,
-    pub charge_percent: f32,
+    /// State of charge, or `None` where it was not read.
+    ///
+    /// This was `f32` and an unread charge became `0.0`, via an
+    /// `unwrap_or(0)` over the `Option<u8>` that `power_supply.rs` models
+    /// correctly. **Zero is not a neutral wrong answer here**: it means "about
+    /// to shut down", and `power.battery.percentage` published it as a
+    /// measurement, so an agent asked whether it could start a long job on a
+    /// laptop with an unreadable gauge would have been told the battery was
+    /// flat.
+    pub charge_percent: Option<f32>,
     pub state: ChargingState,
     pub health: BatteryHealth,
     pub voltage_mv: Option<u32>,
@@ -104,7 +113,9 @@ impl BatteryMonitor {
                     model: supply.model_name.clone(),
                     technology: supply.technology.clone(),
                     serial_number: supply.serial_number.clone(),
-                    charge_percent: supply.capacity_percent.unwrap_or(0) as f32,
+                    // The `Option` that `power_supply` went to the trouble of
+                    // producing, kept rather than flattened to a sentinel.
+                    charge_percent: supply.capacity_percent.map(f32::from),
                     state,
                     health,
                     voltage_mv: supply.voltage_now_mv,

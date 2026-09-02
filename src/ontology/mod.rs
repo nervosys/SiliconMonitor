@@ -423,21 +423,38 @@ impl Ontology {
              one reading rather than two.",
         ));
         add(Entity::new(
+            "cpu.core.{n}.frequency.max",
+            D::Cpu,
+            K::Limit,
+            Some(U::Megahertz),
+            P::Specification,
+            true,
+            concat!(
+                "Rated maximum core clock, as the firmware reports it. A ",
+                "boosting core can and does exceed it."
+            ),
+        ));
+        add(Entity::new(
             "cpu.core.{n}.frequency",
             D::Cpu,
             K::Measurement,
             Some(U::Megahertz),
-            P::Measured,
+            // Declared as the weakest provenance any platform's rows can
+            // carry, which is what `a_reading_never_resolves_weaker_than_                // its_entity_declares` asks for. Linux reads
+            // `scaling_cur_freq` and over-delivers `Measured`; Windows has
+            // no unprivileged API for a current clock and multiplies the
+            // rated maximum by the kernel's delivered-performance counter,
+            // which is a derivation and says so.
+            P::Derived,
             true,
             concat!(
-                "Current core clock. Null when the platform reports no per-core ",
-                "clock. Provenance varies by platform and each reading carries ",
-                "its own: Linux reads `scaling_cur_freq` and is measured, while ",
-                "Windows has no unprivileged API for a current clock and ",
-                "multiplies the nominal maximum by the kernel's delivered ",
-                "performance counter, which is derived."
+                "Current core clock. Null when the platform reports no ",
+                "per-core clock. Each reading carries its own provenance: ",
+                "Linux measures it from `scaling_cur_freq`, Windows derives ",
+                "it from the rated maximum and `% Processor Performance`."
             ),
-        ));
+        )
+        .derived(&["cpu.core.{n}.frequency.max"]));
         add(Entity::new(
             "cpu.core.{n}.frequency.min",
             D::Cpu,

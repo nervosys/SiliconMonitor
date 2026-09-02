@@ -448,6 +448,19 @@ fn resolve_cpu(out: &mut Vec<Reading>) {
                 FREQUENCY_ABSENT,
             )),
         }
+        // The rated maximum, which the Windows reader multiplies by delivered
+        // performance to get the figure above -- so it is published rather than
+        // discarded, and `cpu.core.{n}.frequency` names it as its input.
+        push_opt(
+            out,
+            format!("{base}.frequency.max"),
+            core.frequency
+                .as_ref()
+                .and_then(|f| f.max)
+                .map(|v| serde_json::json!(v)),
+            Some(Unit::Megahertz),
+            "platform reports no rated maximum for this core",
+        );
         // Deliberately not derived from the maximum: a minimum is a distinct
         // property, and dividing the maximum by four produced a plausible number
         // that was not one.
@@ -3609,11 +3622,13 @@ fn resolve_power(out: &mut Vec<Reading>) {
                     "no battery present (desktop or always-AC machine)",
                 ));
             } else {
-                out.push(Reading::measured(
-                    "power.battery.percentage",
-                    serde_json::json!(batteries[0].charge_percent),
+                push_opt(
+                    out,
+                    "power.battery.percentage".to_string(),
+                    batteries[0].charge_percent.map(|p| serde_json::json!(p)),
                     Some(Unit::Percent),
-                ));
+                    "a battery is present but its charge gauge could not be read",
+                );
             }
         }
         Err(e) => out.push(Reading::unavailable(

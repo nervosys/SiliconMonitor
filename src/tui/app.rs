@@ -533,10 +533,12 @@ impl PeripheralCache {
                 ));
                 for bat in monitor.batteries() {
                     let state = format!("{:?}", bat.state);
-                    lines.push(format!(
-                        "{}: {:.0}% ({})",
-                        bat.name, bat.charge_percent, state
-                    ));
+                    // "0%" for an unread gauge would read as a flat battery.
+                    let charge = match bat.charge_percent {
+                        Some(p) => format!("{p:.0}%"),
+                        None => "charge unread".to_string(),
+                    };
+                    lines.push(format!("{}: {} ({})", bat.name, charge, state));
                     if let Some(time) = &bat.time_to_empty {
                         lines.push(format!(
                             "  Time remaining: {}:{:02}",
