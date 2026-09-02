@@ -114,9 +114,44 @@ Since the tag, on `master` and green on all three platforms:
 | `8ed7e71` | Zero hertz and zero swap, handed to an agent as facts |
 | `e425908` | Every network rate in the crate was zero, on every platform |
 | `17dd4fa` | Two fabricated zeros next to the comment explaining why zero is wrong |
+| `HEAD` | A 16 MB drive reported as sizeless, by integer division |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### A 16 MB drive reported as sizeless, by integer division
+
+The smallest finding of the tool-surface sweep, kept because the failure mode is
+one the rest of this file does not cover. `get_disk_list`:
+
+```json
+{"model":"Linux File-Stor Gadget USB Device","size_gb":0}
+```
+
+Nothing fabricated a zero here. The drive has a real, correctly read capacity —
+the ontology reports `disk.0.capacity = 16450560`, which is 15.7 MB — and
+
+```rust
+"size_gb": info.capacity / 1024 / 1024 / 1024,
+```
+
+is integer division, so **every drive smaller than a gibibyte reports as
+sizeless**. The reader was right, the arithmetic was right, and the unit chosen
+for the answer destroyed it.
+
+Both call sites now emit the exact byte count alongside a float:
+
+```
+PhysicalDrive3  size_gb=0.015     size_bytes=16450560
+PhysicalDrive1  size_gb=3726.021  size_bytes=4000784417280
+```
+
+**Worth keeping: the other entries in this file are about readers that did not
+read. This one is about a value that survived the reader and died in the
+presentation.** A unit coarse enough to round a real measurement to zero
+produces the same sentence an agent has been taught to distrust — and it will
+pass every check in this crate, because nothing here inspects the arithmetic
+between a correct reading and the JSON.
 
 ### Two fabricated zeros next to the comment explaining why zero is wrong
 

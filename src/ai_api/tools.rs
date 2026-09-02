@@ -1737,7 +1737,14 @@ impl AiDataApi {
                     json!({
                         "name": info.name,
                         "model": info.model,
-                        "size_gb": info.capacity / 1024 / 1024 / 1024,
+                        // Integer division truncated every drive smaller than a
+                        // gibibyte to `size_gb: 0`. The USB gadget on the
+                        // development machine is 16,450,560 bytes and reported
+                        // as sizeless, which is a different claim from small.
+                        // The exact figure goes alongside so the answer is
+                        // never rounded away.
+                        "size_bytes": info.capacity,
+                        "size_gb": info.capacity as f64 / 1024.0 / 1024.0 / 1024.0,
                         "disk_type": format!("{:?}", info.disk_type),
                     })
                 })
@@ -1778,7 +1785,10 @@ impl AiDataApi {
             "serial": info.serial,
             "firmware": info.firmware,
             "size_bytes": info.capacity,
-            "size_gb": info.capacity / 1024 / 1024 / 1024,
+            // See `tool_get_disk_list`: the exact byte count alongside a
+            // figure that would otherwise truncate small media to zero.
+            "size_bytes": info.capacity,
+            "size_gb": info.capacity as f64 / 1024.0 / 1024.0 / 1024.0,
             "disk_type": format!("{:?}", info.disk_type),
             "temperature_c": disk.temperature().ok().flatten(),
         }))
