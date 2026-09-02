@@ -125,10 +125,19 @@ pub struct SystemStats {
     pub boot_time: Option<u64>,
     /// Number of CPUs/cores
     pub num_cpus: u32,
-    /// Total number of processes
-    pub total_processes: u32,
-    /// Number of running processes
-    pub running_processes: u32,
+    /// Total number of processes, or `None` where it was not read.
+    ///
+    /// This was a bare `u32` and only Linux ever assigned it, so Windows and
+    /// macOS reported `0` -- no processes at all, on a machine running several
+    /// hundred. Windows now answers it from `GetPerformanceInfo`; macOS still
+    /// does not, and says so.
+    pub total_processes: Option<u32>,
+    /// Number of processes in the running state, or `None` where unreported.
+    ///
+    /// Linux takes this from `procs_running` in `/proc/stat`. Neither Windows
+    /// nor macOS publishes a runnable count, so it stays `None` there rather
+    /// than claiming nothing is running.
+    pub running_processes: Option<u32>,
     /// CPU time breakdown
     pub cpu_time: Option<CpuTime>,
     /// Virtual memory stats
@@ -203,8 +212,8 @@ mod linux {
             idle_seconds: None,
             boot_time: None,
             num_cpus: 0,
-            total_processes: 0,
-            running_processes: 0,
+            total_processes: None,
+            running_processes: None,
             cpu_time: None,
             vm_stats: None,
             hostname: None,
@@ -223,8 +232,8 @@ mod linux {
 
                 // Parse running/total processes from "1/234" format
                 if let Some((running, total)) = parts[3].split_once('/') {
-                    stats.running_processes = running.parse().unwrap_or(0);
-                    stats.total_processes = total.parse().unwrap_or(0);
+                    stats.running_processes = running.parse().ok();
+                    stats.total_processes = total.parse().ok();
                 }
             }
         }
@@ -382,8 +391,8 @@ mod windows {
             idle_seconds: None,
             boot_time: None,
             num_cpus: 0,
-            total_processes: 0,
-            running_processes: 0,
+            total_processes: None,
+            running_processes: None,
             cpu_time: None,
             vm_stats: None,
             hostname: None,
@@ -397,6 +406,22 @@ mod windows {
             let sys_info = sys_info.assume_init();
             stats.num_cpus = sys_info.dwNumberOfProcessors;
         }
+
+        // Process count, from the struct this crate was already calling for the
+        // system file cache. `PERFORMANCE_INFORMATION.ProcessCount` is exactly
+        // this figure and costs nothing extra to ask for.
+        {
+            use ::windows::Win32::System::ProcessStatus::{
+                GetPerformanceInfo, PERFORMANCE_INFORMATION,
+            };
+            let mut perf: PERFORMANCE_INFORMATION = unsafe { std::mem::zeroed() };
+            perf.cb = std::mem::size_of::<PERFORMANCE_INFORMATION>() as u32;
+            if unsafe { GetPerformanceInfo(&mut perf, perf.cb) }.is_ok() {
+                stats.total_processes = Some(perf.ProcessCount);
+            }
+        }
+        // Windows publishes no runnable-process count, so `running_processes`
+        // stays `None`.
 
         // Get uptime via GetTickCount64
         unsafe {
@@ -438,8 +463,8 @@ mod macos {
             idle_seconds: None,
             boot_time: None,
             num_cpus: 0,
-            total_processes: 0,
-            running_processes: 0,
+            total_processes: None,
+            running_processes: None,
             cpu_time: None,
             vm_stats: None,
             hostname: None,
@@ -468,6 +493,9 @@ mod macos {
         {
             stats.num_cpus = 1; // Fallback
         }
+
+        // macOS reports no process count here. `sysctl kern.proc` would give
+        // one, and until somebody writes it this stays absent rather than 0.
 
         // Get hostname
         #[cfg(feature = "hostname")]
@@ -541,8 +569,8 @@ mod tests {
             idle_seconds: None,
             boot_time: None,
             num_cpus: 4,
-            total_processes: 100,
-            running_processes: 5,
+            total_processes: Some(100),
+            running_processes: Some(5),
             cpu_time: None,
             vm_stats: None,
             hostname: None,
@@ -559,8 +587,8 @@ mod tests {
             idle_seconds: None,
             boot_time: None,
             num_cpus: 4,
-            total_processes: 100,
-            running_processes: 5,
+            total_processes: Some(100),
+            running_processes: Some(5),
             cpu_time: None,
             vm_stats: None,
             hostname: None,
@@ -577,8 +605,8 @@ mod tests {
             idle_seconds: None,
             boot_time: None,
             num_cpus: 4,
-            total_processes: 0,
-            running_processes: 0,
+            total_processes: None,
+            running_processes: None,
             cpu_time: None,
             vm_stats: None,
             hostname: None,
@@ -599,8 +627,8 @@ mod tests {
             idle_seconds: None,
             boot_time: None,
             num_cpus: 4,
-            total_processes: 0,
-            running_processes: 0,
+            total_processes: None,
+            running_processes: None,
             cpu_time: None,
             vm_stats: None,
             hostname: None,

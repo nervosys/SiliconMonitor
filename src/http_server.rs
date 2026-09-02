@@ -470,13 +470,43 @@ impl HttpServer {
             }
         }
 
-        // Recorded only once a rate exists. A metrics collector that is
-        // handed `0` cannot tell it apart from a quiet network.
-        if let Some(rx) = snap.total_rx_rate() {
-            collector.record("simon_network_rx_bytes_total", rx);
-        }
-        if let Some(tx) = snap.total_tx_rate() {
-            collector.record("simon_network_tx_bytes_total", tx);
+        // `_total` is a counter, and these carry the cumulative byte counts.
+        //
+        // They used to carry `total_rx_rate()` -- a bytes/sec figure, summed
+        // over interfaces, published unlabelled under a counter's name. The
+        // bundled fleet dashboard plots `rate(simon_network_rx_bytes_total[5m])`,
+        // so it was taking the rate of change *of a rate*: near zero under
+        // steady traffic, and a spike shaped like the derivative of the load
+        // rather than the load. The library exporter has published the true
+        // counter under this exact name all along, per interface, so the two
+        // publishers disagreed about what the name meant and the reachable one
+        // was wrong.
+        //
+        // Labelled per interface, like the library exporter and like disks here,
+        // rather than summed: a sum over counters jumps backwards whenever an
+        // interface disappears, and Prometheus reads that as a counter reset on
+        // the whole series.
+        for iface in &snap.network {
+            let interface = &[("interface", iface.name.as_str())];
+            collector.record_with_labels(
+                "simon_network_rx_bytes_total",
+                iface.rx_bytes as f64,
+                interface,
+            );
+            collector.record_with_labels(
+                "simon_network_tx_bytes_total",
+                iface.tx_bytes as f64,
+                interface,
+            );
+
+            // Rates go under their own names, and only once one exists: a
+            // collector handed `0` cannot tell it from a quiet link.
+            if let Some(rate) = iface.rx_rate {
+                collector.record_with_labels("simon_network_rx_bytes_per_sec", rate, interface);
+            }
+            if let Some(rate) = iface.tx_rate {
+                collector.record_with_labels("simon_network_tx_bytes_per_sec", rate, interface);
+            }
         }
         collector.record("simon_process_count", snap.processes.len() as f64);
 

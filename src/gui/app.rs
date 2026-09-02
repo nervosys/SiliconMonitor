@@ -2506,15 +2506,19 @@ impl SiliconMonitorApp {
                         ui.separator();
                     }
 
-                    // Running/Total processes
-                    if stats.running_processes > 0 || stats.total_processes > 0 {
-                        ui.label(
-                            RichText::new(format!(
-                                "🔄 Tasks: {} running, {} total",
-                                stats.running_processes, stats.total_processes
-                            ))
-                            .color(CyberColors::NEON_PURPLE),
-                        );
+                    // Running/Total processes. Each half is shown only if it
+                    // was read: Windows reports a total and no runnable count,
+                    // macOS reports neither.
+                    let tasks = match (stats.running_processes, stats.total_processes) {
+                        (Some(running), Some(total)) => {
+                            Some(format!("🔄 Tasks: {running} running, {total} total"))
+                        }
+                        (None, Some(total)) => Some(format!("🔄 Tasks: {total} total")),
+                        (Some(running), None) => Some(format!("🔄 Tasks: {running} running")),
+                        (None, None) => None,
+                    };
+                    if let Some(tasks) = tasks {
+                        ui.label(RichText::new(tasks).color(CyberColors::NEON_PURPLE));
                         ui.separator();
                     }
 

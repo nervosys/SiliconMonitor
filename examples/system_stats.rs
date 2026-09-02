@@ -52,10 +52,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Process info (like 'htop' header)
     println!("━━━━━━━━━━━━━━━━━━━━ TASKS ━━━━━━━━━━━━━━━━━━━━━━");
-    println!(
-        "📊 Tasks: {} total, {} running",
-        stats.total_processes, stats.running_processes
-    );
+    // Each half is printed only where the platform reports it: Windows gives a
+    // total and no runnable count, macOS gives neither.
+    match stats.total_processes {
+        Some(total) => println!("📊 Tasks: {total} total"),
+        None => println!("📊 Tasks: total not reported on this platform"),
+    }
+    match stats.running_processes {
+        Some(running) => println!("📊       {running} running"),
+        None => println!("📊       runnable count not reported on this platform"),
+    }
     println!("💻 CPUs: {}", stats.num_cpus);
     println!();
 
