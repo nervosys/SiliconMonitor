@@ -108,7 +108,7 @@ Since the tag, on `master` and green on all three platforms:
 | `3197ee0` | A flat battery that was never read, and the test that caught me |
 | `066e373` | An invariant the ontology states and this machine breaks |
 | `cab0c34` | Auditing every absolute claim in the ontology against the machine |
-| `HEAD` | A class guessed from the device's name, when it declares one |
+| `e456c53` | A class guessed from the device's name, when it declares one |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
