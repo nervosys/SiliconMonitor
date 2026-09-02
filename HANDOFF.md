@@ -106,9 +106,56 @@ Since the tag, on `master` and green on all three platforms:
 | `7fcddde` | The last swallow, a real USB key, and a swap series that changed meaning |
 | `2276c9c` | Per-core clocks, from the counter that was named three fixes ago |
 | `3197ee0` | A flat battery that was never read, and the test that caught me |
+| `HEAD` | An invariant the ontology states and this machine breaks |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### An invariant the ontology states and this machine breaks
+
+Found by sweeping the domains that had not been read yet. Two rows, side by
+side, on this desktop:
+
+```
+system.virtualization.platform          = "bare_metal"  [Measured]
+system.virtualization.hypervisor        = "hyperv"      [Measured]
+system.virtualization.detection_method  = "CPUID: Microsoft Hv"
+```
+
+And the entity for the second one said:
+
+> Which hypervisor, when one was detected. **Null on bare metal**, which is an
+> answer rather than a gap.
+
+So the ontology states an invariant that the resolver breaks on the machine it
+is running on. **The code is right and the documentation is wrong**, which is
+the opposite of the usual direction in this file and took a moment to accept.
+
+`detect.rs` already knows exactly why, in a comment written before this session:
+
+> Windows 11 enables virtualization-based security by default, which puts the
+> *host* under a thin hypervisor: a bare-metal desktop reports the "Microsoft
+> Hv" CPUID signature exactly as a guest VM does. Vendor string alone therefore
+> cannot answer "am I in a VM", and every caller that assumed it could has been
+> wrong on ordinary Windows 11 hardware.
+
+It answers the question from the Hyper-V **privilege leaf** instead, which is
+why `platform` correctly says `bare_metal`. Both rows are true at once: this is
+physical hardware, and a hypervisor is present. The description was written for
+a simpler world than the detector already understood.
+
+**Why a description is worth a commit here.** Nothing in the crate infers
+VM-ness from `hypervisor` — I checked every consumer. The reader of that
+sentence is an *agent*, and the ontology is the product. An agent that coded
+`if hypervisor != null then guest` would be wrong on the default configuration
+of every modern Windows desktop, and it would have been following the
+documentation exactly.
+
+**Worth keeping: the sweep that found it was looking for wrong values, and this
+was two right values and a wrong sentence.** Reading rows for plausibility
+catches fabrications; reading them *against their own declarations* catches a
+different class, and it is the class where the code is fine and nobody is
+looking.
 
 ### A flat battery that was never read, and the test that caught me
 

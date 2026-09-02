@@ -1923,8 +1923,20 @@ impl Ontology {
             Some(U::Identifier),
             P::Measured,
             true,
-            "Which hypervisor, when one was detected. Null on bare metal, which is \
-             an answer rather than a gap.",
+            concat!(
+                "Which hypervisor is present, when one was detected. ",
+                "A value here does not mean this machine is a guest. ",
+                "Windows 11 enables virtualization-based security by default, ",
+                "which puts the host itself under a thin hypervisor, so an ",
+                "ordinary desktop reports `hyperv` while ",
+                "`system.virtualization.platform` correctly reports ",
+                "`bare_metal` -- both rows are true at once, and the machine ",
+                "this was found on is one of them. Read `platform` for the ",
+                "question \"am I in a VM\": `detect.rs` answers it from the ",
+                "Hyper-V privilege leaf rather than the CPUID vendor string, ",
+                "which is identical either side of the partition boundary. ",
+                "Null means no hypervisor was detected at all."
+            ),
         ));
         add(Entity::new(
             "system.virtualization.detection_method",
