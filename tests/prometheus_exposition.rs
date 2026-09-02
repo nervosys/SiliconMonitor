@@ -306,16 +306,12 @@ fn the_served_endpoint_publishes_every_dashboard_metric() {
 /// And so must the library exporter, which has its own, different gaps.
 #[test]
 fn the_library_exporter_publishes_every_dashboard_metric() {
-    // These four are not snapshot limitations — `PrometheusExporter` collects
-    // from the system directly and could read every one of them. They are simply
-    // metrics it was never taught, and the combined check never asked, because
-    // `http_server.rs` publishes all four.
-    const KNOWN_GAPS: &[&str] = &[
-        "simon_cpu_frequency_mhz",
-        "simon_load_average_1m",
-        "simon_load_average_5m",
-        "simon_process_count",
-    ];
+    // Empty, and it must stay that way. These four were never blocked on
+    // anything — `PrometheusExporter` collects from the system directly and
+    // could always have read them. They were simply metrics nobody taught it,
+    // and the combined check never asked because `http_server.rs` publishes all
+    // four. Adding an entry here means the exporter lost a metric.
+    const KNOWN_GAPS: &[&str] = &[];
 
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let missing = unpublished_by(root, &["src/prometheus.rs"]);

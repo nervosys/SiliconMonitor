@@ -241,6 +241,7 @@ impl PrometheusExporter {
         self.collect_network_metrics();
         self.collect_cpu_temperature_metrics();
         self.collect_uptime_metrics();
+        self.collect_system_load_metrics();
         self.collect_profile_metrics();
     }
 
@@ -377,6 +378,63 @@ impl PrometheusExporter {
                 &self.prefixed("cpu_cores_total"),
                 "Total number of CPU cores",
                 cpu.cores.len() as f64,
+            ));
+
+            // Queried by the bundled dashboards, and available from the reading
+            // already in hand. Emitted only when a clock was actually read --
+            // `CpuFrequency::current` is `Option` for the reason set out on it,
+            // and a gauge of 0 MHz is a claim that the cores have stopped.
+            if let Some(mhz) = cpu
+                .cores
+                .first()
+                .and_then(|c| c.frequency.as_ref())
+                .and_then(|f| f.current)
+            {
+                self.add(MetricFamily::gauge(
+                    &self.prefixed("cpu_frequency_mhz"),
+                    "Current CPU clock frequency in MHz",
+                    mhz as f64,
+                ));
+            }
+        }
+    }
+
+    /// Load average and process count.
+    ///
+    /// Four metrics the bundled dashboards query that this exporter simply had
+    /// never been taught. Unlike the served endpoint's three gaps, none of these
+    /// were blocked on anything: the exporter collects from the system directly
+    /// and could always have read them. They went unnoticed because the coverage
+    /// test accepted a name published by *either* renderer, and `http_server.rs`
+    /// publishes all four -- see `tests/prometheus_exposition.rs`.
+    ///
+    /// Each is emitted only where the platform reports it. Load average is a
+    /// Unix quantity and Windows has none, so those two series are simply absent
+    /// there; Prometheus already reads an absent series as "not reported", which
+    /// is what is true.
+    fn collect_system_load_metrics(&mut self) {
+        let Ok(stats) = crate::system_stats::SystemStats::new() else {
+            return;
+        };
+
+        if let Some(ref load) = stats.load_average {
+            self.add(MetricFamily::gauge(
+                &self.prefixed("load_average_1m"),
+                "System load average over 1 minute",
+                load.one,
+            ));
+            self.add(MetricFamily::gauge(
+                &self.prefixed("load_average_5m"),
+                "System load average over 5 minutes",
+                load.five,
+            ));
+        }
+
+        if let Some(total) = stats.total_processes {
+            self.add(MetricFamily::gauge(
+                &self.prefixed("process_count"),
+                "Total number of processes",
+                total as f64,
             ));
         }
     }
