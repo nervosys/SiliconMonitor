@@ -119,9 +119,58 @@ Since the tag, on `master` and green on all three platforms:
 | `cc4e347` | The zero left behind when a field stopped being the identity |
 | `4685c52` | A guard for the regression, and nearly a test that proved nothing |
 | `db94a7b` | The two pairings the guard did not cover, and why one is separate |
+| `HEAD` | A metrics endpoint Prometheus would reject in full |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### A metrics endpoint Prometheus would reject in full
+
+The tool catalogue turned out to be productive because it was a machine-consumed
+surface with no conformance tests. The Prometheus exporter is the other one:
+`tests/` had no file for it, and the network-rate defect three entries below had
+been exporting a hard zero from it for the life of the exporter. So the same
+treatment — render the output and read it.
+
+**`simon_network_rx_bytes_total` was emitted twenty times, unlabelled, with
+twenty different values.**
+
+```
+simon_network_rx_bytes_total 43054075
+# HELP simon_network_rx_bytes_total Total bytes received
+# TYPE simon_network_rx_bytes_total counter
+simon_network_rx_bytes_total 10988371
+...
+```
+
+`collect_network_metrics` builds an `interface` label and then calls
+`MetricFamily::counter`, which takes no labels and drops it. This is not a wrong
+number on a dashboard. **Prometheus rejects a scrape containing duplicate
+samples**, so the network section discards every other metric the endpoint
+serves — CPU, memory, GPU, all of it — and the failure appears as an empty
+target rather than as a bad value.
+
+The repeated `# HELP` lines are a second, independent defect with the same
+reach. `PrometheusExporter::add` pushed a *new family* per sample, so the
+headers repeated once per instance: 6× for disks, 3× for GPUs, 20× for network.
+`MetricFamily` already held a `Vec<MetricSample>`, so the structure was right
+and only the insertion was wrong — `add` merges by name now, which fixes every
+family at once.
+
+And `network_tx_bytes_total` was never exported at all. The receive counter had
+no counterpart, so a dashboard could plot half of every link.
+
+`tests/prometheus_exposition.rs` now holds three guards — one HELP and TYPE per
+name, no duplicate name+label pair, and every per-instance metric carrying a
+label. All three were confirmed by restoring the defects and watching them fail,
+then confirming the restore.
+
+**One of them found a false positive in itself, which is worth recording.** The
+label guard flagged `simon_gpu_count 3`. That metric is correct: a count of GPUs
+is a fact about the machine, not about any GPU, so it rightly carries no `gpu`
+label. The rule now exempts `_count` **on that reasoning** rather than by
+widening a prefix match until the failure disappears — the two look identical in
+the diff and only one of them still tests anything.
 
 ### The two pairings the guard did not cover, and why one is separate
 

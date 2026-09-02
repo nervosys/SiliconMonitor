@@ -113,6 +113,28 @@ impl MetricFamily {
     }
 
     /// Create a counter metric
+    /// A counter carrying labels.
+    ///
+    /// Without this, `collect_network_metrics` built an `interface` label and
+    /// then called [`Self::counter`], which drops it -- so every interface
+    /// emitted `simon_network_rx_bytes_total` with **no labels and a different
+    /// value**. Twenty identical series in one scrape is not a wrong number, it
+    /// is a malformed exposition: Prometheus rejects a scrape containing
+    /// duplicate samples, so the network section could take the whole endpoint
+    /// down with it.
+    pub fn counter_with_labels(
+        name: &str,
+        help: &str,
+        value: f64,
+        labels: BTreeMap<String, String>,
+    ) -> Self {
+        let mut family = Self::counter(name, help, value);
+        if let Some(sample) = family.samples.first_mut() {
+            sample.labels = labels;
+        }
+        family
+    }
+
     pub fn counter(name: &str, help: &str, value: f64) -> Self {
         Self {
             name: name.to_string(),
@@ -187,7 +209,26 @@ impl PrometheusExporter {
     }
 
     /// Add a metric family
+    /// Add a family, merging into one that already carries this name.
+    ///
+    /// The Prometheus text format allows **one** `# HELP` and one `# TYPE` per
+    /// metric name, and this pushed a whole new family per sample -- so an
+    /// export repeated the header for every disk, every GPU and every network
+    /// interface. On the machine this was written on:
+    ///
+    /// ```text
+    ///  6x  # HELP simon_disk_used_bytes
+    ///  3x  # HELP simon_gpu_utilization_percent
+    /// 20x  # HELP simon_network_rx_bytes_total
+    /// ```
+    ///
+    /// `MetricFamily` already held a `Vec<MetricSample>`, so the structure was
+    /// right and only the insertion was wrong.
     pub fn add(&mut self, family: MetricFamily) {
+        if let Some(existing) = self.families.iter_mut().find(|f| f.name == family.name) {
+            existing.samples.extend(family.samples);
+            return;
+        }
         self.families.push(family);
     }
 
@@ -510,10 +551,20 @@ impl PrometheusExporter {
                     let mut labels = BTreeMap::new();
                     labels.insert("interface".into(), iface.name.clone());
 
-                    self.add(MetricFamily::counter(
+                    self.add(MetricFamily::counter_with_labels(
                         &self.prefixed("network_rx_bytes_total"),
                         "Total bytes received",
                         iface.rx_bytes as f64,
+                        labels.clone(),
+                    ));
+                    // The transmit total was never exported at all: the receive
+                    // counter had no counterpart, so a dashboard could plot half
+                    // of every link.
+                    self.add(MetricFamily::counter_with_labels(
+                        &self.prefixed("network_tx_bytes_total"),
+                        "Total bytes transmitted",
+                        iface.tx_bytes as f64,
+                        labels.clone(),
                     ));
 
                     // Use gauges for current rates.
