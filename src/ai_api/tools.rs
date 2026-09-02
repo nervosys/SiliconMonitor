@@ -1312,26 +1312,42 @@ impl AiDataApi {
         #[cfg(not(any(target_os = "linux", target_os = "windows")))]
         {
             use std::process::Command;
-            let model = Command::new("sysctl")
-                .args(["-n", "machdep.cpu.brand_string"])
-                .output()
-                .ok()
-                .and_then(|o| String::from_utf8(o.stdout).ok())
-                .map(|s| s.trim().to_string())
-                .unwrap_or_else(|| "CPU".to_string());
-            let freq_hz = Command::new("sysctl")
-                .args(["-n", "hw.cpufrequency"])
-                .output()
-                .ok()
-                .and_then(|o| String::from_utf8(o.stdout).ok())
-                .and_then(|s| s.trim().parse::<u64>().ok())
-                .unwrap_or(0);
+            let sysctl = |key: &str| -> Option<String> {
+                Command::new("sysctl")
+                    .args(["-n", key])
+                    .output()
+                    .ok()
+                    .filter(|o| o.status.success())
+                    .and_then(|o| String::from_utf8(o.stdout).ok())
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+            };
+
+            // `null`, not the literal string "CPU". A placeholder model name
+            // handed to an agent is a name it will repeat back.
+            let model = sysctl("machdep.cpu.brand_string");
+
+            // `hw.cpufrequency` does not exist on Apple Silicon -- Apple removed
+            // it with the ARM transition -- so this parsed to `None` and
+            // `unwrap_or(0)` published `"frequency_mhz": 0` for every core of
+            // every M-series Mac. Zero hertz is not a clock, and this is the
+            // agent surface, where a fabricated number becomes a premise.
+            //
+            // It is also one figure repeated across every core, which is the
+            // defect `24a7314` fixed on the macOS silicon reader and `f5a54ee`
+            // fixed on the Windows one. The value is per-machine, so it is
+            // reported once per core only because the shape demands it; when it
+            // is absent every core says so rather than saying zero.
+            let freq_mhz = sysctl("hw.cpufrequency")
+                .and_then(|s| s.parse::<u64>().ok())
+                .map(|hz| hz / 1_000_000);
+
             let ncpu = num_cpus::get();
             let cores: Vec<_> = (0..ncpu)
                 .map(|i| {
                     json!({
                         "id": i, "online": true, "model": model,
-                        "frequency_mhz": freq_hz / 1_000_000,
+                        "frequency_mhz": freq_mhz,
                     })
                 })
                 .collect();
@@ -1664,28 +1680,43 @@ impl AiDataApi {
         #[cfg(not(any(target_os = "linux", target_os = "windows")))]
         {
             use std::process::Command;
-            let swap_info = Command::new("sysctl")
+            // A failed `sysctl` used to land in `unwrap_or_default()`, giving an
+            // empty string that both parses read as `0` -- so the tool answered
+            // "swap total 0, used 0", which an agent reads as a machine with no
+            // swap configured rather than as a command that did not run. Same
+            // defect as the Windows pagefile reader in `15a60ab`, mirrored.
+            let raw = Command::new("sysctl")
                 .args(["-n", "vm.swapusage"])
                 .output()
                 .ok()
-                .and_then(|o| String::from_utf8(o.stdout).ok())
-                .unwrap_or_default();
-            let parse_swap = |key: &str| -> u64 {
-                swap_info
-                    .split_whitespace()
+                .filter(|o| o.status.success())
+                .and_then(|o| String::from_utf8(o.stdout).ok());
+
+            let parse_swap = |text: &str, key: &str| -> Option<u64> {
+                text.split_whitespace()
                     .collect::<Vec<_>>()
                     .windows(3)
                     .find(|w| w[0] == key && w[1] == "=")
                     .and_then(|w| w[2].trim_end_matches('M').parse::<f64>().ok())
                     .map(|v| v as u64)
-                    .unwrap_or(0)
             };
-            let total = parse_swap("total");
-            let used = parse_swap("used");
+            let total = raw.as_deref().and_then(|t| parse_swap(t, "total"));
+            let used = raw.as_deref().and_then(|t| parse_swap(t, "used"));
+
             Ok(json!({
-                "total_kb": total * 1024, "used_kb": used * 1024, "cached_kb": 0,
-                "total_mb": total, "used_mb": used,
-                "usage_percent": if total > 0 { used as f64 / total as f64 * 100.0 } else { 0.0 },
+                "total_kb": total.map(|v| v * 1024),
+                "used_kb": used.map(|v| v * 1024),
+                // Never read on this platform. `0` claimed a measurement of
+                // nothing cached, which is not the same as not having looked.
+                "cached_kb": serde_json::Value::Null,
+                "total_mb": total,
+                "used_mb": used,
+                "usage_percent": match (total, used) {
+                    (Some(t), Some(u)) if t > 0 => json!(u as f64 / t as f64 * 100.0),
+                    // A machine with a zero-sized swap file is not 0% used, it
+                    // has no ratio to report.
+                    _ => serde_json::Value::Null,
+                },
             }))
         }
     }

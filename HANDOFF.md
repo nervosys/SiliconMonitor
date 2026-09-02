@@ -111,9 +111,61 @@ Since the tag, on `master` and green on all three platforms:
 | `e456c53` | A class guessed from the device's name, when it declares one |
 | `44612d8` | The last misleading absence, and a deliberate refusal to implement |
 | `68c9ff0` | Every measurement, checked for whether it actually moves |
+| `HEAD` | Zero hertz and zero swap, handed to an agent as facts |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### Zero hertz and zero swap, handed to an agent as facts
+
+Two audits in a row came back clean, so this followed the pointer the fallback
+entry left: **triage `unwrap_or` by blast radius, and the agent tool surface is
+the largest radius there is** — a `0` in a TUI gauge is cosmetic, a `0` handed
+to an LLM becomes a premise it reasons from. Fifteen such fallbacks in
+`ai_api/`. Two are real defects, both on macOS, both the exact shape this
+session has been fixing on Windows.
+
+**`tool_get_cpu_cores`** read `hw.cpufrequency` and did `unwrap_or(0)`:
+
+```rust
+"frequency_mhz": freq_hz / 1_000_000,
+```
+
+`hw.cpufrequency` **does not exist on Apple Silicon** — Apple removed it with
+the ARM transition — so this reports `"frequency_mhz": 0` for every core of
+every M-series Mac. It is two defects at once: a fabricated zero, and *one
+figure broadcast across every core*, which is precisely what `24a7314` fixed in
+the macOS silicon reader and `f5a54ee` fixed on Windows. The same commit also
+replaced a missing model string with the literal `"CPU"` — a placeholder name an
+agent will repeat back as though it were a part number. Both are `null` now.
+
+**`tool_get_swap_info`** ran `sysctl -n vm.swapusage` into `unwrap_or_default()`,
+so a failed command became an empty string that both parses read as `0`:
+
+```
+"total_kb": 0, "used_kb": 0, "cached_kb": 0, "usage_percent": 0.0
+```
+
+An agent asked "is this machine swapping" is told there is no swap configured,
+when what happened is that the command did not run. **This is `15a60ab`
+mirrored**: there, Windows commit charge was published as swap and read 97 GB
+too high; here, a failed read is published as swap and reads all the way low.
+`cached_kb` was a hardcoded `0` for a quantity never read at all — the same
+thing the Windows reader says `None` to, with a comment.
+
+**Stated plainly: none of this is verified on hardware.** There is no Mac here.
+The defects are certain by inspection — `unwrap_or(0)` on a `sysctl` that does
+not exist on the current architecture is not a judgement call — but the
+corrected code has been compiled for `aarch64-apple-darwin` and not run. That
+is the same standing caveat as every other macOS change in this session, and it
+is why the open-work item about macOS being unexercised stays open.
+
+**Worth keeping: the audits that found nothing still directed this.** Two clean
+sweeps meant the ontology's own surface was in good order, which is what made it
+worth walking to a *different* surface. The tool catalogue is not covered by the
+ontology conformance tests at all — no entity declares it, no `push_opt` guards
+it, and the honesty rules this crate enforces on `snapshot()` simply do not
+reach it.
 
 ### Every measurement, checked for whether it actually moves
 
