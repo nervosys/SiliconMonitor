@@ -130,9 +130,54 @@ Since the tag, on `master` and green on all three platforms:
 | `fc1667e` | A contract that was right for a loop and wrong for everything else |
 | `86fc72c` | Checking my own open-work item, which was already stale |
 | `f64f5ea` | Disk throughput, zero on every platform, drawn on three surfaces |
+| `ed4ec44` | A section of the state document that was never filled in |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### A section of the state document that was never filled in
+
+The lesson from `f64f5ea` was that every place a rate is *stored* is worth
+checking, so I swept the crate for rate-shaped fields. Two were still declared
+`f64`: `BandwidthInfo` in `src/ai_api/types.rs` and `NetworkState` in
+`src/backend.rs`. Both had escaped `e425908` for the same reason — nothing
+constructs them, so nothing had made me look.
+
+`NetworkState` turned out to be the interesting one. It is a public type, and
+`FullSystemState::network` is a public field serialised by `simon cli all
+--format json`. `get_full_system_state` builds every other section and never
+assigns that one. Asked the binary:
+
+```
+simon cli all --format json:
+  cpu             present
+  memory          present
+  accelerators    3
+  disks           4
+  network         0        <- on a machine with 20 interfaces
+  top_processes   10
+  system          present
+```
+
+An empty array is a worse answer than a missing key, because it reads as a
+finding: this host has no network interfaces. It is served by a process that had
+just enumerated twenty of them for its own `network` subcommand.
+
+The fix populates the field, and takes the rate fields to `Option<f64>` on the
+way through — they come back `None` here by construction, since the enumeration
+happens through a fresh `NetworkMonitor` (baselines need `&mut`, the method takes
+`&self`) and a rate needs two samples. `None` on a one-shot dump is the honest
+answer; `0.0` would have been the same fabrication `e425908` removed everywhere
+else. A caller that wants throughput holds a monitor and samples it twice.
+
+Verified: 20 entries with byte counters and null rates, where the field was `[]`.
+
+**A field nobody constructs is a field nobody has audited.** Both survivors of
+the network-rate sweep were unconstructed types. Grepping for a *pattern* finds
+the code that runs; the code that does not run keeps whatever shape it was born
+with, and stays wrong quietly until someone wires it up. Worth checking the
+public types no constructor mentions — the ones exported through an API are the
+ones a consumer will eventually hit.
 
 ### Disk throughput, zero on every platform, drawn on three surfaces
 
