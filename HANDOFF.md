@@ -2249,8 +2249,39 @@ whole-machine number describes. It reported **100% on an idle desktop** where
 `simon cli cpu`, reading `core::cpu`, said 7.3% at the same moment. Probing
 `GetSystemTimes` directly over the same window gives deltas that check out —
 kernel+user = 120,156,250 ticks, which is exactly 12.0s across 24 cores in
-500ms — and an idle delta implying ~35%. **The arithmetic is not obviously
-wrong and the disagreement was never explained.**
+500ms — and an idle delta implying ~35%.
+
+**Explained, later in the same session, and the sentence above contains the
+proof it missed.** `lpKernelTime` *includes* idle time: kernel and user together
+partition *all* CPU time, so `kernel + user` is the total, not the busy part.
+Measuring it directly:
+
+```
+cores=24  idle=36250000  kernel=54218750  user=65781250
+kernel + user    = 120,000,000
+wall x cores     = 120,000,000     <- identical, every time
+```
+
+A reader that uses `kernel + user` as its busy numerator is therefore dividing
+the whole pie by itself and gets **exactly 100% on every machine at every
+load** — idle desktop, saturated build server, no difference. Sampling both
+readers over one shared window settles it:
+
+```
+round 1: correct 97.91%   core::cpu 97.48%   kernel+user-as-busy 100.00%
+round 2: correct 97.03%   core::cpu 97.18%   kernel+user-as-busy 100.00%
+round 3: correct 96.71%   core::cpu 96.60%   kernel+user-as-busy 100.00%
+```
+
+`(kernel + user - idle) / (kernel + user)` agrees with `core::cpu` to within
+half a percent. The removal was right, and the reason is now known rather than
+merely suspected.
+
+**Worth keeping: "the arithmetic checks out" was the bug report.** The original
+note recorded that kernel+user came to *exactly* wall-clock times core count and
+read that as a sanity check passing. It is the tell. **If a quantity you believe
+is a subset comes out exactly equal to the total, you are measuring the
+total.**
 
 So the function was removed rather than published or left behind an
 `#[allow(dead_code)]`. **A reader that contradicts a known-good source by an
