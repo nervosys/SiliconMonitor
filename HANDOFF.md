@@ -107,9 +107,59 @@ Since the tag, on `master` and green on all three platforms:
 | `2276c9c` | Per-core clocks, from the counter that was named three fixes ago |
 | `3197ee0` | A flat battery that was never read, and the test that caught me |
 | `066e373` | An invariant the ontology states and this machine breaks |
+| `HEAD` | Auditing every absolute claim in the ontology against the machine |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### Auditing every absolute claim in the ontology against the machine
+
+The entry below found a false invariant by accident. This ran the same check
+deliberately: extract every entity whose description makes an absolute claim
+(`null on`, `null when`, `never`, `always`), pull its live rows, and read the
+claim against the values. 26 entities qualified.
+
+Most held. `gpu.codec.{n}.max_fps` says it "always resolves absent" and 15 of 15
+are absent. `pending_sectors` and `reallocated_sectors` say "null on NVMe" and
+are. `power.battery.percentage` says "null on machines with no battery" and
+reports 100% — correct, because this desktop's battery is an APC Back-UPS, which
+also means the `charge_percent` fix two entries below is exercised on real
+hardware.
+
+**One did not.** `disk.{n}.read_rate` and `write_rate`, absent on all four
+drives, claimed:
+
+> Null where the platform reports only a combined figure **that cannot be
+> attributed to a direction**.
+
+No supported platform does that. Windows exposes `DiskReadBytesPerSec` and
+`DiskWriteBytesPerSec`; Linux's `/sys/block/*/stat` gives read and write sectors
+separately. The resolver's own absence reason, sitting on the same row, says
+something different and true:
+
+```
+disk.0.read_rate = None  note="a throughput needs two samples; this query took one"
+```
+
+The counters are cumulative — `ae625ab` moved this reader to
+`Win32_PerfRawData_*` precisely so they would be — so a rate requires
+differencing two samples, and a single-shot snapshot has one. **The value is
+obtainable by direction; it is not obtainable in one call.** The entity told an
+agent the first was impossible, which would end the search, when the fix is to
+sample twice.
+
+Chased two other suspicions to ground and both were fine: the USB row count read
+39 against an earlier 41 because two devices had been unplugged in the interim,
+not because my new address scheme collided (39 devices, 39 addresses, 39
+instances, zero unmatched templates); and `pci.{addr}.numa_node` null on all 64
+devices is honest on a single-node desktop.
+
+**Worth keeping.** Both defects this technique found are *the reason attached to
+an absence*, not the absence itself. This crate is careful that a missing value
+says why it is missing — which means the "why" is load-bearing prose that no
+test checks and that ages badly as readers improve underneath it. **When a
+reader changes how it obtains something, the entity's explanation of what it
+cannot obtain is now suspect.**
 
 ### An invariant the ontology states and this machine breaks
 

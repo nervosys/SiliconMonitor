@@ -2219,8 +2219,14 @@ impl Ontology {
             Some(U::BytesPerSecond),
             P::Measured,
             true,
-            "Read throughput. Null where the platform reports only a combined \
-             figure that cannot be attributed to a direction.",
+            concat!(
+                "Read throughput. Null in a single-shot snapshot, because a ",
+                "rate needs two samples to difference and this resolver takes ",
+                "one. Not a platform limitation: Windows exposes ",
+                "`DiskReadBytesPerSec` and Linux `/sys/block/*/stat` gives ",
+                "read and write sectors separately, so a caller that samples ",
+                "twice can compute it per direction."
+            ),
         ));
         add(Entity::new(
             "disk.{n}.write_rate",
@@ -2229,7 +2235,14 @@ impl Ontology {
             Some(U::BytesPerSecond),
             P::Measured,
             true,
-            "Write throughput. Null under the same condition as the read rate.",
+            concat!(
+                "Write throughput. Null in a single-shot snapshot, because a ",
+                "rate needs two samples to difference and this resolver takes ",
+                "one. Not a platform limitation: Windows exposes ",
+                "`DiskWriteBytesPerSec` and Linux `/sys/block/*/stat` gives ",
+                "read and write sectors separately, so a caller that samples ",
+                "twice can compute it per direction."
+            ),
         ));
         add(Entity::new(
             "disk.{n}.partition.{m}.mount_point",
