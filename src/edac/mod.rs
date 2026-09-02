@@ -51,15 +51,6 @@ impl std::fmt::Display for EdacMemType {
     }
 }
 
-/// EDAC error type.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum EdacEdgeType {
-    /// Single-bit correctable.
-    Correctable,
-    /// Multi-bit uncorrectable.
-    Uncorrectable,
-}
-
 /// EDAC DIMM/CSROW information.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EdacCsRow {

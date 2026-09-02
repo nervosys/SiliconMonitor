@@ -181,21 +181,6 @@ pub struct NetworkSilicon {
     pub power_state: Option<String>,
 }
 
-/// Comprehensive silicon snapshot
-#[derive(Debug, Clone)]
-pub struct SiliconSnapshot {
-    /// CPU cores
-    pub cpu_cores: Vec<CpuCore>,
-    /// CPU clusters
-    pub cpu_clusters: Vec<CpuCluster>,
-    /// NPU/Neural engines
-    pub npus: Vec<NpuInfo>,
-    /// I/O controllers
-    pub io_controllers: Vec<IoController>,
-    /// Network silicon
-    pub network: Vec<NetworkSilicon>,
-}
-
 /// Silicon monitor trait
 pub trait SiliconMonitor {
     /// Get CPU information (cores and clusters)
