@@ -134,9 +134,78 @@ Since the tag, on `master` and green on all three platforms:
 | `5a8bcee` | 26 public types the crate declares and never produces |
 | `3656368` | Six uncalled readers that answered zero for unknown |
 | `495e2ba` | Two renderers covering for each other, and a test that vouched for itself |
+| `f194cfd` | A rate published as a counter, and 530 processes reported as 0 |
+| `2e33bdf` | A load average synthesised from one CPU reading |
+| `3ccaf43` | The four dashboard metrics the exporter never learned |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### What the split guard immediately found
+
+Splitting the dashboard check paid for itself in the next hour. Three defects,
+all in the code the combined test had been declaring complete.
+
+**`simon_network_rx/tx_bytes_total` carried a rate on the served endpoint.**
+`record_snapshot` recorded `total_rx_rate()` — bytes/sec, summed over interfaces,
+unlabelled — under a `_total` counter name. The bundled fleet dashboard plots
+`rate(simon_network_rx_bytes_total[5m])`, so it was taking the rate of change *of
+a rate*: near zero under steady traffic, and a spike shaped like the derivative
+of the load rather than the load itself.
+
+The library exporter has published the true cumulative counter under that exact
+name all along, per interface. The two publishers disagreed about what the name
+meant, and the one reachable over HTTP was the wrong one — which is exactly the
+shape of gap the split was written to expose, found on the first look.
+`NetSnapshot` already carried `rx_bytes`/`tx_bytes`, so nothing had to be added:
+the counters are labelled per interface now, and the rates moved to
+`_bytes_per_sec`. Labelled rather than summed deliberately — a sum over counters
+jumps backwards when an interface disappears, and Prometheus reads that as a
+reset on the whole series.
+
+**`SystemStats::total_processes` was a bare `u32` that only Linux assigned.**
+Windows and macOS returned `0`: no processes at all, on a machine running several
+hundred. It is `Option<u32>` now, and Windows answers it from
+`PERFORMANCE_INFORMATION.ProcessCount` — a field of the struct this crate was
+*already calling* for the system file cache, so the reading costs nothing beyond
+noticing it was there. Measured 527 against 518 from both `Get-Process` and
+`Win32_Process`, with cargo's own process tree accounting for the difference.
+(`\Objects\Processes` reads 671; it counts something else and is the outlier —
+worth knowing before anyone "corrects" this against it.) `running_processes` is
+`Option` too: only Linux has `procs_running`.
+
+**And a load average invented from a single CPU sample.** Following the process
+count into `observability/api.rs` turned up this, on the Windows arm of
+`collect_system_load`:
+
+```rust
+let load = (usage as f64 / 100.0) * cores;
+SystemLoadMetrics { load_1: load, load_5: load, load_15: load, .. }
+```
+
+Windows has no load average. This synthesised one from one instantaneous
+utilisation reading and served it, through the observability API, under three
+names that each promise a different time window.
+
+It is wrong in three ways, and each removes the reason the metric exists. It
+cannot exceed the core count, so queue depth — the whole point, the part that says
+how far past capacity the machine is — is precisely what it cannot express. It has
+no history, so the three windows that separate a spike from a trend were
+byte-identical. And it counts busy CPUs rather than waiting tasks, so a machine
+wedged on I/O, the case load average exists to expose, read as idle. `None` on
+Windows now; the Linux arm's `parse().unwrap_or(0.0)` went too, since a
+`/proc/loadavg` that will not parse says nothing about how busy the machine is.
+
+Then the cheap half of the open-work item itself: `PrometheusExporter` learned
+the four metrics it had never been taught, all of which it could always have
+read. Driven rather than grepped for — `simon_cpu_frequency_mhz 5148`,
+`simon_process_count 542`, and the two load averages correctly absent. Its pinned
+gap list is empty and the test fails if it regains an entry.
+
+**A test that has just been made stricter is the best moment to go looking.**
+These four sat behind a check that read 24/24 and had read 24/24 for as long as it
+existed. Nothing about the code changed to make them findable; the question got
+sharper, and they were the answer.
 
 ### Two renderers covering for each other, and a test that vouched for itself
 
@@ -4852,7 +4921,7 @@ feature stayed broken through eight published versions.
 
 ## Open work
 
-1. **Seven dashboard metrics are unpublished, across two renderers.** The
+1. **Three dashboard metrics are unpublished, all on the served endpoint.** The
    guard is split per publisher as of `495e2ba` and each gap is pinned by name
    in `tests/prometheus_exposition.rs`, so closing one fails the test until the
    entry is pruned. Measured, not estimated:
@@ -4866,11 +4935,10 @@ feature stayed broken through eight published versions.
    and a rate cannot be turned back into a total. Both are the same shape of
    work: put the reading in the snapshot, then record it.
 
-   **Library exporter (`prometheus.rs`), 20/24.** `simon_cpu_frequency_mhz`,
-   `simon_load_average_1m`, `simon_load_average_5m`, `simon_process_count`.
-   These are *not* blocked on anything — `PrometheusExporter` collects from the
-   system directly and could read all four today. They are metrics nobody taught
-   it, and until the split nobody asked. This is the cheaper half of the item.
+   ~~**Library exporter (`prometheus.rs`), 20/24.**~~ Done in `3ccaf43`. All
+   four are published, its pinned gap list is empty, and the test fails if it
+   regains an entry. Load average is emitted only where the platform has one, so
+   those two series are absent on Windows.
 2. **USB negotiated speed is unimplemented on Windows, and obtainable.**
    `usb.{addr}.speed` is absent on every device. It is not a PnP property; it
    comes from `IOCTL_USB_GET_NODE_CONNECTION_INFORMATION_EX` against the parent
