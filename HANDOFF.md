@@ -110,9 +110,63 @@ Since the tag, on `master` and green on all three platforms:
 | `cab0c34` | Auditing every absolute claim in the ontology against the machine |
 | `e456c53` | A class guessed from the device's name, when it declares one |
 | `44612d8` | The last misleading absence, and a deliberate refusal to implement |
+| `HEAD` | Every measurement, checked for whether it actually moves |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### Every measurement, checked for whether it actually moves
+
+**The audit that would have caught this session's biggest defect, run
+deliberately.** A `Measurement`-kind reading that never changes is a candidate
+for a specification wearing a measurement's provenance — which is exactly what
+`CurrentMhz` was, reading 4400 on all 24 cores idle and loaded, and what the
+removed `GetSystemTimes` reader was, reading 100% always.
+
+Method: snapshot, saturate the CPU, snapshot again, and list every
+`Measurement` entity whose value is byte-identical across the two. 79 moved, 97
+did not.
+
+**Nothing was wrong.** The 97 are all legitimately slow: SMART counters and
+power-on hours, drive temperatures on their own update cadence, service counts,
+and every GPU figure — because the load generator only stressed CPU, so an idle
+GPU sitting at 210 MHz is the correct reading, not a frozen one. **Filtering to
+the domains the load actually touches left zero frozen `cpu.*` measurements.**
+
+The specific confirmation is worth having, because it is the field this
+session rewrote:
+
+```
+cpu.core.0.frequency   idle=None            loaded=5027 MHz
+cpu.core.1.frequency   idle=None            loaded=5072 MHz
+```
+
+`None` on the priming call, real boosting clocks after — the PDH contract
+behaving as designed, on the field that used to be a constant 4400.
+
+**One scare, which was my own test.** `cpu.total.utilization` read 17.74% idle
+and 17.73% under full load, which looks exactly like a dead reader. It is not.
+The interval is *time since the previous call*, so two back-to-back snapshots
+make the second one span milliseconds. Spacing the calls out:
+
+```
+idle:        17.85%  then 6.73%   (back-to-back, second window tiny)
+half loaded: 55.70  55.92  56.17  56.00
+independent per-core mean:        55.69
+```
+
+Twelve of twenty-four threads busy, plus background, is 56%. It is correct to
+two decimal places against a separate reader.
+
+That behaviour is now in the entity description with the numbers, because an
+agent polling twice in a row gets a real measurement of a meaningless window and
+nothing previously said so.
+
+**Worth keeping: a negative result from a good technique is still worth the
+run.** Three audits in a row found defects; this one found none, and that is
+evidence about the crate rather than about the method. The method is also cheap
+to repeat — it is thirty lines and it directly tests the property this whole
+codebase exists to protect.
 
 ### The last misleading absence, and a deliberate refusal to implement
 

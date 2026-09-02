@@ -384,7 +384,17 @@ impl Ontology {
             // Nullable: the resolver reports it absent when the CPU stats
             // reader errors.
             true,
-            "System-wide CPU busy percentage over the last sampling interval.",
+            concat!(
+                "System-wide CPU busy percentage over the last sampling ",
+                "interval. That interval is the time since the previous call, ",
+                "not a fixed window: two snapshots taken back to back make the ",
+                "second one span milliseconds, and it will report whatever ",
+                "happened in those milliseconds. Measured here at 17.9% then ",
+                "6.7% from consecutive calls on an idle machine, and steady at ",
+                "55.7-56.2% across five spaced calls with half the cores ",
+                "loaded, against an independent per-core mean of 55.7%. Space ",
+                "the calls out to get a figure that means anything."
+            ),
         )
         .derived(&["cpu.total.idle"]));
         add(Entity::new(
