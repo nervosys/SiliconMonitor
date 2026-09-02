@@ -132,9 +132,77 @@ Since the tag, on `master` and green on all three platforms:
 | `f64f5ea` | Disk throughput, zero on every platform, drawn on three surfaces |
 | `ed4ec44` | A section of the state document that was never filled in |
 | `5a8bcee` | 26 public types the crate declares and never produces |
+| `3656368` | Six uncalled readers that answered zero for unknown |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### Six uncalled readers that answered zero for unknown
+
+The type sweep did not generalise to functions, and it is worth saying why
+before the next person tries it. 189 of the crate's 1670 public functions are
+called nowhere inside it — but for a monitoring library that is simply its API
+surface. `cpufreq::set_turbo`, `fan_control::set_curve`, `memory_management::purge_memory`:
+these exist to be called by a consumer, and a guard demanding an internal caller
+would be demanding the library use itself.
+
+So the filter had to be narrower, and the honest one is: of the uncalled
+functions, which **return a bare number and fall back to zero**. Seven. Six were
+real.
+
+**`PcieLinkSpeed` was the worst, because the zero propagated.** All three lookups
+on the enum mapped `Unknown` to zero — `gen_number() == 0`, `transfer_rate_gts()
+== 0.0`, `per_lane_gbps() == 0.0` — and `Unknown` is what `from_sysfs` returns for
+*any* string it fails to parse. There is no PCIe Gen0. From there it spread into
+two places that matter:
+
+| Consumer | What the zero did |
+| --- | --- |
+| `max_bandwidth_gbps` | Returned 0.0, and it is *summed* across devices into `PcieBandwidthSummary::total_bandwidth_gbps`. A device of unknown speed contributed nothing to a figure presented as the bus's aggregate bandwidth, and the total looked complete |
+| `is_downgraded` | Compared generation numbers with `Unknown` as 0, so it was wrong in both directions at once |
+
+That second one is worth spelling out, because it is a false alarm and a missed
+alarm in the same three lines. A device whose *maximum* speed was unreadable
+compared as Gen0 and so could never exceed the current speed — never downgraded,
+whatever was happening. A device whose *current* speed was unreadable compared as
+Gen0 against a known Gen4 maximum and was reported as degraded — a degradation
+alarm about a link that was never measured. And `PcieMonitor::downgraded_devices`
+put that device in the list a caller acts on.
+
+Everything is `Option` now. `is_downgraded` decides on width first, which is the
+cheaper signal and settles the case on its own — a link narrower than its maximum
+is downgraded whatever the speeds turn out to be — and only consults speed when
+width says no, which is the only case that needs both to be known. The summary
+gained `unreadable_devices` rather than quietly excluding them, so a reader can
+see that the other two counts are partial.
+
+**`BlockDeviceIo`'s three stats figures**, fixed for the zero and then for
+something worse than the zero. They returned 0.0 when the busy-time denominator
+was zero, which happens both when a device has genuinely served no reads and when
+the counters were never populated — every platform but Linux, where `IoStats` is
+constructed with zeros. But going in to fix that made me read what they compute,
+and the names are wrong twice over: `/sys/block/*/stat` counters are cumulative
+since boot, so these are *lifetime averages*, not rates, and will barely move
+under a burst of load; and the denominator is time *spent* doing I/O rather than
+elapsed time, so the figure is IOPS-while-busy, which on a mostly idle device is
+far above its actual IOPS. Both now documented at the method, with the
+instruction to read `IoStats` twice and difference it for a real rate.
+
+**`RackInfo`'s two utilisation figures** returned 0.0 when no capacity was
+configured. "This rack is drawing 0% of its power budget" is the most reassuring
+possible answer to a question nobody supplied the inputs for, and it was the
+common case: `max_power_watts` defaults to `0.0` in the builder precisely because
+it cannot be known without being told.
+
+The seventh, `streaming::subscription_count`, counts a collection. Zero is a real
+answer to how many subscriptions there are, and it was left alone.
+
+**Being uncalled is not the defect; it is the reason the defect survived.** Every
+one of these had been read past by the sweeps that fixed the same pattern
+everywhere else in the crate, because those sweeps followed values to the
+surfaces that display them and these values reach no surface. The `Unknown => 0`
+arm is the single most repeated shape in this file's history, and it was still
+sitting in three consecutive match arms of a published enum.
 
 ### 26 public types the crate declares and never produces
 
