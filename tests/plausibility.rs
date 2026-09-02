@@ -363,7 +363,7 @@ fn disk_readings_are_self_consistent() {
             disk.total
         );
         assert!(
-            disk.read_rate >= 0.0 && disk.write_rate >= 0.0,
+            disk.read_rate.unwrap_or(0.0) >= 0.0 && disk.write_rate.unwrap_or(0.0) >= 0.0,
             "disk {} reports a negative transfer rate",
             disk.name
         );

@@ -453,8 +453,14 @@ impl HttpServer {
             // cumulative figures exist, but only on the `PrometheusExporter`
             // path, which reads `io_stats` directly.
             let device: &[(&str, &str)] = &[("device", disk.name.as_str())];
-            collector.record_with_labels("simon_disk_read_bytes_per_sec", disk.read_rate, device);
-            collector.record_with_labels("simon_disk_write_bytes_per_sec", disk.write_rate, device);
+            // Emitted only where a rate exists. The pipeline reports none on
+            // Windows, whose disk path reads capacity and no counters.
+            if let Some(rate) = disk.read_rate {
+                collector.record_with_labels("simon_disk_read_bytes_per_sec", rate, device);
+            }
+            if let Some(rate) = disk.write_rate {
+                collector.record_with_labels("simon_disk_write_bytes_per_sec", rate, device);
+            }
             if disk.total > 0 {
                 collector.record_with_labels(
                     "simon_disk_usage_percent",
@@ -574,8 +580,8 @@ mod snapshot_recording_tests {
                 name: "PhysicalDrive0".into(),
                 total: 1_000,
                 used: 250,
-                read_rate: 4096.0,
-                write_rate: 512.0,
+                read_rate: Some(4096.0),
+                write_rate: Some(512.0),
                 ..Default::default()
             }],
             ..Default::default()
@@ -646,8 +652,8 @@ mod dashboard_coverage_tests {
                 name: "PhysicalDrive0".into(),
                 total: 1_000,
                 used: 250,
-                read_rate: 1.0,
-                write_rate: 1.0,
+                read_rate: Some(1.0),
+                write_rate: Some(1.0),
                 ..Default::default()
             }],
             network: vec![NetSnapshot {

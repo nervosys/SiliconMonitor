@@ -99,10 +99,21 @@ pub struct DiskSnapshot {
     pub used: u64,
     /// Filesystem label (NTFS, ext4, ...).
     pub filesystem: String,
-    /// Read throughput in bytes/sec.
-    pub read_rate: f64,
-    /// Write throughput in bytes/sec.
-    pub write_rate: f64,
+    /// Read throughput in bytes/sec, or `None` where no rate was established.
+    ///
+    /// This was `f64` and it was **zero on every platform**. Windows takes the
+    /// cheap `logical_drives` path, which reads capacity and no counters at
+    /// all, and hardcoded `0.0`; the other platforms wrote
+    /// `io.read_throughput.unwrap_or(0)`, and `read_throughput` is itself
+    /// always `None` because a rate needs two samples to difference and
+    /// `DiskIoStats` is built from one.
+    ///
+    /// So every consumer -- the TUI, the GUI, and
+    /// `simon_disk_read_bytes_per_sec` -- has been drawing a flat line at zero
+    /// and calling it disk throughput.
+    pub read_rate: Option<f64>,
+    /// Write throughput in bytes/sec. See [`Self::read_rate`].
+    pub write_rate: Option<f64>,
 }
 
 /// A network interface row with computed bandwidth rates.
@@ -932,8 +943,10 @@ fn collect_disks() -> Vec<DiskSnapshot> {
                     total: d.total,
                     used: d.used,
                     filesystem: d.filesystem,
-                    read_rate: 0.0,
-                    write_rate: 0.0,
+                    // `logical_drives` reads capacity and no I/O counters, so
+                    // there is no rate here to report. It said `0.0`.
+                    read_rate: None,
+                    write_rate: None,
                 })
                 .collect()
         })
@@ -970,11 +983,13 @@ fn collect_disks() -> Vec<DiskSnapshot> {
                 .ok()
                 .map(|io| {
                     (
-                        io.read_throughput.unwrap_or(0) as f64,
-                        io.write_throughput.unwrap_or(0) as f64,
+                        io.read_throughput.map(|v| v as f64),
+                        io.write_throughput.map(|v| v as f64),
                     )
                 })
-                .unwrap_or((0.0, 0.0));
+                // A disk whose `io_stats` call failed reports no rate, rather
+                // than a rate of zero.
+                .unwrap_or((None, None));
 
             Some(DiskSnapshot {
                 name: info.model,

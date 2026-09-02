@@ -677,14 +677,16 @@ fn draw_system_tab(f: &mut Frame, app: &App, area: Rect) {
             } else {
                 0.0
             };
-            let io_str = if disk.read_rate > 0.0 || disk.write_rate > 0.0 {
-                format!(
-                    " │ R:{}/s W:{}/s",
-                    auto_unit(disk.read_rate as u64),
-                    auto_unit(disk.write_rate as u64)
-                )
-            } else {
-                String::new()
+            // Shown only when a rate was established and is non-zero. The
+            // absent case and the genuinely-idle case both render nothing here,
+            // which is the same choice the column made before -- the difference
+            // is that an unestablished rate no longer arrives as `0.0` and so
+            // no longer claims the disk was idle.
+            let io_str = match (disk.read_rate, disk.write_rate) {
+                (Some(r), Some(w)) if r > 0.0 || w > 0.0 => {
+                    format!(" │ R:{}/s W:{}/s", auto_unit(r as u64), auto_unit(w as u64))
+                }
+                _ => String::new(),
             };
             ListItem::new(Line::from(vec![
                 Span::styled(
@@ -1073,8 +1075,11 @@ fn draw_memory_bar(f: &mut Frame, app: &App, area: Rect) {
 fn draw_disk_bar(f: &mut Frame, app: &App, area: Rect) {
     let total_space: u64 = app.disk_info.iter().map(|d| d.total).sum();
     let used_space: u64 = app.disk_info.iter().map(|d| d.used).sum();
-    let total_read: f64 = app.disk_info.iter().map(|d| d.read_rate).sum();
-    let total_write: f64 = app.disk_info.iter().map(|d| d.write_rate).sum();
+    // Summed over the disks that have a rate. Where none has one the total is
+    // zero and the gauge below reads empty, which is what "nothing to show"
+    // looks like in a bar -- not a claim that the disks were idle.
+    let total_read: f64 = app.disk_info.iter().filter_map(|d| d.read_rate).sum();
+    let total_write: f64 = app.disk_info.iter().filter_map(|d| d.write_rate).sum();
     let disk_percent = if total_space > 0 {
         (used_space as f64 / total_space as f64) * 100.0
     } else {

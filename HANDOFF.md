@@ -129,9 +129,49 @@ Since the tag, on `master` and green on all three platforms:
 | `69f1766` | The last unaudited surface, and a fix that never reached the screen |
 | `fc1667e` | A contract that was right for a loop and wrong for everything else |
 | `86fc72c` | Checking my own open-work item, which was already stale |
+| `HEAD` | Disk throughput, zero on every platform, drawn on three surfaces |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### Disk throughput, zero on every platform, drawn on three surfaces
+
+Went to close the last three dashboard gaps at their cause — the pipeline
+`Snapshot` not carrying the readings — and found the reading it *does* carry is
+a constant.
+
+```rust
+// Windows
+read_rate: 0.0,
+write_rate: 0.0,
+// everywhere else
+io.read_throughput.unwrap_or(0) as f64,
+```
+
+Both are zero. Windows takes the cheap `logical_drives` path, which reads
+capacity and no I/O counters at all, and hardcodes it. The other platforms flatten
+`read_throughput`, which is itself **always `None`** — a rate needs two samples
+to difference and `DiskIoStats` is built from one, which the entry about
+`disk.{n}.read_rate` established some fifteen commits ago.
+
+So `DiskSnapshot::read_rate` has been `0.0` on every platform for the life of
+the pipeline, and it is drawn by the TUI, the GUI, and — since two commits ago —
+`simon_disk_read_bytes_per_sec`. **I renamed and labelled that metric earlier
+today, which made a constant zero more accurately addressed.** Correcting a
+name without checking the value behind it is its own small lesson.
+
+Both fields are `Option<f64>` now, matching `NetSnapshot` after the equivalent
+fix: `None` on the Windows capacity-only path, and the real `Option` from
+`io_stats` elsewhere. Six consumers followed — the metric, the TUI row, the TUI
+totals, the GUI, a placeholder row and the plausibility test — and every one of
+them was flattening an absence to zero at its own layer.
+
+**Worth keeping.** Three separate rate defects this session had the same shape:
+network bandwidth differenced against a baseline overwritten a line earlier,
+disk throughput hardcoded, and `read_throughput` never computed at all. **A rate
+is the most fragile thing this crate publishes** — it needs two readings, a
+clock, and somewhere to keep the first — and every place one is stored is worth
+checking against the possibility that nobody ever computed it.
 
 ### Checking my own open-work item, which was already stale
 

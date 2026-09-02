@@ -833,9 +833,11 @@ pub struct DiskInfo {
     pub used: u64,
     pub filesystem: String,
     /// Read bytes per second
-    pub read_rate: f64,
+    /// Read throughput, or `None` where no rate was established.
+    pub read_rate: Option<f64>,
     /// Write bytes per second
-    pub write_rate: f64,
+    /// Write throughput. See [`Self::read_rate`].
+    pub write_rate: Option<f64>,
 }
 
 /// Network interface information for display
@@ -1646,8 +1648,10 @@ impl App {
                 total: 0,
                 used: 0,
                 filesystem: "N/A".to_string(),
-                read_rate: 0.0,
-                write_rate: 0.0,
+                // A placeholder row for a disk with no readings, so the rates
+                // are absent rather than a throughput of zero.
+                read_rate: None,
+                write_rate: None,
             });
         }
 
