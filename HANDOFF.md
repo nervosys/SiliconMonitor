@@ -131,9 +131,64 @@ Since the tag, on `master` and green on all three platforms:
 | `86fc72c` | Checking my own open-work item, which was already stale |
 | `f64f5ea` | Disk throughput, zero on every platform, drawn on three surfaces |
 | `ed4ec44` | A section of the state document that was never filled in |
+| `5a8bcee` | 26 public types the crate declares and never produces |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### 26 public types the crate declares and never produces
+
+Took the lesson from the previous commit at its word and swept every public
+`struct` and `enum` in the crate — 885 of them — for ones mentioned nowhere but
+their own declaration. Eight. Following those transitively through the fields
+that only they reference: 24 of the 32 types in `ai_api::types`, 391 of its 619
+lines, plus `EdacEdgeType` and `SiliconSnapshot`.
+
+The `ai_api` half is the one that matters, because it is published.
+`ai_api::types` is a `pub mod` re-exported with `pub use types::*`, so a consumer
+reading the docs finds `CpuDetails`, `GpuDetails`, `DiskDetails`,
+`ProcessDetails`, `NetworkInterfaceDetails` and eighteen more, under a module
+header reading *"data structures for tool results"*. No tool returns one. I
+checked whether they were at least a deserialisation contract for the JSON the
+tools do emit, and they are not:
+
+```
+CpuDetails      { model, physical_cores, logical_cores, cores,
+                  total_utilization, frequency }
+get_cpu_status  { core_count, total { user_percent, system_percent,
+                  nice_percent, idle_percent, usage_percent }, model }
+```
+
+Two different documents about the same subject. The tools build their results
+with ad-hoc `json!` and always have.
+
+What makes this an honesty defect rather than tidying is the *shape* of the dead
+types. They are flat and non-`Option` — per-core clocks, power draw,
+temperatures, SMART attributes, packet counters, bandwidth rates — declaring as
+unconditionally present exactly the readings the last hundred commits have
+established are routinely unavailable on a real machine. `BandwidthInfo` still
+carried the bare `f64` rate fields that `e425908` removed from every network rate
+in the crate that something constructs. This is a published description of a
+machine simon cannot actually see, and the first person to wire one up would have
+imported the fabrication wholesale rather than met it as a fix.
+
+Deleted. `tests/unreachable_types.rs` keeps the count at zero, with **no
+allowlist** — a public type appearing nowhere but its declaration is either dead
+or an unkept promise, and both deserve a deliberate decision rather than an
+exemption line. Comments are stripped before counting, because every type's own
+doc comment names it and would otherwise vouch for it; that is the third guard in
+this file to need that, after the dashboard one that a comment satisfied.
+Sabotage-verified by adding a `SabotageProbe` struct with an `f64` rate field,
+which the test named in its failure.
+
+Breaking, and 6.0.0 — where the constructor renames and the `SwapInfo` `Option`
+fields are landing — is the release for it.
+
+**Two sweeps in a row have now found their remaining defects in code that does
+not run.** Grepping for a pattern finds the code that executes; the code that
+does not execute keeps whatever shape it was born with and stays wrong silently.
+Both of this crate's last two fabrications were in unconstructed types, and
+neither was found by looking for fabrications.
 
 ### A section of the state document that was never filled in
 
