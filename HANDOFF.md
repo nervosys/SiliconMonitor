@@ -123,7 +123,7 @@ Since the tag, on `master` and green on all three platforms:
 | `74b635d` | Dashboards querying names nothing published, and three wrong tests |
 | `d4da86c` | Two Prometheus renderers, and the server serves the worse one |
 | `5796371` | The instance in the metric name, and a rate called a total |
-| `HEAD` | Doing the thing the previous commit deferred |
+| `15ea71e` | Doing the thing the previous commit deferred |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
