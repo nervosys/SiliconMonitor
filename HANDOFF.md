@@ -5292,7 +5292,7 @@ feature stayed broken through eight published versions.
    Note `--lib --tests` skips doc-tests; run those before a release.
 
    **`cargo`'s output does not go to `./target` on this machine.**
-   `~/.cargo/config.toml` sets `target-dir = "C:/Users/adamm/.cargo-target"`, and
+   `~/.cargo/config.toml` sets a `target-dir` outside the repo, and
    `./target` still holds a stale tree from before that line was added. Running
    `./target/debug/simon.exe` therefore runs *whatever was built before the
    redirect*, silently. It cost a wrong conclusion during the USB speed work:
