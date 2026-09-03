@@ -99,6 +99,100 @@ pub struct InputMonitor {
     devices: Vec<InputDevice>,
 }
 
+/// Match a device instance id's enumerator prefix to a transport.
+///
+/// The enumerator is the segment before the first backslash: `USB`, `BTHENUM`,
+/// `ACPI`, `HID`. **`HID` is deliberately absent from this table** — it names a
+/// device class and says nothing about how the device is attached, which is the
+/// whole reason [`interface_from_device_tree`] has to walk the parent chain.
+#[cfg(target_os = "windows")]
+fn classify_enumerator(id: &str) -> Option<InputInterface> {
+    let upper = id.to_uppercase();
+    match upper.split('\\').next().unwrap_or("") {
+        "USB" | "USBSTOR" => Some(InputInterface::USB),
+        // `BTHENUM` is classic Bluetooth, `BTHLEDEVICE` is Low Energy.
+        "BTHENUM" | "BTHLEDEVICE" | "BTH" => Some(InputInterface::Bluetooth),
+        "ACPI" => Some(InputInterface::PS2),
+        "HIDI2C" => Some(InputInterface::I2C),
+        "SWD" | "ROOT" => Some(InputInterface::Virtual),
+        _ => None,
+    }
+}
+
+/// The transport a device instance sits on, following the parent chain.
+///
+/// A `HID\...` instance id names a device *class*, not a transport: the same
+/// prefix covers a USB mouse, a Bluetooth keyboard and an I2C touchpad. The
+/// reader used to look only at the device's own id and answer `Unknown` for
+/// every HID node, which was the honest answer to the question it was asking.
+///
+/// It is not the only question available. Windows records
+/// `DEVPKEY_Device_Parent`, and the HID node's parent carries the transport in
+/// its own enumerator prefix -- on this machine, the HID mouse
+/// `HID\VID_046D&PID_C548&MI_01\...` has the parent
+/// `USB\VID_046D&PID_C548&MI_01\...`. Walking up until an enumerator is
+/// recognised turns a refusal to guess into a reading.
+///
+/// Still `Unknown` when the walk finds nothing it recognises, which is the same
+/// answer as before and for the same reason: naming a transport this crate has
+/// not established would be the guess the old comment declined to make.
+#[cfg(target_os = "windows")]
+fn interface_from_device_tree(instance_id: &str) -> InputInterface {
+    use std::os::windows::ffi::OsStrExt;
+    use windows::core::PCWSTR;
+    use windows::Win32::Devices::DeviceAndDriverInstallation::{
+        CM_Get_Device_IDW, CM_Get_Parent, CM_Locate_DevNodeW, CM_LOCATE_DEVNODE_NORMAL, CR_SUCCESS,
+    };
+
+    if let Some(direct) = classify_enumerator(instance_id) {
+        return direct;
+    }
+
+    let wide: Vec<u16> = std::ffi::OsStr::new(instance_id)
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+
+    let mut devinst = 0u32;
+    // SAFETY: `wide` is NUL-terminated and outlives the call.
+    if unsafe {
+        CM_Locate_DevNodeW(
+            &mut devinst,
+            PCWSTR(wide.as_ptr()),
+            CM_LOCATE_DEVNODE_NORMAL,
+        )
+    } != CR_SUCCESS
+    {
+        return InputInterface::Unknown;
+    }
+
+    // Bounded: the device tree is a tree and terminates on its own, but a
+    // corrupted one should not hang a monitoring process.
+    let mut node = devinst;
+    for _ in 0..8 {
+        let mut parent = 0u32;
+        // SAFETY: `parent` is a live local; the call writes one `u32`.
+        if unsafe { CM_Get_Parent(&mut parent, node, 0) } != CR_SUCCESS {
+            return InputInterface::Unknown;
+        }
+
+        let mut buf = [0u16; 512];
+        // SAFETY: `buf` is the buffer the call fills, sized by its own length.
+        if unsafe { CM_Get_Device_IDW(parent, &mut buf, 0) } != CR_SUCCESS {
+            return InputInterface::Unknown;
+        }
+        let len = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+        let id = String::from_utf16_lossy(&buf[..len]);
+
+        if let Some(found) = classify_enumerator(&id) {
+            return found;
+        }
+        node = parent;
+    }
+
+    InputInterface::Unknown
+}
+
 /// The manufacturer WMI reports for an input device, if it named one.
 ///
 /// Windows fills `Manufacturer` on many device nodes with the *driver package
@@ -427,18 +521,12 @@ impl InputMonitor {
                     .to_string();
                 let device_id = item["DeviceID"].as_str().unwrap_or("").to_string();
                 // A bare `HID\` instance names the device class, not the
-                // transport -- it may be Bluetooth or I2C rather than USB. The
-                // note that used to sit here said exactly that and the code
-                // reported USB anyway. Only a `USB` in the instance path is
-                // evidence of USB; `Unknown` resolves to an absent reading,
-                // which is what a guess is worth.
-                let iface = if device_id.to_lowercase().contains("usb") {
-                    InputInterface::USB
-                } else if device_id.contains("PS2") || device_id.contains("ACPI") {
-                    InputInterface::PS2
-                } else {
-                    InputInterface::Unknown
-                };
+                // transport -- it may be Bluetooth or I2C rather than USB. An
+                // earlier note said exactly that while the code reported USB
+                // anyway; then the code stopped guessing and answered `Unknown`
+                // for every HID node. Neither was necessary: the parent chain
+                // records the transport. See `interface_from_device_tree`.
+                let iface = interface_from_device_tree(&device_id);
                 self.devices.push(InputDevice {
                     name,
                     device_type: InputDeviceType::Keyboard,
@@ -483,15 +571,8 @@ impl InputMonitor {
                     InputDeviceType::Mouse
                 };
                 let device_id = item["DeviceID"].as_str().unwrap_or("").to_string();
-                // See the note on the keyboard branch above: `HID` is a
-                // device class, not a transport.
-                let iface = if device_id.to_lowercase().contains("usb") {
-                    InputInterface::USB
-                } else if device_id.contains("PS2") || device_id.contains("ACPI") {
-                    InputInterface::PS2
-                } else {
-                    InputInterface::Unknown
-                };
+                // See the keyboard branch above.
+                let iface = interface_from_device_tree(&device_id);
                 let buttons = item["NumberOfButtons"].as_u64().unwrap_or(0);
                 let mut caps = vec!["relative-axes".into()];
                 if buttons > 0 {
@@ -657,6 +738,59 @@ impl std::fmt::Display for InputInterface {
             Self::Virtual => write!(f, "Virtual"),
             Self::Unknown => write!(f, "Unknown"),
         }
+    }
+}
+
+#[cfg(all(test, target_os = "windows"))]
+mod enumerator_tests {
+    use super::{classify_enumerator, InputInterface};
+
+    /// The reason the parent walk exists at all.
+    #[test]
+    fn hid_is_a_device_class_and_names_no_transport() {
+        // A HID instance id is compatible with USB, Bluetooth and I2C alike,
+        // so it must not resolve to any of them on its own. This is the real
+        // id of this machine's mouse.
+        assert_eq!(
+            classify_enumerator(r"HID\VID_046D&PID_C548&MI_01&COL01\A&27230CC3&0&0000"),
+            None
+        );
+    }
+
+    #[test]
+    fn an_enumerator_prefix_names_its_transport() {
+        // The parent of that HID node, and the shapes of the other buses.
+        assert_eq!(
+            classify_enumerator(r"USB\VID_046D&PID_C548&MI_01\9&24c94812&0&0001"),
+            Some(InputInterface::USB)
+        );
+        assert_eq!(
+            classify_enumerator(r"BTHENUM\Dev_0000\7&2&0"),
+            Some(InputInterface::Bluetooth)
+        );
+        assert_eq!(
+            classify_enumerator(r"ACPI\PNP0303\4&1"),
+            Some(InputInterface::PS2)
+        );
+        assert_eq!(
+            classify_enumerator(r"ROOT\SYSTEM\0000"),
+            Some(InputInterface::Virtual)
+        );
+
+        // Instance ids arrive in both cases.
+        assert_eq!(
+            classify_enumerator(r"usb\vid_046d"),
+            Some(InputInterface::USB)
+        );
+    }
+
+    #[test]
+    fn an_unrecognised_enumerator_is_not_forced_into_a_transport() {
+        // Absence, not a nearest match. Naming a transport this crate has not
+        // established is the guess the reader exists to avoid.
+        assert_eq!(classify_enumerator(r"PCI\VEN_1022&DEV_43F7"), None);
+        assert_eq!(classify_enumerator(""), None);
+        assert_eq!(classify_enumerator(r"SOMETHINGNEW\X"), None);
     }
 }
 
