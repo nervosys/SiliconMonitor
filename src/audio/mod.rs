@@ -71,6 +71,139 @@ struct WindowsEndpoint {
     state: Option<AudioState>,
 }
 
+/// Per-endpoint volume, mute and default flag, from the audio service.
+///
+/// Keyed by endpoint GUID so it joins the registry enumeration this module
+/// already does. `IMMDevice::GetId` returns `{0.0.0.00000000}.{guid}`; the
+/// trailing brace-wrapped GUID is the same key the `MMDevices\Audio\Render`
+/// and `...\Capture` trees use.
+///
+/// **Why COM and not WMI or the registry.** Neither carries a live master
+/// volume: `Win32_SoundDevice` has no volume property at all, and the
+/// `MMDevices` tree stores endpoint *configuration*, not the current scalar the
+/// mixer shows. The absence reason these readings replace said as much -- "simon
+/// has no mixer binding on this platform" and "which endpoint the system routes
+/// to by default is a COM call this crate does not make" -- and both were
+/// accurate descriptions of an unimplemented reader rather than of the platform.
+///
+/// Volume is reported as the scalar percentage the mixer displays, which is
+/// what `board.audio.{n}.volume` asks for, and not the dB level: the two differ
+/// by the taper Windows applies, and a consumer comparing simon's figure against
+/// the slider would find the dB one wrong.
+#[cfg(target_os = "windows")]
+fn windows_endpoint_mixer() -> std::collections::HashMap<String, EndpointMixer> {
+    use windows::Win32::Media::Audio::Endpoints::IAudioEndpointVolume;
+    use windows::Win32::Media::Audio::{
+        eCapture, eConsole, eRender, IMMDeviceEnumerator, MMDeviceEnumerator, DEVICE_STATE_ACTIVE,
+    };
+    use windows::Win32::System::Com::{
+        CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_ALL, COINIT_APARTMENTTHREADED,
+    };
+
+    let mut out = std::collections::HashMap::new();
+
+    // SAFETY: every call below is on interfaces obtained from the call above
+    // it, and `CoUninitialize` balances the initialisation on every path out.
+    unsafe {
+        // The audio service is apartment-threaded. A failure here usually means
+        // COM is already initialised on this thread with a different model,
+        // which is not fatal -- the interfaces still work -- so the result is
+        // deliberately not propagated, only the uninitialise is skipped.
+        let initialised = CoInitializeEx(None, COINIT_APARTMENTTHREADED).is_ok();
+
+        let enumerator: Result<IMMDeviceEnumerator, _> =
+            CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL);
+        let Ok(enumerator) = enumerator else {
+            if initialised {
+                CoUninitialize();
+            }
+            return out;
+        };
+
+        // Which endpoint each direction routes to. A machine with no output at
+        // all has no default, which is why this is an `Option` rather than a
+        // sentinel.
+        let mut defaults: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for flow in [eRender, eCapture] {
+            if let Ok(device) = enumerator.GetDefaultAudioEndpoint(flow, eConsole) {
+                if let Ok(id) = device.GetId() {
+                    if let Some(guid) = endpoint_guid(&id.to_string().unwrap_or_default()) {
+                        defaults.insert(guid);
+                    }
+                }
+            }
+        }
+
+        for flow in [eRender, eCapture] {
+            let Ok(collection) = enumerator.EnumAudioEndpoints(flow, DEVICE_STATE_ACTIVE) else {
+                continue;
+            };
+            let count = collection.GetCount().unwrap_or(0);
+            for i in 0..count {
+                let Ok(device) = collection.Item(i) else {
+                    continue;
+                };
+                let Ok(id) = device.GetId() else { continue };
+                let Some(guid) = endpoint_guid(&id.to_string().unwrap_or_default()) else {
+                    continue;
+                };
+
+                let volume: Result<IAudioEndpointVolume, _> = device.Activate(CLSCTX_ALL, None);
+                let (level, muted) = match volume {
+                    Ok(v) => (
+                        // The scalar is 0.0-1.0; the entity is a percentage.
+                        v.GetMasterVolumeLevelScalar()
+                            .ok()
+                            .map(|s| (s * 100.0).round().clamp(0.0, 100.0) as u8),
+                        v.GetMute().ok().map(|m| m.as_bool()),
+                    ),
+                    // An endpoint whose volume interface will not activate
+                    // reports no level, rather than a default one.
+                    Err(_) => (None, None),
+                };
+
+                out.insert(
+                    guid.clone(),
+                    EndpointMixer {
+                        volume: level,
+                        muted,
+                        is_default: defaults.contains(&guid),
+                        is_render: flow == eRender,
+                    },
+                );
+            }
+        }
+
+        if initialised {
+            CoUninitialize();
+        }
+    }
+
+    out
+}
+
+/// Pull the endpoint GUID out of an `IMMDevice` id.
+///
+/// The id is `{0.0.0.00000000}.{a1b2...}`: a container id, a dot, then the
+/// endpoint GUID in braces. The registry trees this module already reads are
+/// keyed by that second component alone.
+#[cfg(target_os = "windows")]
+fn endpoint_guid(device_id: &str) -> Option<String> {
+    let guid = device_id.rsplit('.').next()?;
+    (guid.starts_with('{') && guid.ends_with('}')).then(|| guid.to_ascii_lowercase())
+}
+
+/// What the audio service reports about one endpoint's mixer.
+#[cfg(target_os = "windows")]
+struct EndpointMixer {
+    volume: Option<u8>,
+    muted: Option<bool>,
+    is_default: bool,
+    /// Output rather than input. The two directions each have their own
+    /// default, and "master volume" means the output one.
+    is_render: bool,
+}
+
 pub struct AudioMonitor {
     devices: Vec<AudioDevice>,
     /// System master volume, if it has been read.
@@ -270,6 +403,20 @@ impl AudioMonitor {
         );
 
         let endpoints = Self::windows_endpoint_registry();
+        // One COM session for the whole enumeration rather than one per device.
+        let mixer = windows_endpoint_mixer();
+
+        // "Master volume" is the level of the endpoint the system routes output
+        // to -- the figure the volume slider shows. It is not a separate system
+        // property, and Windows has none: there is only ever a per-endpoint
+        // level, so taking the default output's is what the name means.
+        //
+        // `None` where no default output was found, which is a machine with no
+        // active render endpoint at all. It used to be a hardcoded `Some(100)`.
+        if let Some(default_out) = mixer.values().find(|m| m.is_default && m.is_render) {
+            self.master_volume = default_out.volume;
+            self.master_muted = default_out.muted;
+        }
 
         let Some(value) =
             crate::core::command::capture_json("powershell", &["-NoProfile", "-Command", QUERY])?
@@ -309,16 +456,21 @@ impl AudioMonitor {
                     AudioDeviceType::Input
                 },
                 state: endpoint.state,
-                // Not read. Which endpoint the system routes to by default is
-                // `IMMDeviceEnumerator::GetDefaultAudioEndpoint`, a COM call;
-                // the registry does not record it. This was "whichever row came
-                // first", which on this machine named an audio *controller* as
-                // the default output.
-                is_default: None,
+                // From the audio service. This was "whichever row came first",
+                // which on this machine named an audio *controller* as the
+                // default output; then it was `None` with a note that the COM
+                // call was not made. It is made now -- see
+                // `windows_endpoint_mixer`.
+                //
+                // An endpoint the mixer enumeration did not return keeps its
+                // absence: `DEVICE_STATE_ACTIVE` is what that enumeration asks
+                // for, so a disabled or unplugged endpoint has no live volume
+                // to report and is not given one.
+                is_default: mixer.get(&guid).map(|m| m.is_default),
                 is_output: endpoint.is_output,
                 is_enabled: endpoint.state == Some(AudioState::Active),
-                volume: None,
-                muted: None,
+                volume: mixer.get(&guid).and_then(|m| m.volume),
+                muted: mixer.get(&guid).and_then(|m| m.muted),
             });
         }
         Ok(())
@@ -556,27 +708,55 @@ mod tests {
     /// fails the moment a real reader lands, which is when the wording on
     /// those three surfaces needs revisiting.
     #[test]
-    fn an_unread_mixer_reports_nothing_rather_than_full_volume() {
+    fn the_master_volume_is_the_default_output_or_nothing() {
         let monitor = AudioMonitor::new().expect("monitor");
 
-        assert_eq!(
-            monitor.master_volume(),
-            None,
-            "no platform reads the master volume; 100% was a constructor default"
-        );
-        assert_eq!(monitor.is_muted(), None, "no platform reads the mute state");
+        // This test was written when no platform read a mixer at all, and it
+        // asserted `None` everywhere. Windows reads one now, so asserting
+        // absence would pin the defect rather than the principle.
+        //
+        // The principle is what the original constructor got wrong: it set
+        // `Some(100)` from nowhere, and every surface published "Master Volume:
+        // 100%" on every machine. A master volume is not a system property --
+        // Windows has only per-endpoint levels -- so the only honest value is
+        // the default *output* endpoint's, and any other number is invented.
+        let default_output = monitor
+            .devices()
+            .iter()
+            .find(|d| d.is_output && d.is_default == Some(true));
 
+        match default_output {
+            Some(device) => {
+                assert_eq!(
+                    monitor.master_volume(),
+                    device.volume,
+                    "master volume must be the default output's level, not a figure of its own"
+                );
+                assert_eq!(monitor.is_muted(), device.muted);
+            }
+            // No default output found: on a platform with no mixer binding at
+            // all, and on a machine with no active render endpoint.
+            None => {
+                assert_eq!(
+                    monitor.master_volume(),
+                    None,
+                    "with no default output there is nothing for a master volume to be"
+                );
+                assert_eq!(monitor.is_muted(), None);
+            }
+        }
+
+        // Whatever is reported is a percentage. The old value was 100, which is
+        // in range -- so this alone would not have caught it, and it is here to
+        // catch a scalar published without its 0-1 to 0-100 conversion.
         for device in monitor.devices() {
-            assert_eq!(
-                device.volume, None,
-                "{}: device volume is not read on any platform",
-                device.name
-            );
-            assert_eq!(
-                device.muted, None,
-                "{}: mute state is not read",
-                device.name
-            );
+            if let Some(volume) = device.volume {
+                assert!(
+                    volume <= 100,
+                    "{}: volume {volume} is not a percentage",
+                    device.name
+                );
+            }
         }
     }
 
@@ -585,6 +765,8 @@ mod tests {
     #[test]
     fn the_mixer_setters_decline_rather_than_pretend() {
         let mut monitor = AudioMonitor::new().expect("monitor");
+        let before_volume = monitor.master_volume();
+        let before_muted = monitor.is_muted();
 
         assert!(
             monitor.set_master_volume(75).is_err(),
@@ -592,10 +774,12 @@ mod tests {
         );
         assert!(monitor.set_mute(true).is_err());
 
-        // Still unread: the failed call must not have left its argument behind
-        // as though it were a reading.
-        assert_eq!(monitor.master_volume(), None);
-        assert_eq!(monitor.is_muted(), None);
+        // The failed call must not have left its argument behind as though it
+        // were a reading. Compared against what was read before the call rather
+        // than against `None`, since a mixer that *is* read has a real value
+        // here and pinning `None` would only pin the platform this runs on.
+        assert_eq!(monitor.master_volume(), before_volume);
+        assert_eq!(monitor.is_muted(), before_muted);
 
         // Argument validation still comes first.
         assert!(monitor.set_master_volume(101).is_err());

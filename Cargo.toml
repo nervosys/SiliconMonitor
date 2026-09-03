@@ -207,6 +207,12 @@ windows = { version = "0.58", features = [
     # against the parent hub. Not a PnP property -- Windows reports it nowhere
     # else, including `Get-PnpDeviceProperty` and every `root\wmi` class.
     "Win32_Devices_Usb",
+    # Audio endpoint volume, mute and which endpoint the system routes to by
+    # default. All three are COM-only: no WMI class and no registry value
+    # carries the live master volume of an endpoint.
+    "Win32_Media_Audio",
+    "Win32_Media_Audio_Endpoints",
+    "Win32_System_Com",
     "Win32_NetworkManagement_IpHelper",
     "Win32_Networking_WinSock",
     "Win32_Graphics_Dxgi",

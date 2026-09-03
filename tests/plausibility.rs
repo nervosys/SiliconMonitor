@@ -454,13 +454,48 @@ fn readers_that_find_nothing_invent_nothing() {
                 device.name
             );
 
-            // The default endpoint used to be handed `Some(100)` while every
-            // other device got `None`, so the one device a user looks at was
-            // the one carrying an invented figure.
+            // A volume that is read is a percentage. This does not catch the
+            // original defect on its own -- 100 is in range -- which is what
+            // the check after the loop is for.
+            if let Some(volume) = device.volume {
+                assert!(
+                    volume <= 100,
+                    "{}: volume {volume} is not a percentage",
+                    device.name
+                );
+            }
+        }
+
+        // The original defect had a shape, and this is it: the default endpoint
+        // was handed `Some(100)` while every other device got `None`, so the one
+        // device a user actually looks at was the one carrying an invented
+        // figure. Either a platform reads the mixer for the endpoints it
+        // enumerates, or it reads none of them -- "only the default has a
+        // volume, and it is exactly full" is not a state any mixer produces.
+        let with_volume: Vec<&str> = monitor
+            .devices()
+            .iter()
+            .filter(|d| d.volume.is_some())
+            .map(|d| d.name.as_str())
+            .collect();
+        let defaults: Vec<&str> = monitor
+            .devices()
+            .iter()
+            .filter(|d| d.is_default == Some(true))
+            .map(|d| d.name.as_str())
+            .collect();
+        if !with_volume.is_empty() && with_volume == defaults {
             assert!(
-                device.volume.is_none(),
-                "{}: no platform reads a device volume, so none may report one",
-                device.name
+                monitor
+                    .devices()
+                    .iter()
+                    .any(|d| d.volume.is_some_and(|v| v != 100)),
+                concat!(
+                    "only the default endpoints report a volume and all of them ",
+                    "read 100%: {:?}. That is the constructor default returning, ",
+                    "not a mixer reading"
+                ),
+                with_volume
             );
         }
     }
