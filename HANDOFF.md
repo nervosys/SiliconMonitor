@@ -139,9 +139,70 @@ Since the tag, on `master` and green on all three platforms:
 | `3ccaf43` | The four dashboard metrics the exporter never learned |
 | `400608c` | One WMI connection instead of N, and the counters that cost |
 | `cd07a27` | The last dashboard gap, and an empty gap list on both sides |
+| `2c80d66` | The negotiated USB speed, and nothing at super speed |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### The negotiated USB speed, and nothing running at super speed
+
+Open-work item 2, and the item was wrong about the hard part.
+
+`usb.{addr}.speed` was absent on every device. Windows genuinely reports it
+nowhere a query can reach — not a PnP property, not in `Get-PnpDeviceProperty`,
+and no class in `root\wmi` or `root\cimv2` carries a field for it. All three
+were checked first, because the item asked for a ground truth before trusting
+any result and the answer is that none exists.
+
+It comes from `IOCTL_USB_GET_NODE_CONNECTION_INFORMATION_EX` against the parent
+hub, addressed by the device's port. **The item said that port comes from
+`LocationInformation`, which only 14 of this machine's devices carry, and called
+the other 25 blocked on "the parent traversal".** It comes from `CM_DRP_ADDRESS`,
+which every node has. The blocker was a wrong guess about where a number lives,
+and it had been sitting in the list for weeks.
+
+The traversal that *is* needed is different and smaller. Two passes:
+
+1. A node whose parent is a hub is read directly.
+2. A node whose parent is not a hub is an interface of a composite device —
+   `...&MI_02\...` — and negotiates nothing of its own. Its link belongs to the
+   device it is one function of, so it inherits. **That is 18 of 38 nodes here**,
+   nearly half the tree, sitting exactly one step from the answer.
+
+`USBSTOR` is enumerated alongside `USB`, because an external drive is where this
+diagnostic earns its keep.
+
+Measured, 33 of 41 devices answered:
+
+```
+17 measured full
+16 measured high
+ 8 unavailable
+```
+
+The eight are six root hubs and two USB4 nodes. None sits on an upstream hub
+port, and that is the true answer rather than a gap — a speed is a property of a
+*link*, and they have none above them. The resolver's absence reason used to say
+"this reader does not ask for the negotiated speed … obtainable and
+unimplemented"; it now says what is actually the case, because a stale reason is
+a lie the same as a stale number.
+
+**Nothing on this machine negotiates super speed.** The name heuristic this
+replaces — `USB3` or `xHCI` in the PnP path meant `Super` — called six devices
+super. Two of those declare `bcdUSB 3.00` and are running at high speed: a USB 3
+device on a USB 2 link, which is *precisely* the wrong-cable case the field
+exists to expose and *precisely* where the heuristic was confidently wrong. The
+old reader would have told a user their cable was fine.
+
+The ioctl's `CTL_CODE` carries `FILE_ANY_ACCESS`, so the hub handle opens with
+zero desired access and none of this needs Administrator — read off the code
+first, per the standing lesson from `IOCTL_ATA_PASS_THROUGH`.
+
+**An open-work item can be wrong about why it is open.** This one had a specific,
+plausible, checkable claim in it — the port comes from `LocationInformation` —
+and that claim was what made the work look large. Checking it took one
+`Get-PnpDeviceProperty` call. Before believing an item's account of its own
+blocker, verify the blocker.
 
 ### One WMI connection instead of N, and the counters it was hiding
 
@@ -4992,7 +5053,13 @@ feature stayed broken through eight published versions.
    and has never met hardware that reports one. **If you are on a machine with a
    readable CPU sensor, scrape the endpoint and check the value against
    something else.** That is a minute's work and nobody has been able to do it.
-2. **USB negotiated speed is unimplemented on Windows, and obtainable.**
+2. ~~**USB negotiated speed is unimplemented on Windows.**~~ Done in
+   `2c80d66`: 33 of 41 devices report a measured speed, and the eight that do
+   not are six root hubs and two USB4 nodes, which sit on no upstream hub port
+   and so have no link to describe. **The item below was wrong about the
+   blocker** — kept here because the error is the useful part.
+
+   ~~**Original text.**~~
    `usb.{addr}.speed` is absent on every device. It is not a PnP property; it
    comes from `IOCTL_USB_GET_NODE_CONNECTION_INFORMATION_EX` against the parent
    hub, addressed by the port in `LocationInformation` — which only 14 of this
