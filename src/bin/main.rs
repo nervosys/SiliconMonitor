@@ -2063,7 +2063,11 @@ fn print_memory_info_backend(backend: &simonlib::backend::MonitoringBackend) {
             ram_pct_colored
         );
 
-        if memory.swap.total_or_zero() > 0 {
+        // Second copy of the block above, and it had the same three-into-two
+        // collapse: an unreported pagefile printed nothing.
+        if memory.swap.total.is_none() {
+            println!("  {} not reported by this platform", "SWAP:".white().bold());
+        } else if memory.swap.total_or_zero() > 0 {
             let swap_usage = memory.swap_usage_percent_or_zero();
             let swap_bar = create_usage_bar(swap_usage, 20);
             let swap_used_gb = memory.swap.used_or_zero() as f64 / 1024.0 / 1024.0;

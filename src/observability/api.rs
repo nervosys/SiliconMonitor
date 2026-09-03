@@ -882,7 +882,7 @@ impl ObservabilityApi {
                     memory_type: None,
                     speed_mhz: None,
                     dimm_count: None,
-                    swap_total_gb: stats.swap.total_or_zero() as f64 / (1024.0 * 1024.0),
+                    swap_total_gb: stats.swap.total.map(|v| v as f64 / (1024.0 * 1024.0)),
                 });
             }
         }
@@ -895,7 +895,7 @@ impl ObservabilityApi {
                     memory_type: None,
                     speed_mhz: None,
                     dimm_count: None,
-                    swap_total_gb: stats.swap.total_or_zero() as f64 / (1024.0 * 1024.0),
+                    swap_total_gb: stats.swap.total.map(|v| v as f64 / (1024.0 * 1024.0)),
                 });
             }
         }
@@ -1151,8 +1151,8 @@ impl ObservabilityApi {
                     total_mb: stats.ram.total / 1024,
                     cached_mb: stats.ram.cached.map(|v| v / 1024),
                     buffers_mb: stats.ram.buffers.map(|v| v / 1024),
-                    swap_used_mb: stats.swap.used_or_zero() / 1024,
-                    swap_total_mb: stats.swap.total_or_zero() / 1024,
+                    swap_used_mb: stats.swap.used.map(|v| v / 1024),
+                    swap_total_mb: stats.swap.total.map(|v| v / 1024),
                 });
             }
         }
@@ -1169,8 +1169,8 @@ impl ObservabilityApi {
                     // zero. The absence is carried in the type now.
                     cached_mb: stats.ram.cached.map(|v| v / 1024),
                     buffers_mb: stats.ram.buffers.map(|v| v / 1024),
-                    swap_used_mb: stats.swap.used_or_zero() / 1024,
-                    swap_total_mb: stats.swap.total_or_zero() / 1024,
+                    swap_used_mb: stats.swap.used.map(|v| v / 1024),
+                    swap_total_mb: stats.swap.total.map(|v| v / 1024),
                 });
             }
         }

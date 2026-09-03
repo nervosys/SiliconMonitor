@@ -250,8 +250,20 @@ impl SystemHealth {
                     .with_value(mem_usage as f64, Some(thresholds.memory_warning as f64)),
             );
 
-            // Swap check
-            if mem.swap.total_or_zero() > 0 {
+            // Swap check.
+            //
+            // Three cases, and `total_or_zero() > 0` collapsed two of them: a
+            // pagefile in use, a machine with none configured, and a pagefile
+            // this platform did not report. The last one silently produced no
+            // check at all -- and a health report with a check missing reads
+            // as one where the check passed. `HealthStatus::Unknown` exists
+            // for precisely this and was not being used.
+            if mem.swap.total.is_none() {
+                checks.push(HealthCheck::new("Swap Usage", "Memory").with_status(
+                    HealthStatus::Unknown,
+                    "swap was not reported by this platform",
+                ));
+            } else if mem.swap.total_or_zero() > 0 {
                 let swap_usage =
                     (mem.swap.used_or_zero() as f64 / mem.swap.total_or_zero() as f64) * 100.0;
                 let (status, message) = if swap_usage >= thresholds.swap_critical as f64 {

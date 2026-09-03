@@ -718,8 +718,10 @@ pub struct MemoryInfo {
     pub total: u64,
     pub used: u64,
     pub available: u64,
-    pub swap_total: u64,
-    pub swap_used: u64,
+    /// Swap total in bytes, or `None` where the pagefile was not read.
+    pub swap_total: Option<u64>,
+    /// Swap in use in bytes, or `None` where the pagefile was not read.
+    pub swap_used: Option<u64>,
 }
 
 /// Legacy GPU info struct - kept for backward compatibility
@@ -1420,8 +1422,8 @@ impl App {
             total: stats.ram.total * 1024,
             used: stats.ram.used * 1024,
             available: stats.ram.free * 1024,
-            swap_total: stats.swap.total_or_zero() * 1024,
-            swap_used: stats.swap.used_or_zero() * 1024,
+            swap_total: stats.swap.total.map(|v| v * 1024),
+            swap_used: stats.swap.used.map(|v| v * 1024),
         };
 
         let used_percent = (self.memory_info.used * 100)

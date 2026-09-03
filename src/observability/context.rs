@@ -205,7 +205,8 @@ pub struct MemoryContext {
     /// Number of DIMMs
     pub dimm_count: Option<u32>,
     /// Swap/page file size in GB
-    pub swap_total_gb: f64,
+    /// Swap total in GB, or `None` where the pagefile was not read.
+    pub swap_total_gb: Option<f64>,
 }
 
 /// Disk context
@@ -442,9 +443,11 @@ pub struct MemoryMetrics {
     /// Buffers in MB
     pub buffers_mb: Option<u64>,
     /// Swap used in MB
-    pub swap_used_mb: u64,
+    /// Swap in use in MB, or `None` where the pagefile was not read.
+    pub swap_used_mb: Option<u64>,
     /// Swap total in MB
-    pub swap_total_mb: u64,
+    /// Swap total in MB, or `None` where the pagefile was not read.
+    pub swap_total_mb: Option<u64>,
 }
 
 /// Disk metrics

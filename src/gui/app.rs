@@ -2243,18 +2243,13 @@ impl SiliconMonitorApp {
                 .as_ref()
                 .map(|m| m.ram_usage_percent())
                 .unwrap_or(0.0);
+            // `swap_usage_percent()` already returns `Option` and already
+            // handles a zero total; this recomputed it from `*_or_zero()` and
+            // answered 0% for an unread pagefile.
             let swap_usage = self
                 .memory_stats
                 .as_ref()
-                .map(|m| {
-                    if m.swap.total_or_zero() > 0 {
-                        (m.swap.used_or_zero() as f64 / m.swap.total_or_zero() as f64 * 100.0)
-                            as f32
-                    } else {
-                        0.0
-                    }
-                })
-                .unwrap_or(0.0);
+                .and_then(|m| m.swap_usage_percent());
             let load_avg = self
                 .system_stats
                 .as_ref()

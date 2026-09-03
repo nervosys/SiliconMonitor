@@ -514,24 +514,31 @@ fn draw_memory_tab(f: &mut Frame, app: &App, area: Rect) {
     let used_gb = app.memory_info.used as f64 / (1024.0 * 1024.0 * 1024.0);
     let total_gb = app.memory_info.total as f64 / (1024.0 * 1024.0 * 1024.0);
     let avail_gb = app.memory_info.available as f64 / (1024.0 * 1024.0 * 1024.0);
-    let swap_used_gb = app.memory_info.swap_used as f64 / (1024.0 * 1024.0 * 1024.0);
-    let swap_total_gb = app.memory_info.swap_total as f64 / (1024.0 * 1024.0 * 1024.0);
+    let swap_used_gb = app
+        .memory_info
+        .swap_used
+        .map(|v| v as f64 / (1024.0 * 1024.0 * 1024.0));
+    let swap_total_gb = app
+        .memory_info
+        .swap_total
+        .map(|v| v as f64 / (1024.0 * 1024.0 * 1024.0));
     let mem_pct = if total_gb > 0.0 {
         (used_gb / total_gb) * 100.0
     } else {
         0.0
     };
-    let swap_pct = if swap_total_gb > 0.0 {
-        (swap_used_gb / swap_total_gb) * 100.0
-    } else {
-        0.0
+    // Absent when either figure is, rather than 0% for an unread pagefile.
+    let swap_pct = match (swap_used_gb, swap_total_gb) {
+        (Some(used), Some(total)) if total > 0.0 => Some((used / total) * 100.0),
+        _ => None,
     };
 
     let bar_width: usize = 40;
     let ram_filled = (mem_pct / 100.0 * bar_width as f64) as usize;
     let ram_bar: String =
         "█".repeat(ram_filled) + &"░".repeat(bar_width.saturating_sub(ram_filled));
-    let swap_filled = (swap_pct / 100.0 * bar_width as f64) as usize;
+    // An empty bar where nothing was read, which the "-" beside it explains.
+    let swap_filled = (swap_pct.unwrap_or(0.0) / 100.0 * bar_width as f64) as usize;
     let swap_bar: String =
         "█".repeat(swap_filled) + &"░".repeat(bar_width.saturating_sub(swap_filled));
 
@@ -563,20 +570,29 @@ fn draw_memory_tab(f: &mut Frame, app: &App, area: Rect) {
                     .fg(glances_colors::MEMORY_TITLE)
                     .add_modifier(Modifier::BOLD),
             ),
-            Span::styled(swap_bar, Style::default().fg(memory_color(swap_pct as f32))),
             Span::styled(
-                format!(" {:.1}%", swap_pct),
+                swap_bar,
+                Style::default().fg(memory_color(swap_pct.unwrap_or(0.0) as f32)),
+            ),
+            Span::styled(
+                match swap_pct {
+                    Some(p) => format!(" {p:.1}%"),
+                    None => " -".to_string(),
+                },
                 Style::default()
-                    .fg(memory_color(swap_pct as f32))
+                    .fg(memory_color(swap_pct.unwrap_or(0.0) as f32))
                     .add_modifier(Modifier::BOLD),
             ),
         ]),
-        Line::from(format!(
-            "      Total: {:.2} GB │ Used: {:.2} GB │ Free: {:.2} GB",
-            swap_total_gb,
-            swap_used_gb,
-            swap_total_gb - swap_used_gb
-        )),
+        Line::from(match (swap_total_gb, swap_used_gb) {
+            (Some(total), Some(used)) => format!(
+                "      Total: {:.2} GB │ Used: {:.2} GB │ Free: {:.2} GB",
+                total,
+                used,
+                total - used
+            ),
+            _ => "      not reported by this platform".to_string(),
+        }),
     ];
 
     let info = Paragraph::new(info_lines)
@@ -1050,7 +1066,7 @@ fn draw_memory_bar(f: &mut Frame, app: &App, area: Rect) {
         mem_percent,
         auto_unit(app.memory_info.used),
         auto_unit(app.memory_info.total),
-        auto_unit(app.memory_info.swap_used)
+        auto_unit_opt(app.memory_info.swap_used)
     );
 
     let mem_clr = memory_color(mem_percent as f32);
@@ -2501,8 +2517,14 @@ fn draw_memory(f: &mut Frame, app: &App, area: Rect) {
     let used_gb = app.memory_info.used as f64 / (1024.0 * 1024.0 * 1024.0);
     let total_gb = app.memory_info.total as f64 / (1024.0 * 1024.0 * 1024.0);
     let avail_gb = app.memory_info.available as f64 / (1024.0 * 1024.0 * 1024.0);
-    let swap_used_gb = app.memory_info.swap_used as f64 / (1024.0 * 1024.0 * 1024.0);
-    let swap_total_gb = app.memory_info.swap_total as f64 / (1024.0 * 1024.0 * 1024.0);
+    let swap_used_gb = app
+        .memory_info
+        .swap_used
+        .map(|v| v as f64 / (1024.0 * 1024.0 * 1024.0));
+    let swap_total_gb = app
+        .memory_info
+        .swap_total
+        .map(|v| v as f64 / (1024.0 * 1024.0 * 1024.0));
 
     let info_text = vec![
         Line::from(format!("Total: {:.2} GB", total_gb)),
@@ -2510,8 +2532,14 @@ fn draw_memory(f: &mut Frame, app: &App, area: Rect) {
         Line::from(format!("Available: {:.2} GB", avail_gb)),
         Line::from(format!("Usage: {:.1}%", (used_gb / total_gb) * 100.0)),
         Line::from(""),
-        Line::from(format!("Swap Total: {:.2} GB", swap_total_gb)),
-        Line::from(format!("Swap Used: {:.2} GB", swap_used_gb)),
+        Line::from(match swap_total_gb {
+            Some(v) => format!("Swap Total: {v:.2} GB"),
+            None => "Swap Total: not reported".to_string(),
+        }),
+        Line::from(match swap_used_gb {
+            Some(v) => format!("Swap Used: {v:.2} GB"),
+            None => "Swap Used: not reported".to_string(),
+        }),
     ];
 
     let info = Paragraph::new(info_text)

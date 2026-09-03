@@ -889,18 +889,22 @@ impl Widget for SectionHeader<'_> {
 pub struct QuickLookPanel {
     cpu_percent: f32,
     mem_percent: f32,
-    swap_percent: f32,
+    /// Swap usage, or `None` where the pagefile was not read.
+    ///
+    /// A summary panel showing `SWAP 0%` for a machine whose swap could not be
+    /// read is the most reassuring possible rendering of an unknown.
+    swap_percent: Option<f32>,
     load_1m: f32,
     cpu_trend: Option<&'static str>,
     mem_trend: Option<&'static str>,
 }
 
 impl QuickLookPanel {
-    pub fn new(cpu: f32, mem: f32, swap: f32, load: f32) -> Self {
+    pub fn new(cpu: f32, mem: f32, swap: Option<f32>, load: f32) -> Self {
         Self {
             cpu_percent: cpu.clamp(0.0, 100.0),
             mem_percent: mem.clamp(0.0, 100.0),
-            swap_percent: swap.clamp(0.0, 100.0),
+            swap_percent: swap.map(|s| s.clamp(0.0, 100.0)),
             load_1m: load,
             cpu_trend: None,
             mem_trend: None,
@@ -932,13 +936,18 @@ impl Widget for QuickLookPanel {
 
             // Draw each metric
             let metrics = [
-                ("CPU", self.cpu_percent, self.cpu_trend),
-                ("MEM", self.mem_percent, self.mem_trend),
+                ("CPU", Some(self.cpu_percent), self.cpu_trend),
+                ("MEM", Some(self.mem_percent), self.mem_trend),
                 ("SWAP", self.swap_percent, None),
-                ("LOAD", (self.load_1m * 10.0).min(100.0), None), // Scale load to 0-100
+                // Scale load to 0-100
+                ("LOAD", Some((self.load_1m * 10.0).min(100.0)), None),
             ];
 
             for (i, (label, percent, trend)) in metrics.iter().enumerate() {
+                // A metric with no reading draws its label and a dash, and no
+                // bar at all -- an empty bar is indistinguishable from a bar at
+                // zero, and only one of those is something that was measured.
+                let percent = *percent;
                 let x_start = rect.min.x + 4.0 + i as f32 * (section_width + 8.0);
 
                 // Label with trend
@@ -963,18 +972,22 @@ impl Widget for QuickLookPanel {
                 );
                 painter.rect_filled(bar_rect, 2.0, CyberColors::BACKGROUND_DARK);
 
-                let fill_width = bar_rect.width() * (percent / 100.0);
-                if fill_width > 0.0 {
-                    let fill_rect =
-                        Rect::from_min_size(bar_rect.min, Vec2::new(fill_width, bar_rect.height()));
-                    painter.rect_filled(fill_rect, 2.0, threshold_color(*percent));
+                if let Some(pct) = percent {
+                    let fill_width = bar_rect.width() * (pct / 100.0);
+                    if fill_width > 0.0 {
+                        let fill_rect = Rect::from_min_size(
+                            bar_rect.min,
+                            Vec2::new(fill_width, bar_rect.height()),
+                        );
+                        painter.rect_filled(fill_rect, 2.0, threshold_color(pct));
+                    }
                 }
 
                 // Percentage text
-                let percent_text = if *label == "LOAD" {
-                    format!("{:.2}", self.load_1m)
-                } else {
-                    format!("{:.0}%", percent)
+                let percent_text = match (percent, *label == "LOAD") {
+                    (_, true) => format!("{:.2}", self.load_1m),
+                    (Some(pct), false) => format!("{pct:.0}%"),
+                    (None, false) => "-".to_string(),
                 };
 
                 painter.text(
@@ -982,7 +995,7 @@ impl Widget for QuickLookPanel {
                     egui::Align2::LEFT_CENTER,
                     percent_text,
                     egui::FontId::proportional(11.0),
-                    threshold_color(*percent),
+                    threshold_color(percent.unwrap_or(0.0)),
                 );
             }
 
