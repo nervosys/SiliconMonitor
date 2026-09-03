@@ -275,6 +275,13 @@ pub struct Snapshot {
     pub disks: Vec<DiskSnapshot>,
     /// Cumulative I/O counters, per physical device. See [`DiskIoSnapshot`].
     pub disk_io: Vec<DiskIoSnapshot>,
+    /// CPU temperature sensors, one entry per readable sensor.
+    ///
+    /// Empty where the CPU exposes none, which is a common case rather than a
+    /// failure: this crate's own development machine reads zero sensors through
+    /// every one of the four Windows paths `hwmon` tries. Empty means "nothing
+    /// to report", never "0 degrees".
+    pub cpu_temperatures: Vec<crate::hwmon::HwSensor>,
     /// Active network interfaces.
     pub network: Vec<NetSnapshot>,
     /// Load average / vmstat style system counters.
@@ -691,9 +698,13 @@ fn collect_once(
     let refresh_processes = due(config.process_every_n_ticks);
     let refresh_connections = due(config.connection_every_n_ticks);
 
-    let (cpu, memory, gpu_dynamic, process_list, net_list, conn_list, disk_list, sys_stats) =
+    #[allow(clippy::type_complexity)]
+    let (cpu, memory, gpu_dynamic, process_list, net_list, conn_list, disk_list, sys_stats, temps) =
         thread::scope(|scope| {
             let cpu_h = scope.spawn(timed(collect_cpu));
+            // ~2 ms per call after a one-time ~365 ms initialisation, so it sits
+            // on the per-tick cadence with the CPU reading it belongs beside.
+            let temp_h = scope.spawn(timed(crate::hwmon::read_cpu_temperatures));
             let mem_h = scope.spawn(timed(collect_memory));
             let sys_h = scope.spawn(timed(collect_system_stats));
             let gpu_h = scope.spawn(timed(move || collect_gpu(gpu.as_ref())));
@@ -721,6 +732,7 @@ fn collect_once(
                 join_or_default(conn_h),
                 join_or_default(disk_h),
                 join_or_default(sys_h),
+                join_or_default(temp_h),
             )
         });
 
@@ -814,6 +826,7 @@ fn collect_once(
         connections,
         disks: cached_disks.clone(),
         disk_io: cached_disk_io.clone(),
+        cpu_temperatures: temps.0,
         network,
         system_stats,
         histories: histories.clone(),

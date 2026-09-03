@@ -282,17 +282,13 @@ fn every_dashboard_metric_is_published_somewhere() {
 /// `record_snapshot`. A name only `PrometheusExporter` knows is not on the wire.
 #[test]
 fn the_served_endpoint_publishes_every_dashboard_metric() {
-    // Gaps in the served endpoint, each limited by the pipeline `Snapshot`
-    // rather than by the recorder. `record_snapshot` is deliberately pure over a
-    // `Snapshot` — that purity is what makes it testable — so it cannot go read
-    // a sensor the snapshot does not carry. Closing these means putting the
-    // reading in the snapshot first.
-    const KNOWN_GAPS: &[&str] = &[
-        // Needs a CPU temperature. `CpuStats` carries none, and the library
-        // exporter gets this by calling `hwmon::read_cpu_temperatures` directly,
-        // which the recorder must not do.
-        "simon_cpu_temperature_celsius",
-    ];
+    // Empty, and it must stay that way. Each of these three was limited by
+    // the pipeline `Snapshot` rather than by the recorder — `record_snapshot` is
+    // deliberately pure over a `Snapshot`, and that purity is what makes it
+    // testable, so it cannot go read a sensor the snapshot does not carry. The
+    // fix in each case was to put the reading in the snapshot: `disk_io` in
+    // `400608c`, `cpu_temperatures` after it.
+    const KNOWN_GAPS: &[&str] = &[];
 
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let missing = unpublished_by(root, &["src/http_server.rs"]);

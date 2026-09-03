@@ -470,6 +470,18 @@ impl HttpServer {
             }
         }
 
+        // One series per readable sensor. A CPU that exposes none emits
+        // nothing at all rather than a zero, which Prometheus already reads as
+        // "not reported" -- and 0 degrees would be a specific and alarming
+        // claim about a machine whose temperature nobody could measure.
+        for sensor in &snap.cpu_temperatures {
+            collector.record_with_labels(
+                "simon_cpu_temperature_celsius",
+                sensor.value as f64,
+                &[("sensor", sensor.name.as_str())],
+            );
+        }
+
         // Cumulative per-device byte counters, which the bundled dashboards
         // query and the served endpoint could not publish until the pipeline
         // carried them. Labelled by physical device rather than by mount:
@@ -661,18 +673,52 @@ mod snapshot_recording_tests {
         );
     }
 
+    /// A readable CPU sensor is published; an absent one emits nothing.
+    ///
+    /// The second half is the point. This crate's development machine reads
+    /// zero sensors through all four Windows paths, and a `0` there would be a
+    /// specific and alarming claim about a temperature nobody could measure.
+    #[test]
+    fn cpu_temperature_is_published_per_sensor_or_not_at_all() {
+        use crate::hwmon::{HwSensor, HwSensorType, HwType};
+
+        assert!(
+            !rendered(&Snapshot::default()).contains("simon_cpu_temperature_celsius"),
+            "a snapshot with no sensors must publish no temperature"
+        );
+
+        let snap = Snapshot {
+            cpu_temperatures: vec![HwSensor {
+                name: "Core 0".into(),
+                value: 47.5,
+                min: None,
+                max: None,
+                sensor_type: HwSensorType::Temperature,
+                hardware_type: HwType::Cpu,
+            }],
+            ..Default::default()
+        };
+        let text = rendered(&snap);
+        assert!(
+            text.contains("simon_cpu_temperature_celsius{sensor=\"Core 0\"} 47.5"),
+            "a sensor needs its own label and its reading: {text}"
+        );
+    }
+
     /// The cumulative counters are published from `disk_io`, per device.
     ///
     /// They are keyed by physical drive while `disks` is keyed by filesystem,
     /// which is why they travel in a separate list -- see `DiskIoSnapshot`.
     #[test]
     fn cumulative_disk_counters_are_published_per_device() {
-        let mut snap = Snapshot::default();
-        snap.disk_io = vec![crate::pipeline::DiskIoSnapshot {
-            device: "PhysicalDrive0".into(),
-            read_bytes: 8_111_574_792_192,
-            write_bytes: 5_613_750_109_184,
-        }];
+        let snap = Snapshot {
+            disk_io: vec![crate::pipeline::DiskIoSnapshot {
+                device: "PhysicalDrive0".into(),
+                read_bytes: 8_111_574_792_192,
+                write_bytes: 5_613_750_109_184,
+            }],
+            ..Default::default()
+        };
 
         let text = rendered(&snap);
         assert!(
