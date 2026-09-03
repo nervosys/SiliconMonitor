@@ -151,9 +151,47 @@ Since the tag, on `master` and green on all three platforms:
 | `dbe64e0` | A manufacturer the query never selected, and Windows' fake vendors |
 | `91667d1` | The CPUID triple Windows reports, under a comment saying it does not |
 | `235562e` | The cache topology this module's docs already claimed to read |
+| `e6d5259` | The transport a HID node's parent names |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### Not guessing was right; not looking further was not
+
+Two readings said `reader returned "Unknown"` for `board.input.N.interface`, and
+the reader had earned them honestly. A `HID\...` instance id names a device
+*class*: the same prefix covers a USB mouse, a Bluetooth keyboard and an I2C
+touchpad. An earlier note in that file said exactly that while the code reported
+USB anyway, and the fix at the time was to stop guessing.
+
+Stopping was correct. Stopping *there* was the part left undone. Windows records
+`DEVPKEY_Device_Parent`, and the parent carries the transport in its own
+enumerator prefix:
+
+```
+HID\VID_046D&PID_C548&MI_01&COL01\...   the mouse
+USB\VID_046D&PID_C548&MI_01\...         its parent
+```
+
+Walking up until an enumerator is recognised turns a refusal into a reading, and
+the traversal was already written — `CM_Get_Parent`, the same walk the USB speed
+reader needed in `2c80d66`. Six of six input devices now report a transport where
+three reported none.
+
+`HID` is deliberately absent from the enumerator table and a test asserts it
+resolves to nothing, because if it ever resolved the walk would be pointless. An
+enumerator the table does not recognise still answers `Unknown`.
+
+**A correct refusal can still be an unfinished reading.** The absence here was
+well-reasoned, documented, and defended against a previous wrong guess — which is
+exactly what made it invisible. Three of the five defects in this audit were
+absences that had been *argued for* in a comment; the argument was sound about
+the evidence in hand and silent about the evidence one call away.
+
+Also worth recording as a process note: while adding the helper I inserted it
+between `device_vendor`'s doc comment and `device_vendor`, so the doc silently
+documented the wrong function. `cargo` says nothing about this. Check what a doc
+comment sits above after inserting anything near one.
 
 ### Two more absences that were not
 
