@@ -141,9 +141,67 @@ Since the tag, on `master` and green on all three platforms:
 | `cd07a27` | The last dashboard gap, and an empty gap list on both sides |
 | `2c80d66` | The negotiated USB speed, and nothing at super speed |
 | `0801f11` | Six recorded columns that wrote zero for a failed read |
+| `556a471` | A type that could not say "not reported", and four backends that filled the gap with zeros |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### A type that could not say "not reported"
+
+The same sweep, one layer down. Every field of `GpuMemory` was a bare number,
+and all four GPU backends independently filled them with zeros when they had
+nothing to read. Two of them said so in a comment while doing it:
+
+```rust
+used: 0, // Not available from powermetrics            (apple.rs)
+memory: GpuMemory { total: 0, used: 0, free: 0, .. }   (amd.rs, intel.rs)
+```
+
+That is the defect in one line. The code *knew* the value was unavailable and
+wrote the most plausible-looking number it had, because the type gave it no way
+to say anything else. A GPU reporting 0 bytes of memory is not a reading any real
+adapter produces — and it reached the TUI, the GUI, the Prometheus exporter, the
+observability API, the ontology and the recorded database labelled `measured`.
+
+Note what surrounds those lines: in the very same constructors, clocks, power and
+temperature are all `Option` and all correctly `None`. The backends were not
+careless. They were exactly as honest as their types allowed, field by field.
+
+**Three of the 96 sites were worse than a zero.**
+
+| Site | What it did |
+| --- | --- |
+| AMD + Intel WMI readers | Where the adapter's capacity was not reported, the total fell back to *the used figure itself* — so a card whose capacity WMI did not know read as exactly **100% memory utilisation, permanently, on every scrape** |
+| `TraitGpuAdapter` | Divided by `total.max(1)`, turning a missing total into "0% of one byte" rather than into an absence |
+| `GpuState::memory_usage_percent()` | Returned `0.0` for an unread device, and `health_status()` tests it against 95% — so an unread GPU could never raise the memory warning |
+
+That last one is the same missed alarm as `is_downgraded` in `3656368`, found the
+same way and one release apart.
+
+`GpuMemory::unreported()` and `from_total_used()` mean the percentage is derived
+once instead of in four places that each got the zero-denominator case wrong
+differently. Every surface now says what it knows: the ontology reports the two
+figures independently rather than gating both on `total > 0`, Prometheus and the
+served endpoint omit an absent gauge, the histories contribute no sample rather
+than a zero sample, the TUI and GUI draw a dash, the CSV exports write an empty
+field, and the recorder stores `None`.
+
+Verified on this machine: three adapters, all still reporting real figures, with
+874 tests, clippy, doctests and both cross-targets green.
+
+**A 96-site type change is the safe kind of large.** Every one of them was found
+by the compiler, so nothing changed behaviour silently and nothing could be
+missed — including the two that only the Linux cross-check could see, sitting
+inside `cfg(target_os = "linux")` blocks and invisible to every Windows build.
+The risk in a change like this is not the size; it is the sites the compiler
+*cannot* find, and there were none, because the fix was to a type rather than to
+a value.
+
+**And the honest limit: this is verified where the readings succeed, not where
+they fail.** All three adapters here report their memory. The paths that now
+return `unreported()` are the ones nobody has watched execute — the Apple reader,
+the Intel Linux reader, and the two WMI fallbacks. They are simple, and they are
+unwitnessed.
 
 ### Six recorded columns that wrote zero for a failed read
 
