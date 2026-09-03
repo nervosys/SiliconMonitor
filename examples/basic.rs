@@ -16,10 +16,13 @@ fn main() -> Result<(), Box<dyn Error>> {
     for (idx, info) in gpus.snapshot_all()?.iter().enumerate() {
         println!("GPU {}: {}", idx, info.static_info.name);
         println!("  Vendor: {:?}", info.static_info.vendor);
+        // A dash where the device reported no figure, rather than `0 / 0 MB`.
+        let mb =
+            |v: Option<u64>| v.map_or_else(|| "-".to_string(), |b| (b / 1024 / 1024).to_string());
         println!(
             "  Memory: {} / {} MB",
-            info.dynamic_info.memory.used / 1024 / 1024,
-            info.dynamic_info.memory.total / 1024 / 1024
+            mb(info.dynamic_info.memory.used),
+            mb(info.dynamic_info.memory.total)
         );
         println!("  Utilization: {}%", info.dynamic_info.utilization);
         if let Some(temp) = info.dynamic_info.thermal.temperature {

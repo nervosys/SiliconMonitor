@@ -1478,26 +1478,27 @@ fn resolve_gpu(out: &mut Vec<Reading>) {
             "vendor publishes no graphics clock ceiling",
         );
 
+        // Each figure stands on its own now. The old gate was `total > 0`,
+        // which published *both* as unavailable whenever the total was missing
+        // -- including the case where the used bytes were read perfectly well
+        // and only the adapter's capacity was unknown, which is what the WMI
+        // readers hit. It also had to infer absence from a zero, because the
+        // zero was all the type could carry.
         let mem = &dynamic.memory;
-        if mem.total > 0 {
-            out.push(Reading::measured(
-                format!("{base}.memory.total"),
-                serde_json::json!(mem.total),
-                Some(Unit::Bytes),
-            ));
-            out.push(Reading::measured(
-                format!("{base}.memory.used"),
-                serde_json::json!(mem.used),
-                Some(Unit::Bytes),
-            ));
-        } else {
-            for suffix in ["total", "used"] {
-                out.push(Reading::unavailable(
+        for (suffix, value) in [("total", mem.total), ("used", mem.used)] {
+            match value {
+                Some(bytes) => out.push(Reading::measured(
+                    format!("{base}.memory.{suffix}"),
+                    serde_json::json!(bytes),
+                    Some(Unit::Bytes),
+                )),
+                None => out.push(Reading::unavailable(
                     format!("{base}.memory.{suffix}"),
                     Some(Unit::Bytes),
-                    "adapter reports no discrete video memory (unified memory parts \
-                     report none)",
-                ));
+                    "the driver reported no figure for it. Unified-memory parts \
+                     have no discrete video memory to report, and some adapters \
+                     publish usage without publishing a capacity",
+                )),
             }
         }
     }

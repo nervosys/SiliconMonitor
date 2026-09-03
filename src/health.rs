@@ -320,9 +320,10 @@ impl SystemHealth {
                     }
 
                     // GPU Memory
-                    if dynamic.memory.total > 0 {
-                        let mem_pct =
-                            (dynamic.memory.used as f64 / dynamic.memory.total as f64) * 100.0;
+                    // Derived on `GpuMemory`, so a device that reported no
+                    // memory has no percentage and no check runs -- rather than
+                    // computing 0% and quietly passing every threshold.
+                    if let Some(mem_pct) = dynamic.memory.utilization.map(f64::from) {
                         let (status, message) = if mem_pct >= thresholds.gpu_memory_critical as f64
                         {
                             (

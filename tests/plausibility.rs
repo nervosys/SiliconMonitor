@@ -220,12 +220,16 @@ fn gpu_readings_are_physically_possible() {
             "GPU {i} utilization {}% exceeds 100",
             gpu.utilization
         );
-        assert!(
-            gpu.memory.used <= gpu.memory.total || gpu.memory.total == 0,
-            "GPU {i} memory used {} exceeds total {}",
-            gpu.memory.used,
-            gpu.memory.total
-        );
+        // Checked only where both figures exist. The `|| total == 0` escape
+        // used to be how this test tolerated an adapter that reported no
+        // memory, which is to say the absence had to be smuggled through as a
+        // zero here too.
+        if let (Some(used), Some(total)) = (gpu.memory.used, gpu.memory.total) {
+            assert!(
+                used <= total,
+                "GPU {i} memory used {used} exceeds total {total}"
+            );
+        }
 
         if let Some(temp) = gpu.thermal.temperature {
             // A powered GPU sits between roughly ambient and its thermal shutdown

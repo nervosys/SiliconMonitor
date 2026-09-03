@@ -817,11 +817,10 @@ fn draw_single_accelerator(
     let inner = block.inner(area);
     f.render_widget(block, area);
 
-    // Memory percentage for threshold color
-    let mem_percent = if accel.memory_total > 0 {
-        (accel.memory_used as f64 / accel.memory_total as f64) * 100.0
-    } else {
-        0.0
+    // Memory percentage for threshold color, absent when either figure is.
+    let mem_percent = match (accel.memory_used, accel.memory_total) {
+        (Some(used), Some(total)) if total > 0 => Some((used as f64 / total as f64) * 100.0),
+        _ => None,
     };
 
     // Build fan speed string
@@ -852,9 +851,9 @@ fn draw_single_accelerator(
             .utilization
             .map_or_else(|| "-".to_string(), |u| format!("{u:.0}%")),
         accel.clock_core.unwrap_or(0),
-        auto_unit(accel.memory_used),
-        auto_unit(accel.memory_total),
-        mem_percent,
+        auto_unit_opt(accel.memory_used),
+        auto_unit_opt(accel.memory_total),
+        pct_opt(mem_percent),
         accel.clock_memory.unwrap_or(0),
         accel.temperature.unwrap_or(0.0),
         accel.power.unwrap_or(0.0),
@@ -911,11 +910,10 @@ fn draw_single_gpu(f: &mut Frame, gpu: &super::app::GpuInfo, idx: usize, area: R
     let inner = block.inner(area);
     f.render_widget(block, area);
 
-    // Memory percentage for threshold color
-    let mem_percent = if gpu.memory_total > 0 {
-        (gpu.memory_used as f64 / gpu.memory_total as f64) * 100.0
-    } else {
-        0.0
+    // Memory percentage for threshold color, absent when either figure is.
+    let mem_percent = match (gpu.memory_used, gpu.memory_total) {
+        (Some(used), Some(total)) if total > 0 => Some((used as f64 / total as f64) * 100.0),
+        _ => None,
     };
 
     // Compact: All key metrics with Glances-style formatting
@@ -923,9 +921,9 @@ fn draw_single_gpu(f: &mut Frame, gpu: &super::app::GpuInfo, idx: usize, area: R
         "GPU: {:.0}% @ {} MHz │ MEM: {}/{} ({:.0}%) @ {} MHz │ {:.0}°C │ {:.0}/{:.0}W",
         gpu.utilization,
         gpu.clock_graphics.unwrap_or(0),
-        auto_unit(gpu.memory_used),
-        auto_unit(gpu.memory_total),
-        mem_percent,
+        auto_unit_opt(gpu.memory_used),
+        auto_unit_opt(gpu.memory_total),
+        pct_opt(mem_percent),
         gpu.clock_memory.unwrap_or(0),
         gpu.temperature.unwrap_or(0.0),
         gpu.power.unwrap_or(0.0),
@@ -1435,7 +1433,9 @@ fn draw_nvtop_processes(f: &mut Frame, app: &App, area: Rect) {
     let highlight_style = Style::default().bg(Color::Rgb(69, 71, 90));
 
     // Get total GPU memory for computing percentages
-    let total_gpu_memory: u64 = app.accelerators.iter().map(|a| a.memory_total).sum();
+    // Summed over the devices that reported a capacity. A device that
+    // reported none contributes nothing rather than a zero.
+    let total_gpu_memory: u64 = app.accelerators.iter().filter_map(|a| a.memory_total).sum();
 
     // Determine columns based on mode - Glances-style headers
     let (header, rows, widths) = match app.process_display_mode {
@@ -2413,10 +2413,11 @@ fn draw_gpu(f: &mut Frame, app: &App, area: Rect) {
     let gpu = &app.gpu_info[0];
 
     // GPU Info - safely calculate memory percentage with clamping
-    let mem_percent = if gpu.memory_total > 0 {
-        ((gpu.memory_used as f64 / gpu.memory_total as f64) * 100.0).clamp(0.0, 100.0) as u16
-    } else {
-        0
+    let mem_percent = match (gpu.memory_used, gpu.memory_total) {
+        (Some(used), Some(total)) if total > 0 => {
+            Some(((used as f64 / total as f64) * 100.0).clamp(0.0, 100.0) as u16)
+        }
+        _ => None,
     };
     let info_text = vec![
         Line::from(format!("Name: {}", gpu.name)),
@@ -2431,12 +2432,19 @@ fn draw_gpu(f: &mut Frame, app: &App, area: Rect) {
             gpu.power.unwrap_or(0.0),
             gpu.power_limit.unwrap_or(0.0)
         )),
-        Line::from(format!(
-            "Memory: {:.1} GB / {:.1} GB ({:.0}%)",
-            gpu.memory_used as f64 / (1024.0 * 1024.0 * 1024.0),
-            gpu.memory_total as f64 / (1024.0 * 1024.0 * 1024.0),
-            mem_percent
-        )),
+        Line::from(match (gpu.memory_used, gpu.memory_total, mem_percent) {
+            (Some(used), Some(total), Some(pct)) => format!(
+                "Memory: {:.1} GB / {:.1} GB ({}%)",
+                used as f64 / (1024.0 * 1024.0 * 1024.0),
+                total as f64 / (1024.0 * 1024.0 * 1024.0),
+                pct
+            ),
+            (Some(used), None, _) => format!(
+                "Memory: {:.1} GB used, capacity not reported",
+                used as f64 / (1024.0 * 1024.0 * 1024.0)
+            ),
+            _ => "Memory: not reported".to_string(),
+        }),
         Line::from(format!(
             "Graphics Clock: {} MHz",
             gpu.clock_graphics
@@ -3316,6 +3324,21 @@ fn draw_profile_deviations_overlay(f: &mut Frame, app: &App, area: Rect) {
             .title(" Apply audit log (tail) "),
     );
     f.render_widget(audit_para, chunks[1]);
+}
+
+/// Render an optional byte count, or a dash where nothing was reported.
+///
+/// The TUI already shows a dash for a device with no utilization counter. These
+/// figures were bare numbers until 6.0.0 and had no way to say the same, so an
+/// adapter that reported no memory drew "0B/0B (0%)" -- a full-looking readout
+/// of an empty card.
+fn auto_unit_opt(bytes: Option<u64>) -> String {
+    bytes.map_or_else(|| "-".to_string(), auto_unit)
+}
+
+/// Render an optional percentage, or a dash.
+fn pct_opt(pct: Option<f64>) -> String {
+    pct.map_or_else(|| "-".to_string(), |p| format!("{p:.0}%"))
 }
 
 #[cfg(test)]

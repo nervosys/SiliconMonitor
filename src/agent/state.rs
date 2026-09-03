@@ -86,10 +86,10 @@ pub struct GpuState {
     pub utilization: u32,
 
     /// Memory used (MB)
-    pub memory_used_mb: u64,
+    pub memory_used_mb: Option<u64>,
 
     /// Memory total (MB)
-    pub memory_total_mb: u64,
+    pub memory_total_mb: Option<u64>,
 
     /// GPU temperature (Celsius), or `None` when the device exposes no sensor.
     ///
@@ -306,8 +306,8 @@ impl SystemState {
             name: info.static_info.name,
             vendor: format!("{:?}", info.static_info.vendor),
             utilization: info.dynamic_info.utilization as u32,
-            memory_used_mb: info.dynamic_info.memory.used / 1024 / 1024,
-            memory_total_mb: info.dynamic_info.memory.total / 1024 / 1024,
+            memory_used_mb: info.dynamic_info.memory.used.map(|v| v / 1024 / 1024),
+            memory_total_mb: info.dynamic_info.memory.total.map(|v| v / 1024 / 1024),
             temperature_c: info.dynamic_info.thermal.temperature.map(|t| t as u32),
             power_w: info.dynamic_info.power.draw.map(|d| d as f32 / 1000.0),
             power_limit_w: info.dynamic_info.power.limit.map(|l| l as f32 / 1000.0),
@@ -361,12 +361,21 @@ impl SystemState {
                 gpu.index, gpu.name, gpu.vendor
             ));
             context.push_str(&format!("  Utilization: {}%\n", gpu.utilization));
-            context.push_str(&format!(
-                "  Memory: {} / {} MB ({:.1}%)\n",
+            match (
                 gpu.memory_used_mb,
                 gpu.memory_total_mb,
-                (gpu.memory_used_mb as f32 / gpu.memory_total_mb as f32) * 100.0
-            ));
+                gpu.memory_usage_percent(),
+            ) {
+                (Some(used), Some(total), Some(pct)) => {
+                    context.push_str(&format!("  Memory: {used} / {total} MB ({pct:.1}%)\n"))
+                }
+                (Some(used), None, _) => {
+                    context.push_str(&format!("  Memory: {used} MB used, capacity unavailable\n"))
+                }
+                // As with the temperature below: say so, rather than omitting
+                // the line and letting a model assume a figure it was not given.
+                _ => context.push_str("  Memory: unavailable\n"),
+            }
             // Say "unavailable" rather than omitting the line entirely: a model shown
             // no temperature may assume one it was not given, whereas an explicit
             // "unavailable" tells it not to reason about this device's thermals.
@@ -477,12 +486,16 @@ impl SystemState {
 }
 
 impl GpuState {
-    /// Get memory usage percentage
-    pub fn memory_usage_percent(&self) -> f32 {
-        if self.memory_total_mb == 0 {
-            return 0.0;
-        }
-        (self.memory_used_mb as f32 / self.memory_total_mb as f32) * 100.0
+    /// Memory usage percentage, or `None` where the device reported no
+    /// memory figures.
+    ///
+    /// This returned `0.0` for that case, and [`Self::health_status`] tests the
+    /// result against 95% -- so a device whose memory could not be read could
+    /// never raise the "memory nearly full" warning. An unread GPU reported as
+    /// comfortably empty is a missed alarm, not a safe default.
+    pub fn memory_usage_percent(&self) -> Option<f32> {
+        let (used, total) = (self.memory_used_mb?, self.memory_total_mb?);
+        (total > 0).then(|| (used as f32 / total as f32) * 100.0)
     }
 
     /// Power draw as a percentage of the limit, when both were measured.
@@ -527,7 +540,7 @@ impl GpuState {
             "CRITICAL: Temperature too high"
         } else if self.is_hot() {
             "WARNING: Temperature elevated"
-        } else if self.memory_usage_percent() > 95.0 {
+        } else if self.memory_usage_percent().is_some_and(|p| p > 95.0) {
             "WARNING: Memory nearly full"
         } else if self.is_busy() {
             "BUSY: High utilization"
@@ -550,8 +563,8 @@ mod tests {
             name: "Test GPU".to_string(),
             vendor: "NVIDIA".to_string(),
             utilization: 75,
-            memory_used_mb: 8000,
-            memory_total_mb: 16000,
+            memory_used_mb: Some(8000),
+            memory_total_mb: Some(16000),
             temperature_c: Some(65),
             power_w: Some(150.0),
             power_limit_w: Some(200.0),
@@ -561,7 +574,7 @@ mod tests {
             process_count: 3,
         };
 
-        assert_eq!(gpu.memory_usage_percent(), 50.0);
+        assert_eq!(gpu.memory_usage_percent(), Some(50.0));
         assert_eq!(gpu.power_usage_percent(), Some(75.0));
         assert!(!gpu.is_hot());
         assert!(!gpu.is_idle());
@@ -576,8 +589,8 @@ mod tests {
             name: format!("GPU {index}"),
             vendor: "Test".to_string(),
             utilization: 0,
-            memory_used_mb: 0,
-            memory_total_mb: 1024,
+            memory_used_mb: Some(0),
+            memory_total_mb: Some(1024),
             temperature_c,
             power_w: None,
             power_limit_w: None,
@@ -687,8 +700,8 @@ mod tests {
                     name: "GPU 0".to_string(),
                     vendor: "NVIDIA".to_string(),
                     utilization: 50,
-                    memory_used_mb: 4000,
-                    memory_total_mb: 8000,
+                    memory_used_mb: Some(4000),
+                    memory_total_mb: Some(8000),
                     temperature_c: Some(60),
                     power_w: Some(100.0),
                     power_limit_w: Some(150.0),
@@ -702,8 +715,8 @@ mod tests {
                     name: "GPU 1".to_string(),
                     vendor: "AMD".to_string(),
                     utilization: 80,
-                    memory_used_mb: 6000,
-                    memory_total_mb: 8000,
+                    memory_used_mb: Some(6000),
+                    memory_total_mb: Some(8000),
                     temperature_c: Some(75),
                     power_w: Some(120.0),
                     power_limit_w: Some(180.0),

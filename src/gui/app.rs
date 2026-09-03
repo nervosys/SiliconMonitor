@@ -1047,13 +1047,13 @@ impl SiliconMonitorApp {
             }
 
             if i < self.gpu_memory_history.len() {
-                self.gpu_memory_history[i].pop_front();
-                let mem_pct = if info.memory.total > 0 {
-                    (info.memory.used as f32 / info.memory.total as f32) * 100.0
-                } else {
-                    0.0
-                };
-                self.gpu_memory_history[i].push_back(mem_pct);
+                // A device that reported no memory contributes no sample: the
+                // series holds its last value rather than dropping to zero,
+                // which is what the CPU and GPU histories elsewhere do.
+                if let Some(mem_pct) = info.memory.utilization {
+                    self.gpu_memory_history[i].pop_front();
+                    self.gpu_memory_history[i].push_back(mem_pct as f32);
+                }
             }
 
             if i < self.gpu_temp_history.len() {
@@ -1568,8 +1568,8 @@ impl SiliconMonitorApp {
                 json!({
                     "name": static_info.name,
                     "vendor": format!("{:?}", static_info.vendor),
-                    "memory_used_mb": dynamic.memory.used / (1024 * 1024),
-                    "memory_total_mb": dynamic.memory.total / (1024 * 1024),
+                    "memory_used_mb": dynamic.memory.used.map(|v| v / (1024 * 1024)),
+                    "memory_total_mb": dynamic.memory.total.map(|v| v / (1024 * 1024)),
                     "temperature_c": dynamic.thermal.temperature,
                     "utilization_percent": dynamic.utilization,
                     "power_mw": dynamic.power.draw,
@@ -1640,16 +1640,27 @@ impl SiliconMonitorApp {
                 "gpu{}_name,\"{}\",string,{}\n",
                 i, static_info.name, timestamp
             ));
+            // An empty CSV field where the device reported nothing, which
+            // every reader treats as missing; `0` would be read as a
+            // measurement of an empty card.
             csv.push_str(&format!(
                 "gpu{}_memory_used,{},MB,{}\n",
                 i,
-                dynamic.memory.used / (1024 * 1024),
+                dynamic
+                    .memory
+                    .used
+                    .map(|v| (v / (1024 * 1024)).to_string())
+                    .unwrap_or_default(),
                 timestamp
             ));
             csv.push_str(&format!(
                 "gpu{}_memory_total,{},MB,{}\n",
                 i,
-                dynamic.memory.total / (1024 * 1024),
+                dynamic
+                    .memory
+                    .total
+                    .map(|v| (v / (1024 * 1024)).to_string())
+                    .unwrap_or_default(),
                 timestamp
             ));
             if let Some(temp) = dynamic.thermal.temperature {
@@ -2402,16 +2413,21 @@ impl SiliconMonitorApp {
                         );
                     }
 
-                    // GPU Memory
-                    let mem_pct = if dynamic_info.memory.total > 0 {
-                        (dynamic_info.memory.used as f32 / dynamic_info.memory.total as f32) * 100.0
-                    } else {
-                        0.0
-                    };
+                    // GPU Memory. A dash where the device reported none,
+                    // rather than a card reading 0%.
+                    let mem_label = dynamic_info
+                        .memory
+                        .utilization
+                        .map_or_else(|| "-".to_string(), |p| format!("{p}"));
                     ui.add(
-                        MetricCard::new(&format!("GPU{} Mem", i), format!("{:.0}", mem_pct))
+                        MetricCard::new(&format!("GPU{} Mem", i), mem_label)
                             .unit("%")
-                            .color(theme::memory_color(mem_pct)),
+                            // No reading, no threshold colour: 0% would paint
+                            // the card the "plenty free" colour for a device
+                            // whose memory nobody could read.
+                            .color(theme::memory_color(
+                                dynamic_info.memory.utilization.unwrap_or(0) as f32,
+                            )),
                     );
                 }
             });
@@ -2966,20 +2982,28 @@ impl SiliconMonitorApp {
                             ui.add_space(4.0);
 
                             // VRAM bar
-                            let mem_used_mb = dynamic_info.memory.used / 1024 / 1024;
-                            let mem_total_mb = dynamic_info.memory.total / 1024 / 1024;
+                            let mb = |v: Option<u64>| {
+                                v.map_or_else(|| "-".to_string(), |b| (b / 1024 / 1024).to_string())
+                            };
                             ui.label(
-                                RichText::new(format!("VRAM {}/{}MB", mem_used_mb, mem_total_mb))
-                                    .color(CyberColors::TEXT_SECONDARY)
-                                    .size(13.0),
+                                RichText::new(format!(
+                                    "VRAM {}/{}MB",
+                                    mb(dynamic_info.memory.used),
+                                    mb(dynamic_info.memory.total)
+                                ))
+                                .color(CyberColors::TEXT_SECONDARY)
+                                .size(13.0),
                             );
-                            ui.add(
-                                CyberProgressBar::new(
-                                    dynamic_info.memory.utilization as f32 / 100.0,
-                                )
-                                .color(DeviceTitleColors::MEMORY)
-                                .height(bar_height),
-                            );
+                            // The bar is drawn only when there is a fraction to
+                            // draw. An empty bar and a bar at zero look the
+                            // same, and only one of them is a reading.
+                            if let Some(pct) = dynamic_info.memory.utilization {
+                                ui.add(
+                                    CyberProgressBar::new(pct as f32 / 100.0)
+                                        .color(DeviceTitleColors::MEMORY)
+                                        .height(bar_height),
+                                );
+                            }
 
                             // Vendor/Driver info at bottom
                             ui.add_space(4.0);

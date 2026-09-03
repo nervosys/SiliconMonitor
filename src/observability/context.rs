@@ -170,7 +170,8 @@ pub struct GpuContext {
     /// Vendor (NVIDIA, AMD, Intel, Apple)
     pub vendor: String,
     /// Total VRAM in MB
-    pub vram_mb: u64,
+    /// Video memory in MB, or `None` where the driver reported no capacity.
+    pub vram_mb: Option<u64>,
     /// Driver version
     pub driver_version: Option<String>,
     /// CUDA/ROCm/Metal version
@@ -400,9 +401,11 @@ pub struct GpuMetrics {
     /// GPU utilization (0-100)
     pub utilization_percent: f32,
     /// Memory used in MB
-    pub memory_used_mb: u64,
+    /// GPU memory used in MB, or `None` where unreported.
+    pub memory_used_mb: Option<u64>,
     /// Memory total in MB
-    pub memory_total_mb: u64,
+    /// GPU memory total in MB, or `None` where unreported.
+    pub memory_total_mb: Option<u64>,
     /// Temperature in Celsius
     pub temperature_c: Option<f32>,
     /// Power draw in watts

@@ -55,10 +55,13 @@
 //!     println!("  Utilization: {}%", info.dynamic_info.utilization);
 //!     
 //!     // Memory
-//!     println!("  Memory: {} / {} MB",
-//!         info.dynamic_info.memory.used / 1024 / 1024,
-//!         info.dynamic_info.memory.total / 1024 / 1024
-//!     );
+//!     // `None` where the device reported no figure, which is why these are
+//!     // `Option` -- an adapter with no readable memory is not one with none.
+//!     if let (Some(used), Some(total)) =
+//!         (info.dynamic_info.memory.used, info.dynamic_info.memory.total)
+//!     {
+//!         println!("  Memory: {} / {} MB", used / 1024 / 1024, total / 1024 / 1024);
+//!     }
 //! }
 //! # Ok(())
 //! # }
@@ -207,14 +210,53 @@ pub struct GpuProcess {
 /// GPU memory information
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GpuMemory {
-    /// Total memory in bytes
-    pub total: u64,
-    /// Used memory in bytes
-    pub used: u64,
-    /// Free memory in bytes
-    pub free: u64,
-    /// Memory utilization percentage (0-100)
-    pub utilization: u8,
+    /// Total memory in bytes, or `None` where the driver reports none.
+    ///
+    /// Every field here was a bare number, and four backends independently
+    /// wrote zeros into them because there was no way to say otherwise. Two
+    /// said so in a comment while doing it -- `used: 0, // Not available from
+    /// powermetrics` in the Apple reader, and the Intel Linux reader writing a
+    /// zero total for an integrated part that has no separate VRAM at all. A
+    /// GPU reporting 0 bytes of memory is not a plausible reading; it is the
+    /// absence of one, and it reached the TUI, the GUI, the Prometheus
+    /// exporter, the ontology and the recorded database as a measurement.
+    pub total: Option<u64>,
+    /// Used memory in bytes, or `None` where unreported. See [`Self::total`].
+    pub used: Option<u64>,
+    /// Free memory in bytes, or `None` where unreported. See [`Self::total`].
+    pub free: Option<u64>,
+    /// Memory utilization percentage (0-100), or `None`.
+    ///
+    /// Derived from `used / total`, so it is absent whenever either is.
+    pub utilization: Option<u8>,
+}
+
+impl GpuMemory {
+    /// Nothing about this device's memory was readable.
+    ///
+    /// Distinct from a device reporting zeros, which no real adapter does.
+    pub fn unreported() -> Self {
+        Self {
+            total: None,
+            used: None,
+            free: None,
+            utilization: None,
+        }
+    }
+
+    /// Build from a total and a used figure, deriving free and utilization.
+    ///
+    /// The derivation is the reason this exists: four backends computed the
+    /// percentage by hand and three of them divided by a total that could be
+    /// zero.
+    pub fn from_total_used(total: u64, used: u64) -> Self {
+        Self {
+            total: Some(total),
+            used: Some(used),
+            free: Some(total.saturating_sub(used)),
+            utilization: (total > 0).then(|| ((used as f64 / total as f64) * 100.0) as u8),
+        }
+    }
 }
 
 /// GPU clock information
@@ -385,8 +427,9 @@ impl GpuInfo {
         self.dynamic_info.thermal.temperature
     }
 
-    /// Get memory usage percentage
-    pub fn memory_utilization(&self) -> u8 {
+    /// Memory usage percentage, or `None` where the device reported no
+    /// memory figures to derive it from.
+    pub fn memory_utilization(&self) -> Option<u8> {
         self.dynamic_info.memory.utilization
     }
 
@@ -520,20 +563,13 @@ impl Gpu for TraitGpuAdapter {
         let fan = self.device.fan_speed().ok().flatten();
         let pci = self.device.pci_info().ok();
 
-        let memory = if let Some(m) = mem {
-            GpuMemory {
-                total: m.total,
-                used: m.used,
-                free: m.free,
-                utilization: ((m.used as f64 / m.total.max(1) as f64) * 100.0) as u8,
-            }
-        } else {
-            GpuMemory {
-                total: 0,
-                used: 0,
-                free: 0,
-                utilization: 0,
-            }
+        // `.max(1)` in the old percentage was guarding a division by a total
+        // that could be zero -- which is to say the total could be absent, and
+        // the guard turned that into "0% of one byte" rather than into an
+        // absence. A device whose memory query failed now reports nothing.
+        let memory = match mem {
+            Some(m) => GpuMemory::from_total_used(m.total, m.used),
+            None => GpuMemory::unreported(),
         };
 
         let clocks_info = if let Some(c) = clocks {

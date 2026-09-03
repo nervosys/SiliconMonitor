@@ -32,10 +32,13 @@
 //!         info.static_info.vendor
 //!     );
 //!     println!("  Utilization: {}%", info.dynamic_info.utilization);
-//!     println!("  Memory: {} / {} MB",
-//!         info.dynamic_info.memory.used / 1024 / 1024,
-//!         info.dynamic_info.memory.total / 1024 / 1024
-//!     );
+//!     // `None` where the device reported no figure, which is why these are
+//!     // `Option` -- an adapter with no readable memory is not one with none.
+//!     if let (Some(used), Some(total)) =
+//!         (info.dynamic_info.memory.used, info.dynamic_info.memory.total)
+//!     {
+//!         println!("  Memory: {} / {} MB", used / 1024 / 1024, total / 1024 / 1024);
+//!     }
 //!     if let Some(temp) = info.dynamic_info.thermal.temperature {
 //!         println!("  Temperature: {}°C", temp);
 //!     }

@@ -1868,22 +1868,24 @@ fn print_gpu_info_backend(backend: &simonlib::backend::MonitoringBackend) {
         let util_bar = create_usage_bar(util, 15);
         println!("    {} {} {}", "Load:".white(), util_bar, util_colored);
 
-        // Memory
-        let mem_used_mb = di.memory.used / 1024 / 1024;
-        let mem_total_mb = di.memory.total / 1024 / 1024;
-        let mem_pct = if di.memory.total > 0 {
-            (di.memory.used as f32 / di.memory.total as f32) * 100.0
-        } else {
-            0.0
-        };
-        let mem_bar = create_usage_bar(mem_pct, 15);
-        println!(
-            "    {} {} {} / {} MB",
-            "Memory:".white(),
-            mem_bar,
-            mem_used_mb.to_string().cyan(),
-            mem_total_mb
-        );
+        // Memory. The bar is drawn only when there is a percentage to draw:
+        // an empty bar beside "0 / 0 MB" reads as a card with no memory rather
+        // than as a card whose memory could not be read.
+        match (di.memory.used, di.memory.total, di.memory.utilization) {
+            (Some(used), Some(total), Some(pct)) => println!(
+                "    {} {} {} / {} MB",
+                "Memory:".white(),
+                create_usage_bar(pct as f32, 15),
+                (used / 1024 / 1024).to_string().cyan(),
+                total / 1024 / 1024
+            ),
+            (Some(used), None, _) => println!(
+                "    {} {} MB used, capacity not reported",
+                "Memory:".white(),
+                (used / 1024 / 1024).to_string().cyan()
+            ),
+            _ => println!("    {} not reported", "Memory:".white()),
+        }
 
         // Temperature.
         //
@@ -3062,7 +3064,10 @@ fn handle_record_command(action: &RecordSubcommand) -> Result<(), Box<dyn std::e
                     match gpu {
                         Some(g) => {
                             gpu_percent.push(Some(g.utilization as f32));
-                            gpu_memory_used.push(Some(g.memory.used));
+                            // Already `Option`: a device that answered its
+                            // query but reported no memory records the same
+                            // absence as one that could not be queried at all.
+                            gpu_memory_used.push(g.memory.used);
                             gpu_temperature.push(g.thermal.temperature.map(|t| t as f32));
                             gpu_power_mw.push(g.power.draw);
                         }

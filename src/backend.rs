@@ -129,14 +129,16 @@ pub struct AcceleratorState {
     /// Utilization (0-100%)
     pub utilization: f32,
 
-    /// Memory used (bytes)
-    pub memory_used_bytes: u64,
+    /// Memory used in bytes, or `None` where the device reported none.
+    pub memory_used_bytes: Option<u64>,
 
-    /// Memory total (bytes)
-    pub memory_total_bytes: u64,
+    /// Memory total in bytes, or `None` where the device reported none.
+    pub memory_total_bytes: Option<u64>,
 
-    /// Memory usage percentage
-    pub memory_usage_percent: f32,
+    /// Memory usage percentage, or `None` when there was nothing to derive it
+    /// from. This was computed here against a total that could be zero, and
+    /// answered `0.0` in that case.
+    pub memory_usage_percent: Option<f32>,
 
     /// Temperature (Celsius)
     pub temperature: Option<f32>,
@@ -332,12 +334,27 @@ impl FullSystemState {
                     }
                 }
                 ctx.push('\n');
-                let mem_used_gb = accel.memory_used_bytes as f64 / 1024.0 / 1024.0 / 1024.0;
-                let mem_total_gb = accel.memory_total_bytes as f64 / 1024.0 / 1024.0 / 1024.0;
-                ctx.push_str(&format!(
-                    "    Memory: {:.1}GB / {:.1}GB ({:.1}%)\n",
-                    mem_used_gb, mem_total_gb, accel.memory_usage_percent
-                ));
+                // Written out only where there is something to write. A
+                // model shown "0.0GB / 0.0GB (0.0%)" will reason about an idle
+                // card; shown nothing, it reasons about the rest.
+                const GB: f64 = 1024.0 * 1024.0 * 1024.0;
+                match (
+                    accel.memory_used_bytes,
+                    accel.memory_total_bytes,
+                    accel.memory_usage_percent,
+                ) {
+                    (Some(used), Some(total), Some(pct)) => ctx.push_str(&format!(
+                        "    Memory: {:.1}GB / {:.1}GB ({:.1}%)\n",
+                        used as f64 / GB,
+                        total as f64 / GB,
+                        pct
+                    )),
+                    (Some(used), None, _) => ctx.push_str(&format!(
+                        "    Memory: {:.1}GB used, capacity not reported\n",
+                        used as f64 / GB
+                    )),
+                    _ => ctx.push_str("    Memory: not reported\n"),
+                }
             }
             ctx.push('\n');
         }
@@ -850,7 +867,13 @@ impl MonitoringBackend {
                 for (i, info) in self.gpu_dynamic_info.iter().enumerate() {
                     if i < self.accelerator_histories.len() {
                         self.accelerator_histories[i].push(info.utilization as f32);
-                        self.accelerator_memory_histories[i].push(info.memory.utilization as f32);
+                        // A device that reported no memory contributes no
+                        // sample, so the series does not advance -- a flat
+                        // segment, not a drop to zero. The GPU histories in the
+                        // pipeline take the same line for the same reason.
+                        if let Some(mem_util) = info.memory.utilization {
+                            self.accelerator_memory_histories[i].push(mem_util as f32);
+                        }
                         if let Some(temp) = info.thermal.temperature {
                             self.accelerator_temp_histories[i].push(temp as f32);
                         }
@@ -1214,12 +1237,6 @@ impl MonitoringBackend {
             .zip(self.gpu_dynamic_info.iter())
             .enumerate()
         {
-            let mem_usage = if dynamic_info.memory.total > 0 {
-                (dynamic_info.memory.used as f32 / dynamic_info.memory.total as f32) * 100.0
-            } else {
-                0.0
-            };
-
             state.accelerators.push(AcceleratorState {
                 index: i,
                 accel_type: "GPU".to_string(), // Could be extended for NPU/FPGA
@@ -1228,7 +1245,9 @@ impl MonitoringBackend {
                 utilization: dynamic_info.utilization as f32,
                 memory_used_bytes: dynamic_info.memory.used,
                 memory_total_bytes: dynamic_info.memory.total,
-                memory_usage_percent: mem_usage,
+                // Derived once, on `GpuMemory`, rather than recomputed here
+                // against a total that might be zero.
+                memory_usage_percent: dynamic_info.memory.utilization.map(|u| u as f32),
                 temperature: dynamic_info.thermal.temperature.map(|t| t as f32),
                 power_watts: dynamic_info.power.draw.map(|p| p as f32 / 1000.0),
                 power_limit_watts: dynamic_info.power.limit.map(|p| p as f32 / 1000.0),

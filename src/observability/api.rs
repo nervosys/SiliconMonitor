@@ -849,7 +849,7 @@ impl ObservabilityApi {
                         index: snap.static_info.index,
                         name: snap.static_info.name.clone(),
                         vendor: format!("{:?}", snap.static_info.vendor),
-                        vram_mb: snap.dynamic_info.memory.total / (1024 * 1024),
+                        vram_mb: snap.dynamic_info.memory.total.map(|v| v / (1024 * 1024)),
                         driver_version: snap.static_info.driver_version.clone(),
                         compute_version: snap
                             .static_info
@@ -1123,8 +1123,8 @@ impl ObservabilityApi {
                     result.push(GpuMetrics {
                         index: snap.static_info.index,
                         utilization_percent: snap.dynamic_info.utilization as f32,
-                        memory_used_mb: snap.dynamic_info.memory.used / (1024 * 1024),
-                        memory_total_mb: snap.dynamic_info.memory.total / (1024 * 1024),
+                        memory_used_mb: snap.dynamic_info.memory.used.map(|v| v / (1024 * 1024)),
+                        memory_total_mb: snap.dynamic_info.memory.total.map(|v| v / (1024 * 1024)),
                         temperature_c: snap.dynamic_info.thermal.temperature.map(|t| t as f32),
                         power_watts: snap.dynamic_info.power.draw.map(|p| p as f32 / 1000.0),
                         fan_speed_percent: snap.dynamic_info.thermal.fan_speed,

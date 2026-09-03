@@ -422,8 +422,14 @@ impl HttpServer {
             };
 
             put("simon_gpu_utilization_percent", gpu.utilization as f64);
-            put("simon_gpu_memory_used_bytes", gpu.memory.used as f64);
-            put("simon_gpu_memory_total_bytes", gpu.memory.total as f64);
+            // Recorded only where the device reported a figure, like the
+            // temperature below and unlike the zeros these used to publish.
+            if let Some(used) = gpu.memory.used {
+                put("simon_gpu_memory_used_bytes", used as f64);
+            }
+            if let Some(total) = gpu.memory.total {
+                put("simon_gpu_memory_total_bytes", total as f64);
+            }
 
             if let Some(temp) = gpu.thermal.temperature {
                 put("simon_gpu_temperature_celsius", temp as f64);

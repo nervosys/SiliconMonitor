@@ -157,15 +157,12 @@ impl Gpu for NvidiaGpu {
             .unwrap_or(0);
 
         // Memory
-        let memory_info = self.device.memory_info().ok();
-        let memory = GpuMemory {
-            total: memory_info.as_ref().map(|m| m.total).unwrap_or(0),
-            used: memory_info.as_ref().map(|m| m.used).unwrap_or(0),
-            free: memory_info.as_ref().map(|m| m.free).unwrap_or(0),
-            utilization: memory_info
-                .as_ref()
-                .map(|m| ((m.used as f64 / m.total as f64) * 100.0) as u8)
-                .unwrap_or(0),
+        // An NVML query that failed reports nothing, rather than a card with
+        // no memory. The clocks immediately below have always been `Option` for
+        // this reason; the memory fields could not say it until 6.0.0.
+        let memory = match self.device.memory_info().ok() {
+            Some(m) => GpuMemory::from_total_used(m.total, m.used),
+            None => GpuMemory::unreported(),
         };
 
         // Clocks

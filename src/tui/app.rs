@@ -137,10 +137,10 @@ pub struct AcceleratorInfo {
     pub power: Option<f32>,
     /// Power limit in Watts
     pub power_limit: Option<f32>,
-    /// Total memory in bytes
-    pub memory_total: u64,
-    /// Used memory in bytes
-    pub memory_used: u64,
+    /// Total memory in bytes, or `None` where the device reported none.
+    pub memory_total: Option<u64>,
+    /// Used memory in bytes, or `None` where the device reported none.
+    pub memory_used: Option<u64>,
     /// Core/compute clock in MHz
     pub clock_core: Option<u32>,
     /// Memory clock in MHz
@@ -731,8 +731,8 @@ pub struct GpuInfo {
     pub temperature: Option<f32>,
     pub power: Option<f32>,
     pub power_limit: Option<f32>,
-    pub memory_total: u64,
-    pub memory_used: u64,
+    pub memory_total: Option<u64>,
+    pub memory_used: Option<u64>,
     pub clock_graphics: Option<u32>,
     pub clock_memory: Option<u32>,
     /// Fan speed in RPM
@@ -794,8 +794,8 @@ impl From<&NpuInfo> for AcceleratorInfo {
             temperature: None,
             power: npu.power_watts,
             power_limit: None,
-            memory_total: 0,
-            memory_used: 0,
+            memory_total: None,
+            memory_used: None,
             clock_core: npu.frequency_mhz,
             clock_memory: None,
             fan_speed_rpm: None,
@@ -2674,8 +2674,13 @@ mod tests {
             info.utilization, None,
             "a default accelerator has no utilization reading, not one of zero"
         );
-        assert_eq!(info.memory_total, 0);
-        assert_eq!(info.memory_used, 0);
+        // The same sentence as the utilization assertion above, which sat
+        // directly on top of these two while they asserted a zero.
+        assert_eq!(
+            info.memory_total, None,
+            "a default accelerator has no memory reading, not one of zero"
+        );
+        assert_eq!(info.memory_used, None);
         assert!(info.temperature.is_none());
         assert!(info.power.is_none());
     }

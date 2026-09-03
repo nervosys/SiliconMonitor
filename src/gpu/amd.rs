@@ -194,14 +194,15 @@ impl Gpu for AmdGpu {
                 .and_then(|s| s.trim().parse::<u8>().ok())
                 .unwrap_or(0);
 
-            // Read memory info
-            let mem_total = read_sysfs_bytes(&format!("{}/mem_info_vram_total", device_path));
-            let mem_used = read_sysfs_bytes(&format!("{}/mem_info_vram_used", device_path));
-            let mem_free = mem_total.saturating_sub(mem_used);
-            let mem_util = if mem_total > 0 {
-                ((mem_used as f64 / mem_total as f64) * 100.0) as u8
-            } else {
-                0
+            // Read memory info. `mem_info_vram_*` is absent on parts with no
+            // dedicated VRAM and on drivers that do not export it, and this
+            // used to answer 0 bytes for both.
+            let memory = match (
+                read_sysfs_bytes(&format!("{}/mem_info_vram_total", device_path)),
+                read_sysfs_bytes(&format!("{}/mem_info_vram_used", device_path)),
+            ) {
+                (Some(total), Some(used)) => GpuMemory::from_total_used(total, used),
+                _ => GpuMemory::unreported(),
             };
 
             // Read clocks from hwmon
@@ -252,12 +253,7 @@ impl Gpu for AmdGpu {
 
             Ok(GpuDynamicInfo {
                 utilization,
-                memory: GpuMemory {
-                    total: mem_total,
-                    used: mem_used,
-                    free: mem_free,
-                    utilization: mem_util,
-                },
+                memory,
                 clocks: GpuClocks {
                     graphics: graphics_clock,
                     graphics_max: None,
@@ -303,15 +299,14 @@ impl Gpu for AmdGpu {
             })
         }
 
+        // Nothing is read on this platform, so nothing is reported. Every
+        // `Option` field below was already `None`; the four bare ones said `0`,
+        // which is a reading nobody took. The AMD path that actually runs on
+        // Windows is `WmiAmdGpu`, further down this file.
         #[cfg(not(target_os = "linux"))]
         Ok(GpuDynamicInfo {
             utilization: 0,
-            memory: GpuMemory {
-                total: 0,
-                used: 0,
-                free: 0,
-                utilization: 0,
-            },
+            memory: GpuMemory::unreported(),
             clocks: GpuClocks {
                 graphics: None,
                 graphics_max: None,
@@ -398,11 +393,10 @@ impl Gpu for AmdGpu {
 
 /// Read a sysfs value as bytes
 #[cfg(target_os = "linux")]
-fn read_sysfs_bytes(path: &str) -> u64 {
+fn read_sysfs_bytes(path: &str) -> Option<u64> {
     fs::read_to_string(path)
         .ok()
         .and_then(|s| s.trim().parse::<u64>().ok())
-        .unwrap_or(0)
 }
 
 /// Read frequency in Hz, convert to MHz
@@ -769,27 +763,26 @@ impl Gpu for WmiAmdGpu {
         // Query real-time GPU performance counters via shared helpers
         let perf = query_gpu_perf_counters_wmi(&self.gpu_name_hint, self.luid_filter.as_deref());
 
+        // The counters give bytes in use; the adapter's declared capacity comes
+        // from WMI at construction. Where WMI reported no capacity, the total
+        // fell back to *the used figure itself*, which makes every adapter look
+        // exactly full -- 100% memory utilisation, permanently. Reporting the
+        // used bytes with no total says what is actually known.
         let mem_used = perf.dedicated_used;
-        let mem_total = if self.dedicated_video_memory > 0 {
-            self.dedicated_video_memory
+        let memory = if self.dedicated_video_memory > 0 {
+            GpuMemory::from_total_used(self.dedicated_video_memory, mem_used)
         } else {
-            mem_used
-        };
-        let mem_free = mem_total.saturating_sub(mem_used);
-        let mem_util = if mem_total > 0 {
-            ((mem_used as f64 / mem_total as f64) * 100.0).min(100.0) as u8
-        } else {
-            0
+            GpuMemory {
+                total: None,
+                used: Some(mem_used),
+                free: None,
+                utilization: None,
+            }
         };
 
         Ok(GpuDynamicInfo {
             utilization: perf.utilization,
-            memory: GpuMemory {
-                total: mem_total,
-                used: mem_used,
-                free: mem_free,
-                utilization: mem_util,
-            },
+            memory,
             clocks: GpuClocks {
                 graphics: None,
                 graphics_max: None,

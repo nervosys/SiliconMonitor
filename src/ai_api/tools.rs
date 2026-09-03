@@ -868,13 +868,16 @@ impl AiDataApi {
                     "name": s.static_info.name,
                     "vendor": format!("{:?}", s.static_info.vendor),
                     "utilization_percent": s.dynamic_info.utilization,
+                    // `null` rather than `0` for a device that reported no
+                    // memory figures. `usage_percent` is the derived field on
+                    // `GpuMemory`, which is absent whenever either input is --
+                    // the arithmetic used to run against a total that could be
+                    // zero and answer `0.0`.
                     "memory": {
-                        "used_mb": s.dynamic_info.memory.used / 1024 / 1024,
-                        "total_mb": s.dynamic_info.memory.total / 1024 / 1024,
-                        "free_mb": s.dynamic_info.memory.free / 1024 / 1024,
-                        "usage_percent": if s.dynamic_info.memory.total > 0 {
-                            (s.dynamic_info.memory.used as f64 / s.dynamic_info.memory.total as f64) * 100.0
-                        } else { 0.0 }
+                        "used_mb": s.dynamic_info.memory.used.map(|v| v / 1024 / 1024),
+                        "total_mb": s.dynamic_info.memory.total.map(|v| v / 1024 / 1024),
+                        "free_mb": s.dynamic_info.memory.free.map(|v| v / 1024 / 1024),
+                        "usage_percent": s.dynamic_info.memory.utilization,
                     },
                     "temperature_c": s.dynamic_info.thermal.temperature,
                     "power_watts": s.dynamic_info.power.draw.map(|p| p as f32 / 1000.0),
@@ -910,7 +913,7 @@ impl AiDataApi {
                     "index": idx,
                     "name": s.static_info.name,
                     "vendor": format!("{:?}", s.static_info.vendor),
-                    "total_memory_mb": s.dynamic_info.memory.total / 1024 / 1024,
+                    "total_memory_mb": s.dynamic_info.memory.total.map(|v| v / 1024 / 1024),
                 })
             })
             .collect();
@@ -955,11 +958,9 @@ impl AiDataApi {
                 "total_bytes": info.dynamic_info.memory.total,
                 "used_bytes": info.dynamic_info.memory.used,
                 "free_bytes": info.dynamic_info.memory.free,
-                "total_mb": info.dynamic_info.memory.total / 1024 / 1024,
-                "used_mb": info.dynamic_info.memory.used / 1024 / 1024,
-                "usage_percent": if info.dynamic_info.memory.total > 0 {
-                    (info.dynamic_info.memory.used as f32 / info.dynamic_info.memory.total as f32) * 100.0
-                } else { 0.0 }
+                "total_mb": info.dynamic_info.memory.total.map(|v| v / 1024 / 1024),
+                "used_mb": info.dynamic_info.memory.used.map(|v| v / 1024 / 1024),
+                "usage_percent": info.dynamic_info.memory.utilization,
             },
             "thermal": {
                 "temperature_c": info.dynamic_info.thermal.temperature,
@@ -1108,12 +1109,10 @@ impl AiDataApi {
                     "total_bytes": s.dynamic_info.memory.total,
                     "used_bytes": s.dynamic_info.memory.used,
                     "free_bytes": s.dynamic_info.memory.free,
-                    "total_mb": s.dynamic_info.memory.total / 1024 / 1024,
-                    "used_mb": s.dynamic_info.memory.used / 1024 / 1024,
-                    "free_mb": s.dynamic_info.memory.free / 1024 / 1024,
-                    "usage_percent": if s.dynamic_info.memory.total > 0 {
-                        (s.dynamic_info.memory.used as f64 / s.dynamic_info.memory.total as f64) * 100.0
-                    } else { 0.0 }
+                    "total_mb": s.dynamic_info.memory.total.map(|v| v / 1024 / 1024),
+                    "used_mb": s.dynamic_info.memory.used.map(|v| v / 1024 / 1024),
+                    "free_mb": s.dynamic_info.memory.free.map(|v| v / 1024 / 1024),
+                    "usage_percent": s.dynamic_info.memory.utilization
                 })
             })
             .collect();

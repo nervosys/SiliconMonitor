@@ -58,9 +58,11 @@ pub struct GpuSummary {
     /// Current utilization percentage
     pub utilization_percent: f32,
     /// Used memory in MB
-    pub memory_used_mb: u64,
+    /// GPU memory used in MB, or `None` where the device reported none.
+    pub memory_used_mb: Option<u64>,
     /// Total memory in MB
-    pub memory_total_mb: u64,
+    /// GPU memory total in MB, or `None` where the device reported none.
+    pub memory_total_mb: Option<u64>,
     /// Temperature in Celsius
     pub temperature_c: Option<i32>,
     /// Power draw in watts

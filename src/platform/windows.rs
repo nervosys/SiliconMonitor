@@ -745,9 +745,12 @@ pub fn read_gpu_stats() -> Result<GpuStats> {
             railgate: None,
             tpc_pg_mask: None,
             scaling_3d: None,
-            memory_used: (di.memory.total > 0).then_some(di.memory.used),
-            memory_total: (di.memory.total > 0).then_some(di.memory.total),
-            memory_free: (di.memory.total > 0).then_some(di.memory.free),
+            // This already treated a zero total as an absence and wrapped the
+            // three figures in `Some` only when it was non-zero. The type says
+            // it now, so the guard is gone rather than duplicated.
+            memory_used: di.memory.used,
+            memory_total: di.memory.total,
+            memory_free: di.memory.free,
             // `GpuThermal::temperature` is already degrees Celsius.
             temperature: di.thermal.temperature.map(|t| t as f32),
             // `GpuPower` is milliwatts; `GpuStatus` is watts.

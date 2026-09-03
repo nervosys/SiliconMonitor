@@ -774,11 +774,11 @@ fn collect_once(
         let Some(info) = info.as_ref() else { continue };
         if i < histories.gpu_util.len() {
             push_capped(&mut histories.gpu_util[i], info.utilization as f32, cap);
-            push_capped(
-                &mut histories.gpu_memory[i],
-                info.memory.utilization as f32,
-                cap,
-            );
+            // A device that reported no memory contributes no sample, exactly as
+            // a device that failed its whole query contributes none above.
+            if let Some(mem_util) = info.memory.utilization {
+                push_capped(&mut histories.gpu_memory[i], mem_util as f32, cap);
+            }
             if let Some(temp) = info.thermal.temperature {
                 push_capped(&mut histories.gpu_temp[i], temp as f32, cap);
             }

@@ -254,12 +254,10 @@ impl Gpu for IntelGpu {
 
             Ok(GpuDynamicInfo {
                 utilization,
-                memory: GpuMemory {
-                    total: 0,
-                    used: 0,
-                    free: 0,
-                    utilization: 0,
-                },
+                // Intel integrated parts have no separate VRAM and expose no
+                // memory figures in sysfs, so there is nothing to report --
+                // which is not the same as reporting a card with no memory.
+                memory: GpuMemory::unreported(),
                 clocks: GpuClocks {
                     graphics: graphics_clock,
                     graphics_max,
@@ -303,15 +301,11 @@ impl Gpu for IntelGpu {
             })
         }
 
+        // Nothing is read on this platform, so nothing is reported.
         #[cfg(not(target_os = "linux"))]
         Ok(GpuDynamicInfo {
             utilization: 0,
-            memory: GpuMemory {
-                total: 0,
-                used: 0,
-                free: 0,
-                utilization: 0,
-            },
+            memory: GpuMemory::unreported(),
             clocks: GpuClocks {
                 graphics: None,
                 graphics_max: None,
@@ -749,30 +743,33 @@ impl Gpu for WmiIntelGpu {
         } else {
             perf.shared_used + perf.dedicated_used
         };
+        // The final `else` fell back to *the used figure itself* as the
+        // total, so an adapter whose capacity WMI did not report came out at
+        // exactly 100% memory utilisation, permanently, on every scrape. The
+        // used bytes are a real reading and are kept; the capacity is not
+        // invented from them.
         let mem_total = if self.is_discrete && self.dedicated_video_memory > 0 {
-            self.dedicated_video_memory
+            Some(self.dedicated_video_memory)
         } else if !self.is_discrete && self.shared_system_memory > 0 {
-            self.shared_system_memory
+            Some(self.shared_system_memory)
         } else if self.dedicated_video_memory > 0 {
-            self.dedicated_video_memory
+            Some(self.dedicated_video_memory)
         } else {
-            mem_used
+            None
         };
-        let mem_free = mem_total.saturating_sub(mem_used);
-        let mem_util = if mem_total > 0 {
-            ((mem_used as f64 / mem_total as f64) * 100.0).min(100.0) as u8
-        } else {
-            0
+        let memory = match mem_total {
+            Some(total) => GpuMemory::from_total_used(total, mem_used),
+            None => GpuMemory {
+                total: None,
+                used: Some(mem_used),
+                free: None,
+                utilization: None,
+            },
         };
 
         Ok(GpuDynamicInfo {
             utilization: perf.utilization,
-            memory: GpuMemory {
-                total: mem_total,
-                used: mem_used,
-                free: mem_free,
-                utilization: mem_util,
-            },
+            memory,
             clocks: GpuClocks {
                 graphics: None,
                 graphics_max: None,

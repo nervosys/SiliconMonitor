@@ -101,12 +101,12 @@ impl Gpu for AppleGpu {
 
         Ok(GpuDynamicInfo {
             utilization: data.gpu_active,
-            memory: GpuMemory {
-                used: 0, // Not available from powermetrics
-                free: 0,
-                total: 0,
-                utilization: 0,
-            },
+            // `powermetrics` reports no GPU memory figures at all, and Apple
+            // Silicon has no separate VRAM to report -- the GPU shares system
+            // memory. The comment here used to say "Not available from
+            // powermetrics" on a line assigning `0`, which is the whole defect
+            // in miniature: the code knew, and the type could not say.
+            memory: GpuMemory::unreported(),
             clocks: GpuClocks {
                 graphics: Some(data.gpu_freq_mhz),
                 graphics_max: None, // Apple does not publish a GPU clock ceiling

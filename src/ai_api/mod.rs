@@ -448,8 +448,12 @@ impl AiDataApi {
                         name: snapshot.static_info.name.clone(),
                         vendor: format!("{:?}", snapshot.static_info.vendor),
                         utilization_percent: snapshot.dynamic_info.utilization as f32,
-                        memory_used_mb: (snapshot.dynamic_info.memory.used / 1024 / 1024),
-                        memory_total_mb: (snapshot.dynamic_info.memory.total / 1024 / 1024),
+                        memory_used_mb: snapshot.dynamic_info.memory.used.map(|v| v / 1024 / 1024),
+                        memory_total_mb: snapshot
+                            .dynamic_info
+                            .memory
+                            .total
+                            .map(|v| v / 1024 / 1024),
                         temperature_c: snapshot.dynamic_info.thermal.temperature,
                         power_watts: snapshot.dynamic_info.power.draw.map(|p| p as f32 / 1000.0),
                     });

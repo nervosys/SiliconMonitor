@@ -560,25 +560,37 @@ impl PrometheusExporter {
                         ));
                     }
 
-                    // Memory
-                    self.add(MetricFamily::gauge_with_labels(
-                        &self.prefixed("gpu_memory_total_bytes"),
-                        "GPU total memory in bytes",
-                        info.dynamic_info.memory.total as f64,
-                        base_labels.clone(),
-                    ));
-                    self.add(MetricFamily::gauge_with_labels(
-                        &self.prefixed("gpu_memory_used_bytes"),
-                        "GPU used memory in bytes",
-                        info.dynamic_info.memory.used as f64,
-                        base_labels.clone(),
-                    ));
-                    self.add(MetricFamily::gauge_with_labels(
-                        &self.prefixed("gpu_memory_free_bytes"),
-                        "GPU free memory in bytes",
-                        info.dynamic_info.memory.free as f64,
-                        base_labels.clone(),
-                    ));
+                    // Memory. Emitted per figure, only where the device
+                    // reported one: a gauge states that the value is currently
+                    // this, so exporting `0` for an adapter that reported no
+                    // memory publishes an empty card as a fact. Prometheus reads
+                    // an absent series as "not reported", which is true.
+                    for (name, help, value) in [
+                        (
+                            "gpu_memory_total_bytes",
+                            "GPU total memory in bytes",
+                            info.dynamic_info.memory.total,
+                        ),
+                        (
+                            "gpu_memory_used_bytes",
+                            "GPU used memory in bytes",
+                            info.dynamic_info.memory.used,
+                        ),
+                        (
+                            "gpu_memory_free_bytes",
+                            "GPU free memory in bytes",
+                            info.dynamic_info.memory.free,
+                        ),
+                    ] {
+                        if let Some(bytes) = value {
+                            self.add(MetricFamily::gauge_with_labels(
+                                &self.prefixed(name),
+                                help,
+                                bytes as f64,
+                                base_labels.clone(),
+                            ));
+                        }
+                    }
 
                     // Clocks
                     if let Some(graphics) = info.dynamic_info.clocks.graphics {
