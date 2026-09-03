@@ -172,6 +172,35 @@ pub struct CpuMicroarchMonitor {
     report: CpuMicroarchReport,
 }
 
+/// Pull `(family, model, stepping)` out of a Windows processor description.
+///
+/// Both `Win32_Processor.Description` and the `PROCESSOR_IDENTIFIER`
+/// environment variable use the same shape:
+///
+/// ```text
+/// AMD64 Family 26 Model 68 Stepping 0
+/// AMD64 Family 26 Model 68 Stepping 0, AuthenticAMD
+/// x86 Family 6 Model 142 Stepping 10
+/// ```
+///
+/// Parsed by keyword rather than by position, so a vendor suffix or an extra
+/// leading token does not shift the fields. All three must be present: two
+/// thirds of a CPUID triple is not one, and reporting a family without a model
+/// would invite exactly the "close enough" matching this crate avoids.
+#[cfg(target_os = "windows")]
+fn parse_cpuid_triple(desc: &str) -> Option<(u32, u32, u32)> {
+    let after = |key: &str| -> Option<u32> {
+        let tokens: Vec<&str> = desc.split_whitespace().collect();
+        let idx = tokens.iter().position(|t| t.eq_ignore_ascii_case(key))?;
+        tokens
+            .get(idx + 1)?
+            .trim_end_matches(',')
+            .parse::<u32>()
+            .ok()
+    };
+    Some((after("Family")?, after("Model")?, after("Stepping")?))
+}
+
 impl CpuMicroarchMonitor {
     /// Create a new monitor and detect microarchitecture.
     pub fn new() -> Result<Self, SimonError> {
@@ -1023,7 +1052,7 @@ impl CpuMicroarchMonitor {
             .args([
                 "-NoProfile",
                 "-Command",
-                "Get-CimInstance Win32_Processor | Select-Object Name,Family,NumberOfCores,NumberOfLogicalProcessors | ConvertTo-Json",
+                "Get-CimInstance Win32_Processor | Select-Object Name,Description,Family,NumberOfCores,NumberOfLogicalProcessors | ConvertTo-Json",
             ])
             .output()
             .map_err(SimonError::Io)?;
@@ -1043,15 +1072,38 @@ impl CpuMicroarchMonitor {
             .as_u64()
             .unwrap_or(cores as u64) as u32;
 
-        // WMI does not expose the CPUID triple. This returned (0, 0, 0),
-        // which is not a triple any x86 CPU reports.
+        // WMI does expose the CPUID triple, and the comment that used to sit
+        // here said it does not. `Win32_Processor.Description` is the string
+        // "AMD64 Family 26 Model 68 Stepping 0", and `PROCESSOR_IDENTIFIER`
+        // carries the same text -- which this file was already reading, two
+        // functions down, for something else.
+        //
+        // Description first because it comes from the query already running;
+        // the environment variable is the fallback, and is what a process
+        // launched under an unusual environment might be missing.
+        let (family, model, stepping) = val["Description"]
+            .as_str()
+            .and_then(parse_cpuid_triple)
+            .or_else(|| {
+                std::env::var("PROCESSOR_IDENTIFIER")
+                    .ok()
+                    .as_deref()
+                    .and_then(parse_cpuid_triple)
+            })
+            .map_or((None, None, None), |(f, m, s)| (Some(f), Some(m), Some(s)));
+
         let flags = Self::read_windows_cpu_features();
 
-        Ok((model_name, None, None, None, flags, cores, threads))
+        Ok((model_name, family, model, stepping, flags, cores, threads))
     }
 
     #[cfg(target_os = "windows")]
     fn read_windows_cpu_features() -> Vec<String> {
+        // NOTE: the flags below are asserted from the architecture rather than
+        // read from CPUID, which is why the ontology publishes them with
+        // `specification` provenance rather than `measured`. Every x86_64 part
+        // has them; that is a fact about the instruction set, not about this
+        // chip.
         // Detect features from environment or registry
         // This is a simplified version - real implementation would use CPUID
         let mut flags = Vec::new();
@@ -1170,6 +1222,44 @@ impl Default for CpuMicroarchMonitor {
                 smt_enabled: false,
             },
         })
+    }
+}
+
+#[cfg(all(test, target_os = "windows"))]
+mod cpuid_triple_tests {
+    use super::parse_cpuid_triple;
+
+    #[test]
+    fn a_windows_processor_description_yields_its_cpuid_triple() {
+        // Exactly what `Win32_Processor.Description` returns on the machine
+        // this was written against, and what `PROCESSOR_IDENTIFIER` returns
+        // there with the vendor appended.
+        assert_eq!(
+            parse_cpuid_triple("AMD64 Family 26 Model 68 Stepping 0"),
+            Some((26, 68, 0))
+        );
+        assert_eq!(
+            parse_cpuid_triple("AMD64 Family 26 Model 68 Stepping 0, AuthenticAMD"),
+            Some((26, 68, 0))
+        );
+        // An Intel form, with a different leading token.
+        assert_eq!(
+            parse_cpuid_triple("x86 Family 6 Model 142 Stepping 10"),
+            Some((6, 142, 10))
+        );
+    }
+
+    #[test]
+    fn two_thirds_of_a_triple_is_not_a_triple() {
+        // A partial reading is an absent one. Publishing a family with no
+        // model invites matching a CPU against the wrong microarchitecture,
+        // which is the whole reason these three travel together.
+        assert_eq!(parse_cpuid_triple("AMD64 Family 26 Model 68"), None);
+        assert_eq!(parse_cpuid_triple("AMD64 Family 26"), None);
+        assert_eq!(parse_cpuid_triple(""), None);
+        assert_eq!(parse_cpuid_triple("Intel64 Family Model Stepping"), None);
+        // A vendor string that merely mentions the words.
+        assert_eq!(parse_cpuid_triple("Family Values Model Agency"), None);
     }
 }
 
