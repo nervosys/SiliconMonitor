@@ -152,9 +152,60 @@ Since the tag, on `master` and green on all three platforms:
 | `91667d1` | The CPUID triple Windows reports, under a comment saying it does not |
 | `235562e` | The cache topology this module's docs already claimed to read |
 | `e6d5259` | The transport a HID node's parent names |
+| `59e6268` | A rated figure published as measured, on 24 rows |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### The one entity whose rows over-claimed
+
+Two more absence reasons checked and both **true**: "platform exposes no minimum
+core frequency" (`Win32_Processor` carries `MaxClockSpeed`, `CurrentClockSpeed`
+and `ExtClock`, and no minimum) and "this controller reports no port count"
+(`Win32_SCSIController.MaxNumberControlled` is blank on every row here). The
+audit is converging: the reasons that were wrong all asserted something the
+platform *does* provide through a different column; these two have no source at
+all.
+
+Checking the frequency claim turned up something else. This machine reports:
+
+```
+cpu.core.0.frequency       derived    5282 megahertz
+cpu.core.0.frequency.max   measured   4400 megahertz
+```
+
+A current clock 887 MHz above the stated maximum. That relationship is correct
+and the entity documents it — *"Rated maximum core clock, as the firmware reports
+it. A boosting core can and does exceed it."* 4400 is this part's base clock, not
+its 5.6 GHz boost ceiling, and Windows exposes no boost figure.
+
+**The defect was the label.** `measured 4400 MHz` says simon observed the core at
+4400. It read a number the firmware states. The entity beside it declares
+`Specification`; the resolver called `push_opt` where `push_spec_opt` was already
+sitting.
+
+Found by comparing every row's resolved provenance against its entity's
+declaration across all 255 entities, and it was **the only one in the ontology
+that over-claimed** — on all 24 of its rows.
+
+**No test was added, and that is the interesting part.** `tests/honesty.rs`
+checks the opposite direction and argues at length for leaving this one alone: an
+`Entity` carries a single provenance and cannot say "varies per row", so a
+cluster declares the weakest its rows can carry and over-delivers on the rest.
+`cpu.core.{n}.frequency` does exactly that — Linux measures `scaling_cur_freq`
+where Windows derives. A blanket check would fail on Linux for a perfectly honest
+entity.
+
+That reasoning holds. It simply does not cover this case: `frequency.max` is not
+a cluster, because no platform measures a rated figure, so every row over-claimed
+uniformly. The harm is the one that test's own documentation names — *"a
+spec-sheet inference wearing a measurement's authority"* — arriving from the side
+it deliberately does not guard.
+
+**When an existing test's reasoning explains why it does not catch something,
+read the reasoning before overriding it.** The rule here was right; the case was
+outside it. Adding a stricter test would have broken a legitimate entity on a
+platform I cannot run.
 
 ### Not guessing was right; not looking further was not
 
