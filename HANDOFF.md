@@ -143,9 +143,70 @@ Since the tag, on `master` and green on all three platforms:
 | `0801f11` | Six recorded columns that wrote zero for a failed read |
 | `556a471` | A type that could not say "not reported", and four backends that filled the gap with zeros |
 | `549ca3e` | GPU utilization, and an unreadable card advertised as idle |
+| `76dc998` | Six power readings unwrapped to zero, and "No swap configured" |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### Six power readings unwrapped to zero, and a lie about the machine
+
+The last two fixes suggested a detector, so I built it: **a struct where some
+numeric fields are `Option` and the rest are not.** That mixture is the signature
+of a type that learned to express absence for one field and never for its
+neighbours. 134 structs match. Most are legitimate — ids, counts, flags, things
+that really are always known. Two were not.
+
+**`gpu::traits::Power` had one `Option` field and six bare ones**, and the
+`Option` one was documented *"(if available)"* — which quietly implies the others
+always are. They are not; every one is a driver query that can decline. All three
+backends read them **as `Option`** and destroyed the absence one line later:
+
+```rust
+current: current.unwrap_or(0.0),
+limit: limit.unwrap_or(0.0),
+default_limit: default_limit.unwrap_or(0.0),
+```
+
+Then the absence was *laundered back into a reading*. `GpuPower::default_limit`
+is `Option<u32>` — a type that can say "unreported" — and `gpu/mod.rs` filled it
+with `Some((p.default_limit * 1000.0) as u32)`. A card whose default limit NVML
+declined published `Some(0)`: not merely a zero, but a zero explicitly marked
+present.
+
+Two more in the same constructors. The AMD and Intel readers wrote
+`average: if current > 0.0 { Some(current) } else { None }` — the **inverse**
+mistake, a card genuinely drawing zero watts reported as having no average
+reading at all. And Intel's `min_limit` was a hardcoded `0.0` on a path that
+reads no minimum whatsoever.
+
+**And the GUI told the user a fact about their machine that it had not
+established.** It took `mem.swap.total_or_zero()`, branched on `> 0.0`, and
+printed:
+
+> No swap configured
+
+`SwapInfo` carries `Option` precisely so an unread pagefile is distinguishable
+from an absent one, and Windows swap comes from a WMI query that can fail. The
+sentence is about the machine; the truth available was about the reading. It now
+says "Swap not reported by this platform" when that is what happened. **That is
+the fourth site this session where `*_or_zero()` throws the distinction away at
+the point of use**, after the agent tools (`a50b77d`) and the recorder
+(`0801f11`) — a helper that exists to be convenient at exactly the moment being
+careful matters.
+
+**The examples had been hiding it.** Several guarded on `power.current > 0.0`
+before printing — which was how they told "unreported" from "reported" back when
+the type could not say. Every one of those guards was a workaround for this
+defect, sitting in plain sight in the code that demonstrates the API.
+
+Verified: two discrete cards at 19.1 W and 12.0 W against 450 W limits, and the
+integrated adapter's power correctly unavailable.
+
+**A convenience method named `*_or_zero()` is a defect generator.** It is
+correct at some call sites and catastrophic at others, it reads as harmless, and
+nothing distinguishes the two cases at the call site. Four sites this session,
+across three surfaces, each written by someone reaching for the shortest thing
+that compiled.
 
 ### GPU utilization, and an unreadable card advertised as idle
 
