@@ -149,9 +149,59 @@ Since the tag, on `master` and green on all three platforms:
 | `7d78dab` | A DIMM voltage the query never asked for, and MT/s called "count" |
 | `b76c215` | An absence reason contradicted by the rows beside it |
 | `dbe64e0` | A manufacturer the query never selected, and Windows' fake vendors |
+| `91667d1` | The CPUID triple Windows reports, under a comment saying it does not |
+| `235562e` | The cache topology this module's docs already claimed to read |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### Two more absences that were not
+
+The audit continued into the smaller reasons, and both of the ones I checked
+were false.
+
+**"the CPUID family/model/stepping triple was not read on this platform"**, on
+three readings, with the reader carrying a comment asserting the same:
+
+```rust
+// WMI does not expose the CPUID triple. This returned (0, 0, 0),
+// which is not a triple any x86 CPU reports.
+```
+
+`Win32_Processor.Description` is the string `AMD64 Family 26 Model 68 Stepping 0`.
+The query selected four other columns. `PROCESSOR_IDENTIFIER` carries the same
+text — and this file was already reading that variable, two functions further
+down, to guess feature flags from. Parsed by keyword rather than position, and
+all three must parse or the answer is `None`: a family without a model invites
+matching a CPU against the wrong microarchitecture, which is why the three travel
+together at all.
+
+**"the platform reported no line size for this cache"**, and its neighbour about
+sharing. This module's own documentation opens with *"Uses WMI
+(`Win32_CacheMemory`) or `GetLogicalProcessorInformationEx`"* — and only the
+first was implemented. It is the weaker source three ways over: `LineSize` is
+declared on the class and blank on every row, `Associativity` is a CIM
+enumeration rather than a way count (7 means 16-way, and it was published as 7),
+and it aggregates per level so the separate L1 data and instruction caches cannot
+be recovered from it at all.
+
+The Win32 call returns one record per physical cache. This machine went from 3
+aggregate rows to 38 real ones — 24 L1, 12 L2, 2 L3 — with line sizes, true
+associativity, and `shared_cpus` naming the SMT pairs and the two CCX groups.
+
+**And a bug I put in, caught by counting rather than by testing.** The walk over
+those variable-length records required
+`size_of::<SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX>()` bytes to remain in the
+buffer. That union is sized by its *largest* arm, which is bigger than a cache
+record, so the final record was skipped. The reader found **11 of 12 L2 caches**.
+
+Everything about that output looked right. The line sizes were 64 bytes, the
+sharing lists were sensible SMT pairs, the L1 and L3 totals were exactly correct,
+and the tests passed. `cpu.cache.l2` read 11 MB, which is only wrong if you
+happen to know the part has twelve cores and multiply. **A plausible number is
+the failure mode this crate exists to catch, and I shipped one into my own
+verification step** — the fix came from counting instances against the hardware,
+not from anything the toolchain could have told me.
 
 ### Auditing 491 absences against the platform
 
