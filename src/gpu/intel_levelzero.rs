@@ -339,24 +339,27 @@ impl Device for IntelGpu {
         let hwmon = hwmon_dirs[0].path();
 
         // Read power values (in microwatts, convert to watts)
-        let read_power = |sensor: &str| -> f32 {
+        // A hwmon node that is missing or unparseable reports nothing. It
+        // used to report 0 W, which on a power rail is a specific claim.
+        let read_power = |sensor: &str| -> Option<f32> {
             fs::read_to_string(hwmon.join(sensor))
                 .ok()
                 .and_then(|s| s.trim().parse::<u64>().ok())
                 .map(|microwatts| microwatts as f32 / 1_000_000.0)
-                .unwrap_or(0.0)
         };
 
         let current = read_power("power1_input");
         let limit = read_power("power1_cap");
         let max_limit = read_power("power1_cap_max");
 
+        // See the AMD reader for `average`. `min_limit` was a hardcoded
+        // `0.0`: this path reads no minimum at all, and 0 W is not one.
         Ok(Power {
             current,
-            average: if current > 0.0 { Some(current) } else { None },
+            average: current,
             limit,
             default_limit: limit,
-            min_limit: 0.0,
+            min_limit: None,
             max_limit,
             enforced_limit: limit,
         })

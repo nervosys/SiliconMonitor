@@ -3258,19 +3258,31 @@ impl SiliconMonitorApp {
                 ui.add_space(16.0);
                 ui.add(SectionHeader::new("Swap Memory").icon("🔄"));
 
+                // `total_or_zero()` discarded the `Option` that `SwapInfo`
+                // carries specifically so an unread pagefile is distinguishable
+                // from an absent one -- and the `else` branch below then told
+                // the user "No swap configured", which is a statement about the
+                // machine rather than about the reading. Windows swap is read
+                // through a WMI query that can fail.
                 let swap_usage = mem.swap_usage_percent();
-                let swap_total_mb = mem.swap.total_or_zero() as f64 / 1024.0;
-                let swap_used_mb = mem.swap.used_or_zero() as f64 / 1024.0;
-                let swap_free_mb = swap_total_mb - swap_used_mb;
-                let swap_cached_mb = mem.swap.cached_or_zero() as f64 / 1024.0;
+                let swap_total_mb = mem.swap.total.map(|v| v as f64 / 1024.0);
+                let swap_used_mb = mem.swap.used.map(|v| v as f64 / 1024.0);
+                let swap_free_mb = match (swap_total_mb, swap_used_mb) {
+                    (Some(total), Some(used)) => Some(total - used),
+                    _ => None,
+                };
+                let swap_cached_mb = mem.swap.cached.map(|v| v as f64 / 1024.0);
 
-                if swap_total_mb > 0.0 {
+                let mb = |v: Option<f64>| v.map_or_else(|| "-".to_string(), |x| format!("{x:.0}"));
+
+                if swap_total_mb.is_some_and(|t| t > 0.0) {
                     ui.add(
                         CyberProgressBar::new(swap_usage.unwrap_or(0.0) / 100.0)
                             .color(CyberColors::NEON_PURPLE)
                             .label(format!(
-                                "Swap: {:.1} MB / {:.1} MB",
-                                swap_used_mb, swap_total_mb
+                                "Swap: {} MB / {} MB",
+                                mb(swap_used_mb),
+                                mb(swap_total_mb)
                             ))
                             .height(24.0),
                     );
@@ -3278,30 +3290,37 @@ impl SiliconMonitorApp {
                     ui.add_space(8.0);
                     ui.horizontal(|ui| {
                         ui.add(
-                            MetricCard::new("Swap Total", format!("{:.0}", swap_total_mb))
+                            MetricCard::new("Swap Total", mb(swap_total_mb))
                                 .unit("MB")
                                 .color(DeviceTitleColors::MEMORY),
                         );
                         ui.add(
-                            MetricCard::new("Swap Used", format!("{:.0}", swap_used_mb))
+                            MetricCard::new("Swap Used", mb(swap_used_mb))
                                 .unit("MB")
                                 .color(CyberColors::MAGENTA),
                         );
                         ui.add(
-                            MetricCard::new("Swap Free", format!("{:.0}", swap_free_mb))
+                            MetricCard::new("Swap Free", mb(swap_free_mb))
                                 .unit("MB")
                                 .color(CyberColors::NEON_GREEN),
                         );
-                        if swap_cached_mb > 0.0 {
+                        if swap_cached_mb.is_some_and(|c| c > 0.0) {
                             ui.add(
-                                MetricCard::new("Swap Cached", format!("{:.0}", swap_cached_mb))
+                                MetricCard::new("Swap Cached", mb(swap_cached_mb))
                                     .unit("MB")
                                     .color(CyberColors::NEON_YELLOW),
                             );
                         }
                     });
-                } else {
+                } else if swap_total_mb.is_some() {
                     ui.label(RichText::new("No swap configured").color(CyberColors::TEXT_MUTED));
+                } else {
+                    // Not the same sentence. One is a fact about the machine,
+                    // the other about this reading of it.
+                    ui.label(
+                        RichText::new("Swap not reported by this platform")
+                            .color(CyberColors::TEXT_MUTED),
+                    );
                 }
             } else {
                 ui.label(

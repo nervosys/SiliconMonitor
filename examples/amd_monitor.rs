@@ -31,7 +31,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         if let Ok(power) = device.power() {
-            println!("  Power: {:.2}W", power.current);
+            match power.current {
+                Some(w) => println!("  Power: {w:.2}W"),
+                None => println!("  Power: not reported"),
+            }
         }
 
         if let Ok(util) = device.utilization() {

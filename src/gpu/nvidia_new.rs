@@ -169,14 +169,16 @@ impl Device for NvidiaGpu {
         let min_limit = constraints.as_ref().map(|c| c.min_limit as f32 / 1000.0);
         let max_limit = constraints.as_ref().map(|c| c.max_limit as f32 / 1000.0);
 
+        // Each of these was read as an `Option` two lines above and then
+        // unwrapped to `0.0` here. They are passed through now.
         Ok(Power {
-            current: current.unwrap_or(0.0),
+            current,
             average: None, // Calculate from samples
-            limit: limit.unwrap_or(0.0),
-            default_limit: default_limit.unwrap_or(0.0),
-            min_limit: min_limit.unwrap_or(0.0),
-            max_limit: max_limit.unwrap_or(0.0),
-            enforced_limit: limit.unwrap_or(0.0),
+            limit,
+            default_limit,
+            min_limit,
+            max_limit,
+            enforced_limit: limit,
         })
     }
 

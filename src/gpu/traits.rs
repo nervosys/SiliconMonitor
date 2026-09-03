@@ -336,20 +336,40 @@ impl fmt::Display for TemperatureStatus {
 /// Power consumption and limits
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Power {
-    /// Current power draw in Watts
-    pub current: f32,
-    /// Average power draw in Watts (if available)
+    /// Current power draw in Watts, or `None` where unreported.
+    ///
+    /// Only `average` carried an `Option` here, and its doc said "(if
+    /// available)" -- implying the other six always were. They are not. Every
+    /// one of them is a driver query that can decline, and all three backends
+    /// read them *as* `Option` and then threw the absence away at the moment of
+    /// construction:
+    ///
+    /// ```text
+    /// current: current.unwrap_or(0.0),
+    /// limit: limit.unwrap_or(0.0),
+    /// default_limit: default_limit.unwrap_or(0.0),
+    /// ```
+    ///
+    /// The absence then got *re-wrapped* as present: `GpuPower::default_limit`
+    /// is `Option<u32>` and was filled with `Some((p.default_limit * 1000.0) as
+    /// u32)`, so a card whose default limit NVML declined published `Some(0)` --
+    /// a type that could say "unreported" being handed a zero by a type that
+    /// could not.
+    pub current: Option<f32>,
+    /// Average power draw in Watts, where the device reports one separately
+    /// from the instantaneous draw.
     pub average: Option<f32>,
-    /// Power limit in Watts
-    pub limit: f32,
-    /// Default power limit in Watts
-    pub default_limit: f32,
-    /// Minimum allowed power limit in Watts
-    pub min_limit: f32,
-    /// Maximum allowed power limit in Watts
-    pub max_limit: f32,
-    /// Enforced power limit (may differ from limit if capped by system)
-    pub enforced_limit: f32,
+    /// Power limit in Watts, or `None` where unreported.
+    pub limit: Option<f32>,
+    /// Default power limit in Watts, or `None` where unreported.
+    pub default_limit: Option<f32>,
+    /// Minimum settable power limit in Watts, or `None` where unreported.
+    pub min_limit: Option<f32>,
+    /// Maximum settable power limit in Watts, or `None` where unreported.
+    pub max_limit: Option<f32>,
+    /// Enforced power limit, which may differ from `limit` when the system caps
+    /// it. `None` where unreported.
+    pub enforced_limit: Option<f32>,
 }
 
 /// Clock frequencies

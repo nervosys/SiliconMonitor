@@ -171,19 +171,21 @@ fn print_gpu_info(device: &dyn Device) -> Result<(), Box<dyn std::error::Error>>
     }
 
     // Power
+    // `> 0.0` was how this told "unreported" from "reported": the fields were
+    // bare, so a missing reading arrived as zero and the example simply hid it.
+    // Now it asks the question directly.
     if let Ok(power) = device.power() {
-        if power.current > 0.0 || power.limit > 0.0 {
+        if power.current.is_some() || power.limit.is_some() {
             println!("\n[VOLT] Power:");
-            if power.current > 0.0 {
-                print!("  Draw:    {:.2}W", power.current);
-                if power.limit > 0.0 {
-                    let percent = (power.current / power.limit) * 100.0;
-                    print!(" ({:.0}%)", percent);
+            if let Some(draw) = power.current {
+                print!("  Draw:    {draw:.2}W");
+                if let Some(limit) = power.limit.filter(|l| *l > 0.0) {
+                    print!(" ({:.0}%)", (draw / limit) * 100.0);
                 }
                 println!();
             }
-            if power.limit > 0.0 {
-                println!("  Limit:   {:.2}W", power.limit);
+            if let Some(limit) = power.limit {
+                println!("  Limit:   {limit:.2}W");
             }
         }
     }

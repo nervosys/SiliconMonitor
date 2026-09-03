@@ -240,12 +240,13 @@ impl Device for AmdGpu {
         let hwmon = self.hwmon_dir.as_ref().ok_or(Error::NotSupported)?;
 
         // Read power values (in microwatts, convert to watts)
-        let read_power = |sensor: &str| -> f32 {
+        // A hwmon node that is missing or unparseable reports nothing. It
+        // used to report 0 W, which on a power rail is a specific claim.
+        let read_power = |sensor: &str| -> Option<f32> {
             fs::read_to_string(hwmon.join(sensor))
                 .ok()
                 .and_then(|s| s.trim().parse::<u64>().ok())
                 .map(|microwatts| microwatts as f32 / 1_000_000.0)
-                .unwrap_or(0.0)
         };
 
         let current = read_power("power1_average");
@@ -253,9 +254,13 @@ impl Device for AmdGpu {
         let max_limit = read_power("power1_cap_max");
         let min_limit = read_power("power1_cap_min");
 
+        // `average` used to be `if current > 0.0 { Some(current) } else
+        // { None }`, which is the inverse mistake to the one above: a card
+        // genuinely drawing zero watts was reported as having no average. It is
+        // simply the same reading, and absent exactly when that is.
         Ok(Power {
             current,
-            average: if current > 0.0 { Some(current) } else { None },
+            average: current,
             limit,
             default_limit: limit,
             min_limit,

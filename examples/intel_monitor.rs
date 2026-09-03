@@ -60,7 +60,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         if let Ok(power) = device.power() {
-            println!("  Power: {:.2}W / {:.2}W", power.current, power.limit);
+            let w = |v: Option<f32>| {
+                v.map_or_else(|| "not reported".to_string(), |x| format!("{x:.2}W"))
+            };
+            println!("  Power: {} / {}", w(power.current), w(power.limit));
         }
 
         if let Ok(clocks) = device.clocks() {

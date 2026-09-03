@@ -82,15 +82,19 @@ fn print_device_info(device: &dyn Device) -> Result<(), Box<dyn std::error::Erro
     // Power
     println!("\n[VOLT] Power:");
     let power = device.power()?;
-    println!("  Current Draw:   {:.1} W", power.current);
-    println!("  Power Limit:    {:.1} W", power.limit);
+    let w = |v: Option<f32>| v.map_or_else(|| "not reported".to_string(), |x| format!("{x:.1} W"));
+    println!("  Current Draw:   {}", w(power.current));
+    println!("  Power Limit:    {}", w(power.limit));
+    match (power.current, power.limit) {
+        (Some(cur), Some(lim)) if lim > 0.0 => {
+            println!("  Usage:          {:.1}%", (cur / lim) * 100.0)
+        }
+        _ => println!("  Usage:          not reported"),
+    }
     println!(
-        "  Usage:          {:.1}%",
-        (power.current / power.limit) * 100.0
-    );
-    println!(
-        "  Available Range: {:.1} W - {:.1} W",
-        power.min_limit, power.max_limit
+        "  Available Range: {} - {}",
+        w(power.min_limit),
+        w(power.max_limit)
     );
 
     // Clocks

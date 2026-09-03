@@ -603,16 +603,18 @@ impl Gpu for TraitGpuAdapter {
         };
 
         let power_info = if let Some(p) = power {
-            let draw_mw = (p.current * 1000.0) as u32;
-            let limit_mw = (p.limit * 1000.0) as u32;
+            // Watts to milliwatts, preserving absence rather than wrapping a
+            // zero in `Some`. The percentage needs both figures and is absent
+            // when either is -- it used to guard only against a zero limit,
+            // which was the only way absence could reach it.
+            let mw = |w: Option<f32>| w.map(|v| (v * 1000.0) as u32);
             GpuPower {
-                draw: Some(draw_mw),
-                limit: Some(limit_mw),
-                default_limit: Some((p.default_limit * 1000.0) as u32),
-                usage_percent: if p.limit > 0.0 {
-                    Some(((p.current / p.limit) * 100.0) as u8)
-                } else {
-                    None
+                draw: mw(p.current),
+                limit: mw(p.limit),
+                default_limit: mw(p.default_limit),
+                usage_percent: match (p.current, p.limit) {
+                    (Some(cur), Some(lim)) if lim > 0.0 => Some(((cur / lim) * 100.0) as u8),
+                    _ => None,
                 },
             }
         } else {
