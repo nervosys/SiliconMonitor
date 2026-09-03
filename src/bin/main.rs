@@ -1600,8 +1600,14 @@ fn print_memory_info(memory: &simonlib::core::memory::MemoryStats) {
         ram_pct_colored
     );
 
-    if memory.swap.total_or_zero() > 0 {
-        // Guarded by `total_or_zero() > 0` above, so swap was reported.
+    // Three cases, and the old `total_or_zero() > 0` collapsed two of them:
+    // a pagefile in use, a machine with none configured, and a pagefile this
+    // platform did not report. The last one used to vanish from the output
+    // entirely, which reads as the second.
+    if memory.swap.total.is_none() {
+        println!("  {} not reported by this platform", "SWAP:".white().bold());
+    } else if memory.swap.total_or_zero() > 0 {
+        // Guarded above, so swap was reported.
         let swap_usage = memory.swap_usage_percent_or_zero();
         let swap_bar = create_usage_bar(swap_usage, 20);
         let swap_used_gb = memory.swap.used_or_zero() as f64 / 1024.0 / 1024.0;

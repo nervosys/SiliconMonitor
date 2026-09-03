@@ -102,13 +102,21 @@ pub struct MemoryState {
     pub usage_percent: f32,
 
     /// Total swap (bytes)
-    pub swap_total_bytes: u64,
+    /// Swap total in bytes, or `None` where the platform reported none.
+    ///
+    /// Filled with `total_or_zero()` until 6.0.0, so a machine whose pagefile
+    /// could not be read was published as having no swap.
+    pub swap_total_bytes: Option<u64>,
 
     /// Used swap (bytes)
-    pub swap_used_bytes: u64,
+    /// Swap in use in bytes, or `None`. See [`Self::swap_total_bytes`].
+    pub swap_used_bytes: Option<u64>,
 
     /// Swap usage percentage
-    pub swap_usage_percent: f32,
+    /// Swap usage percentage, or `None` when there was nothing to derive it
+    /// from. This was computed against a total that could be zero and answered
+    /// `0.0` in that case.
+    pub swap_usage_percent: Option<f32>,
 }
 
 /// Accelerator state (GPU/NPU/FPGA/etc.) for AI context
@@ -305,12 +313,19 @@ impl FullSystemState {
                 "Memory: {:.1}GB / {:.1}GB ({:.1}%)\n",
                 used_gb, total_gb, mem.usage_percent
             ));
-            if mem.swap_total_bytes > 0 {
-                let swap_used_gb = mem.swap_used_bytes as f64 / 1024.0 / 1024.0 / 1024.0;
-                let swap_total_gb = mem.swap_total_bytes as f64 / 1024.0 / 1024.0 / 1024.0;
+            // Written out only where the pagefile was read. The `> 0` test
+            // could not tell an unread pagefile from an absent one, so a
+            // machine whose swap query failed silently lost the line.
+            if let (Some(used), Some(total), Some(pct)) = (
+                mem.swap_used_bytes,
+                mem.swap_total_bytes,
+                mem.swap_usage_percent,
+            ) {
                 ctx.push_str(&format!(
                     "Swap: {:.1}GB / {:.1}GB ({:.1}%)\n",
-                    swap_used_gb, swap_total_gb, mem.swap_usage_percent
+                    used as f64 / 1024.0 / 1024.0 / 1024.0,
+                    total as f64 / 1024.0 / 1024.0 / 1024.0,
+                    pct
                 ));
             }
             ctx.push('\n');
@@ -1219,20 +1234,18 @@ impl MonitoringBackend {
         // Memory state
         if let Some(ref mem) = self.memory_stats {
             let ram_usage = mem.ram_usage_percent();
-            let swap_usage = if mem.swap.total_or_zero() > 0 {
-                (mem.swap.used_or_zero() as f32 / mem.swap.total_or_zero() as f32) * 100.0
-            } else {
-                0.0
-            };
-
             state.memory = Some(MemoryState {
                 total_bytes: mem.ram.total * 1024,
                 used_bytes: mem.ram.used * 1024,
                 available_bytes: mem.ram.free * 1024,
                 usage_percent: ram_usage,
-                swap_total_bytes: mem.swap.total_or_zero() * 1024,
-                swap_used_bytes: mem.swap.used_or_zero() * 1024,
-                swap_usage_percent: swap_usage,
+                swap_total_bytes: mem.swap.total.map(|v| v * 1024),
+                swap_used_bytes: mem.swap.used.map(|v| v * 1024),
+                // `swap_usage_percent()` is already `Option` and already
+                // handles the zero-total case; it was being recomputed here
+                // from `*_or_zero()` and answering `0.0` for an unread
+                // pagefile.
+                swap_usage_percent: mem.swap_usage_percent(),
             });
         }
 
