@@ -1144,12 +1144,12 @@ fn resolve_usb(out: &mut Vec<Reading>) {
                 format!("{base}.speed"),
                 Some(Unit::Identifier),
                 concat!(
-                    "this reader does not ask for the negotiated speed. On ",
-                    "Windows it is not a device property -- it comes from ",
-                    "IOCTL_USB_GET_NODE_CONNECTION_INFORMATION_EX against the ",
-                    "parent hub, addressed by the port number in the device's ",
-                    "LocationInformation, which only some devices carry. It is ",
-                    "obtainable and unimplemented, not unavailable"
+                    "no hub reported a negotiated speed for this device. The ",
+                    "speed is a property of a link, so a node that sits on no ",
+                    "upstream hub port has none to report -- a root hub is the ",
+                    "usual case, and reporting one for it would be describing a ",
+                    "link that does not exist. A device on a bus this reader ",
+                    "does not walk reaches the same answer by a different route"
                 ),
             )),
             s => push_id(

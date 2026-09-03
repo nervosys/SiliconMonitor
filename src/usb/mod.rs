@@ -1,6 +1,9 @@
 //! USB device monitoring module
 use serde::{Deserialize, Serialize};
 
+#[cfg(target_os = "windows")]
+mod windows_speed;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum UsbSpeed {
     Low,
@@ -477,6 +480,10 @@ impl UsbMonitor {
         use std::process::Command;
         let mut devices = Vec::new();
 
+        // Negotiated link speeds, read once for the whole tree. See
+        // `windows_speed` for why this cannot come from the WMI query below.
+        let speeds = windows_speed::negotiated_speeds();
+
         // Use PowerShell to query WMI for USB devices
         let output = Command::new("powershell")
             .args([
@@ -550,10 +557,19 @@ impl UsbMonitor {
                     // The negotiated speed comes from
                     // `IOCTL_USB_GET_NODE_CONNECTION_INFORMATION_EX` on the
                     // parent hub, whose `USB_NODE_CONNECTION_INFORMATION_EX`
-                    // carries a `Speed` field. Until that is called this is
-                    // `Unknown`, which the resolver already reports as "the
-                    // platform did not report a negotiated bus speed".
-                    let speed = UsbSpeed::Unknown;
+                    // carries a `Speed` field. That call now happens, in
+                    // `windows_speed`, and this is its answer.
+                    //
+                    // Still `Unknown` for a device the hub did not describe,
+                    // which the resolver reports as "the platform did not
+                    // report a negotiated bus speed". On this host that is
+                    // exactly the six root hubs, and it is the true answer for
+                    // them: a root hub sits on no upstream port, so there is no
+                    // negotiation above it to describe.
+                    let speed = speeds
+                        .get(&pnp_id.to_uppercase())
+                        .copied()
+                        .unwrap_or(UsbSpeed::Unknown);
 
                     // Extract serial from PNP ID (third segment)
                     let serial = pnp_id

@@ -203,6 +203,10 @@ windows = { version = "0.58", features = [
     # devices; these calls cost microseconds.
     "Win32_Devices_DeviceAndDriverInstallation",
     "Win32_Devices_Properties",
+    # USB negotiated link speed: `IOCTL_USB_GET_NODE_CONNECTION_INFORMATION_EX`
+    # against the parent hub. Not a PnP property -- Windows reports it nowhere
+    # else, including `Get-PnpDeviceProperty` and every `root\wmi` class.
+    "Win32_Devices_Usb",
     "Win32_NetworkManagement_IpHelper",
     "Win32_Networking_WinSock",
     "Win32_Graphics_Dxgi",
