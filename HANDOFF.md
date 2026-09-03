@@ -144,9 +144,55 @@ Since the tag, on `master` and green on all three platforms:
 | `556a471` | A type that could not say "not reported", and four backends that filled the gap with zeros |
 | `549ca3e` | GPU utilization, and an unreadable card advertised as idle |
 | `76dc998` | Six power readings unwrapped to zero, and "No swap configured" |
+| `162825a` | The backend and CLI swap sites that could not say "not read" |
+| `3073bf3` | The rest of the swap surfaces, and a health check that vanished |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### Following `*_or_zero()` to the end
+
+Having named it a defect generator, I followed every call site. Eleven of them,
+across seven surfaces, all reached by the same helper. The full list is in
+`162825a` and `3073bf3`; three are worth keeping.
+
+**A health check that disappeared instead of failing.** `health.rs` gated its
+swap check on `total_or_zero() > 0`, so a machine whose pagefile could not be
+read produced *no swap check at all*. A health report with a check missing does
+not read as "unknown" — it reads as a report where that check passed, because
+that is what a clean report looks like. `HealthStatus::Unknown` is a variant of
+this crate's own enum, documented "Unable to determine status", and it was not
+used anywhere in the file.
+
+**A summary panel showing `SWAP 0%`.** The GUI's `QuickLookPanel` took
+`swap: f32`, and its caller recomputed the percentage from `*_or_zero()` rather
+than calling `swap_usage_percent()` — which sits on the same struct, already
+returns `Option`, and already handles a zero total. The recomputation existed
+*only* because the destination could not hold the answer. That pattern repeated
+in `MemoryState`, in the GUI, and in the TUI: three separate hand-rolled
+divisions, each subtly different, all shadowing one correct method.
+
+**And the same block, twice, in the same file.** The CLI's swap display appears
+in two functions, and both had the identical three-cases-into-two collapse — in
+use, none configured, not reported — with the third printing nothing at all. Both
+needed the same fix because both were written the same way.
+
+Ten call sites remain and every one is now inside a guard that has already
+established the value was read. **Checked, not assumed** — I walked each one and
+confirmed the guard, rather than reasoning that the ones I had not touched were
+probably fine.
+
+**Two lessons, and the second is the uncomfortable one.**
+
+A helper that answers a question the caller did not ask — "what if it is absent?"
+— will be reached for at every site where the honest answer is inconvenient, and
+it reads as harmless at all of them.
+
+And: **a correct method already existed.** `swap_usage_percent()` returned
+`Option`, handled the zero-total case, and was sitting on the struct the whole
+time. Four call sites recomputed it by hand instead, each reintroducing the
+defect it was written to avoid. Writing the careful version is not enough if the
+convenient wrong one is still in reach.
 
 ### Six power readings unwrapped to zero, and a lie about the machine
 
