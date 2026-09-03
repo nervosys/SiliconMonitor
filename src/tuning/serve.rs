@@ -162,9 +162,13 @@ pub fn collect_signals() -> Signals {
         if let Ok(gpus) = monitor.snapshot_gpus() {
             // `None` when no GPU was enumerated at all, which the classifier
             // reports as an absent reading rather than as 0%.
+            // ...and now also `None` when no enumerated GPU reported a
+            // utilization counter, which the bare `u8` could not distinguish
+            // from every device sitting at 0%.
             signals.gpu_utilization = gpus
                 .iter()
-                .map(|g| f32::from(g.utilization()))
+                .filter_map(|g| g.utilization())
+                .map(f32::from)
                 .fold(None, |acc: Option<f32>, u| {
                     Some(acc.map_or(u, |a| a.max(u)))
                 });

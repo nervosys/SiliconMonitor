@@ -1377,14 +1377,21 @@ fn print_gpu_info(gpus: &std::collections::HashMap<String, simonlib::core::gpu::
             format!("{:?}", gpu.gpu_type).magenta()
         );
 
-        // Color-code load based on usage
-        let load_str = format!("{:.1}%", gpu.status.load);
-        let load_colored = if gpu.status.load > 90.0 {
-            load_str.red().bold()
-        } else if gpu.status.load > 70.0 {
-            load_str.yellow()
-        } else {
-            load_str.green()
+        // Color-code load based on usage. A device with no utilization
+        // counter prints "not read" rather than a green 0.0%, which is the
+        // same treatment the clocks below already get.
+        let load_colored = match gpu.status.load {
+            Some(load) => {
+                let load_str = format!("{load:.1}%");
+                if load > 90.0 {
+                    load_str.red().bold()
+                } else if load > 70.0 {
+                    load_str.yellow()
+                } else {
+                    load_str.green()
+                }
+            }
+            None => "not read".dimmed(),
         };
         println!("    {} {}", "Load:".white(), load_colored);
 
@@ -1855,18 +1862,28 @@ fn print_gpu_info_backend(backend: &simonlib::backend::MonitoringBackend) {
             si.vendor.to_string().magenta()
         );
 
-        // Utilization
-        let util = di.utilization as f32;
-        let util_str = format!("{:.1}%", util);
-        let util_colored = if util > 90.0 {
-            util_str.red().bold()
-        } else if util > 70.0 {
-            util_str.yellow()
-        } else {
-            util_str.green()
-        };
-        let util_bar = create_usage_bar(util, 15);
-        println!("    {} {} {}", "Load:".white(), util_bar, util_colored);
+        // Utilization. As with the memory below: the bar is drawn only when
+        // there is a reading to draw, since an empty bar beside a green 0.0%
+        // reads as an idle card rather than an unmeasured one.
+        match di.utilization.map(f32::from) {
+            Some(util) => {
+                let util_str = format!("{util:.1}%");
+                let util_colored = if util > 90.0 {
+                    util_str.red().bold()
+                } else if util > 70.0 {
+                    util_str.yellow()
+                } else {
+                    util_str.green()
+                };
+                println!(
+                    "    {} {} {}",
+                    "Load:".white(),
+                    create_usage_bar(util, 15),
+                    util_colored
+                );
+            }
+            None => println!("    {} not read", "Load:".white()),
+        }
 
         // Memory. The bar is drawn only when there is a percentage to draw:
         // an empty bar beside "0 / 0 MB" reads as a card with no memory rather
@@ -3063,7 +3080,7 @@ fn handle_record_command(action: &RecordSubcommand) -> Result<(), Box<dyn std::e
                 for gpu in &state.gpu_dynamic {
                     match gpu {
                         Some(g) => {
-                            gpu_percent.push(Some(g.utilization as f32));
+                            gpu_percent.push(g.utilization.map(f32::from));
                             // Already `Option`: a device that answered its
                             // query but reported no memory records the same
                             // absence as one that could not be queried at all.

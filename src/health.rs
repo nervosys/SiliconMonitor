@@ -354,8 +354,12 @@ impl SystemHealth {
                         );
                     }
 
-                    // GPU Utilization (informational, not a health concern usually)
-                    let util = dynamic.utilization as f64;
+                    // GPU Utilization (informational, not a health concern
+                    // usually). No reading, no check -- rather than reporting an
+                    // unreadable device as a comfortable 0%.
+                    let Some(util) = dynamic.utilization.map(f64::from) else {
+                        continue;
+                    };
                     let (status, message) = if util >= 95.0 {
                         (
                             HealthStatus::Good,

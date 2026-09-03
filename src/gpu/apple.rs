@@ -100,7 +100,7 @@ impl Gpu for AppleGpu {
         let data = monitor.parse_powermetrics()?;
 
         Ok(GpuDynamicInfo {
-            utilization: data.gpu_active,
+            utilization: Some(data.gpu_active),
             // `powermetrics` reports no GPU memory figures at all, and Apple
             // Silicon has no separate VRAM to report -- the GPU shares system
             // memory. The comment here used to say "Not available from

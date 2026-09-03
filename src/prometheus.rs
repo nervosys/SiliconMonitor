@@ -532,13 +532,15 @@ impl PrometheusExporter {
                     base_labels.insert("name".into(), info.static_info.name.clone());
                     base_labels.insert("vendor".into(), info.static_info.vendor.to_string());
 
-                    // Utilization
-                    self.add(MetricFamily::gauge_with_labels(
-                        &self.prefixed("gpu_utilization_percent"),
-                        "GPU compute utilization percentage",
-                        info.dynamic_info.utilization as f64,
-                        base_labels.clone(),
-                    ));
+                    // Utilization, where the device reports one.
+                    if let Some(util) = info.dynamic_info.utilization {
+                        self.add(MetricFamily::gauge_with_labels(
+                            &self.prefixed("gpu_utilization_percent"),
+                            "GPU compute utilization percentage",
+                            util as f64,
+                            base_labels.clone(),
+                        ));
+                    }
 
                     // Temperature
                     if let Some(temp) = info.dynamic_info.thermal.temperature {

@@ -421,7 +421,9 @@ impl HttpServer {
                 collector.record_with_labels(name, value, gpu_label);
             };
 
-            put("simon_gpu_utilization_percent", gpu.utilization as f64);
+            if let Some(util) = gpu.utilization {
+                put("simon_gpu_utilization_percent", util as f64);
+            }
             // Recorded only where the device reported a figure, like the
             // temperature below and unlike the zeros these used to publish.
             if let Some(used) = gpu.memory.used {

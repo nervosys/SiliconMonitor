@@ -24,7 +24,10 @@ fn main() -> Result<(), Box<dyn Error>> {
             mb(info.dynamic_info.memory.used),
             mb(info.dynamic_info.memory.total)
         );
-        println!("  Utilization: {}%", info.dynamic_info.utilization);
+        match info.dynamic_info.utilization {
+            Some(u) => println!("  Utilization: {u}%"),
+            None => println!("  Utilization: not reported"),
+        }
         if let Some(temp) = info.dynamic_info.thermal.temperature {
             println!("  Temperature: {}°C", temp);
         }

@@ -188,11 +188,11 @@ impl Gpu for AmdGpu {
         {
             let device_path = format!("{}/device", self.card_path);
 
-            // Read GPU utilization
+            // Read GPU utilization. `gpu_busy_percent` is absent on older
+            // drivers and on some parts; that used to read as an idle GPU.
             let utilization = fs::read_to_string(format!("{}/gpu_busy_percent", device_path))
                 .ok()
-                .and_then(|s| s.trim().parse::<u8>().ok())
-                .unwrap_or(0);
+                .and_then(|s| s.trim().parse::<u8>().ok());
 
             // Read memory info. `mem_info_vram_*` is absent on parts with no
             // dedicated VRAM and on drivers that do not export it, and this
@@ -288,7 +288,7 @@ impl Gpu for AmdGpu {
                     rx_throughput: None,
                 },
                 engines: GpuEngines {
-                    graphics: Some(utilization),
+                    graphics: utilization,
                     compute: None,
                     encoder: None,
                     decoder: None,
@@ -305,7 +305,7 @@ impl Gpu for AmdGpu {
         // Windows is `WmiAmdGpu`, further down this file.
         #[cfg(not(target_os = "linux"))]
         Ok(GpuDynamicInfo {
-            utilization: 0,
+            utilization: None,
             memory: GpuMemory::unreported(),
             clocks: GpuClocks {
                 graphics: None,
@@ -781,7 +781,7 @@ impl Gpu for WmiAmdGpu {
         };
 
         Ok(GpuDynamicInfo {
-            utilization: perf.utilization,
+            utilization: Some(perf.utilization),
             memory,
             clocks: GpuClocks {
                 graphics: None,

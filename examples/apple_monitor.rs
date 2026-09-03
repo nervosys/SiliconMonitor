@@ -31,7 +31,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("  GPU Cores:    {}", cores);
         }
 
-        println!("\n  Utilization:  {}%", d.utilization);
+        match d.utilization {
+            Some(u) => println!("\n  Utilization:  {u}%"),
+            None => println!("\n  Utilization:  not reported"),
+        }
         if let Some(freq) = d.clocks.graphics {
             println!("  Frequency:    {} MHz", freq);
         }

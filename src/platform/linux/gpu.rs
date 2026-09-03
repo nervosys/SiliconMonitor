@@ -169,13 +169,16 @@ fn read_igpu_status(device_path: &Path) -> Result<GpuStatus> {
         None
     };
 
+    // Every sibling above uses `path_exists ... else None`; this one alone
+    // answered `0.0` both when the file was missing and when it failed to
+    // parse, which is a GPU reported as idle on a machine that exposes no
+    // `load` node at all.
     let load = if path_exists(device_path.join("load")) {
         read_file_u32(device_path.join("load"))
             .ok()
             .map(|v| v as f32 / 10.0)
-            .unwrap_or(0.0)
     } else {
-        0.0
+        None
     };
 
     Ok(GpuStatus {

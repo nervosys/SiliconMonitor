@@ -149,12 +149,9 @@ impl Gpu for NvidiaGpu {
         use nvml_wrapper::enum_wrappers::device::Clock;
 
         // GPU utilization
-        let utilization = self
-            .device
-            .utilization_rates()
-            .ok()
-            .map(|u| u.gpu as u8)
-            .unwrap_or(0);
+        // `.unwrap_or(0)` here reported an idle card for a query that
+        // failed. The clocks below have always been `Option`; this now is too.
+        let utilization = self.device.utilization_rates().ok().map(|u| u.gpu as u8);
 
         // Memory
         // An NVML query that failed reports nothing, rather than a card with
@@ -255,7 +252,7 @@ impl Gpu for NvidiaGpu {
             .map(|u| u.utilization as u8);
 
         let engines = GpuEngines {
-            graphics: Some(utilization),
+            graphics: utilization,
             compute: None,
             encoder: encoder_util,
             decoder: decoder_util,

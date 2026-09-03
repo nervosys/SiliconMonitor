@@ -52,7 +52,9 @@
 //!     }
 //!     
 //!     // Utilization
-//!     println!("  Utilization: {}%", info.dynamic_info.utilization);
+//!     if let Some(util) = info.dynamic_info.utilization {
+//!         println!("  Utilization: {}%", util);
+//!     }
 //!     
 //!     // Memory
 //!     // `None` where the device reported no figure, which is why these are
@@ -374,8 +376,15 @@ pub struct GpuStaticInfo {
 /// Dynamic GPU information (updated each snapshot)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GpuDynamicInfo {
-    /// GPU utilization percentage (0-100)
-    pub utilization: u8,
+    /// GPU utilization percentage (0-100), or `None` where the device reports
+    /// no utilization counter.
+    ///
+    /// This was a bare `u8`. Two backends returned a literal `0` having read
+    /// nothing at all, and the NVIDIA reader wrote `utilization_rates().ok()
+    /// .map(..).unwrap_or(0)` -- so an NVML query that failed reported an idle
+    /// card. An idle GPU and an unreadable one are the same number and
+    /// different facts, and `0%` is the one a capacity planner acts on.
+    pub utilization: Option<u8>,
     /// Memory information
     pub memory: GpuMemory,
     /// Clock speeds
@@ -417,8 +426,9 @@ impl GpuInfo {
         &self.static_info.name
     }
 
-    /// Get GPU utilization
-    pub fn utilization(&self) -> u8 {
+    /// GPU utilization percentage, or `None` where the device reports no
+    /// utilization counter.
+    pub fn utilization(&self) -> Option<u8> {
         self.dynamic_info.utilization
     }
 
@@ -669,7 +679,9 @@ impl Gpu for TraitGpuAdapter {
         };
 
         Ok(GpuDynamicInfo {
-            utilization: util.as_ref().map(|u| u.gpu as u8).unwrap_or(0),
+            // A failed utilization query reports nothing, matching the
+            // memory beside it rather than claiming an idle device.
+            utilization: util.as_ref().map(|u| u.gpu as u8),
             memory,
             clocks: clocks_info,
             power: power_info,

@@ -447,7 +447,7 @@ impl AiDataApi {
                     summary.gpus.push(GpuSummary {
                         name: snapshot.static_info.name.clone(),
                         vendor: format!("{:?}", snapshot.static_info.vendor),
-                        utilization_percent: snapshot.dynamic_info.utilization as f32,
+                        utilization_percent: snapshot.dynamic_info.utilization.map(f32::from),
                         memory_used_mb: snapshot.dynamic_info.memory.used.map(|v| v / 1024 / 1024),
                         memory_total_mb: snapshot
                             .dynamic_info

@@ -1043,7 +1043,9 @@ impl SiliconMonitorApp {
 
             if i < self.gpu_history.len() {
                 self.gpu_history[i].pop_front();
-                self.gpu_history[i].push_back(info.utilization as f32);
+                if let Some(util) = info.utilization {
+                    self.gpu_history[i].push_back(util as f32);
+                }
             }
 
             if i < self.gpu_memory_history.len() {
@@ -1668,7 +1670,12 @@ impl SiliconMonitorApp {
             }
             csv.push_str(&format!(
                 "gpu{}_utilization,{},percent,{}\n",
-                i, dynamic.utilization, timestamp
+                i,
+                dynamic
+                    .utilization
+                    .map(|u| u.to_string())
+                    .unwrap_or_default(),
+                timestamp
             ));
             if let Some(power) = dynamic.power.draw {
                 csv.push_str(&format!("gpu{}_power,{:.1},mW,{}\n", i, power, timestamp));
@@ -1874,8 +1881,11 @@ impl eframe::App for SiliconMonitorApp {
 
                 for (i, gpu) in self.gpu_dynamic_info.iter().enumerate() {
                     ui.label(
-                        RichText::new(format!("GPU{}: {}%", i, gpu.utilization))
-                            .color(theme::utilization_color(gpu.utilization as f32)),
+                        RichText::new(match gpu.utilization {
+                            Some(u) => format!("GPU{i}: {u}%"),
+                            None => format!("GPU{i}: -"),
+                        })
+                        .color(theme::utilization_color(gpu.utilization.unwrap_or(0) as f32)),
                     );
                     if let Some(temp) = gpu.thermal.temperature {
                         ui.label(
@@ -2059,10 +2069,13 @@ impl SiliconMonitorApp {
             .iter()
             .filter_map(|g| g.thermal.temperature.map(|t| t as f32))
             .collect();
+        // Devices that reported a counter. One that did not contributes no
+        // point rather than a zero, which would read as an idle card.
         let gpu_utils: Vec<f32> = self
             .gpu_dynamic_info
             .iter()
-            .map(|g| g.utilization as f32)
+            .filter_map(|g| g.utilization)
+            .map(f32::from)
             .collect();
 
         self.historical_data.push(HistoricalDataPoint {
@@ -2394,9 +2407,16 @@ impl SiliconMonitorApp {
                         | GpuVendor::Apple => "GPU",
                     };
                     ui.add(
-                        MetricCard::new(&format!("{} {}", accel_type, i), dynamic_info.utilization)
-                            .unit("%")
-                            .color(theme::accel_color(dynamic_info.utilization as f32)),
+                        MetricCard::new(
+                            &format!("{} {}", accel_type, i),
+                            dynamic_info
+                                .utilization
+                                .map_or_else(|| "-".to_string(), |u| u.to_string()),
+                        )
+                        .unit("%")
+                        .color(theme::accel_color(
+                            dynamic_info.utilization.unwrap_or(0) as f32,
+                        )),
                     );
 
                     if let Some(temp) = dynamic_info.thermal.temperature {
@@ -2969,15 +2989,22 @@ impl SiliconMonitorApp {
 
                             // Utilization bar
                             ui.label(
-                                RichText::new(format!("Utilization {}%", dynamic_info.utilization))
-                                    .color(CyberColors::TEXT_SECONDARY)
-                                    .size(13.0),
+                                RichText::new(match dynamic_info.utilization {
+                                    Some(u) => format!("Utilization {u}%"),
+                                    None => "Utilization -".to_string(),
+                                })
+                                .color(CyberColors::TEXT_SECONDARY)
+                                .size(13.0),
                             );
-                            ui.add(
-                                CyberProgressBar::new(dynamic_info.utilization as f32 / 100.0)
-                                    .color(accel_color)
-                                    .height(bar_height),
-                            );
+                            // No reading, no bar: an empty bar and a bar at
+                            // zero look the same, and only one is a reading.
+                            if let Some(util) = dynamic_info.utilization {
+                                ui.add(
+                                    CyberProgressBar::new(util as f32 / 100.0)
+                                        .color(accel_color)
+                                        .height(bar_height),
+                                );
+                            }
 
                             ui.add_space(4.0);
 

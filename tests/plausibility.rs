@@ -215,11 +215,11 @@ fn gpu_readings_are_physically_possible() {
     for (i, gpu) in snap.gpu_dynamic.iter().enumerate() {
         let Some(gpu) = gpu.as_ref() else { continue };
 
-        assert!(
-            gpu.utilization <= 100,
-            "GPU {i} utilization {}% exceeds 100",
-            gpu.utilization
-        );
+        // Checked only where the device reports a counter. A percentage that
+        // was never read cannot be out of range.
+        if let Some(util) = gpu.utilization {
+            assert!(util <= 100, "GPU {i} utilization {util}% exceeds 100");
+        }
         // Checked only where both figures exist. The `|| total == 0` escape
         // used to be how this test tolerated an adapter that reported no
         // memory, which is to say the absence had to be smuggled through as a

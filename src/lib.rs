@@ -31,7 +31,9 @@
 //!         info.static_info.name,
 //!         info.static_info.vendor
 //!     );
-//!     println!("  Utilization: {}%", info.dynamic_info.utilization);
+//!     if let Some(util) = info.dynamic_info.utilization {
+//!         println!("  Utilization: {}%", util);
+//!     }
 //!     // `None` where the device reported no figure, which is why these are
 //!     // `Option` -- an adapter with no readable memory is not one with none.
 //!     if let (Some(used), Some(total)) =

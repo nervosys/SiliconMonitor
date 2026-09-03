@@ -74,7 +74,10 @@ fn main() -> Result<()> {
             }
 
             // Display utilization
-            println!("  GPU Utilization: {}%", dynamic.utilization);
+            match dynamic.utilization {
+                Some(u) => println!("  GPU Utilization: {u}%"),
+                None => println!("  GPU Utilization: not reported"),
+            }
 
             // Display power
             if let Some(draw) = dynamic.power.draw {

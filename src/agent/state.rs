@@ -83,7 +83,8 @@ pub struct GpuState {
     pub vendor: String,
 
     /// Graphics utilization (0-100%)
-    pub utilization: u32,
+    /// Utilization percentage, or `None` where the device reports no counter.
+    pub utilization: Option<u32>,
 
     /// Memory used (MB)
     pub memory_used_mb: Option<u64>,
@@ -305,7 +306,7 @@ impl SystemState {
             index,
             name: info.static_info.name,
             vendor: format!("{:?}", info.static_info.vendor),
-            utilization: info.dynamic_info.utilization as u32,
+            utilization: info.dynamic_info.utilization.map(u32::from),
             memory_used_mb: info.dynamic_info.memory.used.map(|v| v / 1024 / 1024),
             memory_total_mb: info.dynamic_info.memory.total.map(|v| v / 1024 / 1024),
             temperature_c: info.dynamic_info.thermal.temperature.map(|t| t as u32),
@@ -360,7 +361,10 @@ impl SystemState {
                 "\nGPU {}: {} ({})\n",
                 gpu.index, gpu.name, gpu.vendor
             ));
-            context.push_str(&format!("  Utilization: {}%\n", gpu.utilization));
+            match gpu.utilization {
+                Some(u) => context.push_str(&format!("  Utilization: {u}%\n")),
+                None => context.push_str("  Utilization: unavailable\n"),
+            }
             match (
                 gpu.memory_used_mb,
                 gpu.memory_total_mb,
@@ -446,13 +450,18 @@ impl SystemState {
         (!known.is_empty()).then(|| known.iter().sum())
     }
 
-    /// Get average GPU utilization
-    pub fn avg_utilization(&self) -> f32 {
-        if self.gpus.is_empty() {
-            return 0.0;
+    /// Average utilization across the GPUs that report one, or `None` when
+    /// none does.
+    ///
+    /// Averaged over the reporting devices rather than over all of them: a
+    /// device with no counter used to contribute a zero and drag the mean
+    /// down, which reads as spare capacity that may not exist.
+    pub fn avg_utilization(&self) -> Option<f32> {
+        let reported: Vec<u32> = self.gpus.iter().filter_map(|g| g.utilization).collect();
+        if reported.is_empty() {
+            return None;
         }
-        let sum: u32 = self.gpus.iter().map(|g| g.utilization).sum();
-        sum as f32 / self.gpus.len() as f32
+        Some(reported.iter().sum::<u32>() as f32 / reported.len() as f32)
     }
 
     /// Average temperature across GPUs that report one.
@@ -524,14 +533,19 @@ impl GpuState {
         self.temperature_c.is_some_and(|t| t >= GPU_TEMP_CRITICAL_C)
     }
 
-    /// Check if GPU is heavily utilized (above 80%)
+    /// Whether the GPU is heavily utilized (at or above 80%).
+    ///
+    /// `false` for a device with no counter, which is the same answer it gave
+    /// before -- but `is_idle` is now also `false` there, where it used to be
+    /// `true`. An unreadable GPU was being reported as idle, which is the
+    /// answer a scheduler acts on.
     pub fn is_busy(&self) -> bool {
-        self.utilization >= 80
+        self.utilization.is_some_and(|u| u >= 80)
     }
 
-    /// Check if GPU is idle (below 10%)
+    /// Whether the GPU is idle (below 10%). `false` when there is no reading.
     pub fn is_idle(&self) -> bool {
-        self.utilization < 10
+        self.utilization.is_some_and(|u| u < 10)
     }
 
     /// Get health status summary
@@ -562,7 +576,7 @@ mod tests {
             index: 0,
             name: "Test GPU".to_string(),
             vendor: "NVIDIA".to_string(),
-            utilization: 75,
+            utilization: Some(75),
             memory_used_mb: Some(8000),
             memory_total_mb: Some(16000),
             temperature_c: Some(65),
@@ -588,7 +602,7 @@ mod tests {
             index,
             name: format!("GPU {index}"),
             vendor: "Test".to_string(),
-            utilization: 0,
+            utilization: Some(0),
             memory_used_mb: Some(0),
             memory_total_mb: Some(1024),
             temperature_c,
@@ -699,7 +713,7 @@ mod tests {
                     index: 0,
                     name: "GPU 0".to_string(),
                     vendor: "NVIDIA".to_string(),
-                    utilization: 50,
+                    utilization: Some(50),
                     memory_used_mb: Some(4000),
                     memory_total_mb: Some(8000),
                     temperature_c: Some(60),
@@ -714,7 +728,7 @@ mod tests {
                     index: 1,
                     name: "GPU 1".to_string(),
                     vendor: "AMD".to_string(),
-                    utilization: 80,
+                    utilization: Some(80),
                     memory_used_mb: Some(6000),
                     memory_total_mb: Some(8000),
                     temperature_c: Some(75),
@@ -730,7 +744,7 @@ mod tests {
         };
 
         assert_eq!(state.total_power_w(), Some(220.0));
-        assert_eq!(state.avg_utilization(), 65.0);
+        assert_eq!(state.avg_utilization(), Some(65.0));
         assert_eq!(state.avg_temperature(), Some(67.5));
         assert_eq!(state.hottest_gpu().unwrap().index, 1);
         assert_eq!(state.most_utilized_gpu().unwrap().index, 1);

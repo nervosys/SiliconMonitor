@@ -918,8 +918,8 @@ fn draw_single_gpu(f: &mut Frame, gpu: &super::app::GpuInfo, idx: usize, area: R
 
     // Compact: All key metrics with Glances-style formatting
     let gpu_util_label = format!(
-        "GPU: {:.0}% @ {} MHz │ MEM: {}/{} ({:.0}%) @ {} MHz │ {:.0}°C │ {:.0}/{:.0}W",
-        gpu.utilization,
+        "GPU: {} @ {} MHz │ MEM: {}/{} ({:.0}%) @ {} MHz │ {:.0}°C │ {:.0}/{:.0}W",
+        pct_opt(gpu.utilization.map(f64::from)),
         gpu.clock_graphics.unwrap_or(0),
         auto_unit_opt(gpu.memory_used),
         auto_unit_opt(gpu.memory_total),
@@ -930,11 +930,13 @@ fn draw_single_gpu(f: &mut Frame, gpu: &super::app::GpuInfo, idx: usize, area: R
         gpu.power_limit.unwrap_or(0.0)
     );
 
-    let gpu_clr = accel_color(gpu.utilization);
+    // A gauge at 0% and a gauge with no reading look identical, so the
+    // label carries the dash and the bar simply sits empty.
+    let gpu_clr = accel_color(gpu.utilization.unwrap_or(0.0));
 
     let gpu_gauge = Gauge::default()
         .gauge_style(Style::default().fg(gpu_clr).add_modifier(Modifier::BOLD))
-        .percent(safe_percent(gpu.utilization))
+        .percent(safe_percent(gpu.utilization.unwrap_or(0.0)))
         .label(gpu_util_label);
     f.render_widget(gpu_gauge, inner);
 }
@@ -2322,14 +2324,14 @@ fn draw_overview(f: &mut Frame, app: &App, area: Rect) {
             .block(gpu_block)
             .gauge_style(
                 Style::default()
-                    .fg(usage_color(gpu.utilization))
+                    .fg(usage_color(gpu.utilization.unwrap_or(0.0)))
                     .bg(Color::Black)
                     .add_modifier(Modifier::BOLD),
             )
-            .percent(safe_percent(gpu.utilization))
+            .percent(safe_percent(gpu.utilization.unwrap_or(0.0)))
             .label(format!(
-                "{:.0}% | {:.0}°C | {:.0}W / {:.0}W",
-                gpu.utilization,
+                "{} | {:.0}°C | {:.0}W / {:.0}W",
+                pct_opt(gpu.utilization.map(f64::from)),
                 gpu.temperature.unwrap_or(0.0),
                 gpu.power.unwrap_or(0.0),
                 gpu.power_limit.unwrap_or(0.0)
@@ -2422,7 +2424,10 @@ fn draw_gpu(f: &mut Frame, app: &App, area: Rect) {
     let info_text = vec![
         Line::from(format!("Name: {}", gpu.name)),
         Line::from(format!("Vendor: {}", gpu.vendor)),
-        Line::from(format!("Utilization: {:.0}%", gpu.utilization)),
+        Line::from(format!(
+            "Utilization: {}",
+            pct_opt(gpu.utilization.map(f64::from))
+        )),
         Line::from(format!(
             "Temperature: {:.0}°C",
             gpu.temperature.unwrap_or(0.0)

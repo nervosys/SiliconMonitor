@@ -32,7 +32,13 @@ pub struct GpuFrequency {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GpuStatus {
     /// GPU load percentage (0.0 - 100.0)
-    pub load: f32,
+    /// Utilization percentage, or `None` where the device reports no
+    /// utilization counter.
+    ///
+    /// A GPU at 0% and a GPU whose counter could not be read are the same
+    /// number and different facts. This was `f32` and took whichever one the
+    /// backend happened to produce.
+    pub load: Option<f32>,
     /// Railgate status (Jetson only)
     pub railgate: Option<bool>,
     /// TPC PG mask status (Jetson only)

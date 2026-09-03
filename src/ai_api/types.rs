@@ -56,7 +56,8 @@ pub struct GpuSummary {
     /// Vendor (NVIDIA, AMD, Intel, Apple)
     pub vendor: String,
     /// Current utilization percentage
-    pub utilization_percent: f32,
+    /// Utilization percentage, or `None` where the device reports no counter.
+    pub utilization_percent: Option<f32>,
     /// Used memory in MB
     /// GPU memory used in MB, or `None` where the device reported none.
     pub memory_used_mb: Option<u64>,

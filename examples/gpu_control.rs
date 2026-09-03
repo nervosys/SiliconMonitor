@@ -19,7 +19,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         // Print current GPU status
         for (name, gpu) in &snapshot.gpus {
             println!("GPU: {}", name);
-            println!("  Current Load: {:.1}%", gpu.status.load);
+            match gpu.status.load {
+                Some(load) => println!("  Current Load: {load:.1}%"),
+                None => println!("  Current Load: not reported"),
+            }
 
             if let Some(scaling_3d) = gpu.status.scaling_3d {
                 println!(

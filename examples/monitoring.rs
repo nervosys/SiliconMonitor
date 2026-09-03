@@ -35,10 +35,14 @@ fn main() -> Result<(), Box<dyn Error>> {
                     .draw
                     .map(|p| format!("{:.1}W", p as f64 / 1000.0))
                     .unwrap_or_else(|| "N/A".to_string());
-                format!(
-                    "GPU{}: {}%@{}MHz {}",
-                    idx, info.dynamic_info.utilization, clocks, power
-                )
+                // "N/A" for an absent utilization, matching the power figure
+                // built just above.
+                let util = info
+                    .dynamic_info
+                    .utilization
+                    .map(|u| format!("{u}%"))
+                    .unwrap_or_else(|| "N/A".to_string());
+                format!("GPU{}: {}@{}MHz {}", idx, util, clocks, power)
             })
             .collect();
 

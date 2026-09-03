@@ -225,15 +225,22 @@ impl Gpu for IntelGpu {
                 .ok()
                 .and_then(|s| s.trim().parse::<u32>().ok());
 
-            // Calculate utilization from frequency ratio
-            let utilization = if let (Some(cur), Some(max)) = (graphics_clock, graphics_max) {
-                if max > 0 {
-                    ((cur as f32 / max as f32) * 100.0) as u8
-                } else {
-                    0
+            // Utilization from the frequency ratio.
+            //
+            // **This is a proxy, not a measurement**, and it is left in place
+            // only because it is the sole signal this path has. A GPU sitting
+            // at its maximum clock is not necessarily busy, and one being
+            // throttled while fully loaded reads low. Intel exposes real
+            // engine-busy counters through `i915` PMU perf events, which is
+            // what this should read; nobody has written that.
+            //
+            // What has changed is the failure case: with no clocks to divide,
+            // there is no ratio, and this now says so instead of answering 0%.
+            let utilization = match (graphics_clock, graphics_max) {
+                (Some(cur), Some(max)) if max > 0 => {
+                    Some(((cur as f32 / max as f32) * 100.0) as u8)
                 }
-            } else {
-                0
+                _ => None,
             };
 
             // Read power from hwmon (if available)
@@ -290,7 +297,7 @@ impl Gpu for IntelGpu {
                     rx_throughput: None,
                 },
                 engines: GpuEngines {
-                    graphics: Some(utilization),
+                    graphics: utilization,
                     compute: None,
                     encoder: None,
                     decoder: None,
@@ -304,7 +311,7 @@ impl Gpu for IntelGpu {
         // Nothing is read on this platform, so nothing is reported.
         #[cfg(not(target_os = "linux"))]
         Ok(GpuDynamicInfo {
-            utilization: 0,
+            utilization: None,
             memory: GpuMemory::unreported(),
             clocks: GpuClocks {
                 graphics: None,
@@ -768,7 +775,7 @@ impl Gpu for WmiIntelGpu {
         };
 
         Ok(GpuDynamicInfo {
-            utilization: perf.utilization,
+            utilization: Some(perf.utilization),
             memory,
             clocks: GpuClocks {
                 graphics: None,

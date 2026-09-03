@@ -727,7 +727,8 @@ pub struct MemoryInfo {
 pub struct GpuInfo {
     pub name: String,
     pub vendor: String,
-    pub utilization: f32,
+    /// Utilization percentage, or `None` where the device reports no counter.
+    pub utilization: Option<f32>,
     pub temperature: Option<f32>,
     pub power: Option<f32>,
     pub power_limit: Option<f32>,
@@ -759,7 +760,7 @@ impl From<&GpuInfo> for AcceleratorInfo {
             name: gpu.name.clone(),
             vendor: gpu.vendor.clone(),
             accel_type: AcceleratorType::Gpu,
-            utilization: Some(gpu.utilization),
+            utilization: gpu.utilization,
             temperature: gpu.temperature,
             power: gpu.power,
             power_limit: gpu.power_limit,
@@ -1482,7 +1483,7 @@ impl App {
             self.gpu_info.push(GpuInfo {
                 name: static_info.name.clone(),
                 vendor: format!("{}", static_info.vendor),
-                utilization: dynamic.utilization as f32,
+                utilization: dynamic.utilization.map(f32::from),
                 temperature: dynamic.thermal.temperature.map(|t| t as f32),
                 // Power is reported in milliwatts; the panel displays watts.
                 power: dynamic
@@ -1517,9 +1518,13 @@ impl App {
         }
 
         for (i, gpu) in self.gpu_info.iter().enumerate() {
-            self.gpu_histories[i].push_back(gpu.utilization as u64);
-            if self.gpu_histories[i].len() > MAX_HISTORY {
-                self.gpu_histories[i].pop_front();
+            // No reading, no sample: the sparkline holds its last value
+            // rather than dropping to a zero nobody measured.
+            if let Some(util) = gpu.utilization {
+                self.gpu_histories[i].push_back(util as u64);
+                if self.gpu_histories[i].len() > MAX_HISTORY {
+                    self.gpu_histories[i].pop_front();
+                }
             }
         }
 

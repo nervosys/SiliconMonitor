@@ -1122,7 +1122,7 @@ impl ObservabilityApi {
                 for snap in &snapshots {
                     result.push(GpuMetrics {
                         index: snap.static_info.index,
-                        utilization_percent: snap.dynamic_info.utilization as f32,
+                        utilization_percent: snap.dynamic_info.utilization.map(f32::from),
                         memory_used_mb: snap.dynamic_info.memory.used.map(|v| v / (1024 * 1024)),
                         memory_total_mb: snap.dynamic_info.memory.total.map(|v| v / (1024 * 1024)),
                         temperature_c: snap.dynamic_info.thermal.temperature.map(|t| t as f32),

@@ -127,7 +127,8 @@ pub struct AcceleratorState {
     pub vendor: String,
 
     /// Utilization (0-100%)
-    pub utilization: f32,
+    /// Utilization percentage, or `None` where the device reports no counter.
+    pub utilization: Option<f32>,
 
     /// Memory used in bytes, or `None` where the device reported none.
     pub memory_used_bytes: Option<u64>,
@@ -323,7 +324,10 @@ impl FullSystemState {
                     "  {} {}: {} ({})\n",
                     accel.accel_type, accel.index, accel.name, accel.vendor
                 ));
-                ctx.push_str(&format!("    Utilization: {:.0}%", accel.utilization));
+                match accel.utilization {
+                    Some(u) => ctx.push_str(&format!("    Utilization: {u:.0}%")),
+                    None => ctx.push_str("    Utilization: not reported"),
+                }
                 if let Some(temp) = accel.temperature {
                     ctx.push_str(&format!(" | Temp: {:.0}°C", temp));
                 }
@@ -866,7 +870,9 @@ impl MonitoringBackend {
                 // Update histories
                 for (i, info) in self.gpu_dynamic_info.iter().enumerate() {
                     if i < self.accelerator_histories.len() {
-                        self.accelerator_histories[i].push(info.utilization as f32);
+                        if let Some(util) = info.utilization {
+                            self.accelerator_histories[i].push(util as f32);
+                        }
                         // A device that reported no memory contributes no
                         // sample, so the series does not advance -- a flat
                         // segment, not a drop to zero. The GPU histories in the
@@ -1242,7 +1248,7 @@ impl MonitoringBackend {
                 accel_type: "GPU".to_string(), // Could be extended for NPU/FPGA
                 name: static_info.name.clone(),
                 vendor: format!("{:?}", static_info.vendor),
-                utilization: dynamic_info.utilization as f32,
+                utilization: dynamic_info.utilization.map(f32::from),
                 memory_used_bytes: dynamic_info.memory.used,
                 memory_total_bytes: dynamic_info.memory.total,
                 // Derived once, on `GpuMemory`, rather than recomputed here

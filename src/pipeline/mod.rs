@@ -773,7 +773,9 @@ fn collect_once(
         // does not advance, which reads as a flat segment rather than a false zero.
         let Some(info) = info.as_ref() else { continue };
         if i < histories.gpu_util.len() {
-            push_capped(&mut histories.gpu_util[i], info.utilization as f32, cap);
+            if let Some(util) = info.utilization {
+                push_capped(&mut histories.gpu_util[i], util as f32, cap);
+            }
             // A device that reported no memory contributes no sample, exactly as
             // a device that failed its whole query contributes none above.
             if let Some(mem_util) = info.memory.utilization {

@@ -741,7 +741,7 @@ pub fn read_gpu_stats() -> Result<GpuStats> {
         let di = &info.dynamic_info;
 
         let status = GpuStatus {
-            load: di.utilization as f32,
+            load: di.utilization.map(f32::from),
             railgate: None,
             tpc_pg_mask: None,
             scaling_3d: None,

@@ -399,7 +399,8 @@ pub struct GpuMetrics {
     /// GPU index
     pub index: usize,
     /// GPU utilization (0-100)
-    pub utilization_percent: f32,
+    /// Utilization percentage, or `None` where the device reports no counter.
+    pub utilization_percent: Option<f32>,
     /// Memory used in MB
     /// GPU memory used in MB, or `None` where unreported.
     pub memory_used_mb: Option<u64>,
