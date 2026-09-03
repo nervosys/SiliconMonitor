@@ -147,9 +147,59 @@ Since the tag, on `master` and green on all three platforms:
 | `162825a` | The backend and CLI swap sites that could not say "not read" |
 | `3073bf3` | The rest of the swap surfaces, and a health check that vanished |
 | `7d78dab` | A DIMM voltage the query never asked for, and MT/s called "count" |
+| `b76c215` | An absence reason contradicted by the rows beside it |
+| `dbe64e0` | A manufacturer the query never selected, and Windows' fake vendors |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### Auditing 491 absences against the platform
+
+The DIMM voltage suggested a method, so I applied it to the whole snapshot: take
+every `unavailable` reading, group by reason, and ask the platform whether the
+reason is true. 491 readings, 30 distinct reasons. Four checked in detail, and
+the split is the useful part — **two were true, two were not.**
+
+| Reason | Count | Verdict |
+| --- | --- | --- |
+| "Windows reports link training nowhere simon can reach unelevated" | 164 | **False** |
+| "the platform reports no NUMA affinity for this device" | 64 | True — 0 of 64 PCI devices expose the property |
+| "driver reports no negotiated link rate for this interface" | 11 | True — every one is a WAN miniport or disconnected adapter, `0 bps` |
+| "reader returned an empty string" | 19 | **False for 1 of 6 checked** |
+
+**The link-training claim was refuted by the same document that made it.** 23
+devices in that snapshot report `link.speed` as `measured`, at 16.0 and 32.0
+GT/s, read unelevated through the cfgmgr32 property store. simon reaches link
+training on Windows; it does so 23 times in the file that says it cannot.
+
+Counting what Windows exposes gives 23 of 64 — matching simon exactly, so nothing
+was being missed — but the 41 without include several `PCI Express Downstream
+Switch Port` and `PCI standard host CPU bridge`. Those *are* PCIe, so the
+alternative clause ("the device is not PCIe") was wrong too. Windows populates
+the link properties for **endpoints** only. The reason says that now, with the
+count behind it. No reading changed; only the explanation was false.
+
+**And a manufacturer nobody asked for.** `Win32_PointingDevice.Manufacturer`
+reports "Microsoft" for this machine's mouse. The query selected Name,
+Description, DeviceID and Status, then the code set `vendor: String::new()`.
+
+The interesting half is what stopped this being a one-line fix. **Windows fills
+`Manufacturer` on many device nodes with the driver-package provider rather than
+the hardware vendor**, marked by convention with parentheses: "(Standard system
+devices)", "(Standard keyboards)". Those name who wrote the inbox driver.
+Publishing one as a vendor is precisely the "Unknown-as-a-value" defect this
+crate has caught in five entities across three releases — a real-looking string
+standing in for an absence — arriving through a channel `push_str_as` cannot see.
+The reader rejects them; the resolver could not have.
+
+`Win32_Keyboard.Manufacturer` is genuinely blank on every keyboard here, so
+keyboards keep their absence — now one the reader observed rather than assumed.
+
+**A reason is a claim, and claims can be checked.** This crate spends real effort
+writing absence reasons that explain themselves, which makes them *persuasive* —
+and a persuasive wrong explanation is worse than a blank one, because it stops
+the next person looking. Two of the four I checked were wrong, and one had been
+contradicted by its own neighbours in every snapshot ever taken.
 
 ### A reading the query never asked for
 
