@@ -142,9 +142,56 @@ Since the tag, on `master` and green on all three platforms:
 | `2c80d66` | The negotiated USB speed, and nothing at super speed |
 | `0801f11` | Six recorded columns that wrote zero for a failed read |
 | `556a471` | A type that could not say "not reported", and four backends that filled the gap with zeros |
+| `549ca3e` | GPU utilization, and an unreadable card advertised as idle |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### GPU utilization, and an unreadable card advertised as idle
+
+The other half of the same type. `556a471` took `GpuMemory` to `Option` and left
+`GpuDynamicInfo::utilization` for a separate pass, which is this one; the shape
+is identical. Two backends returned a literal `0` having read nothing at all, and
+NVIDIA wrote:
+
+```rust
+utilization_rates().ok().map(|u| u.gpu as u8).unwrap_or(0)
+```
+
+An idle GPU and an unreadable one are the same number and different facts. **The
+difference matters because two consumers were acting on it.**
+
+`GpuState::is_idle()` returned `true` for a device with no counter — an
+unreadable GPU advertised as available work capacity, to whatever schedules work.
+And `avg_utilization()` averaged those zeros in, dragging a fleet mean down
+toward spare capacity that may not exist. Both now ignore devices that report
+nothing rather than counting them as idle. That is the third missed alarm of this
+exact shape in three commits, after `is_downgraded` in `3656368` and
+`memory_usage_percent` in `556a471`.
+
+**Two readers turned out to know more than they could say.** `tuning/serve.rs`
+already carried the comment *"`None` … rather than as 0%"* sitting over code that
+had no way to produce a `None`. It can now.
+
+And the Intel Linux path derives utilization from the **clock ratio**, which is a
+proxy rather than a measurement: a throttled but saturated GPU reads low, and one
+parked at maximum clock reads busy. That is now stated at the site, along with
+the `i915` PMU engine-busy counters it should be reading instead — recorded
+rather than quietly kept, because the number is presented as `utilization`
+everywhere downstream and nothing said it was inferred.
+
+`platform/linux/gpu.rs` answered `0.0` both when the sysfs `load` node was
+missing and when it failed to parse — alone among its siblings, every one of
+which uses `path_exists … else None` two lines above it.
+
+Verified on this machine: three adapters at 2%, 0% and 0% — genuine zeros on idle
+cards, still perfectly distinguishable from absence.
+
+**Two of the sites were inside `cfg(target_os = "linux")` blocks.** Nothing on
+Windows compiles them, `cargo clippy --all-targets` does not see them, and the
+full test suite passes without them. Only the Linux cross-check finds this class,
+and in a 30-site change it found two. Run all three targets before believing a
+sweep is finished.
 
 ### A type that could not say "not reported"
 
