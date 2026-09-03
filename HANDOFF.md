@@ -137,9 +137,65 @@ Since the tag, on `master` and green on all three platforms:
 | `f194cfd` | A rate published as a counter, and 530 processes reported as 0 |
 | `2e33bdf` | A load average synthesised from one CPU reading |
 | `3ccaf43` | The four dashboard metrics the exporter never learned |
+| `400608c` | One WMI connection instead of N, and the counters that cost |
+| `cd07a27` | The last dashboard gap, and an empty gap list on both sides |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### One WMI connection instead of N, and the counters it was hiding
+
+Went to close the served endpoint's two `_total` gaps, which needed cumulative
+disk counters the pipeline `Snapshot` did not carry, and found out why it had
+never carried them. Measured on this four-drive host:
+
+| Path | Cost |
+| --- | --- |
+| `logical_drives` (capacity only) | 0.5 ms |
+| `enumerate_disks` | 49 ms |
+| `io_stats`, looped per disk | **8000 ms** |
+| `all_io_counters`, batched | **9.9 ms** |
+
+`read_io_counters` opens its own WMI connection on every call, and the
+connection is the entire cost — the query itself is nothing. That is why
+`collect_disks` takes the capacity-only path on Windows, which is why the
+snapshot had no counters, which is why the metric could not be published. **The
+performance problem and the missing metric were the same fact**, and neither was
+visible from the other end: the gap looked like a missing feature and the cost
+looked like "WMI is slow".
+
+800× for identical values. The Prometheus exporter was paying the eight-second
+version on *every scrape*.
+
+With the cost gone the counters go into the snapshot as `disk_io` — a separate
+list rather than fields on `DiskSnapshot`, because the two are keyed differently.
+`DiskSnapshot` is per filesystem and these are per physical drive; on Windows one
+drive can carry several letters and one letter can span drives, so attributing a
+device counter to a mount needs a partition map nobody has written. Labelling by
+device sidesteps it and is what the metric means anyway:
+`simon_disk_read_bytes_total{device="PhysicalDrive0"}` is a property of the
+hardware, not of a mount point.
+
+Then `cpu_temperature_celsius`, the last gap, by the same shape: the reading goes
+in the snapshot and the recorder publishes it, because `record_snapshot` is pure
+over a `Snapshot` and that purity is what makes it testable. Collected on the CPU
+stage — ~2 ms after a one-time ~365 ms initialisation, with the stage measured at
+1.2–3.4 ms per tick after the first, unchanged.
+
+**Both pinned gap lists are empty.** Every metric the bundled dashboards query is
+published by the renderer that serves them, and either list failing to be empty
+fails the build.
+
+One honest limit on that: this machine reads **zero** CPU temperature sensors
+through all four Windows paths `hwmon` tries, so what is verified here is the
+absence — that a machine with no sensor publishes no series rather than a `0`.
+The populated path is covered by a unit test against a synthetic sensor and has
+never met real hardware that reports one.
+
+**A cost measurement is a design tool, not a benchmark.** Three sessions of work
+had routed around this WMI cost — the capacity-only path, the missing snapshot
+field, the unpublishable metric — without anyone timing it. Two numbers, 0.5 ms
+against 8000 ms, explained all three at once and pointed at the one-line cause.
 
 ### What the split guard immediately found
 
@@ -4921,24 +4977,21 @@ feature stayed broken through eight published versions.
 
 ## Open work
 
-1. **Three dashboard metrics are unpublished, all on the served endpoint.** The
-   guard is split per publisher as of `495e2ba` and each gap is pinned by name
-   in `tests/prometheus_exposition.rs`, so closing one fails the test until the
-   entry is pruned. Measured, not estimated:
+1. ~~**Dashboard metrics are unpublished.**~~ Done. Both renderers publish all
+   24 names the bundled dashboards query, both pinned gap lists in
+   `tests/prometheus_exposition.rs` are empty, and either list gaining an entry
+   fails the build. The guard was split per publisher in `495e2ba`, the library
+   exporter's four closed in `3ccaf43`, and the served endpoint's three in
+   `400608c` and `cd07a27`.
 
-   **Served endpoint (`http_server.rs`), 21/24.** All three are limited by the
-   pipeline `Snapshot` rather than by the recorder, which is deliberately pure
-   over a `Snapshot` — that purity is what makes it testable, so it must not go
-   read a sensor itself. `simon_cpu_temperature_celsius` needs a CPU temperature
-   `CpuStats` does not carry; `simon_disk_read_bytes_total` and
-   `write_bytes_total` need cumulative counters `DiskSnapshot` does not have,
-   and a rate cannot be turned back into a total. Both are the same shape of
-   work: put the reading in the snapshot, then record it.
-
-   ~~**Library exporter (`prometheus.rs`), 20/24.**~~ Done in `3ccaf43`. All
-   four are published, its pinned gap list is empty, and the test fails if it
-   regains an entry. Load average is emitted only where the platform has one, so
-   those two series are absent on Windows.
+   **One thing here is still unverified, and it is not the plumbing.** This
+   machine reads zero CPU temperature sensors through all four Windows paths
+   `hwmon` tries, so `simon_cpu_temperature_celsius` has been checked only in
+   its absent form — a host with no sensor publishes no series rather than a
+   `0`. The populated path is covered by a unit test against a synthetic sensor
+   and has never met hardware that reports one. **If you are on a machine with a
+   readable CPU sensor, scrape the endpoint and check the value against
+   something else.** That is a minute's work and nobody has been able to do it.
 2. **USB negotiated speed is unimplemented on Windows, and obtainable.**
    `usb.{addr}.speed` is absent on every device. It is not a PnP property; it
    comes from `IOCTL_USB_GET_NODE_CONNECTION_INFORMATION_EX` against the parent
