@@ -5291,6 +5291,26 @@ feature stayed broken through eight published versions.
    `cargo clippy --all-features --all-targets` for type-checking the examples.
    Note `--lib --tests` skips doc-tests; run those before a release.
 
+   **`cargo`'s output does not go to `./target` on this machine.**
+   `~/.cargo/config.toml` sets `target-dir = "C:/Users/adamm/.cargo-target"`, and
+   `./target` still holds a stale tree from before that line was added. Running
+   `./target/debug/simon.exe` therefore runs *whatever was built before the
+   redirect*, silently. It cost a wrong conclusion during the USB speed work:
+   every device read `unavailable` from a binary that predated the reader, and
+   the finished feature looked broken. Invoke `cargo run --bin simon`, or the
+   path `cargo build` prints.
+
+   **Three failure modes here are the machine, not the code, and all three lie
+   about it.** `error[E0463]: can't find crate for simonlib`, `error[E0786]:
+   found invalid metadata files`, and `crate X required to be available in rlib
+   format` are all truncated build artifacts, and the recovery is
+   `cargo clean -p silicon-monitor`. What truncates them is resource exhaustion:
+   the disk reached 100% of 3.7 TB twice in one session, and `rustc` was killed
+   by `memory allocation of 69206032 bytes failed` while another process held
+   45 GB of the machine's 94 GB. `cargo test -j 2` finishes where the default
+   parallelism dies. Check `df -h` and free memory *before* concluding a change
+   broke the build -- this has been misread as a tool bug four times.
+
 
 15. **Two Dewey bugs found during the port, recorded because they are real
    and unfixed — but no longer reachable from this crate.** Neither affects simon
