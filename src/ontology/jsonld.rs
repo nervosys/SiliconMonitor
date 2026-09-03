@@ -58,6 +58,11 @@ pub fn qudt_unit(unit: Unit) -> Option<&'static str> {
         Unit::BytesPerSecond => "BYTE-PER-SEC",
         Unit::Hertz => "HZ",
         Unit::Megahertz => "MegaHZ",
+        // QUDT has no megatransfer unit: a transfer is a bus operation, not an
+        // SI quantity, and MT/s is only a frequency if you assume one bit per
+        // transfer -- which is exactly the assumption DDR breaks. `NUM-PER-SEC`
+        // says "this many per second" without claiming to know of what.
+        Unit::MegatransfersPerSecond => "NUM-PER-SEC",
         Unit::Watts => "W",
         Unit::Milliwatts => "MilliW",
         Unit::Volts => "V",

@@ -121,8 +121,16 @@ pub struct DimmInfo {
     pub serial_number: String,
     /// Whether this slot is populated.
     pub populated: bool,
-    /// Voltage in volts (e.g. 1.2 for DDR4/DDR5).
-    pub voltage: f64,
+    /// Operating voltage in volts, or `None` where the firmware reported
+    /// none.
+    ///
+    /// This was `f64`, and the Windows reader set it to `0.0` under the comment
+    /// "WMI doesn't provide this easily". WMI provides it directly:
+    /// `Win32_PhysicalMemory.ConfiguredVoltage`, in millivolts. The query
+    /// simply did not select the column. On this crate's development machine it
+    /// reads 1100 mV, and the ontology had been publishing
+    /// "SMBIOS reported no operating voltage" for it.
+    pub voltage: Option<f64>,
 }
 
 impl DimmInfo {
@@ -423,7 +431,7 @@ impl MemoryTopologyMonitor {
             .args([
                 "-NoProfile",
                 "-Command",
-                "Get-CimInstance Win32_PhysicalMemory | Select-Object BankLabel,DeviceLocator,Capacity,Speed,ConfiguredClockSpeed,MemoryType,SMBIOSMemoryType,FormFactor,DataWidth,TotalWidth,Manufacturer,PartNumber,SerialNumber | ConvertTo-Json",
+                "Get-CimInstance Win32_PhysicalMemory | Select-Object BankLabel,DeviceLocator,Capacity,Speed,ConfiguredClockSpeed,ConfiguredVoltage,MemoryType,SMBIOSMemoryType,FormFactor,DataWidth,TotalWidth,Manufacturer,PartNumber,SerialNumber | ConvertTo-Json",
             ])
             .output();
 
@@ -559,7 +567,10 @@ impl MemoryTopologyMonitor {
                     .and_then(|v| v.parse::<f64>().ok())
             })
             .map(|v| if v > 10.0 { v / 1000.0 } else { v }) // mV to V
-            .unwrap_or(0.0);
+            // SMBIOS Type 17 defines zero in these fields as "unknown", so a
+            // parsed zero is an absence rather than a reading. `profile/memory`
+            // already knew this and filtered on it downstream.
+            .filter(|v| *v > 0.0);
 
         Some(DimmInfo {
             locator,
@@ -721,7 +732,13 @@ impl MemoryTopologyMonitor {
                         .trim()
                         .to_string(),
                     populated: capacity > 0,
-                    voltage: 0.0, // WMI doesn't provide this easily
+                    // `ConfiguredVoltage` is in millivolts. A zero there means
+                    // the firmware filled the field with nothing, which is not
+                    // an operating voltage of zero.
+                    voltage: item["ConfiguredVoltage"]
+                        .as_u64()
+                        .filter(|mv| *mv > 0)
+                        .map(|mv| mv as f64 / 1000.0),
                 }
             })
             .collect()
@@ -772,7 +789,8 @@ impl MemoryTopologyMonitor {
                                 .unwrap_or("")
                                 .to_string(),
                             populated: capacity_bytes > 0,
-                            voltage: 0.0,
+                            // `system_profiler` reports no DIMM voltage.
+                            voltage: None,
                         });
                     }
                 }
@@ -835,7 +853,7 @@ mod tests {
             part_number: "M378A2G43AB3-CWE".into(),
             serial_number: "12345678".into(),
             populated: true,
-            voltage: 1.2,
+            voltage: Some(1.2),
         };
         assert!((dimm.capacity_gib() - 16.0).abs() < 0.01);
         assert_eq!(dimm.is_ecc(), Some(false));
@@ -868,7 +886,7 @@ mod tests {
             part_number: String::new(),
             serial_number: String::new(),
             populated: true,
-            voltage: 0.0,
+            voltage: None,
         };
         assert_eq!(dimm.is_ecc(), None, "neither width read");
 
@@ -899,7 +917,7 @@ mod tests {
             part_number: "".into(),
             serial_number: "".into(),
             populated: true,
-            voltage: 1.2,
+            voltage: Some(1.2),
         };
         assert_eq!(dimm.is_ecc(), Some(true));
     }
@@ -949,7 +967,7 @@ mod tests {
                 part_number: "".into(),
                 serial_number: "".into(),
                 populated: true,
-                voltage: 1.2,
+                voltage: Some(1.2),
             },
             DimmInfo {
                 locator: "DIMM_B1".into(),
@@ -966,7 +984,7 @@ mod tests {
                 part_number: "".into(),
                 serial_number: "".into(),
                 populated: true,
-                voltage: 1.2,
+                voltage: Some(1.2),
             },
         ];
         let analysis = MemoryTopologyMonitor::analyze(&dimms);

@@ -1223,14 +1223,14 @@ fn resolve_memory_dimms(out: &mut Vec<Reading>) {
             out,
             format!("{base}.speed"),
             (dimm.speed_mts > 0).then(|| serde_json::json!(dimm.speed_mts)),
-            Some(Unit::Count),
+            Some(Unit::MegatransfersPerSecond),
             "SMBIOS reported no rated speed",
         );
         push_spec_opt(
             out,
             format!("{base}.configured_speed"),
             (dimm.configured_speed_mts > 0).then(|| serde_json::json!(dimm.configured_speed_mts)),
-            Some(Unit::Count),
+            Some(Unit::MegatransfersPerSecond),
             "SMBIOS reported no configured speed",
         );
         push_spec_id(
@@ -1284,7 +1284,7 @@ fn resolve_memory_dimms(out: &mut Vec<Reading>) {
         push_spec_opt(
             out,
             format!("{base}.voltage"),
-            (dimm.voltage > 0.0).then(|| serde_json::json!(dimm.voltage)),
+            dimm.voltage.map(|v| serde_json::json!(v)),
             Some(Unit::Volts),
             "SMBIOS reported no operating voltage",
         );

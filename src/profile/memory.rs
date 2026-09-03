@@ -114,9 +114,9 @@ impl ProfileProvider for MemoryProfileProvider {
             // "Voltage = 0 V [dangerous]" for a DDR5 module that necessarily runs
             // near 1.1V. A zero volts no DIMM can have, marked dangerous so it
             // reads as significant, is worse than no row at all.
-            if dimm.voltage > 0.0 {
+            if let Some(voltage) = dimm.voltage {
                 g.push(
-                    Setting::info("voltage_v", "Voltage", SettingValue::Float(dimm.voltage))
+                    Setting::info("voltage_v", "Voltage", SettingValue::Float(voltage))
                         .with_unit("V")
                         .with_risk(SettingRisk::Dangerous)
                         .with_description(
