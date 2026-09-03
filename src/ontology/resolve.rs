@@ -451,7 +451,13 @@ fn resolve_cpu(out: &mut Vec<Reading>) {
         // The rated maximum, which the Windows reader multiplies by delivered
         // performance to get the figure above -- so it is published rather than
         // discarded, and `cpu.core.{n}.frequency` names it as its input.
-        push_opt(
+        //
+        // `push_spec_opt`, not `push_opt`: this is a rated figure the firmware
+        // states, not one simon measured. It was published as `measured` on
+        // every row while the entity beside it declared `Specification` -- the
+        // only entity in the ontology whose rows over-claimed their own
+        // declaration.
+        push_spec_opt(
             out,
             format!("{base}.frequency.max"),
             core.frequency
