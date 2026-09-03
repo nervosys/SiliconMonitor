@@ -153,9 +153,63 @@ Since the tag, on `master` and green on all three platforms:
 | `235562e` | The cache topology this module's docs already claimed to read |
 | `e6d5259` | The transport a HID node's parent names |
 | `59e6268` | A rated figure published as measured, on 24 rows |
+| `64e5cf3` | The mixer binding the absence reasons said did not exist |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### An honest reason for an unfinished reader
+
+Two more reasons checked and true — no NVMe data on the USB mass-storage gadget
+that is `disk.0` (the three real NVMe drives report everything), and no minimum
+core frequency anywhere in `Win32_Processor`. That is **five reasons true and
+five false** out of the ten examined.
+
+The audio ones were a third kind. Twelve readings said:
+
+> simon has no mixer binding on this platform, so no level is read
+>
+> which endpoint the system routes to by default is a COM call this crate does
+> not make
+
+Both are *true statements about the reader* and neither is a fact about Windows.
+`IMMDeviceEnumerator` and `IAudioEndpointVolume` answer all three questions
+unelevated, and nothing else does: `Win32_SoundDevice` has no volume property,
+and the `MMDevices` registry tree this module already reads stores endpoint
+configuration rather than the live scalar. COM was not a preference; it was the
+only source.
+
+Keyed by endpoint GUID — what `IMMDevice::GetId` carries after the container id,
+and what the registry trees are already keyed by — so the new reader joins the
+existing enumeration instead of replacing it. `master_volume` is the default
+*output* endpoint's level: Windows has no system-wide volume, only per-endpoint
+ones, so that is what the name can honestly mean. It had been `Some(100)` from
+the constructor, published as "Master Volume: 100%" on every machine.
+
+Cross-checked through an independent COM path — `Add-Type` in PowerShell with its
+own vtable declarations — reporting render 56% and capture 24%, matching simon
+exactly. After the L2 cache count, a reading that merely *looks* right is not
+evidence.
+
+**Three guards asserted the old absence, and restating them was the careful
+part.** Each was written when nothing read a mixer, and each pinned `None`. The
+temptation is to delete them; the error is to keep them, because pinning absence
+on a platform that now reads the value pins the defect rather than the principle.
+Each now asserts what it was actually defending:
+
+- the master volume *equals the default output's*, rather than being a figure of
+  its own — sabotage-verified by restoring `Some(100)`, which it caught;
+- a failed setter leaves the previous reading untouched, compared against what
+  was read rather than against `None`;
+- "only the default endpoint reports a volume and it is exactly 100" — the
+  original defect's precise shape — is not a state any mixer produces.
+
+**And one of this crate's own guards caught me.** `cargo fmt` collapsed a
+backslash-continued assertion message onto one line, baking the source
+indentation into the string: `"...all of them read                  100%"`.
+`string_literals_carry_no_collapsed_indentation` exists for exactly that and
+named the line. Use `concat!` for multi-line literals here; the continuation form
+does not survive formatting.
 
 ### The one entity whose rows over-claimed
 
