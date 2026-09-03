@@ -94,6 +94,43 @@ pub struct CpuCacheMonitor {
     topology: CpuCacheTopology,
 }
 
+/// Render a processor affinity mask as a Linux-style CPU list.
+///
+/// `shared_cpu_list` is read verbatim from sysfs on Linux, where it looks like
+/// `0-1` or `0,12`. Windows reports the same fact as a bitmask, so it is
+/// rendered into the same shape rather than into a second format a consumer
+/// would have to learn.
+#[cfg(target_os = "windows")]
+fn affinity_mask_to_list(mask: usize) -> String {
+    let cpus: Vec<u32> = (0..usize::BITS)
+        .filter(|bit| mask & (1usize << bit) != 0)
+        .collect();
+    if cpus.is_empty() {
+        return String::new();
+    }
+
+    let mut parts = Vec::new();
+    let mut start = cpus[0];
+    let mut prev = cpus[0];
+    for &cpu in &cpus[1..] {
+        if cpu != prev + 1 {
+            parts.push(if start == prev {
+                start.to_string()
+            } else {
+                format!("{start}-{prev}")
+            });
+            start = cpu;
+        }
+        prev = cpu;
+    }
+    parts.push(if start == prev {
+        start.to_string()
+    } else {
+        format!("{start}-{prev}")
+    });
+    parts.join(",")
+}
+
 impl CpuCacheMonitor {
     /// Create a new CpuCacheMonitor and detect cache topology.
     pub fn new() -> Result<Self, SimonError> {
@@ -292,8 +329,146 @@ impl CpuCacheMonitor {
         }
     }
 
+    /// Read the cache topology from `GetLogicalProcessorInformationEx`.
+    ///
+    /// This module's own documentation said it uses "WMI (`Win32_CacheMemory`)
+    /// or `GetLogicalProcessorInformationEx`". Only the first was implemented,
+    /// and it is the weaker source in three separate ways:
+    ///
+    /// - **`LineSize` is blank.** `Win32_CacheMemory` declares the property and
+    ///   this machine leaves it empty on every row, which is why
+    ///   `cpu.cache.N.line_size` read "the platform reported no line size".
+    ///   The platform reports it; that class does not.
+    /// - **`Associativity` is a CIM enumeration, not a way count.** 7 means
+    ///   16-way and 8 means 32-way. It was being passed through as though the
+    ///   number were the ways.
+    /// - **It aggregates per level.** WMI returns one row for all of L1, so the
+    ///   separate data and instruction caches -- and which cores share each one
+    ///   -- are not recoverable from it at all.
+    ///
+    /// `GetLogicalProcessorInformationEx(RelationCache)` returns one record per
+    /// physical cache with the line size, the true associativity, the type, and
+    /// the affinity mask of the processors sharing it.
+    #[cfg(target_os = "windows")]
+    fn refresh_windows_logical_processor_info(&mut self) -> Result<bool, SimonError> {
+        use windows::Win32::System::SystemInformation::{
+            CacheData, CacheInstruction, GetLogicalProcessorInformationEx, RelationCache,
+            LOGICAL_PROCESSOR_RELATIONSHIP, SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX,
+        };
+
+        // Ask for the size, then fill a buffer of it. The records are
+        // variable-length, so the walk below advances by each record's own
+        // `Size` rather than by `size_of`.
+        let mut needed = 0u32;
+        // SAFETY: a null buffer with a zero length is the documented way to
+        // request the required size; it writes only `needed`.
+        let _ = unsafe { GetLogicalProcessorInformationEx(RelationCache, None, &mut needed) };
+        if needed == 0 {
+            return Ok(false);
+        }
+
+        let mut buf = vec![0u8; needed as usize];
+        // SAFETY: `buf` is `needed` bytes, which is the size the call just
+        // asked for, and `needed` is passed by pointer as both in and out.
+        if unsafe {
+            GetLogicalProcessorInformationEx(
+                RelationCache,
+                Some(buf.as_mut_ptr() as *mut SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX),
+                &mut needed,
+            )
+        }
+        .is_err()
+        {
+            return Ok(false);
+        }
+
+        // The fixed header is `Relationship` and `Size`, eight bytes. The
+        // union that follows is sized by its *largest* arm -- a processor or
+        // group relationship, both bigger than a cache one -- so requiring
+        // `size_of::<SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX>()` bytes to
+        // remain would skip a valid cache record near the end of the buffer.
+        // It did: this reader found 11 of this machine's 12 L2 caches, with
+        // the last core's missing, until the bound was corrected. Each
+        // record's own `Size` is what says how far to advance.
+        const HEADER_BYTES: usize =
+            std::mem::size_of::<LOGICAL_PROCESSOR_RELATIONSHIP>() + std::mem::size_of::<u32>();
+        let mut offset = 0usize;
+        let mut index = 0u32;
+        while offset + HEADER_BYTES <= buf.len() {
+            // SAFETY: `offset` is advanced by each record's declared `Size` and
+            // the loop stops before the buffer end.
+            let record = unsafe {
+                &*(buf.as_ptr().add(offset) as *const SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX)
+            };
+            let size = record.Size as usize;
+            if size == 0 || offset + size > buf.len() {
+                break;
+            }
+
+            if record.Relationship == RelationCache {
+                // SAFETY: the relationship discriminant says this arm of the
+                // union is the live one.
+                let cache = unsafe { &record.Anonymous.Cache };
+
+                let level = match cache.Level {
+                    1 => CacheLevel::L1,
+                    2 => CacheLevel::L2,
+                    3 => CacheLevel::L3,
+                    4 => CacheLevel::L4,
+                    // A level this build does not know is not silently an L2.
+                    _ => {
+                        offset += size;
+                        continue;
+                    }
+                };
+
+                let cache_type = match cache.Type {
+                    t if t == CacheData => CacheType::Data,
+                    t if t == CacheInstruction => CacheType::Instruction,
+                    _ => CacheType::Unified,
+                };
+
+                // 0xFF is the documented marker for fully associative, which is
+                // not a way count and must not be reported as 255 ways.
+                let associativity = (cache.Associativity != 0xFF && cache.Associativity != 0)
+                    .then_some(cache.Associativity as u32);
+
+                // SAFETY: `GroupCount` is 0 or 1 for a single-group machine and
+                // the union's first arm covers that case, which is the only one
+                // this reader claims to handle; see the `shared` note below.
+                let mask = unsafe { cache.Anonymous.GroupMask };
+                let shared = affinity_mask_to_list(mask.Mask);
+
+                self.topology.caches.push(CpuCacheInfo {
+                    level,
+                    cache_type,
+                    size_kb: (cache.CacheSize as u64) / 1024,
+                    line_size: (cache.LineSize > 0).then_some(cache.LineSize as u32),
+                    associativity,
+                    // Neither is derivable from this API; sysfs publishes them
+                    // on Linux and this stays absent rather than computed.
+                    sets: None,
+                    partitions: None,
+                    shared_cpu_list: shared,
+                    index,
+                });
+                index += 1;
+            }
+
+            offset += size;
+        }
+
+        Ok(index > 0)
+    }
+
     #[cfg(target_os = "windows")]
     fn refresh_windows(&mut self) -> Result<(), SimonError> {
+        // The Win32 API is the better source; WMI stays as the fallback for a
+        // machine where it returns nothing.
+        if self.refresh_windows_logical_processor_info()? {
+            return Ok(());
+        }
+
         const QUERY: &str = concat!(
             "Get-CimInstance Win32_CacheMemory | Select-Object Purpose, ",
             "InstalledSize, CacheSpeed, Level, Associativity, LineSize, ",
@@ -474,6 +649,28 @@ impl std::fmt::Display for CacheType {
             Self::Unified => write!(f, "Unified"),
             Self::Unknown => write!(f, "Unknown"),
         }
+    }
+}
+
+#[cfg(all(test, target_os = "windows"))]
+mod affinity_tests {
+    use super::affinity_mask_to_list;
+
+    #[test]
+    fn a_mask_renders_as_a_linux_style_cpu_list() {
+        // `shared_cpu_list` is read verbatim from sysfs on Linux, so the
+        // Windows rendering has to match that shape or a consumer has two
+        // formats to parse for one field.
+        assert_eq!(affinity_mask_to_list(0b11), "0-1");
+        assert_eq!(affinity_mask_to_list(0b1100), "2-3");
+        assert_eq!(affinity_mask_to_list(0b1), "0");
+        // Disjoint ranges, which is what an L3 shared by one CCX looks like
+        // beside another socket's.
+        assert_eq!(affinity_mask_to_list(0b1_0000_0011), "0-1,8");
+        assert_eq!(affinity_mask_to_list(0b1010), "1,3");
+        // No processors is an empty string, which the resolver reports as an
+        // absence rather than as a list of nobody.
+        assert_eq!(affinity_mask_to_list(0), "");
     }
 }
 
