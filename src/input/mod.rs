@@ -99,6 +99,29 @@ pub struct InputMonitor {
     devices: Vec<InputDevice>,
 }
 
+/// The manufacturer WMI reports for an input device, if it named one.
+///
+/// Windows fills `Manufacturer` on many device nodes with the *driver package
+/// provider* rather than the hardware vendor, and marks those by convention
+/// with parentheses: "(Standard system devices)", "(Standard keyboards)",
+/// "(Standard mouse types)". Those name who wrote the inbox driver, not who
+/// built the device, and publishing one as a vendor would be the same class of
+/// error as publishing "Unknown" -- a real-looking string standing in for an
+/// absence. The resolver's own guard rejects the word "unknown"; it has no way
+/// to know about this convention, so the reader applies it here.
+///
+/// Verified on this machine: `Win32_PointingDevice` reports "Microsoft" for one
+/// device and "(Standard system devices)" for another, and `Win32_Keyboard`
+/// reports an empty string for every keyboard.
+#[cfg(target_os = "windows")]
+fn device_vendor(item: &serde_json::Value) -> String {
+    let raw = item["Manufacturer"].as_str().unwrap_or("").trim();
+    if raw.starts_with('(') {
+        return String::new();
+    }
+    raw.to_string()
+}
+
 impl InputMonitor {
     /// Create a new InputMonitor and enumerate all input devices.
     pub fn new() -> Result<Self, SimonError> {
@@ -393,7 +416,7 @@ impl InputMonitor {
         // Keyboards via WMI
         let keyboards = crate::core::command::capture_json(
             "powershell",
-            &["-NoProfile", "-Command", "Get-CimInstance Win32_Keyboard | Select-Object Name, Description, DeviceID, Status, Layout | ConvertTo-Json -Compress"],
+            &["-NoProfile", "-Command", "Get-CimInstance Win32_Keyboard | Select-Object Name, Manufacturer, Description, DeviceID, Status, Layout | ConvertTo-Json -Compress"],
         )?;
         if let Some(val) = keyboards {
             let items = crate::core::command::json_items(&val);
@@ -420,7 +443,13 @@ impl InputMonitor {
                     name,
                     device_type: InputDeviceType::Keyboard,
                     interface: iface,
-                    vendor: String::new(),
+                    // Both queries now select `Manufacturer`, which they did
+                    // not before -- the field was hardcoded empty and the
+                    // ontology reported "reader returned an empty string" for
+                    // it. On this machine `Win32_Keyboard.Manufacturer` really
+                    // is blank, so keyboards keep that absence honestly, while
+                    // `Win32_PointingDevice` carries a real value.
+                    vendor: device_vendor(item),
                     product: String::new(),
                     physical_path: device_id,
                     is_active: Some(item["Status"].as_str() == Some("OK")),
@@ -432,7 +461,7 @@ impl InputMonitor {
         // Pointing devices via WMI
         let pointers = crate::core::command::capture_json(
             "powershell",
-            &["-NoProfile", "-Command", "Get-CimInstance Win32_PointingDevice | Select-Object Name, Description, DeviceID, Status, PointingType, NumberOfButtons | ConvertTo-Json -Compress"],
+            &["-NoProfile", "-Command", "Get-CimInstance Win32_PointingDevice | Select-Object Name, Manufacturer, Description, DeviceID, Status, PointingType, NumberOfButtons | ConvertTo-Json -Compress"],
         )?;
         if let Some(val) = pointers {
             let items = crate::core::command::json_items(&val);
@@ -472,7 +501,7 @@ impl InputMonitor {
                     name,
                     device_type,
                     interface: iface,
-                    vendor: String::new(),
+                    vendor: device_vendor(item),
                     product: String::new(),
                     physical_path: device_id,
                     is_active: Some(item["Status"].as_str() == Some("OK")),
@@ -628,6 +657,41 @@ impl std::fmt::Display for InputInterface {
             Self::Virtual => write!(f, "Virtual"),
             Self::Unknown => write!(f, "Unknown"),
         }
+    }
+}
+
+#[cfg(all(test, target_os = "windows"))]
+mod windows_vendor_tests {
+    use super::device_vendor;
+    use serde_json::json;
+
+    /// Windows' parenthesised driver-provider strings are not vendors.
+    #[test]
+    fn a_driver_package_provider_is_not_a_device_vendor() {
+        // Real values from `Win32_PointingDevice` on the development host.
+        assert_eq!(
+            device_vendor(&json!({"Manufacturer": "Microsoft"})),
+            "Microsoft"
+        );
+        assert_eq!(
+            device_vendor(&json!({"Manufacturer": "(Standard system devices)"})),
+            ""
+        );
+        assert_eq!(
+            device_vendor(&json!({"Manufacturer": "(Standard keyboards)"})),
+            ""
+        );
+
+        // An absent or blank column stays absent rather than becoming a name.
+        assert_eq!(device_vendor(&json!({"Manufacturer": ""})), "");
+        assert_eq!(device_vendor(&json!({})), "");
+
+        // A real vendor that merely contains a bracket keeps it; only a
+        // leading one marks the convention.
+        assert_eq!(
+            device_vendor(&json!({"Manufacturer": "Logitech (Suisse) SA"})),
+            "Logitech (Suisse) SA"
+        );
     }
 }
 
