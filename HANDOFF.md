@@ -146,9 +146,55 @@ Since the tag, on `master` and green on all three platforms:
 | `76dc998` | Six power readings unwrapped to zero, and "No swap configured" |
 | `162825a` | The backend and CLI swap sites that could not say "not read" |
 | `3073bf3` | The rest of the swap surfaces, and a health check that vanished |
+| `7d78dab` | A DIMM voltage the query never asked for, and MT/s called "count" |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### A reading the query never asked for
+
+Checked the ontology's DIMM rows against WMI directly, rather than reading the
+code that produces them. Two defects, and the first is the more interesting.
+
+**`memory.dimm.N.voltage` said "SMBIOS reported no operating voltage" on a
+machine whose firmware reports one.** The Windows reader had:
+
+```rust
+voltage: 0.0, // WMI doesn't provide this easily
+```
+
+`Win32_PhysicalMemory.ConfiguredVoltage` is exactly that figure, in millivolts.
+The PowerShell query simply did not select the column. And then the system
+behaved *exactly as designed* on top of a value that was never fetched: the
+resolver saw a zero, correctly decided a DIMM cannot operate at zero volts,
+and published a confident, specific, well-worded sentence about what the
+firmware had reported. Every layer did its job. The reading was 1.1 V all along.
+
+```
+before: memory.dimm.0.voltage  unavailable  — SMBIOS reported no operating voltage
+after:  memory.dimm.0.voltage  specification  1.1 volts
+```
+
+against `Get-CimInstance Win32_PhysicalMemory` reporting `ConfiguredVoltage
+1100`. The field is `Option<f64>` now, so absence stops travelling as a zero to
+be decoded three layers away — `profile/memory.rs` was doing that decoding too,
+with its own comment explaining the SMBIOS "zero means unknown" convention, in a
+different module from the parse that produced it.
+
+**And DIMM speeds were published with unit `count`.** They are megatransfers per
+second. `5600 count` hands a consumer a number and nothing else, in a crate whose
+ontology exists so that a unit travels with its value. `Unit::MegatransfersPerSecond`
+now exists, mapped to QUDT `NUM-PER-SEC` rather than to a frequency — a transfer
+is a bus operation, not an SI quantity, and MT/s is a frequency only if you assume
+one bit per transfer, which is the exact assumption double data rate breaks.
+
+**An absence reported for the right reason can still be wrong.** Nothing in the
+code was sloppy: the comment stated a belief, the resolver validated correctly,
+the reason string was accurate about what it had been given. The defect was one
+column missing from a `SELECT`, and the entire careful apparatus downstream
+turned that into a plausible, well-argued falsehood. **Checking the code against
+the machine is not the same as checking the code**, and only the first would have
+found this.
 
 ### Following `*_or_zero()` to the end
 
