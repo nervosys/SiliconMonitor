@@ -140,9 +140,59 @@ Since the tag, on `master` and green on all three platforms:
 | `400608c` | One WMI connection instead of N, and the counters that cost |
 | `cd07a27` | The last dashboard gap, and an empty gap list on both sides |
 | `2c80d66` | The negotiated USB speed, and nothing at super speed |
+| `0801f11` | Six recorded columns that wrote zero for a failed read |
 
 **None of these were found by grepping.** The method, and why the greps missed
 them, is below under *Run it and read the output*.
+
+### Six recorded columns that wrote zero for a failed read
+
+The sweep that found the six uncalled readers had a second half nobody had run:
+the same filter — a function returning a bare number with a zero fallback — over
+the code that *is* called. 46 hits, most of them legitimate (clocks, `is_*`
+predicates, the deliberately-named `*_or_zero`). Six were not, and they were the
+six that end up in a file on disk.
+
+`simon record` writes a row per tick whether or not the readers succeeded, and
+that row is read back later by someone who was not there:
+
+| Column | What it stored for a failed read |
+| --- | --- |
+| `cpu_percent` | `0.0`, from `Snapshot::cpu_utilization()` |
+| `cpu_per_core` | `100.0 - core.idle.unwrap_or(100.0)` — a core with no idle reading recorded as 0% busy |
+| `memory_used` / `memory_total` | `0`, from `.unwrap_or((0, 0, 0, 0))` |
+| `swap_used` / `swap_total` | `used_or_zero()`, discarding at the point of storage the `Option` that `15a60ab` added for exactly this |
+
+None of that is a visible gap. `0.0%` CPU beside 0 bytes of memory is a specific,
+plausible claim that the machine was idle and empty at that moment — and the
+readback divides by `memory_total`, so an unread tick printed `NaN%` next to a
+confident `0.0%`.
+
+**The same function already gets this right three times over.** The GPU columns
+push `None` for an unqueried device, under a comment reading *"it is not idle,
+cold and drawing no power"*. The per-process I/O fields are `None` because zero
+*"reads back as an idle process"*. The network rates are `None` rather than `0`
+because *"a recording that starts with a zero teaches whoever reads it back that
+the network was idle"*. The CPU and memory lines sit in between, doing the thing
+all three comments warn about.
+
+All six are `Option` now. Both readbacks print "not read" where the GPU rows
+already printed "no sensor", and the CSV writes an empty field where the two
+network columns already did. `DB_VERSION` 5 → 6: as with the two bumps before it,
+the layout moving matters less than the values changing meaning, and a reader
+that took version-5 rows as version-6 would keep reading those zeros as
+measurements.
+
+Verified by recording and reading back — 21 rows, real CPU and memory throughout,
+network rates empty for the first samples and populated once the collector had
+two — plus a round-trip test that writes an all-absent tick and asserts it comes
+back absent.
+
+**A file full of careful `None`s is not evidence that the writer is careful.**
+Three separate fixes had passed through this function, each fixing its own
+column and each leaving a comment explaining the principle, and the columns
+beside them stayed wrong through all three. Fixing an instance is not the same as
+sweeping the site, and the comments left behind made the site *look* audited.
 
 ### The negotiated USB speed, and nothing running at super speed
 
