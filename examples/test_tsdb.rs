@@ -29,12 +29,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Create test snapshot
         let snapshot = SystemSnapshot {
             timestamp,
-            cpu_percent: 25.0 + (i as f32 * 5.0),
-            cpu_per_core: vec![20.0, 30.0, 25.0, 35.0],
-            memory_used: 8_000_000_000 + (i as u64 * 100_000_000),
-            memory_total: 16_000_000_000,
-            swap_used: 500_000_000,
-            swap_total: 8_000_000_000,
+            cpu_percent: Some(25.0 + (i as f32 * 5.0)),
+            // One core whose idle time was not read, so the round trip covers
+            // an absent per-core entry as well as present ones.
+            cpu_per_core: vec![Some(20.0), Some(30.0), None, Some(35.0)],
+            memory_used: Some(8_000_000_000 + (i as u64 * 100_000_000)),
+            memory_total: Some(16_000_000_000),
+            swap_used: Some(500_000_000),
+            swap_total: Some(8_000_000_000),
             gpu_percent: vec![Some(50.0 + (i as f32 * 2.0))],
             gpu_memory_used: vec![Some(4_000_000_000)],
             // A second adapter with no sensor, so the round trip covers an
@@ -106,11 +108,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             Some(t) => format!("{:.0}°C", t),
             None => "no sensor".to_string(),
         };
+        let cpu = match s.cpu_percent {
+            Some(p) => format!("{p:.1}%"),
+            None => "not read".to_string(),
+        };
+        let mem = match (s.memory_used, s.memory_total) {
+            (Some(used), Some(total)) if total > 0 => {
+                format!("{:.1}%", (used as f64 / total as f64) * 100.0)
+            }
+            _ => "not read".to_string(),
+        };
+        let cores = s
+            .cpu_per_core
+            .iter()
+            .map(|c| match c {
+                Some(v) => format!("{v:.0}"),
+                None => "-".to_string(),
+            })
+            .collect::<Vec<_>>()
+            .join("/");
         println!(
-            "  [{}] CPU: {:.1}% | MEM: {:.1}% | GPU: {} | Temp: {} | Net: {} rx/s {} tx/s",
+            "  [{}] CPU: {} ({}) | MEM: {} | GPU: {} | Temp: {} | Net: {} rx/s {} tx/s",
             i + 1,
-            s.cpu_percent,
-            (s.memory_used as f64 / s.memory_total as f64) * 100.0,
+            cpu,
+            cores,
+            mem,
             util,
             temp,
             s.net_rx_bps.map(format_size).unwrap_or_else(|| "—".into()),

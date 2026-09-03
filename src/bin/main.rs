@@ -3015,13 +3015,16 @@ fn handle_record_command(action: &RecordSubcommand) -> Result<(), Box<dyn std::e
                 // Create system snapshot
                 let timestamp = simonlib::tsdb::TimeSeriesDb::now_millis();
 
-                let cpu_per_core: Vec<f32> = state
+                // A core whose idle time was not read is `None`, not 0% busy.
+                // `unwrap_or(100.0)` here meant "assume fully idle", which
+                // came back out of the database as a measured, idle core.
+                let cpu_per_core: Vec<Option<f32>> = state
                     .cpu
                     .as_ref()
                     .map(|c| {
                         c.cores
                             .iter()
-                            .map(|core| 100.0 - core.idle.unwrap_or(100.0))
+                            .map(|core| core.idle.map(|idle| 100.0 - idle))
                             .collect()
                     })
                     .unwrap_or_default();
@@ -3029,18 +3032,23 @@ fn handle_record_command(action: &RecordSubcommand) -> Result<(), Box<dyn std::e
                 let cpu_percent = state.cpu_utilization();
 
                 // Platform collectors report memory in KB; the database stores bytes.
+                // `(0, 0, 0, 0)` for an unread tick used to go into the file
+                // as a machine with no memory installed -- and the readback
+                // divides by `memory_total`. Swap keeps its own absence
+                // separately: a pagefile that was not read is not an unused one,
+                // which is why `SwapInfo` carries `Option` at all.
                 let (memory_used, memory_total, swap_used, swap_total) = state
                     .memory
                     .as_ref()
                     .map(|m| {
                         (
-                            m.ram.used * 1024,
-                            m.ram.total * 1024,
-                            m.swap.used_or_zero() * 1024,
-                            m.swap.total_or_zero() * 1024,
+                            Some(m.ram.used * 1024),
+                            Some(m.ram.total * 1024),
+                            m.swap.used.map(|v| v * 1024),
+                            m.swap.total.map(|v| v * 1024),
                         )
                     })
-                    .unwrap_or((0, 0, 0, 0));
+                    .unwrap_or((None, None, None, None));
 
                 // Collect GPU stats. `gpu_dynamic` is index-aligned with the static
                 // descriptors and carries None for a device whose query failed this
@@ -3304,11 +3312,21 @@ fn handle_record_command(action: &RecordSubcommand) -> Result<(), Box<dyn std::e
                         .unwrap_or_else(|| "Unknown".to_string());
 
                     println!("  {} {}", "Time:".white().bold(), dt.cyan());
-                    println!(
-                        "    CPU: {:.1}%  MEM: {:.1}%",
-                        snapshot.cpu_percent,
-                        (snapshot.memory_used as f64 / snapshot.memory_total as f64) * 100.0
-                    );
+                    // "not read", the same wording the GPU rows below use. The
+                    // memory percentage also divides by `memory_total`, so an
+                    // unread tick used to divide by zero and print `NaN%` or
+                    // `inf%` next to a confident `0.0%` CPU.
+                    let cpu = match snapshot.cpu_percent {
+                        Some(p) => format!("{p:.1}%"),
+                        None => "not read".to_string(),
+                    };
+                    let mem = match (snapshot.memory_used, snapshot.memory_total) {
+                        (Some(used), Some(total)) if total > 0 => {
+                            format!("{:.1}%", (used as f64 / total as f64) * 100.0)
+                        }
+                        _ => "not read".to_string(),
+                    };
+                    println!("    CPU: {cpu}  MEM: {mem}");
                     if !snapshot.gpu_percent.is_empty() {
                         for (i, gpu) in snapshot.gpu_percent.iter().enumerate() {
                             let util = match gpu {
@@ -3373,15 +3391,17 @@ fn handle_record_command(action: &RecordSubcommand) -> Result<(), Box<dyn std::e
                 for s in &snapshots {
                     writeln!(
                         file,
-                        "{},{:.2},{},{},{},{},{},{}",
+                        "{},{},{},{},{},{},{},{}",
                         s.timestamp,
-                        s.cpu_percent,
-                        s.memory_used,
-                        s.memory_total,
-                        s.swap_used,
-                        s.swap_total,
                         // An empty CSV field, which every reader treats as
-                        // missing. `0` would be read as a measurement.
+                        // missing. `0` would be read as a measurement -- the
+                        // convention the two network columns already used, now
+                        // applied to the six that were writing zeros.
+                        s.cpu_percent.map(|v| format!("{v:.2}")).unwrap_or_default(),
+                        s.memory_used.map(|v| v.to_string()).unwrap_or_default(),
+                        s.memory_total.map(|v| v.to_string()).unwrap_or_default(),
+                        s.swap_used.map(|v| v.to_string()).unwrap_or_default(),
+                        s.swap_total.map(|v| v.to_string()).unwrap_or_default(),
                         s.net_rx_bps.map(|v| v.to_string()).unwrap_or_default(),
                         s.net_tx_bps.map(|v| v.to_string()).unwrap_or_default()
                     )?;

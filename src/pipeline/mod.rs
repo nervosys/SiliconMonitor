@@ -292,19 +292,14 @@ pub struct Snapshot {
 
 impl Snapshot {
     /// CPU utilization percentage, or 0.0 when unavailable.
-    pub fn cpu_utilization(&self) -> f32 {
-        self.cpu
-            .as_ref()
-            .map(|c| 100.0 - c.total.idle)
-            .unwrap_or(0.0)
+    pub fn cpu_utilization(&self) -> Option<f32> {
+        self.cpu.as_ref().map(|c| 100.0 - c.total.idle)
     }
 
-    /// Memory utilization percentage, or 0.0 when unavailable.
-    pub fn memory_utilization(&self) -> f32 {
-        self.memory
-            .as_ref()
-            .map(|m| m.ram_usage_percent())
-            .unwrap_or(0.0)
+    /// Memory utilization percentage, or `None` when memory was not read.
+    /// See [`Self::cpu_utilization`].
+    pub fn memory_utilization(&self) -> Option<f32> {
+        self.memory.as_ref().map(|m| m.ram_usage_percent())
     }
 
     /// Aggregate receive rate across all interfaces, in bytes/sec.
@@ -1162,8 +1157,10 @@ mod tests {
     fn default_snapshot_is_generation_zero() {
         let snap = Snapshot::default();
         assert_eq!(snap.generation, 0, "readers treat gen 0 as not-ready");
-        assert_eq!(snap.cpu_utilization(), 0.0);
-        assert_eq!(snap.memory_utilization(), 0.0);
+        // Not `Some(0.0)`. A default snapshot has read nothing, and 0% CPU
+        // is a claim that the machine is idle.
+        assert_eq!(snap.cpu_utilization(), None);
+        assert_eq!(snap.memory_utilization(), None);
     }
 
     #[test]

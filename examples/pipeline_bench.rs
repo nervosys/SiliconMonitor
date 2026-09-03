@@ -114,6 +114,10 @@ fn main() {
     println!("  disks        {}", snap.disks.len());
     println!("  interfaces   {}", snap.network.len());
     println!("  gpus         {}", snap.gpu_dynamic.len());
-    println!("  cpu util     {:.1}%", snap.cpu_utilization());
-    println!("  mem util     {:.1}%", snap.memory_utilization());
+    let show = |v: Option<f32>| match v {
+        Some(p) => format!("{p:.1}%"),
+        None => "not read".to_string(),
+    };
+    println!("  cpu util     {}", show(snap.cpu_utilization()));
+    println!("  mem util     {}", show(snap.memory_utilization()));
 }

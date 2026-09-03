@@ -18,8 +18,15 @@ const DEFAULT_MAX_SIZE: u64 = 100 * 1024 * 1024;
 /// Magic bytes for database file identification
 const MAGIC_BYTES: &[u8; 8] = b"SIMONDB\0";
 
-/// Current database version
-const DB_VERSION: u32 = 5;
+/// Current database version.
+///
+/// 5 -> 6: CPU, per-core CPU, memory and swap became `Option`. As with the
+/// two bumps before it, the point is not that the layout moved but that the
+/// *values changed meaning*: a `0` in a version-5 file may be a measurement of
+/// an idle machine or a tick whose read failed, and nothing in the file says
+/// which. A reader that took version 5 rows as version 6 would keep reading
+/// those zeros as measurements, which is the error this bump exists to stop.
+const DB_VERSION: u32 = 6;
 
 /// Size of the database header
 const HEADER_SIZE: u64 = 128;
@@ -113,18 +120,35 @@ pub struct ProcessSnapshot {
 pub struct SystemSnapshot {
     /// Timestamp (Unix milliseconds)
     pub timestamp: u64,
-    /// Overall CPU usage percentage
-    pub cpu_percent: f32,
-    /// Per-core CPU usage
-    pub cpu_per_core: Vec<f32>,
-    /// Memory used bytes
-    pub memory_used: u64,
-    /// Memory total bytes
-    pub memory_total: u64,
-    /// Swap used bytes
-    pub swap_used: u64,
-    /// Swap total bytes
-    pub swap_total: u64,
+    /// Overall CPU usage percentage, or `None` where the CPU was not read.
+    ///
+    /// This was a bare `f32` fed from `Snapshot::cpu_utilization()`, which
+    /// answered `0.0` for a tick whose CPU read failed. A recording is read back
+    /// later by someone who was not there, and 0% is not a gap in the data --
+    /// it is a specific, plausible claim that the machine was idle at that
+    /// moment. Every other column in this struct that can be unavailable had
+    /// already been given an `Option` for exactly this reason; these six sat
+    /// between them.
+    pub cpu_percent: Option<f32>,
+    /// Per-core CPU usage, `None` for a core whose idle time was not read.
+    ///
+    /// The writer computed `100.0 - core.idle.unwrap_or(100.0)`, so a core with
+    /// no idle reading was recorded as 0% busy rather than as unread.
+    pub cpu_per_core: Vec<Option<f32>>,
+    /// Memory used in bytes, or `None` where memory was not read.
+    pub memory_used: Option<u64>,
+    /// Memory total in bytes, or `None` where memory was not read.
+    ///
+    /// A zero here is worse than misleading: the readback divides by it.
+    pub memory_total: Option<u64>,
+    /// Swap used in bytes, or `None` where the pagefile was not read.
+    ///
+    /// `SwapInfo` has carried `Option` since `15a60ab` precisely so that an
+    /// unread pagefile is distinguishable from an empty one, and the writer
+    /// called `used_or_zero()`, discarding that at the point of storage.
+    pub swap_used: Option<u64>,
+    /// Swap total in bytes, or `None` where the pagefile was not read.
+    pub swap_total: Option<u64>,
     /// GPU utilization, one entry per GPU. `None` where the device could not
     /// be queried on this tick, or exposes no utilization counter.
     pub gpu_percent: Vec<Option<f32>>,
@@ -738,12 +762,15 @@ mod tests {
 
         let written = SystemSnapshot {
             timestamp: TimeSeriesDb::now_millis(),
-            cpu_percent: 12.5,
-            cpu_per_core: vec![10.0, 15.0],
-            memory_used: 8_000_000_000,
-            memory_total: 16_000_000_000,
-            swap_used: 0,
-            swap_total: 0,
+            cpu_percent: Some(12.5),
+            cpu_per_core: vec![Some(10.0), Some(15.0)],
+            memory_used: Some(8_000_000_000),
+            memory_total: Some(16_000_000_000),
+            // A real zero: this machine has a pagefile and nothing is paged
+            // out. Distinct from `None`, which is what an unread pagefile now
+            // records -- the distinction the bump to version 6 exists for.
+            swap_used: Some(0),
+            swap_total: Some(0),
             // Three adapters: one measured, one at a true zero, one with no
             // sensor at all.
             gpu_percent: vec![Some(44.0), Some(0.0), None],
@@ -808,5 +835,76 @@ mod tests {
         assert_eq!(p.net_rx_bps, None, "untracked per-process I/O is not zero");
         assert_eq!(p.disk_read_bps, None);
         assert_eq!(p.gpu_percent, None);
+
+        // The system columns, which held bare numbers until 6.0.0.
+        assert_eq!(s.cpu_percent, Some(12.5));
+        assert_eq!(s.cpu_per_core, vec![Some(10.0), Some(15.0)]);
+        assert_eq!(
+            s.swap_used,
+            Some(0),
+            "a machine with an idle pagefile really is at zero"
+        );
+    }
+
+    /// A tick that read nothing must not come back as an idle machine.
+    ///
+    /// This is the whole reason for the version 6 bump. `simon record` writes a
+    /// row per tick whether or not the readers succeeded, and the row is read
+    /// back later by someone who was not there. `0.0%` CPU beside 0 bytes of
+    /// memory is not a visible gap in the data -- it is a specific and entirely
+    /// plausible claim that the machine was idle and empty at that moment.
+    #[test]
+    fn a_tick_that_read_nothing_reads_back_as_nothing() {
+        let dir = std::env::temp_dir().join(format!(
+            "simon-tsdb-unread-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("m.db");
+        let _ = std::fs::remove_file(&path);
+
+        let written = SystemSnapshot {
+            timestamp: TimeSeriesDb::now_millis(),
+            cpu_percent: None,
+            cpu_per_core: vec![None, None],
+            memory_used: None,
+            memory_total: None,
+            swap_used: None,
+            swap_total: None,
+            gpu_percent: Vec::new(),
+            gpu_memory_used: Vec::new(),
+            gpu_temperature: Vec::new(),
+            gpu_power_mw: Vec::new(),
+            net_rx_bps: None,
+            net_tx_bps: None,
+            processes: Vec::new(),
+        };
+
+        {
+            let mut db = TimeSeriesDb::new(&path, 1024 * 1024).expect("open");
+            db.record_system(&written).expect("write");
+            db.close().expect("close");
+        }
+
+        let mut db = TimeSeriesDb::new(&path, 1024 * 1024).expect("reopen");
+        let read = db.read_all_system_snapshots().expect("read");
+        assert_eq!(read.len(), 1);
+        let s = &read[0];
+
+        assert_eq!(s.cpu_percent, None, "an unread CPU is not an idle one");
+        assert_eq!(s.cpu_per_core, vec![None, None]);
+        assert_eq!(s.memory_used, None);
+        assert_eq!(
+            s.memory_total, None,
+            "a zero here would make the readback divide by it"
+        );
+        assert_eq!(
+            s.swap_used, None,
+            "an unread pagefile is not an unused pagefile"
+        );
+        assert_eq!(s.swap_total, None);
+
+        let _ = std::fs::remove_file(&path);
     }
 }
